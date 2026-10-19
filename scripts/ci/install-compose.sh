@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI-only renderer pin. Never replace GPU06's system or user Docker plugins.
+# CI-only renderer pin, isolated from system and user Docker plugins.
 set -euo pipefail
 
 readonly compose_version='5.5.0'

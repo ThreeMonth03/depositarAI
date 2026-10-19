@@ -521,9 +521,9 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_no_plaintext_remote_upstream_or_url_credentials(self):
         for peer in (
-            "http://gpu06:8000",
-            "https://user:pass@gpu06",
-            "https://gpu06/path",
+            "http://backend.example.test:8000",
+            "https://user:pass@backend.example.test",
+            "https://backend.example.test/path",
             "file:///etc/passwd",
         ):
             with self.assertRaises(ValueError):

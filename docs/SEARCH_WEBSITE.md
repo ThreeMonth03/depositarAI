@@ -68,7 +68,7 @@ hostname；不支援關閉 TLS 驗證。檔案不存在、無法讀取或不是�
 失敗。`SSL_CERT_FILE`、`SSL_CERT_DIR` 與 `HTTPS_PROXY` 等環境變數不取代此設定。
 CA 檔須可由 `WEB_UID` 讀取；服務 key 另須由相同 UID 擁有，權限為 `0400` 或 `0600`。
 更新 CA 內容後須重新啟動 BFF，才會載入新的信任憑證。
-iisCloud 測試 VM 若使用 UID／GID `1003`，請將 `WEB_UID=1003`、`WEB_GID=1003`，
+若部署帳號使用 UID／GID `1003`，請將 `WEB_UID=1003`、`WEB_GID=1003`，
 並確認服務 key 的擁有者也是 `1003`。容器 `/healthz` 成功只代表網站程序可用，仍須
 另做一次實際搜尋確認私有 API 的 TLS、key 與模型連線。
 
