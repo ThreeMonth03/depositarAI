@@ -10,6 +10,14 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
+PUBLIC_COMMANDS = frozenset(
+    {
+        "prepare-public-entry",
+        "up-public-entry",
+        "update-public-entry",
+        "rollback-public-entry",
+    }
+)
 
 # Only exact operator-owned exception classes and fixed literals may add a
 # diagnostic. Error owners are loaded only when their failure is encountered.
@@ -103,14 +111,7 @@ def _operator_error_code(error, command):
             return None
         codes = product_restore.ERROR_CODES
     elif (
-        command
-        in {
-            "prepare-public-entry",
-            "up-public-entry",
-            "update-public-entry",
-            "rollback-public-entry",
-            "recover-public-entry",
-        }
+        command in PUBLIC_COMMANDS
         and owner == "search.operations.deployment.public_entry.preflight"
     ):
         from search.operations.deployment.public_entry import preflight
@@ -119,14 +120,7 @@ def _operator_error_code(error, command):
             return None
         codes = preflight.ERROR_CODES
     elif (
-        command
-        in {
-            "prepare-public-entry",
-            "up-public-entry",
-            "update-public-entry",
-            "rollback-public-entry",
-            "recover-public-entry",
-        }
+        command in PUBLIC_COMMANDS
         and owner == "search.operations.deployment.public_entry.updates"
     ):
         from search.operations.deployment.public_entry import updates
@@ -172,11 +166,12 @@ def parser():
         entry.add_argument("--entry-config", type=Path, required=True)
         entry.add_argument("--release-compose", type=Path, required=True)
         entry.add_argument("--web-image", required=True)
-    for command in ("rollback-public-entry", "recover-public-entry"):
-        entry = commands.add_parser(
-            command, help="restore a recorded CPU website version; retain Redis quotas"
-        )
-        entry.add_argument("--entry-config", type=Path, required=True)
+        entry.add_argument("--web-nginx-image", required=True)
+    rollback = commands.add_parser(
+        "rollback-public-entry",
+        help="restore the recorded website image pair; retain Redis quotas",
+    )
+    rollback.add_argument("--entry-config", type=Path, required=True)
     doctor = commands.add_parser(
         "doctor", help="read-only storage, GPU and model checks"
     )
@@ -403,23 +398,16 @@ def _runtime_report(options):
 def main(argv=None):
     arguments = parser()
     options = arguments.parse_args(argv)
-    public_commands = {
-        "prepare-public-entry",
-        "up-public-entry",
-        "update-public-entry",
-        "rollback-public-entry",
-        "recover-public-entry",
-    }
-    independent = {"restore-product", *public_commands}
+    independent = {"restore-product", *PUBLIC_COMMANDS}
     if options.command in independent:
         if options.config is not None:
             arguments.error(f"{options.command} does not use --config")
     elif options.config is None:
         arguments.error("--config is required for runtime commands")
     try:
-        if options.command in public_commands:
+        if options.command in PUBLIC_COMMANDS:
             extra = (
-                (options.release_compose, options.web_image)
+                (options.release_compose, options.web_image, options.web_nginx_image)
                 if options.command
                 in {"prepare-public-entry", "up-public-entry", "update-public-entry"}
                 else ()
@@ -438,18 +426,12 @@ def main(argv=None):
                 action = {
                     "update-public-entry": updates.update_public_entry,
                     "rollback-public-entry": updates.rollback_public_entry,
-                    "recover-public-entry": updates.recover_public_entry,
                 }[options.command]
             report = action(options.entry_config, *extra)
             print(
                 json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
             )
-            return (
-                1
-                if report.get("status")
-                in {"recovery_required", "update_failed_rolled_back"}
-                else 0
-            )
+            return 1 if report.get("status") == "deployment_failed" else 0
         if options.command == "restore-product":
             from search.operations.deployment import product_restore
 

@@ -31,6 +31,7 @@ def evidence():
         values["lease"]["revision"],
         uid=21599,
         gid=564,
+        inference_source_sha256="6" * 64,
     )["gateway"]
     service = gateway["services"]["web-nginx"]
     labels = release_runtime._labels(values["lease"], "web-nginx", "c" * 64)

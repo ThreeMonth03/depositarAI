@@ -10,7 +10,7 @@ from contextlib import ExitStack
 import hashlib
 import os
 
-from search.operations.deployment import image_build, image_staging
+from search.operations.deployment import image_build, image_staging, source_bundle
 from search.operations.deployment.runtime_docker import InferenceError
 from search.operations.shared import private_io
 
@@ -30,12 +30,96 @@ def _equal(actual, expected, code):
 
 def read_completed_images(config, store, source_plan):
     """Read closed completed source/image evidence, never attest its own source."""
+    return _read_completed_images(config, store, source_plan, candidate_required=True)
+
+
+def read_completed_images_at_revision(config, store, current_plan, origin_revision):
+    """Authenticate an original build whose complete reranker source is current.
+
+    Unrelated historical website recipes need not equal today's recipes. The
+    original manifest, staged bytes and all build receipts remain sealed under
+    their original revision; only the independently committed reranker closure
+    is required to equal today's reviewed recipe and inputs. The global image
+    candidate belongs to the new application and is deliberately not replaced.
+    """
+    current = source_bundle._verified_plan(current_plan)
+    source_bundle._revision(origin_revision)
+    parent = config.state_root / "image-builds"
+    name = "source-" + origin_revision
+    with ExitStack() as stack:
+        parent_fd = private_io.open_directory(parent)
+        stack.callback(os.close, parent_fd)
+        image_staging._inventory(parent_fd)
+        root_fd = private_io.open_child_directory(parent_fd, name)
+        stack.callback(os.close, root_fd)
+        origin = image_build._record(root_fd, "manifest.json")
+        if (
+            type(origin) is not dict
+            or set(origin) != set(current)
+            or type(origin.get("schema_version")) is not int
+            or origin.get("schema_version") != 1
+            or origin.get("revision") != origin_revision
+            or origin.get("status") != "source_plan_only"
+            or origin.get("runtime_verified") is not False
+            or origin.get("images_built") is not False
+            or type(origin.get("files")) is not dict
+            or not 1 <= len(origin["files"]) <= source_bundle.MAX_SOURCE_FILES
+            or type(origin.get("services")) is not dict
+            or set(origin["services"]) != set(image_build.SERVICES)
+        ):
+            raise InferenceError("inference_origin_source_invalid")
+        for path, record in origin["files"].items():
+            source_bundle._path(path)
+            source_bundle._record(record)
+        total = sum(record["size"] for record in origin["files"].values())
+        if (
+            total > source_bundle.MAX_TOTAL_BYTES
+            or type(origin.get("total_bytes")) is not int
+            or origin["total_bytes"] != total
+            or origin.get("source_map_sha256") != _digest(origin["files"])
+        ):
+            raise InferenceError("inference_origin_source_invalid")
+        expected = current["services"]["reranker"]
+        expected = {
+            **expected,
+            "build_arguments": {"SOURCE_REVISION": origin_revision},
+            "required_labels": {
+                **expected["required_labels"],
+                "org.opencontainers.image.revision": origin_revision,
+                source_bundle.LABEL_PREFIX + "revision": origin_revision,
+            },
+        }
+        _equal(
+            origin["services"]["reranker"],
+            expected,
+            "inference_origin_reranker_source_changed",
+        )
+        _equal(
+            {path: origin["files"].get(path) for path in expected["source_map"]},
+            expected["source_map"],
+            "inference_origin_reranker_source_changed",
+        )
+        private_io.verify_directory(root_fd, parent / name)
+        private_io.verify_directory(parent_fd, parent)
+    return origin, _read_completed_images(
+        config, store, origin, candidate_required=False
+    )
+
+
+def _read_completed_images(config, store, source_plan, *, candidate_required):
     revision = source_plan["revision"]
     parent = config.state_root / "image-builds"
     name = "source-" + revision
     slot = parent / name
     identity = image_staging._identity(source_plan, slot)
-    candidate = store.read("image-candidate.json")
+    if candidate_required:
+        candidate = store.read("image-candidate.json")
+    else:
+        descriptor = private_io.open_directory(parent)
+        try:
+            candidate = image_build._record(descriptor, name + ".image-complete.json")
+        finally:
+            os.close(descriptor)
     images = image_staging._image_result(
         source_plan,
         {
@@ -55,7 +139,13 @@ def read_completed_images(config, store, source_plan):
         "registry_published": False,
         "active_changed": False,
     }
-    _equal(candidate, expected, "inference_image_candidate_changed")
+    _equal(
+        candidate,
+        expected,
+        "inference_image_candidate_changed"
+        if candidate_required
+        else "inference_source_receipt_changed",
+    )
     with ExitStack() as stack:
         parent_fd = private_io.open_directory(parent)
         stack.callback(os.close, parent_fd)

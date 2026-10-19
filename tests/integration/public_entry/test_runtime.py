@@ -156,6 +156,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE", "depositar-search-api:ci"
             ),
             "nginx": cls.image("DEPOSITAR_TEST_PUBLIC_TLS_IMAGE", NGINX_IMAGE),
+            "frontend": cls.image(
+                "DEPOSITAR_TEST_PUBLIC_FRONTEND_IMAGE", "depositar-search-web-nginx:ci"
+            ),
         }
         for name in ("idp", "attacker"):
             cls.command(
@@ -315,6 +318,11 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "8000",
                 "--no-access-log",
             ],
+            "networks": {"website": {"aliases": ["web"]}},
+        }
+        services["public-frontend"] = {
+            **common,
+            "image": images["frontend"],
             "networks": ["website"],
         }
         nginx = """worker_processes 1;

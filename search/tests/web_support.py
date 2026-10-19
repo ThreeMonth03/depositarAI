@@ -12,7 +12,6 @@ SETTINGS = WebSettings(
     "http://conversation-api:8000",
     Path("/unused"),
     "a" * 40,
-    Path("/does-not-exist"),
 )
 
 

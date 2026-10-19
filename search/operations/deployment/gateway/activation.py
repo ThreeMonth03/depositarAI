@@ -368,6 +368,14 @@ def _activate(
         repo, revision, runner=source_runner
     )
     image_authority = image_evidence.read_completed_images(config, store, source_plan)
+    inference_plan = composition._inference(
+        config,
+        revision,
+        os.geteuid(),
+        os.getegid(),
+        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+    )
+    gpu_authority = inference._authority(config, store, source_plan, inference_plan)
     root = config.state_root / "gateway"
     with ExitStack() as state:
         gateway_fd = private_io.open_child_directory(store.fd, "gateway")
@@ -539,7 +547,7 @@ def _activate(
                 == "linux",
                 "daemon_unsupported",
             )
-            gpu_images = inference._images(docker, source_plan, image_authority)
+            gpu_images = inference._images(docker, source_plan, gpu_authority)
             images = release._images(docker, source_plan, image_authority)
             images["filtered-embedding"] = gpu_images["scope-model"]
             catalog_images = execution.load_images(context)
@@ -554,15 +562,17 @@ def _activate(
                 revision,
                 uid=os.geteuid(),
                 gid=os.getegid(),
+                inference_source_sha256=source_plan["services"]["reranker"][
+                    "source_sha256"
+                ],
             )
             gpu_compose = copy.deepcopy(plans["inference"])
             for role, image in gpu_images.items():
                 gpu_compose["services"][role]["image"] = image["Id"]
             gpu_identity = inference._runtime_identity(
-                revision,
                 gpu_compose,
                 {role: models[role] for role in ("api", "reranker")},
-                image_authority,
+                gpu_authority,
                 gpu_images,
             )
             verify_inference = release._sealed_inference(
@@ -627,8 +637,12 @@ def _activate(
                 )
                 _same(execution.load_images(context), catalog_images)
                 _same(
-                    inference._images(docker, source_plan, image_authority), gpu_images
+                    inference._refresh_authority(
+                        config, store, source_plan, gpu_authority
+                    ),
+                    gpu_authority,
                 )
+                _same(inference._images(docker, source_plan, gpu_authority), gpu_images)
                 _same(
                     release._images(docker, source_plan, image_authority),
                     {role: images[role] for role in ("web", "conversation-api")},

@@ -21,13 +21,15 @@ class PublicEntryCLITests(unittest.TestCase):
             "--entry-config",
             "/private/public.json",
         ]
-        if command in {"rollback-public-entry", "recover-public-entry"}:
+        if command == "rollback-public-entry":
             return common
         return common + [
             "--release-compose",
             "/private/release/compose.json",
             "--web-image",
             "sha256:" + "a" * 64,
+            "--web-nginx-image",
+            "sha256:" + "b" * 64,
         ]
 
     def test_entry_dispatch_does_not_require_model_or_product_configuration(self):
@@ -36,7 +38,6 @@ class PublicEntryCLITests(unittest.TestCase):
             ("up-public-entry", host, "up_public_entry"),
             ("update-public-entry", updates, "update_public_entry"),
             ("rollback-public-entry", updates, "rollback_public_entry"),
-            ("recover-public-entry", updates, "recover_public_entry"),
         ):
             output = io.StringIO()
             with (
@@ -50,9 +51,13 @@ class PublicEntryCLITests(unittest.TestCase):
                 self.assertEqual(0, cli.main(self.arguments(command)))
             product.assert_not_called()
             expected = [Path("/private/public.json")]
-            if command not in {"rollback-public-entry", "recover-public-entry"}:
+            if command != "rollback-public-entry":
                 expected.extend(
-                    [Path("/private/release/compose.json"), "sha256:" + "a" * 64]
+                    [
+                        Path("/private/release/compose.json"),
+                        "sha256:" + "a" * 64,
+                        "sha256:" + "b" * 64,
+                    ]
                 )
             entry.assert_called_once_with(*expected)
             self.assertEqual(json.loads(output.getvalue()), {"status": "prepared"})
@@ -77,7 +82,6 @@ class PublicEntryCLITests(unittest.TestCase):
             "up-public-entry",
             "update-public-entry",
             "rollback-public-entry",
-            "recover-public-entry",
         ):
             with (
                 self.subTest(command=command),
@@ -92,31 +96,28 @@ class PublicEntryCLITests(unittest.TestCase):
                         ]
                     )
 
-    def test_rolled_back_failure_and_recovery_required_have_nonzero_exit(self):
+    def test_failed_deployments_have_nonzero_exit_without_claiming_automatic_rollback(
+        self,
+    ):
+        report = {
+            "status": "deployment_failed",
+            "active_changed": False,
+            "entrance_stop_requested": True,
+            "manual_rollback_required": True,
+        }
         for command, module, action in (
             ("up-public-entry", host, "up_public_entry"),
             ("update-public-entry", updates, "update_public_entry"),
             ("rollback-public-entry", updates, "rollback_public_entry"),
-            ("recover-public-entry", updates, "recover_public_entry"),
         ):
-            for status in ("update_failed_rolled_back", "recovery_required"):
-                report = {
-                    "status": status,
-                    "active_changed": False,
-                    "entrance_stopped": False,
-                }
-                output = io.StringIO()
-                with (
-                    self.subTest(command=command, status=status),
-                    patch.object(
-                        module,
-                        action,
-                        return_value=report,
-                    ),
-                    contextlib.redirect_stdout(output),
-                ):
-                    self.assertEqual(1, cli.main(self.arguments(command)))
-                self.assertEqual(json.loads(output.getvalue()), report)
+            output = io.StringIO()
+            with (
+                self.subTest(command=command),
+                patch.object(module, action, return_value=report),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(1, cli.main(self.arguments(command)))
+            self.assertEqual(json.loads(output.getvalue()), report)
 
     def test_only_known_lifecycle_error_codes_are_exposed(self):
         for error, expected in (
@@ -170,37 +171,59 @@ class PublicEntryCLITests(unittest.TestCase):
             self.assertFalse(report["active_changed"])
             self.assertNotIn("sentinel", output.getvalue())
 
-    def test_update_requires_release_and_image_before_dispatch(self):
-        with (
-            patch.object(updates, "update_public_entry") as action,
-            contextlib.redirect_stderr(io.StringIO()),
+    def test_pair_commands_require_every_argument_before_dispatch(self):
+        for command, module, action in (
+            ("prepare-public-entry", host, "prepare_public_entry"),
+            ("up-public-entry", host, "up_public_entry"),
+            ("update-public-entry", updates, "update_public_entry"),
         ):
-            with self.assertRaises(SystemExit):
-                cli.main(
-                    ["update-public-entry", "--entry-config", "/private/public.json"]
-                )
-        action.assert_not_called()
-
-    def test_recovery_and_rollback_reject_unrecorded_image_or_release_overrides(self):
-        for command, action_name in (
-            ("rollback-public-entry", "rollback_public_entry"),
-            ("recover-public-entry", "recover_public_entry"),
-        ):
-            for extra in (
-                ["--web-image", "sha256:" + "a" * 64],
-                ["--release-compose", "/private/other/compose.json"],
+            for required in (
+                "--entry-config",
+                "--release-compose",
+                "--web-image",
+                "--web-nginx-image",
             ):
+                arguments = self.arguments(command)
+                index = arguments.index(required)
+                del arguments[index : index + 2]
                 with (
-                    self.subTest(command=command, extra=extra),
-                    patch.object(
-                        updates,
-                        action_name,
-                    ) as action,
+                    self.subTest(command=command, missing=required),
+                    patch.object(module, action) as mocked,
                     contextlib.redirect_stderr(io.StringIO()),
                 ):
-                    with self.assertRaises(SystemExit):
-                        cli.main([*self.arguments(command), *extra])
-                action.assert_not_called()
+                    with self.assertRaises(SystemExit) as error:
+                        cli.main(arguments)
+                self.assertEqual(error.exception.code, 2)
+                mocked.assert_not_called()
+
+    def test_rollback_rejects_unrecorded_image_or_release_overrides(self):
+        for extra in (
+            ["--web-image", "sha256:" + "a" * 64],
+            ["--web-nginx-image", "sha256:" + "b" * 64],
+            ["--release-compose", "/private/other/compose.json"],
+        ):
+            with (
+                self.subTest(extra=extra),
+                patch.object(updates, "rollback_public_entry") as action,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                with self.assertRaises(SystemExit):
+                    cli.main([*self.arguments("rollback-public-entry"), *extra])
+            action.assert_not_called()
+
+    def test_removed_recovery_command_cannot_invoke_a_deployment(self):
+        with (
+            patch.object(updates, "rollback_public_entry") as rollback,
+            patch.object(host, "up_public_entry") as up,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            with self.assertRaises(SystemExit) as error:
+                cli.main(
+                    ["recover-public-entry", "--entry-config", "/private/public.json"]
+                )
+        self.assertEqual(error.exception.code, 2)
+        rollback.assert_not_called()
+        up.assert_not_called()
 
 
 if __name__ == "__main__":

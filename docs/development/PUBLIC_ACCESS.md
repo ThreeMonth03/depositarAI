@@ -13,7 +13,7 @@
 |---|---|
 | 確認登入、配額與網路前提 | [元件與網路邊界](#元件與網路邊界)、[控制範圍與配額語意](#控制範圍與配額語意) |
 | 第一次設定與啟動 | [同主機準備與啟動](#同主機準備與啟動) |
-| 更新 image、回退或處理中斷 | [更新、回退與中斷恢復](#更新回退與中斷恢復)、[私有版本與狀態](#私有版本與狀態) |
+| 更新或回退網站版本 | [更新與人工回退](#更新與人工回退)、[私有版本與狀態](#私有版本與狀態) |
 | 檢查可否放行流量或人工暫停 | [驗收與暫停](#驗收與暫停) |
 
 ## 元件與網路邊界
@@ -22,7 +22,8 @@
 flowchart LR
     Browser[公眾瀏覽器] --> TLS[既有 HTTPS 對外入口]
     TLS --> APISIX[APISIX：主機 loopback 18084]
-    APISIX --> Web[獨立 CPU public-web]
+    APISIX --> Frontend[Nginx public-frontend]
+    Frontend --> Web[Django public-web]
     APISIX --> Redis[私有 Redis 使用額度]
     APISIX --> OIDC[外部 OIDC 登入服務]
     Web --> Conversation[既有私有 conversation API]
@@ -168,213 +169,122 @@ IPv4 網段；以下只是設定範例：
 配額。設定支援 `/24` 至 `/28` 的私有 IPv4 網段，三者不可互相重疊。
 這個方法不清除既有 networks、不修改 Docker daemon，也不搬動現役 catalog。
 
-### 3. 建置已提交來源的 CPU website image
+### 3. 建置同一版本的前端與 BFF
 
-從已提交且乾淨的來源建置前端與 BFF，記下不可變的 image ID：
+網站由兩個映像組成：`web-nginx` 內含 React 靜態檔；`web` 提供 Django BFF。
+兩者使用同一個已提交的 Git revision，共同構成一版網站；不分開發布或猜測 mutable tag。
 
 ```bash
-docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
-  -f deploy/docker/web/Dockerfile -t depositar-public-web:local .
-docker image inspect --format '{{.Id}}' depositar-public-web:local
+revision="$(git rev-parse HEAD)"
+for role in web web-nginx; do
+  git archive "$revision" | docker build \
+    --build-arg "SOURCE_REVISION=$revision" \
+    -f "deploy/docker/$role/Dockerfile" -t "depositar-public-$role:$revision" -
+done
+docker image inspect --format '{{.Id}}' "depositar-public-web:$revision"
+docker image inspect --format '{{.Id}}' "depositar-public-web-nginx:$revision"
 ```
 
-準備工具要求 `sha256:<64 hex>` image ID，以及
-`io.depositar.ai.public-entry.version=1` 與有效的來源 revision label。
-舊版私有網站映像缺少這個能力標記，不能拿來替代新 BFF，避免入口有驗證但後端未綁定身分。
-建置包含前端，不下載模型、不重建索引；APISIX／Redis 另使用設定中固定的映像 digest。
+記下兩個 `sha256:<64 hex>` image ID。BFF 必須有
+`io.depositar.ai.public-entry.version=1`，前端必須有
+`io.depositar.ai.frontend.version=1`，兩者來源 revision label 必須相同。
+這些建置不下載模型、不重建索引。
 
-### 4. 準備並啟動獨立入口
+### 4. 準備並啟動入口
 
-使用現役 release 的私有 `compose.json`，不是舊 gateway 的 manifest。
-這兩個指令使用獨立入口設定，**不需要產品的 `--config`**：
+使用既有私有 release 的 `compose.json`。入口設定獨立於產品 `--config`：
 
 ```bash
 python3 scripts/depositarai.py prepare-public-entry \
   --entry-config /absolute/private/public.json \
-  --release-compose /absolute/private/current-release/compose.json \
-  --web-image sha256:YOUR_VERIFIED_64_HEX_IMAGE_ID
+  --release-compose /absolute/private/release/compose.json \
+  --web-image sha256:YOUR_BFF_IMAGE_ID \
+  --web-nginx-image sha256:YOUR_FRONTEND_IMAGE_ID
 
 python3 scripts/depositarai.py up-public-entry \
   --entry-config /absolute/private/public.json \
-  --release-compose /absolute/private/current-release/compose.json \
-  --web-image sha256:YOUR_VERIFIED_64_HEX_IMAGE_ID
+  --release-compose /absolute/private/release/compose.json \
+  --web-image sha256:YOUR_BFF_IMAGE_ID \
+  --web-nginx-image sha256:YOUR_FRONTEND_IMAGE_ID
 ```
 
-`prepare-public-entry` 驗證私有設定、secret files、release 網路參照與 image label，產生
-`STATE_ROOT/public-entry/compose.json`、入口設定與 `prepared.json`，不啟動服務。
-CPU website image 須已建置並存在本機；準備不探測私有 backend 的執行狀態，因此可以
-先產生設定，再啟動既有私有 release。
-相同輸入、相同檔案可以重跑；既有準備內容若不同或被竄改會拒絕覆寫。
-準備先寫入私有 staging directory，所有檔案與收據完成後才發布正式目錄；中斷後可
-重新準備，遺留 staging 保持私有，不拿它當作已部署內容，也不自動刪除資料。
-`up-public-entry` 在同樣驗證後啟動 APISIX、Redis 與新的 CPU `public-web`，等待健康檢查。
-現役 conversation API 必須已啟動；工具不會替它啟動 GPU 或切換 release。
-首次啟動會先以唯讀 Docker 查詢核對私有後端：指定的 network 必須是該 release 的
-internal bridge；其中須有唯一、正在運作且健康的 `conversation-api`，其 project／
-service 標記、網路 alias、固定 image 與唯讀 API key 掛載須符合 release 及 website
-設定，且沒有 published ports。檢查失敗時不建立公眾容器、不寫入待恢復交易；先修正
-私有 backend，再以相同設定重試。已產生的準備素材會保留。
-這項預檢不呼叫模型、不啟動 GPU，也不要求 Google provider 連線。
-Docker 健康與身分符合仍不等於實際推論驗收。
-準備時會將 release project、network 名稱與固定 API image 記錄在
-`compose.json` 的 `x-depositar-plan.private_backend`，連同部署素材保存在版本 snapshot。
-首次啟動核對的是這份固定身分，不會在準備完成後重新讀取可變的 release 檔案來
-改換後端目標；API key 掛載也必須與準備好的 website 設定一致。
-第一次啟動要求尚無同名 Compose project，且準備好的 `redis-data` 為空；沒有管理收據的
-既有服務或 Redis 資料不會被自動接管。首次部署前先記錄私有版本 snapshot 與交易，
-先只建立尚未啟動的 Redis，核對 image、標記、掛載與網路後，將完整 container ID
-持久寫入交易，才啟動 Redis 與入口。Redis 使用只啟動既有容器的操作；website 與
-入口以 `--no-deps --no-recreate` 啟動，不經依賴展開建立替代 Redis。健康、固定素材
-及已記錄 Redis 身分驗證完成後，才發布目前版本。
-已有管理收據時，相同有效設定與目前 image 的 `up-public-entry` 只驗證既有三個容器、
-image、掛載、網路及健康狀態，不重建已健康的版本。手動停止或被外部修改的服務不會
-被當作正常狀態悄悄恢復。
-健康檢查僅表示程序與基本 HTTP 可用，回報仍保留 `public_readiness_verified=false`；
-不代表真實登入、BFF 的身分阻擋、上游模型或公眾網路已完成驗收。
-首次啟動失敗可能留下部分 CPU 容器與待恢復交易；先檢查回報，再依下一節使用
-`recover-public-entry`，不要反覆執行普通啟動、刪除 Redis 資料或改用空目錄。
+準備命令只驗證映像與設定、產生 Compose，不啟動服務。啟動前會核對私有 backend
+仍在指定的內部 network、健康、使用指定映像與 API key，且沒有對外發布 port。
+第一次啟動拒絕接管既有同 project 容器或非空 Redis 資料目錄。
 
-## 更新、回退與中斷恢復
+Compose 負責建立 APISIX、Redis、Nginx 與 BFF。Nginx 只連入口的 `website` network，
+沒有 API key、edge secret、GPU 或私有 backend network。BFF 在此網路使用 `web`
+alias，另經指定的私有 release network 呼叫 conversation API。
+APISIX 仍處理所有公開路由的登入、配額、身分清理與限速，再送往 Nginx。
 
-這組生命週期指令只更換獨立 CPU `public-web` 的 image，讓前端與 BFF 可以一起更新。
-它固定有效入口設定、部署素材、secret 內容與參照路徑、網路、既有私有 backend，以及
-APISIX／Redis image。變更網域、OIDC client／金鑰、配額、網段或私有 release 仍須另行
-設計並驗收遷移；不能藉普通 app 更新一併修改。
+## 更新與人工回退
 
-| 指令 | 必要參數 | 行為 |
-|---|---|---|
-| `update-public-entry` | `--entry-config`、`--release-compose`、`--web-image` | 驗證固定條件後更換 CPU website image；相同 image 為唯讀驗證 |
-| `rollback-public-entry` | `--entry-config` | 回到記錄的前一個已完成版本，不接受臨時指定其他 image |
-| `recover-public-entry` | `--entry-config` | 處理待恢復交易；有舊版本時回到交易前版本，首次部署則完成已記錄的 bootstrap |
-
-這些指令同樣不使用產品的 `--config`。先依前面的建置方式取得新 image ID，再執行：
+第一版接受短暫維護中斷。更新會先關閉 APISIX 入口，再以 Compose 更新 Nginx/BFF
+這兩個服務，等待 BFF 與前端首頁健康後重開入口，再檢查 loopback 首頁、health 與 JS／CSS 素材。
+更新不重新建立 Redis、不移動其資料，也不更新私有 API、catalog 或 GPU 服務。
+搜尋 session 留在 BFF 記憶體，網站更新或回退後需要重新搜尋；OIDC 與配額另由入口保存。
 
 ```bash
 python3 scripts/depositarai.py update-public-entry \
   --entry-config /absolute/private/public.json \
-  --release-compose /absolute/private/current-release/compose.json \
-  --web-image sha256:YOUR_NEW_VERIFIED_64_HEX_IMAGE_ID
+  --release-compose /absolute/private/release/compose.json \
+  --web-image sha256:YOUR_NEW_BFF_IMAGE_ID \
+  --web-nginx-image sha256:YOUR_NEW_FRONTEND_IMAGE_ID
 
 python3 scripts/depositarai.py rollback-public-entry \
   --entry-config /absolute/private/public.json
-
-python3 scripts/depositarai.py recover-public-entry \
-  --entry-config /absolute/private/public.json
 ```
 
-三個範例分別用於更新、主動回退與故障恢復，不是每次更新後都依序執行。
-候選與回退 image 必須已在本機，符合相同 capability／來源 revision 要求；更換 website
-時不 build 或 pull image，也不啟動 GPU。保留所有仍需回退版本的舊 image，不能只保留
-snapshot 便刪除映像。
+更新僅允許網站映像與 revision 改變。OIDC、配額、Redis、secret 或私有 backend
+設定若有變更，先安排獨立維護；不要把它混成網站更新。以相同版本執行
+`update-public-entry` 只核對設定、私有 backend 與 HTTP，不重建網站服務。
+首次部署後重跑 `up-public-entry` 仍可能暫停入口並重新執行同一組 Compose，保留 Redis；
+不要將它當成無變更的狀態查詢。回退選擇先前保存的整組映像，不允許只換回其中一個。
 
-每次變更先驗證記錄與目前容器一致，取得獨占操作鎖，寫入待完成交易；停止
-`public-entry` 後只替換 `public-web`，再以 `start --wait` 啟動**同一個**入口容器。
-成功前會確認 APISIX 與 Redis container ID 未改變。Redis 不被重建，沿用相同資料目錄
-與配額命名空間，不主動清空計數；配額視窗仍按實際時間到期。
-過程中公眾入口短暫中斷；既有 `18083` 私有試用、模型與索引不在本次更新範圍。
+更新失敗回報 `deployment_failed`、退出碼 1，工具會盡力停止入口，**不自動回退**。
+先查看 Compose 狀態與已保存的 `pending.json`，確認私有 backend 和磁碟正常，再執行
+上面的人工 rollback。若工具無法成功送出停止命令，回報的
+`entrance_stop_requested` 為 false，需由維護者立即確認對外入口已停止。
 
-普通啟動、更新及回退在變更前會核對版本所記錄的私有 backend；替換 website 後、
-重新開啟入口前與發布版本前還會再驗證。自動回退及 `recover-public-entry` 也受相同
-檢查約束。交易開始前的驗證失敗會拒絕變更，不更動既有服務。已有待恢復交易時，
-若後端停止、不健康或身分變動，交易會保留，入口盡力保持停止；
-不能因 website 或 Redis 仍健康就發布成功。先恢復原本的私有 backend，再執行 recover，
-不必清空交易或 Redis。停止是否成功仍以回報的 `entrance_stopped` 為準。
+程序被強制終止後可能留下部分已更新的容器；Compose 更新本來就不是跨容器交易。
+保留 `pending.json` 與所有版本資料，人工 rollback 會選擇這次更新前的版本。
+不提供自動 recovery 或自動接管未知容器。首次啟動沒有前版可回退時，先修正故障，再以相同設定與兩個 image ID
+重新執行 `up-public-entry`。它只接受已封存的同一個候選版本，Redis 使用
+`--no-recreate` 保留原容器與資料；不接受趁重試更換映像或 secret。不要刪除
+Redis 資料來重試。
 
-`public-web` 重建會清除 RAM 中的搜尋 session。已開啟的瀏覽器下一輪可能收到 `410`，
-需要「新搜尋」；登入 cookie 留在瀏覽器，由同一個 APISIX 驗證，OIDC 金鑰未變且
-登入未到期時仍可使用。回退 app 也不會恢復舊的 RAM 搜尋 session。
+## 私有版本與狀態
 
-### 私有版本與狀態
+`state_root/public-entry/` 中的設定與版本資料都是私有檔案，不上傳 Git：
 
-`STATE_ROOT/public-entry/` 保留原始準備素材，並新增：
-
-- `versions/<generation>/compose.json` 與 `snapshot.json`：不可覆寫的版本資料與素材／
-  secret 雜湊，不包含 secret 原文；新版本先完整 staging 再發布，部分寫入不會成為
-  可使用版本，中斷後可重試。
-- `active.json`：目前版本、前一個版本、實際 container ID 與有效素材的識別資料。
-- `transaction.json`：變更開始前寫入的交易，記錄候選與交易前版本；成功發布後才移除。
-  首次 bootstrap 另記錄 `quota_container_id`：`null` 表示尚未核定配額容器，完整 ID
-  表示入口啟動前已持久記錄的 Redis 身分，不會依目前查到的容器偷偷改寫。
-  若程序在發布 `active.json` 後、移除交易前中斷，仍須先恢復交易，不能只看 active 檔
-  就認定變更已完成。
-
-以上目錄維持 `0700`、檔案 `0600`，不要手動改寫或刪除狀態檔來解除保護。
-回退或恢復會重驗素材、secret 與 image；同一路徑的 secret 內容改變也會拒絕普通更新。
-沒有可信 `active.json`／待恢復交易的舊 runtime 或 Redis 資料不會被自動採用，避免
-把未知狀態當作可清空重裝的入口。
-舊 profile 若缺少 `x-depositar-plan.private_backend`，或記錄格式不合法，同樣拒絕
-啟動、更新與恢復；不自動補寫、接管或重置既有配額資料。若已有待完成交易，恢復
-失敗會保留記錄並嘗試關閉入口；應先確認並修復原始部署素材，不要手動編造後端身分。
-
-| 回報 `status` | CLI exit | 操作者處理 |
-|---|---|---|
-| `public_entry_started`／`public_entry_updated`／`public_entry_rolled_back` | `0` | 記錄目前 generation；只代表受控入口服務操作完成 |
-| `public_entry_unchanged` | `0` | 目前版本已符合請求，未替換容器 |
-| `public_entry_recovered` | `0` | 已恢復交易前版本，或完成首次 bootstrap；再做實際服務驗收 |
-| `update_failed_rolled_back` | `1` | 要求的版本切換失敗、已自動恢復原版本；不能當作更新／回退成功，先查原因 |
-| `recovery_required` | `1` | 自動回退失敗或首次部署未完成；保留交易，阻擋後續普通變更，使用恢復指令 |
-
-遇到待完成交易時，普通 `up`、update 與 rollback 會拒絕並回報
-`public_entry_pending_operation`。`recover-public-entry` 有交易前版本時一律恢復那個版本，
-不繼續發布候選；首次 bootstrap 沒有舊版本，才以已記錄設定及 `--no-recreate` 完成
-部署，保留已存在的入口與已核定 Redis 容器。尚未核定 Redis 的早期中斷，只有在沒有
-website／入口容器、資料目錄為空，且 Redis 尚未建立或可證明仍從未啟動時，才允許
-繼續建立及記錄身分。已記錄 ID 後，即使同一資料目錄仍存在，缺失或換 ID 的 Redis
-也不能被普通 recover 重建或接管；保留交易與資料，另行處理經驗證的修復或遷移。
-缺少 `quota_container_id` 的舊 bootstrap 交易會拒絕恢復並嘗試關閉入口，不從執行中
-容器補猜身分。沒有待完成交易時，recover 只驗證目前版本。
-
-Redis 使用相同資料掛載與 AOF 保存配額；更換容器本身不等於計數歸零。上述身分保護
-防止恢復流程在缺少證據時接受替代配額服務，不會雜湊持續變動的 AOF、清空資料或
-提供自動配額重置。
-
-`recovery_required` 會依固定的 Compose project／service 標記，盡力停止公眾入口並再查
-確認沒有執行中的入口容器。即使待恢復交易、歷史 snapshot 或 secret 損壞，也不依賴
-那些檔案執行停止；損壞的交易原文會保留，無法確認的版本欄位回報 `null`。
-這仍需要可讀的私有入口設定與安全的 state root，以取得操作鎖；無法定位或鎖定狀態時
-指令會拒絕操作，不能據此認定入口已停止。
-只有回報 `entrance_stopped=true` 才表示已確認停止；若 Docker 失聯或停止失敗而回報
-`false`，**不能宣稱入口已停止接受請求**。
-
-| 故障狀態 | 處理方式 |
+| 路徑 | 用途 |
 |---|---|
-| `public_entry_pending_operation` | 保留交易與 Redis，使用 `recover-public-entry`；不要反覆執行普通啟動或更新。 |
-| 待恢復交易期間，私有 backend 停止、不健康或身分不符 | 先恢復原本 backend，再執行 recover；不改換目標或清空交易。 |
-| 已記錄 ID 的 Redis 缺失／換 ID，或 bootstrap 身分紀錄不合法 | 保留交易與資料，安排經驗證的修復或遷移；普通 recover 不建立替代配額服務。 |
-| 有待恢復交易，但交易、snapshot 或 secret 損壞 | 保留原文；recover 會盡力依固定 project／service 關閉入口，修復原始素材後再處理。 |
-| `entrance_stopped=false` 或無法定位／鎖定 state | 入口停止未獲確認；先停用上游 HTTPS 代理轉送，再恢復 Docker 控制與原有素材。 |
+| `compose.json`、`prepared.json`、入口配置 | 初始固定拓樸與配置的核對基準 |
+| `versions/<generation>/compose.json`、`snapshot.json` | 一版網站的 Git revision、兩個 immutable image ID、Compose 與設定 digest |
+| `active.json` | 最近成功完成 HTTP 檢查的版本及其前版 |
+| `pending.json` | 尚未完成的候選版本及更新前版本；供人工回退選版 |
+| `redis-data/` | 配額持久化資料；更新與回退保留原目錄 |
 
-不要用新 state root、刪除 Redis 資料或手動清空交易來繞過故障；需要回退的舊 image
-仍須保留。
-
-所有成功與失敗回報的 `public_readiness_verified` 仍為 `false`：版本切換、程序健康及
-自動回退不等於真實 Google 登入、正式網域／憑證及對外防護已驗收。
-
-APISIX 配額 key 也包含 `limit-count` 設定的版本雜湊；更改配額、視窗或 Redis 憑證等
-設定可能建立新的計數命名空間。相同設定的重啟會沿用配額，任意修改設定則沒有這項
-保證；本組 image-only 指令因此拒絕這些變更。需要調整時另行驗收遷移流程，不能以
-刪除 state 或另開空 state 目錄重置配額。
+部署命令使用同一把檔案鎖，防止兩個維護程序同時更新。版本資料可核對設定及來源，
+不能取代線上狀態觀察；磁碟或設定損壞時先停止入口與調查，不修改 digest 假裝成功。
+保留可回退的映像與版本檔，不要只刪其中一項。
 
 ## 驗收與暫停
 
-正式放行流量前，透過真實 HTTPS host 驗證完整登入、callback、登出，確認未登入、
-偽造身分、超額與其他帳號的 session 都不會到達模型。再驗證入口與 Redis 重啟後，
-已用配額仍保留；Redis 故障時 AI 請求被拒絕。CPU fixture 與 mock provider 測試
-只驗證程式行為，不代表 Google 真實登入或正式對外網路已驗收。
+loopback HTTP 檢查不代替正式 HTTPS/OIDC 驗收。開放流量前，從真正的外網入口檢查：
 
-觀察與暫停使用新入口自己的 manifest：
+- 首頁、JavaScript、CSS 與圖片能載入，瀏覽器沒有 CSP 或 MIME 錯誤。
+- 未登入不能使用 AI；登入、callback、登出與重新登入正常。
+- 搜尋、追問、重設與帳號間 session 隔離正常。
+- 額度用完、Redis 不可用、私有 backend 異常時，不會放行無限 AI 請求。
+- 只公開核准的 HTTPS 入口，沒有旁路可直接存取私有網站或管理介面。
+
+需要人工暫停時，使用目前版本的 Compose：
 
 ```bash
-docker compose -f /absolute/private/public-state/public-entry/compose.json ps
-docker compose -f /absolute/private/public-state/public-entry/compose.json logs --tail 100
-docker compose -f /absolute/private/public-state/public-entry/compose.json stop public-entry
+docker compose -f /absolute/private/public-entry/versions/GENERATION/compose.json \
+  stop public-entry
 ```
 
-停止 `public-entry` 會同時停止這個公眾入口的頁面與新 AI 請求，不會停止原本的
-`18083` 私有試用或刪除 Redis 資料。此工具不自動改寫機構 HTTPS 代理設定。
-手動暫停後，普通更新不會自行恢復這個非健康基準；解除暫停前先確認目前版本及停止
-原因。若仍有待恢復交易，先執行 recover；單純人工暫停且沒有待恢復交易時，才使用
-`active.json` 記錄的 `compose_file` 啟動既有 `public-entry` 容器。
-不要直接對原始 `compose.json` 執行 `up` 或強制重建；一般變更使用上面的生命週期指令。
-需要調整配額或加入反爬挑戰服務時，依實際等待時間、拒絕率與模型成本另行設計及
-驗收；普通 image-only 更新不包含這些設定遷移。
+停止入口不刪除 Redis 或版本資料。恢復之前先處理失敗原因；有 pending 版本時，
+優先執行人工 rollback。不要使用 `down -v`、清空 Redis 或重建空的資料目錄。

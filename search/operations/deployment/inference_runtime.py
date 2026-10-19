@@ -8,6 +8,7 @@ requires the catalog's sealed API/image contract and exact unfiltered peers.
 from __future__ import annotations
 
 import hashlib
+import re
 
 from search.operations.catalog import client_lease, policy
 from search.operations.deployment.gpu_ownership import GPUContainerProof
@@ -16,6 +17,7 @@ from search.operations.shared import private_io
 
 SERVICES = frozenset({"scope-model", "answer-model", "reranker"})
 ROLES = {"scope-model": "scope", "answer-model": "planner", "reranker": "reranker"}
+DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class InferenceRuntimeError(ValueError):
@@ -205,6 +207,22 @@ def _validate_runtime(compose, images, containers, networks, *, client=None):
             or len(networks) != 2
         ):
             raise InferenceRuntimeError("inference_runtime_inventory_invalid")
+        plan = compose.get("x-depositar-plan", {})
+        if (
+            type(plan) is not dict
+            or type(plan.get("schema_version")) is not int
+            or plan.get("schema_version") != 2
+            or type(plan.get("inference_source_sha256")) is not str
+            or DIGEST.fullmatch(plan["inference_source_sha256"]) is None
+            or type(plan.get("recipe_sha256")) is not str
+            or DIGEST.fullmatch(plan["recipe_sha256"]) is None
+            or compose["name"] != "depositar-ai-inference-" + plan["recipe_sha256"][:12]
+            or (images["reranker"]["Config"].get("Labels") or {}).get(
+                "io.depositar.ai.source.sha256"
+            )
+            != plan["inference_source_sha256"]
+        ):
+            raise InferenceRuntimeError("inference_runtime_source_changed")
         by_service, seen = {}, set()
         for row in containers:
             if type(row) is not dict or any(
@@ -382,17 +400,13 @@ def validate_leased_runtime(
         project = release_compose["networks"]["existing-inference"][
             "name"
         ].removesuffix("_inference")
-        if (
-            compose.get("name") != project
-            or compose.get("x-depositar-plan", {}).get("revision") != lease["revision"]
-            or any(
-                compose["networks"][key]["name"] != project + "_" + key
-                or compose["networks"][key]["name"]
-                != release_compose["networks"][release_key]["name"]
-                for key, release_key in (
-                    ("inference", "existing-inference"),
-                    ("ranking", "ranking"),
-                )
+        if compose.get("name") != project or any(
+            compose["networks"][key]["name"] != project + "_" + key
+            or compose["networks"][key]["name"]
+            != release_compose["networks"][release_key]["name"]
+            for key, release_key in (
+                ("inference", "existing-inference"),
+                ("ranking", "ranking"),
             )
         ):
             raise InferenceRuntimeError("inference_client_source_or_network_changed")

@@ -72,6 +72,7 @@ def evidence(*, catalog_revision=REVISION):
         REVISION,
         uid=21599,
         gid=564,
+        inference_source_sha256="6" * 64,
     )["release"]
     inherited_env = {
         "PATH": "/usr/local/bin:/usr/bin",

@@ -1,4 +1,4 @@
-import { expect, test } from "./gateway";
+import { expect, test } from "@playwright/test";
 
 async function ask(page: import("@playwright/test").Page, query: string) {
   await page.getByRole("textbox", { name: "搜尋或追問" }).fill(query);

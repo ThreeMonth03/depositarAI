@@ -666,7 +666,7 @@ def render_public_entry(config, *, uid=None, gid=None):
     origin_host = urlsplit(config.public_origin).hostname
     upstream = {
         "type": "roundrobin",
-        "nodes": {"public-web:8000": 1},
+        "nodes": {"public-frontend:8080": 1},
         "pass_host": "rewrite",
         "upstream_host": urlsplit(config.public_origin).netloc,
         "timeout": {"connect": 3, "send": 5, "read": 130},
@@ -912,7 +912,7 @@ def render_public_entry(config, *, uid=None, gid=None):
             "status": "public_entry_prepared_requires_web_binding",
             "public_origin": config.public_origin,
             "runtime_verified": False,
-            "upstream": "public-web:8000",
+            "upstream": "public-frontend:8080",
             "external_https_proxy_required": True,
             "quota_counts": "admitted_http_requests_not_gpu_calls",
             "anonymous_ai": False,

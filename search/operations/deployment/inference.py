@@ -66,14 +66,15 @@ def _source_revision(repo_root, revision, runner):
 def _images(docker, source_plan, authority):
     proof = authority["images"]["reranker"]
     reranker = docker.inspect(proof["image_id"])
-    fresh = source_bundle.validate_built_image(
-        source_plan, "reranker", proof["image_id"], reranker
+    fresh = source_bundle.validate_compatible_built_image(
+        source_plan, "reranker", authority["revision"], proof["image_id"], reranker
     )
-    tagged = source_bundle.validate_built_image(
+    tagged = source_bundle.validate_compatible_built_image(
         source_plan,
         "reranker",
+        authority["revision"],
         proof["image_id"],
-        docker.inspect(image_build.TAGS["reranker"] + source_plan["revision"]),
+        docker.inspect(image_build.TAGS["reranker"] + authority["revision"]),
     )
     _equal(fresh, proof, "inference_reranker_image_changed")
     _equal(tagged, proof, "inference_reranker_tag_changed")
@@ -92,6 +93,68 @@ def _images(docker, source_plan, authority):
     immutable = docker.inspect(image_id)
     _equal(immutable, ollama, "inference_ollama_immutable_identity_changed")
     return {"scope-model": ollama, "answer-model": ollama, "reranker": reranker}
+
+
+def _authority(config, store, source_plan, compose):
+    """Select only a sealed v2 slot's original build, never adopt live labels."""
+    if "inference" not in os.listdir(store.fd):
+        return image_authority.read_completed_images(config, store, source_plan)
+    descriptor = private_io.open_child_directory(store.fd, "inference")
+    try:
+        names = set(os.listdir(descriptor))
+        if len(names) > MAX_SLOTS or any(
+            SLOT.fullmatch(name) is None for name in names
+        ):
+            raise InferenceError("inference_unknown_state")
+        name = compose["name"].removeprefix("depositar-ai-")
+        if name not in names:
+            # Old app-SHA slots have a different identity; their persisted
+            # evidence cannot silently grant authority over an existing plane.
+            for existing in names:
+                child = private_io.open_child_directory(descriptor, existing)
+                try:
+                    if "started.json" in os.listdir(child):
+                        started = image_build._record(child, "started.json")
+                        if type(started) is dict and started.get("schema_version") == 1:
+                            raise InferenceError(
+                                "inference_legacy_state_requires_transition"
+                            )
+                finally:
+                    os.close(child)
+            return image_authority.read_completed_images(config, store, source_plan)
+        child = private_io.open_child_directory(descriptor, name)
+        try:
+            if set(os.listdir(child)) != {
+                "started.json",
+                "compose.json",
+                "complete.json",
+            }:
+                raise InferenceError("inference_partial_state_recovery_required")
+            started = image_build._record(child, "started.json")
+            if (
+                type(started) is not dict
+                or type(started.get("schema_version")) is not int
+                or started.get("schema_version") != 2
+                or started.get("inference_source_sha256")
+                != source_plan["services"]["reranker"]["source_sha256"]
+            ):
+                raise InferenceError("inference_start_identity_changed")
+            _, authority = image_authority.read_completed_images_at_revision(
+                config, store, source_plan, started["revision"]
+            )
+            return authority
+        finally:
+            os.close(child)
+    finally:
+        os.close(descriptor)
+
+
+def _refresh_authority(config, store, source_plan, authority):
+    if authority["revision"] == source_plan["revision"]:
+        return image_authority.read_completed_images(config, store, source_plan)
+    return image_authority.read_completed_images_at_revision(
+        config, store, source_plan, authority["revision"]
+    )[1]
 
 
 def _model_plan(config):
@@ -280,10 +343,15 @@ def _gpu(config, allowed, runner):
         raise InferenceError("inference_gpu_ownership_blocked")
 
 
-def _runtime_identity(revision, compose, model_plan, authority, images):
+def _runtime_identity(compose, model_plan, authority, images):
     return {
-        "schema_version": 1,
-        "revision": revision,
+        "schema_version": 2,
+        # Preserve original build provenance across unrelated application
+        # commits. No new app revision is ever attached to an existing image.
+        "revision": authority["revision"],
+        "inference_source_sha256": compose["x-depositar-plan"][
+            "inference_source_sha256"
+        ],
         "project": compose["name"],
         "compose_sha256": _digest(compose),
         "model_manifest_sha256": _digest(model_plan),
@@ -332,7 +400,16 @@ def start_private_inference(
         source_plan = source_bundle.committed_source_plan(
             repo_root, source_revision, runner=source_runner
         )
-        authority = image_authority.read_completed_images(config, store, source_plan)
+        compose = composition._inference(
+            config,
+            source_revision,
+            os.geteuid(),
+            os.getegid(),
+            inference_source_sha256=source_plan["services"]["reranker"][
+                "source_sha256"
+            ],
+        )
+        authority = _authority(config, store, source_plan, compose)
         with (
             _verified_models(config, deadline=deadline) as (model_plan, verify_models),
             tempfile.TemporaryDirectory(
@@ -353,18 +430,12 @@ def start_private_inference(
                 ):
                     raise InferenceError("inference_daemon_unsupported")
                 images = _images(docker, source_plan, authority)
-                compose = copy.deepcopy(
-                    composition._inference(
-                        config, source_revision, os.geteuid(), os.getegid()
-                    )
-                )
+                compose = copy.deepcopy(compose)
                 for name, image in images.items():
                     compose["services"][name]["image"] = image["Id"]
                 if b"$" in private_io.canonical(compose):
                     raise InferenceError("inference_compose_interpolation_forbidden")
-                identity = _runtime_identity(
-                    source_revision, compose, model_plan, authority, images
-                )
+                identity = _runtime_identity(compose, model_plan, authority, images)
                 parent = config.state_root / "inference"
                 store._check_directory()
                 parent_fd = private_io.open_child_directory(
@@ -516,7 +587,7 @@ def start_private_inference(
                 verify_models()
                 _source_revision(repo_root, source_revision, source_runner)
                 _equal(
-                    image_authority.read_completed_images(config, store, source_plan),
+                    _refresh_authority(config, store, source_plan, authority),
                     authority,
                     "inference_source_authority_changed",
                 )

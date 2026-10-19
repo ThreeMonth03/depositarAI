@@ -92,6 +92,7 @@ if role == "conversation":
         assert not (path.exists() or path.is_symlink()), "admin code in query image"
 
 if role == "web":
+    assert not Path("/app/web-dist").exists(), "static assets belong to the frontend image"
     for relative in ("operations", "catalog/admin.py", "catalog/client.py",
                      "catalog/importer.py", "catalog/vectors.py",
                      "model_policy.py", "scope.py", "api/retrieval/results.py",

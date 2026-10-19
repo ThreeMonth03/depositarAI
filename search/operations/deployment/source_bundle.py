@@ -168,17 +168,13 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "8e2be261e46a0f7a77331af176cdec0ef2696e3ef4e5630ea240e47ff27976fa",
-        "dockerignore_sha256": "1b188f9588c6a7a6e51db23604cd21599c4b1dc6b8a2b236ce73fddf39bd386a",
-        "bases": (NODE_BASE, PYTHON_BASE),
-        "inputs": WEB_CONTRACT | HTTP | WEB | ASSETS | {"search/api/requirements.lock"},
+        "dockerfile_sha256": "b772f434ec99f679e6112cc54d0164e722740d65de3befac7273105576c60c44",
+        "dockerignore_sha256": "623613abd6969d8aa591bc6f4734a98ac73ce016f0d179a36046b0435a417f89",
+        "bases": (PYTHON_BASE,),
+        "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (
             "search/http/*.py",
             "search/web/*.py",
-            "web/src/*.ts",
-            "web/src/*.tsx",
-            "web/src/*.css",
-            "web/src/search/*.ts",
         ),
     },
     "reranker": {
@@ -196,11 +192,17 @@ RECIPES = {
     },
     "web-nginx": {
         "dockerfile": "deploy/docker/web-nginx/Dockerfile",
-        "dockerfile_sha256": "b75d4ae238bfcd7016a3e25a664cf90b2c2b1fd47f1753e02827b70ac93b6854",
-        "dockerignore_sha256": "d5b1f3565de1cd7c6457759aea8b1ea8079e06c44b99d0b89cf70b5e1f75d37c",
-        "bases": (NGINX_BASE,),
-        "inputs": frozenset({"deploy/config/web-nginx/nginx.conf"}),
-        "patterns": (),
+        "dockerfile_sha256": "4887f86da1997da9fa0c1cc14680ed3dc42e97de09c4767f7d0064b1b2800fa5",
+        "dockerignore_sha256": "bfb266c8815591f71888618bcb240881e623ec775f16584e138bfbeaba6c2f88",
+        "bases": (NODE_BASE, NGINX_BASE),
+        "inputs": ASSETS
+        | _paths("deploy/config/web-nginx/", "nginx.conf http.conf website.conf"),
+        "patterns": (
+            "web/src/*.ts",
+            "web/src/*.tsx",
+            "web/src/*.css",
+            "web/src/search/*.ts",
+        ),
     },
 }
 
@@ -487,6 +489,27 @@ def validate_built_image(plan, service, image_id, inspection):
     re-inspects at the eventual mutation boundary.
     """
     expected = _verified_plan(plan)
+    return _validate_built_image(
+        expected, service, expected["revision"], image_id, inspection
+    )
+
+
+def validate_compatible_built_image(
+    plan, service, origin_revision, image_id, inspection
+):
+    """Check current service bytes against an image's ORIGINAL source revision.
+
+    The caller must independently authenticate the origin's sealed source/build
+    receipts and prove its service source map equals this committed plan. This
+    helper never relabels an image or treats labels as build attestation.
+    """
+    _revision(origin_revision)
+    return _validate_built_image(
+        _verified_plan(plan), service, origin_revision, image_id, inspection
+    )
+
+
+def _validate_built_image(expected, service, revision, image_id, inspection):
     if type(service) is not str or service not in RECIPES:
         raise SourceBundleError("source_bundle_service_invalid")
     if type(image_id) is not str or IMAGE_ID.fullmatch(image_id) is None:
@@ -495,6 +518,11 @@ def validate_built_image(plan, service, image_id, inspection):
         raise SourceBundleError("source_bundle_image_identity_changed")
     config = inspection.get("Config")
     labels = config.get("Labels") if type(config) is dict else None
+    required_labels = {
+        **expected["services"][service]["required_labels"],
+        "org.opencontainers.image.revision": revision,
+        LABEL_PREFIX + "revision": revision,
+    }
     if (
         type(labels) is not dict
         or len(labels) > 128
@@ -504,21 +532,18 @@ def validate_built_image(plan, service, image_id, inspection):
             or len(key) + len(value) > 2048
             for key, value in labels.items()
         )
-        or any(
-            labels.get(key) != value
-            for key, value in expected["services"][service]["required_labels"].items()
-        )
+        or any(labels.get(key) != value for key, value in required_labels.items())
     ):
         raise SourceBundleError("source_bundle_image_labels_changed")
     environment = parse_image_environment(config.get("Env"))
     if any(
         environment.get(key) != value
-        for key, value in _required_environment(service, expected["revision"]).items()
+        for key, value in _required_environment(service, revision).items()
     ):
         raise SourceBundleError("source_bundle_image_environment_flags_changed")
     return {
         "schema_version": 1,
-        "revision": expected["revision"],
+        "revision": revision,
         "service": service,
         "source_sha256": expected["services"][service]["source_sha256"],
         "image_id": image_id,

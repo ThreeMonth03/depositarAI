@@ -12,8 +12,8 @@
 | Dockerfile 目錄 | 用途 |
 |---|---|
 | `api/` | 對話搜尋 API；唯一 API recipe，`production` 是預設 target，`tests` 供 CI 使用 |
-| `web/` | 建置 React 前端，並提供 BFF 與靜態資產 |
-| `web-nginx/` | 網站路由與 gateway 發布 |
+| `web/` | Django BFF，提供網站 API 與暫存搜尋 session |
+| `web-nginx/` | 建置及提供 React 靜態檔，代理網站 API 與發布 gateway |
 | `reranker/` | GPU 重排服務 |
 | `fess/`、`opensearch/` | Catalog 文字與向量索引服務 |
 | `importer/` | 一次性的 catalog 匯入工作 |

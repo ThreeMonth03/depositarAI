@@ -171,6 +171,7 @@ def images():
         "Id": "sha256:" + "b" * 64,
         "Config": {
             "Env": ["PATH=/opt/conda/bin", "MODEL_ROOT=/model"],
+            "Labels": {"io.depositar.ai.source.sha256": "6" * 64},
             "Cmd": ["/opt/conda/bin/python", "-m", "search.reranker.server"],
             "Entrypoint": None,
         },
@@ -180,7 +181,9 @@ def images():
 
 class InferenceRuntimeTests(unittest.TestCase):
     def setUp(self):
-        self.compose = composition._inference(product(), REVISION, 1000, 1000)
+        self.compose = composition._inference(
+            product(), REVISION, 1000, 1000, inference_source_sha256="6" * 64
+        )
         self.images = images()
         for name, image in self.images.items():
             self.compose["services"][name]["image"] = image["Id"]
@@ -361,7 +364,8 @@ class InferenceRuntimeTests(unittest.TestCase):
 
     def test_inherited_source_labels_cannot_be_overridden_at_container_creation(self):
         self.images["reranker"]["Config"]["Labels"] = {
-            "io.depositar.ai.source.revision": REVISION
+            "io.depositar.ai.source.revision": REVISION,
+            "io.depositar.ai.source.sha256": "6" * 64,
         }
         self.containers, self.networks = snapshot(self.compose, self.images)
         self.invoke()
@@ -393,7 +397,11 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.client = client_evidence()
         self.compose = composition._inference(
-            product(), self.client["lease"]["revision"], 21599, 564
+            product(),
+            self.client["lease"]["revision"],
+            21599,
+            564,
+            inference_source_sha256="6" * 64,
         )
         self.images = images()
         for name, image in self.images.items():
@@ -531,11 +539,8 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
                         attachments[row["Name"]]["NetworkID"] = row["Id"]
                 self.reject("inference_client_network_id_changed")
 
-    def test_source_revision_and_network_names_bind_inference_to_release(self):
+    def test_recipe_and_network_names_bind_inference_to_release(self):
         for mutation in (
-            lambda: self.compose["x-depositar-plan"].update(
-                {"revision": self.client["lease"]["revision"][:12] + "f" * 28}
-            ),
             lambda: self.compose.update({"name": "depositar-ai-inference-" + "f" * 12}),
             lambda: self.compose["networks"]["ranking"].update(
                 {"name": "depositar-ai-inference-" + "f" * 12 + "_ranking"}
@@ -545,6 +550,30 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
                 self.setUp()
                 mutation()
                 self.reject("inference_client_source_or_network_changed")
+
+    def test_source_fingerprint_cannot_be_changed_without_the_sealed_image(self):
+        self.compose["x-depositar-plan"]["inference_source_sha256"] = "f" * 64
+        self.reject("inference_runtime_source_changed")
+
+    def test_original_gpu_image_revision_can_differ_from_application_revision(self):
+        origin = "b" * 40
+        self.images["reranker"]["Config"]["Labels"].update(
+            {
+                "org.opencontainers.image.revision": origin,
+                "io.depositar.ai.source.revision": origin,
+            }
+        )
+        reranker = next(
+            row
+            for row in self.containers
+            if row["Config"]["Labels"]["com.docker.compose.service"] == "reranker"
+        )
+        reranker["Config"]["Labels"].update(self.images["reranker"]["Config"]["Labels"])
+        self.assertNotEqual(origin, self.client["lease"]["revision"])
+        result = self.invoke()
+        self.assertEqual(
+            self.client["lease"]["api_container_id"], result["api_container_id"]
+        )
 
     def test_api_image_source_capabilities_mounts_and_attachments_are_reverified(self):
         for mutation in (

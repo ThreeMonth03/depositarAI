@@ -87,6 +87,7 @@ class PrivateReleaseTests(unittest.TestCase):
             "runtime": {"container_ids": {"fixture": "1" * 64}, "network_id": "2" * 64},
         }
         self.image_authority = {
+            "revision": self.revision,
             "source_manifest_sha256": "3" * 64,
             "images": {
                 "conversation-api": self.values["image_proof"],
@@ -138,9 +139,15 @@ class PrivateReleaseTests(unittest.TestCase):
             (
                 release.source_bundle,
                 "committed_source_plan",
-                {"revision": self.revision},
+                {
+                    "revision": self.revision,
+                    "services": {"reranker": {"source_sha256": "6" * 64}},
+                },
             ),
             (release.image_evidence, "read_completed_images", self.image_authority),
+            (release.inference, "_authority", self.image_authority),
+            (release.inference, "_refresh_authority", self.image_authority),
+            (release.composition, "_inference", self.gpu_compose),
             (release.runtime_docker, "Docker", self.docker),
             (release.inference, "_images", self.gpu_images),
             (

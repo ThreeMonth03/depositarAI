@@ -281,6 +281,62 @@ class WebsiteDeploymentTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.assertEqual(2, result.returncode)
 
+    def test_update_closes_admission_on_failed_or_interrupted_health_check(self):
+        for outcome, exit_code in (("success", 0), ("failed", 42), ("terminated", 143)):
+            with (
+                self.subTest(outcome=outcome),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                directory = Path(temporary)
+                (directory / "config.json").write_text(json.dumps(self.remote))
+                (directory / "git").write_text(
+                    "#!/bin/sh\n"
+                    "if [ \"$1\" = rev-parse ]; then printf '%040d\\n' 1; fi\n"
+                )
+                (directory / "docker").write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json,os,pathlib,signal,sys\n"
+                    "root=pathlib.Path(os.environ['FAKE_WEB_ROOT'])\n"
+                    "with (root/'calls.jsonl').open('a') as output:\n"
+                    " output.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                    "if 'config' in sys.argv:\n"
+                    " print((root/'config.json').read_text())\n"
+                    "if 'build' in sys.argv: sys.stdin.buffer.read()\n"
+                    "if 'up' in sys.argv:\n"
+                    " outcome=os.environ['FAKE_DEPLOY_OUTCOME']\n"
+                    " if outcome=='failed': sys.exit(42)\n"
+                    " if outcome=='terminated': os.kill(os.getppid(),signal.SIGTERM)\n"
+                )
+                for name in ("git", "docker"):
+                    (directory / name).chmod(0o700)
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/search-web.sh"), "up"],
+                    cwd=ROOT,
+                    env=dict(
+                        os.environ,
+                        PATH=str(directory) + os.pathsep + os.environ["PATH"],
+                        FAKE_WEB_ROOT=str(directory),
+                        FAKE_DEPLOY_OUTCOME=outcome,
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(exit_code, result.returncode, result.stderr)
+                calls = [
+                    json.loads(line)
+                    for line in (directory / "calls.jsonl").read_text().splitlines()
+                ]
+                operations = [
+                    "stop" if "stop" in call else "up"
+                    for call in calls
+                    if "stop" in call or "up" in call
+                ]
+                expected = ["stop", "up"]
+                if exit_code:
+                    expected.append("stop")
+                self.assertEqual(expected, operations)
+
     def test_public_or_other_port_rejected(self):
         for address, port in (
             ("0.0.0.0", "18081"),

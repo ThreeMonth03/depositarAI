@@ -13,6 +13,7 @@ from search.operations.deployment.public_entry import host
 
 
 IMAGE = "sha256:" + "a" * 64
+FRONTEND = "sha256:" + "f" * 64
 API_IMAGE = "sha256:" + "d" * 64
 REVISION = "b" * 40
 
@@ -30,6 +31,13 @@ class PublicEntryBindingTests(unittest.TestCase):
             public_origin="https://public.example.org",
             edge_secret_file=self.root / "edge-key",
         )
+        self.frontend_proof = {
+            "Id": FRONTEND,
+            "Labels": {
+                host.FRONTEND_CAPABILITY: "1",
+                "org.opencontainers.image.revision": REVISION,
+            },
+        }
         self.proof = {
             "Id": IMAGE,
             "Labels": {
@@ -59,7 +67,7 @@ class PublicEntryBindingTests(unittest.TestCase):
         self.rendered = {
             "compose": {
                 "name": "depositar-ai-public-entry",
-                "services": {},
+                "services": {"public-entry": {"depends_on": {}}},
                 "networks": {"website": {"internal": True}},
             },
             "assets": {"config.yaml": "{}\n", "apisix.yaml": "{}\n#END\n"},
@@ -72,6 +80,8 @@ class PublicEntryBindingTests(unittest.TestCase):
             kwargs.get("release", self.release),
             IMAGE,
             kwargs.get("proof", self.proof),
+            FRONTEND,
+            kwargs.get("frontend_proof", self.frontend_proof),
         )
 
     def test_binding_preserves_private_release_and_publishes_no_backend_port(self):
@@ -85,7 +95,14 @@ class PublicEntryBindingTests(unittest.TestCase):
             web["environment"]["WEB_EDGE_SECRET_FILE"], "/run/secrets/public_edge_key"
         )
         self.assertEqual(web["runtime"], "runc")
-        self.assertEqual(web["networks"], ["website", "existing-release"])
+        self.assertEqual(
+            web["networks"], {"website": {"aliases": ["web"]}, "existing-release": {}}
+        )
+        frontend = result["compose"]["services"]["public-frontend"]
+        self.assertEqual(frontend["image"], FRONTEND)
+        self.assertEqual(frontend["networks"], ["website"])
+        self.assertNotIn("volumes", frontend)
+        self.assertNotIn("ports", frontend)
         self.assertNotIn("ports", web)
         self.assertNotIn("deploy", web)
         self.assertEqual(web["user"], f"{os.geteuid()}:{os.getegid()}")
@@ -155,6 +172,27 @@ class PublicEntryBindingTests(unittest.TestCase):
             ):
                 self.bind(proof=proof)
 
+    def test_frontend_requires_capability_and_same_revision(self):
+        for proof in (
+            None,
+            {},
+            {"Id": FRONTEND, "Labels": ["invalid"]},
+            {**self.frontend_proof, "Id": IMAGE},
+            {
+                "Id": FRONTEND,
+                "Labels": {
+                    host.FRONTEND_CAPABILITY: "1",
+                    "org.opencontainers.image.revision": "c" * 40,
+                },
+            },
+            {"Id": FRONTEND, "Labels": {"org.opencontainers.image.revision": REVISION}},
+        ):
+            with (
+                self.subTest(proof=proof),
+                self.assertRaisesRegex(ValueError, "frontend_image_invalid"),
+            ):
+                self.bind(frontend_proof=proof)
+
     def test_unexpected_release_network_and_published_api_are_rejected(self):
         for mutate in (
             lambda release: release["services"].update({"conversation-api": None}),
@@ -199,7 +237,10 @@ class PublicEntryBindingTests(unittest.TestCase):
                 self.root / "entry.json",
                 release_file,
                 IMAGE,
-                image_inspector=lambda _: self.proof,
+                FRONTEND,
+                image_inspector=lambda image: self.proof
+                if image == IMAGE
+                else self.frontend_proof,
             )
 
     def test_prepare_reverifies_identical_output_and_rejects_drift_without_overwrite(

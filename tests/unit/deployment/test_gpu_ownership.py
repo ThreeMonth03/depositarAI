@@ -869,6 +869,7 @@ class GPUCompositionContractTests(unittest.TestCase):
             REVISION,
             uid=1000,
             gid=1000,
+            inference_source_sha256="6" * 64,
         )["inference"]["services"]
         rows, proofs, pids = [], [], {}
         for index, (name, role) in enumerate(

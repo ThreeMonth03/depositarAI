@@ -30,6 +30,7 @@ SCRIPT = (
     release_probe._COMMON_SCRIPT
     + '\nBASE_URL = ORIGIN = "http://127.0.0.1:18083"\n'
     + "DEADLINE = started + 280\ncheck_website = lambda: None\n"
+    + release_probe._STATIC_ACCEPTANCE_SCRIPT
     + release_probe._WEB_ACCEPTANCE_SCRIPT
 )
 

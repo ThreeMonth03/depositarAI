@@ -271,7 +271,7 @@ def _plan(source_revision, **fields):
     }
 
 
-def _inference(config, source_revision, uid, gid):
+def _inference(config, source_revision, uid, gid, *, inference_source_sha256):
     from search.model_policy import (
         PLANNER_MODEL,
         PLANNER_MODEL_DIGEST,
@@ -281,20 +281,11 @@ def _inference(config, source_revision, uid, gid):
     from search.reranker.contract import MODEL_ID, MODEL_REVISION
     from search.reranker.model import MODEL_HASHES
 
-    # No metadata identity is included: a same-commit catalog update shares this
-    # one plane instead of starting duplicate processes on the same UUIDs.
-    identity = {
-        "revision": source_revision,
-        "model_root": str(config.api_model_root),
-        "reranker_root": str(config.reranker_model_root),
-        "gpus": config.to_dict()["gpus"],
-        "uid": uid,
-        "gid": gid,
-    }
-    digest = hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    project = "depositar-ai-inference-" + digest[:12]
+    if (
+        type(inference_source_sha256) is not str
+        or DIGEST.fullmatch(inference_source_sha256) is None
+    ):
+        raise ValueError("composition_inference_source_invalid")
     services = {}
     for name, identifiers in (
         ("scope-model", (config.gpus.scope,)),
@@ -346,35 +337,66 @@ def _inference(config, source_revision, uid, gid):
     services["reranker"]["tmpfs"] = [
         f"/tmp:rw,nosuid,nodev,size=512m,uid={uid},gid={gid},mode=0700"
     ]
+    models = {
+        "scope": {"model": SCOPE_MODEL, "manifest_sha256": SCOPE_MODEL_DIGEST},
+        "planner": {"model": PLANNER_MODEL, "manifest_sha256": PLANNER_MODEL_DIGEST},
+        "reranker": {
+            "model": MODEL_ID,
+            "revision": MODEL_REVISION,
+            "files": dict(MODEL_HASHES),
+        },
+    }
+    # The reranker source map includes its recipe, bases, dependency lock and
+    # every copied module. Bind the actual runtime recipe too: unrelated UI or
+    # catalog commits share this plane, while model/config/runtime changes do
+    # not. A source tag is only a plan; operators replace it with a sealed ID.
+    recipe_services = {
+        name: {
+            **service,
+            **(
+                {"image": "source-sha256:" + inference_source_sha256}
+                if name == "reranker"
+                else {}
+            ),
+        }
+        for name, service in services.items()
+    }
+    network_policy = {
+        name: {"internal": True, "attachable": False}
+        for name in ("inference", "ranking")
+    }
+    identity = {
+        "schema_version": 2,
+        "inference_source_sha256": inference_source_sha256,
+        "services": recipe_services,
+        "models": models,
+        "networks": network_policy,
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    project = "depositar-ai-inference-" + digest[:12]
     return {
         "name": project,
         "services": services,
         "networks": {
             name: {
                 "name": project + "_" + name,
-                "internal": True,
-                "attachable": False,
+                **policy,
             }
-            for name in ("inference", "ranking")
+            for name, policy in network_policy.items()
         },
-        "x-depositar-plan": _plan(
-            source_revision,
-            ownership_verified=False,
-            model_warmup_required=True,
-            immutable_built_images_required=True,
-            models={
-                "scope": {"model": SCOPE_MODEL, "manifest_sha256": SCOPE_MODEL_DIGEST},
-                "planner": {
-                    "model": PLANNER_MODEL,
-                    "manifest_sha256": PLANNER_MODEL_DIGEST,
-                },
-                "reranker": {
-                    "model": MODEL_ID,
-                    "revision": MODEL_REVISION,
-                    "files": dict(MODEL_HASHES),
-                },
-            },
-        ),
+        "x-depositar-plan": {
+            "schema_version": 2,
+            "status": "plan_only",
+            "runtime_verified": False,
+            "inference_source_sha256": inference_source_sha256,
+            "recipe_sha256": digest,
+            "ownership_verified": False,
+            "model_warmup_required": True,
+            "immutable_built_images_required": True,
+            "models": models,
+        },
     }
 
 
@@ -385,51 +407,27 @@ pid /tmp/nginx.pid;
 error_log /dev/stderr crit;
 events {{ worker_connections 128; }}
 http {{
-    include /etc/nginx/mime.types;
-    server_tokens off;
-    log_format safe '$request_id $request_method $status $request_time';
-    access_log /dev/stdout safe;
-    client_body_temp_path /tmp/client;
-    proxy_temp_path /tmp/proxy;
-    fastcgi_temp_path /tmp/fastcgi;
-    uwsgi_temp_path /tmp/uwsgi;
-    scgi_temp_path /tmp/scgi;
-    client_max_body_size 4k;
-    client_body_timeout 5s;
-    client_header_timeout 5s;
-    keepalive_timeout 5s;
-    send_timeout 10s;
-    resolver 127.0.0.11 ipv6=off valid=10s;
+    include /etc/nginx/http.conf;
     upstream website {{
         zone website 64k;
         server {alias}:8000 resolve;
         keepalive 4;
     }}
-    limit_req_zone $binary_remote_addr zone=web_rate:1m rate=3r/s;
-    server {{
-        listen 8080;
-        limit_req zone=web_rate burst=12 nodelay;
-        limit_req_status 429;
-        location / {{
-            proxy_pass http://website;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-For "";
-            proxy_set_header X-Forwarded-Host "";
-            proxy_set_header X-Forwarded-Proto "";
-            proxy_connect_timeout 5s;
-            proxy_send_timeout 5s;
-            proxy_read_timeout 130s;
-            proxy_buffering off;
-        }}
-        location /v1/ {{ return 404; }}
-    }}
+    include /etc/nginx/website.conf;
 }}
 """
 
 
-def render_composition(config, catalog_plan, query_paths, source_revision, *, uid, gid):
+def render_composition(
+    config,
+    catalog_plan,
+    query_paths,
+    source_revision,
+    *,
+    uid,
+    gid,
+    inference_source_sha256,
+):
     """Return catalog reference, shared inference, CPU release and gateway plans.
 
     Only validated, private paths enter mounts. Provisioning/readiness/source
@@ -453,7 +451,13 @@ def render_composition(config, catalog_plan, query_paths, source_revision, *, ui
         _path(path)
     from search.catalog.embedding import MODEL, MODEL_DIGEST
 
-    inference = _inference(config, source_revision, uid, gid)
+    inference = _inference(
+        config,
+        source_revision,
+        uid,
+        gid,
+        inference_source_sha256=inference_source_sha256,
+    )
     project = "depositar-ai-release-" + bundle_id[:12] + "-" + source_revision[:12]
     alias = project + "-web"
     bundle_target = "/catalog/sha256-" + bundle_id

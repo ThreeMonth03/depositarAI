@@ -266,6 +266,92 @@ class PrivateInferenceTests(unittest.TestCase):
             before, {path.name: path.stat().st_mtime_ns for path in slot.iterdir()}
         )
 
+    def test_ui_only_commit_reuses_original_gpu_images_ids_and_provenance(self):
+        first = self.invoke()
+        origin = self.revision
+        slot = self.slot()
+        before = {path.name: path.read_bytes() for path in slot.iterdir()}
+        page = self.repo / "web/src/main.tsx"
+        page.write_text("new UI only\n")
+        self.fixture.git("add", ".")
+        self.fixture.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "UI only",
+        )
+        self.revision = self.fixture.git("rev-parse", "HEAD").strip()
+        self.assertNotEqual(origin, self.revision)
+        self.docker.calls.clear()
+        second = self.invoke()
+        self.assertTrue(second["runtime_reused"])
+        self.assertEqual(origin, second["revision"])
+        self.assertEqual(first["project"], second["project"])
+        self.assertEqual(first["image_ids"], second["image_ids"])
+        self.assertEqual(first["container_ids"], second["container_ids"])
+        self.assertEqual(
+            first["source_manifest_sha256"], second["source_manifest_sha256"]
+        )
+        self.assertEqual(
+            before, {path.name: path.read_bytes() for path in slot.iterdir()}
+        )
+        self.assertEqual([], self.commands("compose"))
+        tag = self.commands("image")
+        self.assertTrue(
+            any(image_build.TAGS["reranker"] + origin in call for call in tag)
+        )
+        self.assertFalse(
+            any(image_build.TAGS["reranker"] + self.revision in call for call in tag)
+        )
+
+    def test_reranker_code_commit_cannot_reuse_old_image_authority(self):
+        first = self.invoke()
+        server = self.repo / "search/reranker/server.py"
+        server.write_text("changed inference implementation\n")
+        self.fixture.git("add", ".")
+        self.fixture.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Reranker changed",
+        )
+        revision = self.fixture.git("rev-parse", "HEAD").strip()
+        plan = inference.source_bundle.committed_source_plan(self.repo, revision)
+        composed = composition._inference(
+            self.config,
+            revision,
+            os.geteuid(),
+            os.getegid(),
+            inference_source_sha256=plan["services"]["reranker"]["source_sha256"],
+        )
+        self.assertNotEqual(first["project"], composed["name"])
+        self.docker.calls.clear()
+        with self.assertRaises(inference.InferenceError):
+            self.invoke(revision=revision)
+        self.assertEqual([], self.docker.calls)
+
+    def test_legacy_app_sha_state_requires_explicit_transition_without_adoption(self):
+        self.invoke()
+        slot = self.slot()
+        started = json.loads((slot / "started.json").read_bytes())
+        started["schema_version"] = 1
+        (slot / "started.json").write_bytes(private_io.canonical(started))
+        slot.rename(slot.parent / "inference-ffffffffffff")
+        self.docker.calls.clear()
+        with self.assertRaisesRegex(
+            inference.InferenceError, "legacy_state_requires_transition"
+        ):
+            self.invoke()
+        self.assertEqual([], self.docker.calls)
+
     def test_dirty_or_wrong_source_rejected_before_docker_or_inference_state(self):
         with self.assertRaises(inference.InferenceError):
             self.invoke(revision="a" * 40)

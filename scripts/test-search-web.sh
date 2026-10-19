@@ -20,7 +20,6 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 ci_name="depositar-web-ci-$$"
 browser_fixture_started=0
-browser_control_dir=''
 browser_pull_pid=''
 phase_name=contracts
 phase_started=$SECONDS
@@ -44,11 +43,6 @@ cleanup() {
   if [[ "$browser_fixture_started" == 1 ]]; then
     docker rm --force "$ci_name-gpu" "$ci_name-web" "$ci_name-nginx" >/dev/null 2>&1 || true
     docker network rm "$ci_name" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$browser_control_dir" ]]; then
-    rm -f -- "$browser_control_dir/request" "$browser_control_dir/request.tmp" "$browser_control_dir/ready" \
-      "$browser_control_dir/ready.tmp" "$browser_control_dir/failed"
-    rmdir -- "$browser_control_dir"
   fi
   printf 'CI_PHASE phase=%s seconds=%s exit=%s\n' "$phase_name" "$((SECONDS - phase_started))" "$status"
   printf 'CI_TOTAL seconds=%s exit=%s\n' "$((SECONDS - ci_started))" "$status"
@@ -111,6 +105,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=$project_dir/web,dst=/web,readonly" --workdir /web "$node_image" npm run format:check
 begin_phase web-image
 docker build -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
+docker build -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
 if [[ "$suite" != oss ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.
@@ -150,13 +145,11 @@ PY
 fi
 if [[ "$suite" != oss ]]; then
   begin_phase gateway-bootstrap
-  docker build -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
   bootstrap_image_id="$(docker image inspect --format '{{.Id}}' depositar-search-web-nginx:ci)"
   DEPOSITAR_TEST_GATEWAY_IMAGE="$bootstrap_image_id" \
     python3 -B -m unittest tests.unit.deployment.gateway.test_activation.NativeBootstrapTests -v
   begin_phase browser-fixture
   browser_fixture_started=1
-  browser_control_dir="$(mktemp -d /tmp/depositar-browser-control.XXXXXXXX)"
   docker network create --internal "$ci_name" >/dev/null
   common=(--network "$ci_name" --read-only --cap-drop ALL --security-opt no-new-privileges
     --user "$(id -u):$(id -g)" --memory 512m --pids-limit 96 --tmpfs "/tmp:rw,nosuid,nodev,size=32m,mode=1777")
@@ -168,11 +161,8 @@ if [[ "$suite" != oss ]]; then
     --mount "type=bind,src=$project_dir/search,dst=/app/search,readonly" \
     depositar-search-web:ci python -m uvicorn search.tests.web_fixture:website --factory \
     --host 0.0.0.0 --port 8000 --no-access-log >/dev/null
-  docker run -d --name "$ci_name-nginx" "${common[@]}" --entrypoint sh \
-    -e BROWSER_GATEWAY_CONTROL=/gateway-control \
-    --mount "type=bind,src=$browser_control_dir,dst=/gateway-control" \
-    --mount "type=bind,src=$project_dir/web/tests/gateway.sh,dst=/gateway.sh,readonly" \
-    depositar-search-web-nginx:ci /gateway.sh >/dev/null
+  docker run -d --name "$ci_name-nginx" "${common[@]}" \
+    depositar-search-web-nginx:ci >/dev/null
   for attempt in {1..20}; do
     if docker exec "$ci_name-nginx" wget -q -O /dev/null http://127.0.0.1:8080/healthz; then break; fi
     if [[ "$attempt" == 20 ]]; then docker logs "$ci_name-web"; docker logs "$ci_name-nginx"; exit 1; fi
@@ -189,8 +179,6 @@ if [[ "$suite" != oss ]]; then
   docker run --rm --network "container:$ci_name-nginx" --ipc=private --shm-size=256m \
     --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
     --cpus 2 --memory 2g --pids-limit 256 -e HOME=/tmp/browser-home \
-    -e BROWSER_GATEWAY_CONTROL=/gateway-control \
-    --mount "type=bind,src=$browser_control_dir,dst=/gateway-control" \
     --mount "type=bind,src=$project_dir/web,dst=/web" --workdir /web \
     "$browser_image" npm test
 fi

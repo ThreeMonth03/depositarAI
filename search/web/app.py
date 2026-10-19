@@ -4,9 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from django.http import Http404, HttpResponse, JsonResponse
-from django.urls import path, re_path
-from django.views.static import serve
+from django.urls import path
 from pydantic import Field, ValidationError, field_validator
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
@@ -274,43 +272,6 @@ def create_app(settings=None, upstream=None, sessions=None):
         async def post(self, request):
             return await turn(UserTurn.model_validate(request.data), request)
 
-    static_root = (
-        settings.static_dir.resolve() if settings.static_dir.is_dir() else None
-    )
-
-    def assets(request, asset_path):
-        if request.method not in {"GET", "HEAD"}:
-            return JsonResponse({"detail": "Method Not Allowed"}, status=405)
-        if static_root is None:
-            return JsonResponse({"detail": "Not Found"}, status=404)
-        try:
-            candidate = (static_root / asset_path).resolve()
-            candidate.relative_to(static_root)
-            if candidate.is_dir():
-                candidate = (candidate / "index.html").resolve()
-                candidate.relative_to(static_root)
-                if candidate.is_file() and not request.path.endswith("/"):
-                    return HttpResponse(
-                        status=307,
-                        headers={
-                            "Location": request.get_full_path(force_append_slash=True)
-                        },
-                    )
-            if not candidate.is_file():
-                raise Http404
-            return serve(
-                request,
-                str(candidate.relative_to(static_root)),
-                document_root=static_root,
-            )
-        except (Http404, ValueError, OSError):
-            missing = static_root / "404.html"
-            if missing.is_file() and not missing.is_symlink():
-                response = serve(request, "404.html", document_root=static_root)
-                response.status_code = 404
-                return response
-            return JsonResponse({"detail": "Not Found"}, status=404)
-
     return WebBoundary(
         application(
             [
@@ -318,7 +279,6 @@ def create_app(settings=None, upstream=None, sessions=None):
                 path("api/access", AccessView.as_view()),
                 path("api/session", SessionView.as_view()),
                 path("api/turn", TurnView.as_view()),
-                re_path(r"^(?P<asset_path>.*)$", assets),
             ],
             lifespan=lifespan,
         ),

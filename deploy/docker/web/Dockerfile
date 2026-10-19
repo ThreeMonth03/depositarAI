@@ -1,11 +1,3 @@
-FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS assets
-WORKDIR /web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY web/index.html web/tsconfig.json web/vite.config.ts ./
-COPY web/src ./src
-RUN npm run build
-
 FROM python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -25,7 +17,6 @@ COPY search/planning/__init__.py search/planning/clock.py \
     search/planning/contract.py search/planning/predicates.py /app/search/planning/
 COPY search/http /app/search/http/
 COPY search/web /app/search/web/
-COPY --from=assets /web/dist /app/web-dist/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 LABEL io.depositar.ai.public-entry.version="1"

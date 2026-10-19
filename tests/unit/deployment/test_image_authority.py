@@ -1,5 +1,7 @@
 """Prove completed image authority against real private staging receipts."""
 
+import copy
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +17,7 @@ from search.operations.deployment import (
 )
 from search.operations.shared import private_io
 from search.operations.state import locked_state
-from tests.unit.deployment.image_fixtures import ImageStagingFixture
+from tests.unit.deployment.image_fixtures import ImageStagingFixture, fixture_tree
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +75,91 @@ class CompletedImageAuthorityTests(unittest.TestCase):
         with locked_state(self.fixture.config) as store:
             return image_authority.read_completed_images(
                 self.fixture.config, store, self.fixture.plan
+            )
+
+    def current_plan(self, *, changed="web/src/main.tsx"):
+        sources = dict(self.fixture.sources)
+        sources[changed] += b"\n# new source\n"
+        tree = fixture_tree(sources)
+        tree["search/catalog/query.py"]["mode"] = "100755"
+        return source_bundle.plan_source_bundle("f" * 40, tree, sources)
+
+    def read_origin(self, current):
+        with locked_state(self.fixture.config) as store:
+            return image_authority.read_completed_images_at_revision(
+                self.fixture.config, store, current, self.fixture.revision
+            )
+
+    def test_original_authority_preserves_build_revision_across_ui_source_change(self):
+        current = self.current_plan()
+        paths = list(self.fixture.config.state_root.rglob("*.json"))
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+        original, authority = self.read_origin(current)
+        self.assertEqual(self.fixture.plan, original)
+        self.assertEqual(self.fixture.revision, authority["revision"])
+        self.assertEqual(self.fixture.read("image-complete"), authority)
+        self.assertEqual(
+            before,
+            {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths},
+        )
+        image = self.fixture.docker.images["reranker"]
+        proof = source_bundle.validate_compatible_built_image(
+            current, "reranker", self.fixture.revision, image["Id"], image
+        )
+        self.assertEqual(authority["images"]["reranker"], proof)
+        with self.assertRaises(source_bundle.SourceBundleError):
+            source_bundle.validate_built_image(current, "reranker", image["Id"], image)
+
+    def test_unrelated_new_website_recipe_does_not_reinterpret_original_manifest(self):
+        path = source_bundle.RECIPES["web"]["dockerfile"]
+        sources = dict(self.fixture.sources)
+        sources[path] += b"\n# changed UI recipe\n"
+        recipes = copy.deepcopy(source_bundle.RECIPES)
+        recipes["web"]["dockerfile_sha256"] = hashlib.sha256(sources[path]).hexdigest()
+        tree = fixture_tree(sources)
+        tree["search/catalog/query.py"]["mode"] = "100755"
+        with mock.patch.object(source_bundle, "RECIPES", recipes):
+            current = source_bundle.plan_source_bundle("f" * 40, tree, sources)
+            with self.assertRaises(source_bundle.SourceBundleError):
+                source_bundle._verified_plan(self.fixture.plan)
+            original, authority = self.read_origin(current)
+        self.assertEqual(self.fixture.plan, original)
+        self.assertEqual(self.fixture.revision, authority["revision"])
+
+    def test_changed_reranker_implementation_or_dependencies_cannot_reuse_origin(self):
+        for path in ("search/reranker/server.py", "search/reranker/requirements.lock"):
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(
+                    image_authority.InferenceError,
+                    "inference_origin_reranker_source_changed",
+                ),
+            ):
+                self.read_origin(self.current_plan(changed=path))
+
+    def test_origin_build_receipts_and_context_are_freshly_authenticated(self):
+        current = self.current_plan()
+        record = self.fixture.read("image-complete")
+        record["source_manifest_sha256"] = "f" * 64
+        self.fixture.change_record("image-complete", record)
+        with self.assertRaisesRegex(
+            image_authority.InferenceError, "inference_source_receipt_changed"
+        ):
+            self.read_origin(current)
+
+    def test_origin_revision_labels_cannot_be_replaced_by_new_application_revision(
+        self,
+    ):
+        current = self.current_plan()
+        image = copy.deepcopy(self.fixture.docker.images["reranker"])
+        image["Config"]["Labels"]["org.opencontainers.image.revision"] = current[
+            "revision"
+        ]
+        with self.assertRaisesRegex(
+            source_bundle.SourceBundleError, "source_bundle_image_labels_changed"
+        ):
+            source_bundle.validate_compatible_built_image(
+                current, "reranker", self.fixture.revision, image["Id"], image
             )
 
     def test_completed_authority_reads_real_receipts_without_writes_or_docker(self):

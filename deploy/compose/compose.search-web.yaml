@@ -56,6 +56,11 @@ services:
     tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"]
     depends_on:
       web: {condition: service_healthy}
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -T 2 -O /dev/null http://127.0.0.1:8080/healthz && wget -q -T 2 -O /dev/null http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   website: {internal: true}

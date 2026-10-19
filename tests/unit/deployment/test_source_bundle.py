@@ -89,8 +89,12 @@ class SourceBundlePlanTests(unittest.TestCase):
             "search/reranker/requirements.lock", plan["services"]["web"]["source_map"]
         )
         self.assertEqual(
-            [bundle.NODE_BASE, bundle.PYTHON_BASE],
+            [bundle.PYTHON_BASE],
             plan["services"]["web"]["base_images"],
+        )
+        self.assertEqual(
+            [bundle.NODE_BASE, bundle.NGINX_BASE],
+            plan["services"]["web-nginx"]["base_images"],
         )
         for service in plan["services"].values():
             self.assertFalse(
@@ -145,9 +149,10 @@ class SourceBundlePlanTests(unittest.TestCase):
         )
         after = self.plan()
         self.assertNotEqual(
-            before["services"]["web"]["source_sha256"],
-            after["services"]["web"]["source_sha256"],
+            before["services"]["web-nginx"]["source_sha256"],
+            after["services"]["web-nginx"]["source_sha256"],
         )
+        self.assertEqual(before["services"]["web"], after["services"]["web"])
         self.assertEqual(
             before["services"]["conversation-api"],
             after["services"]["conversation-api"],

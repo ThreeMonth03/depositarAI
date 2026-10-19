@@ -299,6 +299,7 @@ class GatewayActivationTests(unittest.TestCase):
         self.authority = {"fixture": "query-authority"}
         self.key = {"fixture": "credential-authority"}
         self.image_authority = {
+            "revision": self.revision,
             "source_manifest_sha256": "e" * 64,
             "images": {
                 "web-nginx": self.proof,
@@ -313,6 +314,9 @@ class GatewayActivationTests(unittest.TestCase):
             (activation.query, "read_authority", self.authority),
             (activation.credentials, "read_api_key_authority", self.key),
             (activation.image_evidence, "read_completed_images", self.image_authority),
+            (activation.inference, "_authority", self.image_authority),
+            (activation.inference, "_refresh_authority", self.image_authority),
+            (activation.composition, "_inference", self.gpu_compose),
             (activation.inference, "_images", self.gpu_images),
             (
                 activation.release,
@@ -862,6 +866,13 @@ class GatewayActivationTests(unittest.TestCase):
             ),
             mock.patch.object(
                 activation.source_bundle, "validate_built_image", side_effect=validate
+            ),
+            mock.patch.object(
+                activation.source_bundle,
+                "validate_compatible_built_image",
+                side_effect=lambda plan, role, revision, image_id, inspection: validate(
+                    plan, role, image_id, inspection
+                ),
             ),
             mock.patch.object(
                 activation.source_bundle,

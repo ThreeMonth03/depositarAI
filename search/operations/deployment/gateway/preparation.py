@@ -116,6 +116,9 @@ def _prepare(
     gpu_runner,
 ):
     inference._source_revision(repo, revision, source_runner)
+    source_plan = source_bundle.committed_source_plan(
+        repo, revision, runner=source_runner
+    )
     plans = composition.render_composition(
         config,
         catalog_plan,
@@ -123,6 +126,7 @@ def _prepare(
         revision,
         uid=os.geteuid(),
         gid=os.getegid(),
+        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
     )
     cpu_project = plans["release"]["name"]
     slot_name = cpu_project.removeprefix("depositar-ai-")
@@ -156,9 +160,6 @@ def _prepare(
                 set(os.listdir(routes_fd)) == ROUTES, "partial_state_recovery_required"
             )
         deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS + 600
-        source_plan = source_bundle.committed_source_plan(
-            repo, revision, runner=source_runner
-        )
         authority = image_evidence.read_completed_images(config, store, source_plan)
         proof = authority["images"][gateway_runtime.ROLE]
         # Every client handle exits successfully before any candidate publication.

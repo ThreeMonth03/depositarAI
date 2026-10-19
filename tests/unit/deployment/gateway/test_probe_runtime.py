@@ -633,7 +633,7 @@ class FixedImageScriptTests(unittest.TestCase):
         contract = private.WebControlFlowTests()
         contract.setUp()
         contract.token, contract.replacement = "T" * 43, "R" * 43
-        fixture = private.ScriptFixture(contract.responses())
+        fixture = private.ScriptFixture(contract.responses(include_assets=True))
         output = io.StringIO()
         with (
             mock.patch.dict(sys.modules, contract.modules),
@@ -656,6 +656,7 @@ class FixedImageScriptTests(unittest.TestCase):
         self.assertEqual(len(fixture.calls), 10)
         self.assertNotIn("search.operations", probe.SCRIPT)
         self.assertIn(private.probe._WEB_ACCEPTANCE_SCRIPT, probe.SCRIPT)
+        self.assertIn(private.probe._STATIC_ACCEPTANCE_SCRIPT, probe.SCRIPT)
         self.assertTrue(probe.SCRIPT.startswith(private.probe._COMMON_SCRIPT))
         for request, timeout, maximum in fixture.calls:
             self.assertTrue(request.url.startswith("http://127.0.0.1:18083/"))

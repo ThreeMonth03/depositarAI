@@ -32,7 +32,9 @@ class GatewayHTTPTests(unittest.TestCase):
     def verify(self, responses=None, *, transport=None, clock=lambda: 1.0):
         fixture = (
             private.ScriptFixture(
-                self.contract.responses() if responses is None else responses
+                self.contract.responses(include_assets=True)
+                if responses is None
+                else responses
             )
             if transport is None
             else transport
@@ -104,13 +106,31 @@ class GatewayHTTPTests(unittest.TestCase):
         self.assertEqual(turns[1]["query"], "CSV")
 
     def test_session_revision_drift_rejects_before_any_gpu_turn(self):
-        responses = self.contract.responses()[:3]
+        responses = self.contract.responses(include_assets=True)[:3]
         responses[2][2]["revision"] = "f" * 40
         report, fixture = self.verify(responses)
         self.assertEqual(report["status"], "blocked")
         self.assertTrue(report["website"]["website_ready"])
         self.assertFalse(report["website"]["two_turn_search_verified"])
         self.assertEqual(len(fixture.calls), 3)
+
+    def test_missing_or_invalid_nginx_homepage_blocks_before_session_creation(self):
+        for status, page in (
+            (404, private.PRIVATE.encode()),
+            (200, b'<div id="root"></div>'),
+            (200, b"<title>depositar AI</title>"),
+        ):
+            with self.subTest(status=status, page=page):
+                responses = self.contract.responses(include_assets=True)[:2]
+                responses[1] = ("/", status, page)
+                report, fixture = self.verify(responses)
+                self.assertEqual(report["status"], "blocked")
+                self.assertFalse(report["website"]["website_ready"])
+                self.assertEqual(report["website"]["turns"], [])
+                self.assertEqual(len(fixture.calls), 2)
+                self.assertTrue(
+                    all(request.method == "GET" for request, _, _ in fixture.calls)
+                )
 
     def test_shared_private_probe_keeps_original_8000_target_and_settings_gate(self):
         fixture = private.ScriptFixture(self.contract.responses())
@@ -123,6 +143,10 @@ class GatewayHTTPTests(unittest.TestCase):
                 request.url.startswith("http://127.0.0.1:8000/")
                 for request, _, _ in fixture.calls
             )
+        )
+        self.assertEqual(len(fixture.calls), 9)
+        self.assertFalse(
+            any(request.url.endswith("8000/") for request, _, _ in fixture.calls)
         )
         settings = self.contract.modules["search.web.upstream"].WebSettings
         settings.from_environment = lambda: SimpleNamespace(
@@ -156,7 +180,7 @@ class GatewayHTTPTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.setUp()
                 change(self.contract.results[0])
-                responses = self.contract.responses()[:4] + [
+                responses = self.contract.responses(include_assets=True)[:4] + [
                     ("/api/session", 200, {"status": "cleared"})
                 ]
                 report, fixture = self.verify(responses)
@@ -177,7 +201,7 @@ class GatewayHTTPTests(unittest.TestCase):
                     result.search.cards[0].condition_status = value
                 else:
                     setattr(result.state, path, value)
-                responses = self.contract.responses()[:5] + [
+                responses = self.contract.responses(include_assets=True)[:5] + [
                     ("/api/session", 200, {"status": "cleared"})
                 ]
                 report, _ = self.verify(responses)
@@ -186,7 +210,7 @@ class GatewayHTTPTests(unittest.TestCase):
                 self.assertEqual(len(report["website"]["turns"]), 2)
 
     def test_second_turn_failure_preserves_partial_counts_and_cleans(self):
-        responses = self.contract.responses()[:5]
+        responses = self.contract.responses(include_assets=True)[:5]
         responses[4] = ("/api/turn", 503, {"error": private.PRIVATE})
         responses.append(("/api/session", 200, {"status": "cleared"}))
         report, fixture = self.verify(responses)
@@ -198,7 +222,7 @@ class GatewayHTTPTests(unittest.TestCase):
         for change in ("old_status", "old_body", "replacement", "final_cleanup"):
             with self.subTest(change=change):
                 self.setUp()
-                responses = self.contract.responses()
+                responses = self.contract.responses(include_assets=True)
                 if change == "old_status":
                     responses[6] = ("/api/turn", 200, {"error": private.PRIVATE})
                     responses = responses[:7] + responses[-1:]
@@ -259,7 +283,7 @@ class GatewayHTTPTests(unittest.TestCase):
 
     def test_global_deadline_prevents_cleanup_request_and_cannot_pass(self):
         now = [0.0]
-        fixture = private.ScriptFixture(self.contract.responses())
+        fixture = private.ScriptFixture(self.contract.responses(include_assets=True))
         send = fixture.send
 
         def slow_send(request, **kwargs):
@@ -402,7 +426,7 @@ class NativeTransportTests(unittest.TestCase):
     def test_default_host_uses_real_transport_fixed_url_and_native_bounded_reads(self):
         fixture = private.WebControlFlowTests()
         fixture.setUp()
-        requests, responses = [], fixture.responses()
+        requests, responses = [], fixture.responses(include_assets=True)
         sockets = []
 
         class Response:

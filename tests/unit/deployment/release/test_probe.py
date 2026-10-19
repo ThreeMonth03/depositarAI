@@ -669,16 +669,19 @@ class WebControlFlowTests(unittest.TestCase):
             timing_ms={},
         )
 
-    def responses(self):
+    def responses(self, *, include_assets=False):
         session = {
             "version": 0,
             "expires_in": 1800,
             "max_turns": 20,
             "revision": REVISION,
         }
-        return [
-            ("/healthz", 200, {"status": "ok"}),
-            ("/", 200, b'<title>depositar AI</title><div id="root"></div>'),
+        checks = [("/healthz", 200, {"status": "ok"})]
+        if include_assets:
+            checks.append(
+                ("/", 200, b'<title>depositar AI</title><div id="root"></div>')
+            )
+        return checks + [
             ("/api/session", 200, {**session, "token": self.token}),
             ("/api/turn", 200, {"version": 1, "result": {}, "context_used": {}}),
             ("/api/turn", 200, {"version": 2, "result": {}, "context_used": {}}),
@@ -709,15 +712,16 @@ class WebControlFlowTests(unittest.TestCase):
         ]
         self.assertEqual([turn["version"] for turn in turns], [0, 1, 2])
         self.assertEqual(turns[1]["query"], "CSV")
-        self.assertEqual(len(fixture.calls), 10)
+        self.assertEqual(len(fixture.calls), 9)
         for request, timeout, max_bytes in fixture.calls:
             self.assertEqual(dict(request.headers)["Origin"], "http://127.0.0.1:18083")
+            self.assertNotEqual(request.url, "http://127.0.0.1:8000/")
             self.assertLessEqual(timeout, 130)
             self.assertEqual(max_bytes, 256 * 1024)
 
     def test_failed_second_turn_cleans_session_and_keeps_partial_evidence(self):
-        responses = self.responses()[:5]
-        responses[4] = ("/api/turn", 503, {"error": PRIVATE})
+        responses = self.responses()[:4]
+        responses[3] = ("/api/turn", 503, {"error": PRIVATE})
         responses.append(("/api/session", 200, {"status": "cleared"}))
         value, fixture = self.run_script(responses)
         self.assertTrue(value["website_ready"])
@@ -729,7 +733,7 @@ class WebControlFlowTests(unittest.TestCase):
 
     def test_changed_subject_or_missing_csv_filter_cannot_pass_refinement(self):
         self.results[1].state.topic = "unrelated topic"
-        responses = self.responses()[:5] + [
+        responses = self.responses()[:4] + [
             ("/api/session", 200, {"status": "cleared"})
         ]
         value, _fixture = self.run_script(responses)
@@ -738,8 +742,8 @@ class WebControlFlowTests(unittest.TestCase):
         self.assertEqual(len(value["turns"]), 2)
 
     def test_old_token_must_fail_before_claiming_reset(self):
-        responses = self.responses()[:7]
-        responses[6] = ("/api/turn", 200, {"private": PRIVATE})
+        responses = self.responses()[:6]
+        responses[5] = ("/api/turn", 200, {"private": PRIVATE})
         responses.append(("/api/session", 200, {"status": "cleared"}))
         value, _fixture = self.run_script(responses)
         self.assertTrue(value["two_turn_search_verified"])
@@ -748,7 +752,7 @@ class WebControlFlowTests(unittest.TestCase):
 
     def test_zero_cards_or_reranker_fallback_blocks_functional_acceptance(self):
         self.results[0].search.cards = []
-        responses = self.responses()[:4] + [
+        responses = self.responses()[:3] + [
             ("/api/session", 200, {"status": "cleared"})
         ]
         value, _fixture = self.run_script(responses)

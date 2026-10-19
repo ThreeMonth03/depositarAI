@@ -275,6 +275,14 @@ emit(report)
 """
 )
 
+_STATIC_ACCEPTANCE_SCRIPT = r"""
+def check_assets():
+    # Gateways serve the React build; direct BFF acceptance skips this hook.
+    page = request("GET", "/")
+    if b'<div id="root"></div>' not in page or b"<title>depositar AI</title>" not in page:
+        raise ValueError("website_assets")
+"""
+
 _WEB_ACCEPTANCE_SCRIPT = r"""
 import re
 from urllib.parse import urlsplit
@@ -366,9 +374,7 @@ def run():
     check_website()
     if request("GET", "/healthz") != {"status": "ok"}:
         raise ValueError("website_health")
-    page = request("GET", "/")
-    if b'<div id="root"></div>' not in page or b"<title>depositar AI</title>" not in page:
-        raise ValueError("website_assets")
+    check_assets()
     report["website_ready"] = True
     token = session()
     try:
@@ -427,6 +433,10 @@ def check_website():
         raise ValueError("website_revision")
     if WebSettings.from_environment().origin != ORIGIN:
         raise ValueError("website_origin")
+
+def check_assets():
+    # The private BFF serves JSON; Nginx owns the separate asset acceptance.
+    pass
 """
     + _WEB_ACCEPTANCE_SCRIPT
 )

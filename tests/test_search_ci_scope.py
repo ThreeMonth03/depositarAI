@@ -800,7 +800,7 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     kind,
                     tuple(
                         re.sub(
-                            r"depositar-(?:web-(?:ci-\d+|pull-[^/]+)|browser-control\.[A-Za-z0-9]+)",
+                            r"depositar-web-(?:ci-\d+|pull-[^/]+)",
                             "depositar-web-fixture",
                             value,
                         )
@@ -889,9 +889,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     "deploy/docker/api/Dockerfile",
                     "deploy/docker/api/Dockerfile",
                     "deploy/docker/web/Dockerfile",
+                    "deploy/docker/web-nginx/Dockerfile",
                 ]
-                if suite == "browser":
-                    expected_builds.append("deploy/docker/web-nginx/Dockerfile")
                 self.assertEqual(expected_builds, builds)
                 self.assertEqual(
                     suite == "oss",
@@ -915,6 +914,19 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     suite == "browser", any(args[0] == "pull" for args in docker)
+                )
+                gateways = [
+                    args
+                    for args in docker
+                    if args[:2] == ["run", "-d"]
+                    and "depositar-search-web-nginx:ci" in args
+                ]
+                self.assertEqual(1 if suite == "browser" else 0, len(gateways))
+                for gateway in gateways:
+                    self.assertEqual("depositar-search-web-nginx:ci", gateway[-1])
+                    self.assertNotIn("--entrypoint", gateway)
+                self.assertFalse(
+                    any("gateway-control" in item for args in docker for item in args)
                 )
                 self.assertEqual(
                     suite == "browser",

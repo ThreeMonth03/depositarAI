@@ -1,4 +1,4 @@
-import { expect, test } from "./gateway";
+import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
 type Time = { start: string | null; end: string | null } | null;

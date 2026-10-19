@@ -43,6 +43,7 @@ class GatewayPreparationTests(unittest.TestCase):
             self.revision,
             uid=os.geteuid(),
             gid=os.getegid(),
+            inference_source_sha256="6" * 64,
         )["release"]
         for role, service in self.compose["services"].items():
             service["image"] = self.values["images"][role]["Id"]
@@ -80,7 +81,10 @@ class GatewayPreparationTests(unittest.TestCase):
         mock.patch.object(
             gateway.source_bundle,
             "committed_source_plan",
-            return_value={"revision": self.revision},
+            return_value={
+                "revision": self.revision,
+                "services": {"reranker": {"source_sha256": "6" * 64}},
+            },
         ).start()
         mock.patch.object(
             gateway.image_evidence,

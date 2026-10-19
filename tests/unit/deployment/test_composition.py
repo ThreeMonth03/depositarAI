@@ -19,6 +19,7 @@ from search.operations.deployment.composition import (
 
 
 REVISION = "a" * 40
+INFERENCE_SOURCE = "6" * 64
 BUNDLE_ID = "b" * 64
 UUIDS = tuple(f"GPU-0000000{index}-0000-4000-8000-000000000001" for index in range(4))
 
@@ -73,6 +74,9 @@ class CompositionTests(unittest.TestCase):
             revision,
             uid=options.pop("uid", 1000),
             gid=options.pop("gid", 1000),
+            inference_source_sha256=options.pop(
+                "inference_source_sha256", INFERENCE_SOURCE
+            ),
             **options,
         )
 
@@ -315,7 +319,52 @@ class CompositionTests(unittest.TestCase):
             paths=QueryBindingPaths.for_catalog(self.config, other),
             revision="1" * 40,
         )
-        self.assertNotEqual(base, result["inference"]["name"])
+        self.assertEqual(base, result["inference"]["name"])
+        self.assertNotEqual(
+            base, self.render(inference_source_sha256="7" * 64)["inference"]["name"]
+        )
+
+    def test_ui_only_revision_preserves_immutable_gpu_recipe_and_networks(self):
+        before = self.render()["inference"]
+        after = self.render(revision="1" * 40)["inference"]
+        self.assertNotEqual(
+            before["services"]["reranker"]["image"],
+            after["services"]["reranker"]["image"],
+        )
+        for compose in (before, after):
+            compose["services"]["reranker"]["image"] = "sha256:" + "2" * 64
+        self.assertEqual(before, after)
+        self.assertNotIn("revision", before["x-depositar-plan"])
+
+    def test_model_pin_or_runtime_recipe_change_requires_new_gpu_identity(self):
+        base = self.render()["inference"]["name"]
+        with mock.patch("search.model_policy.SCOPE_MODEL_DIGEST", "9" * 64):
+            self.assertNotEqual(base, self.render()["inference"]["name"])
+        with mock.patch(
+            "search.operations.deployment.composition.OLLAMA_IMAGE",
+            "changed@sha256:" + "9" * 64,
+        ):
+            self.assertNotEqual(base, self.render()["inference"]["name"])
+        from search.operations.deployment import composition
+
+        runtime = composition._runtime
+
+        def changed_runtime(*args, **kwargs):
+            result = runtime(*args, **kwargs)
+            if kwargs.get("gpu"):
+                result["pids_limit"] += 1
+            return result
+
+        with mock.patch.object(composition, "_runtime", side_effect=changed_runtime):
+            self.assertNotEqual(base, self.render()["inference"]["name"])
+
+    def test_inference_source_fingerprint_is_required_and_bounded(self):
+        for value in (None, True, 1, "", "a" * 40, "A" * 64, "a" * 65):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "inference_source_invalid"),
+            ):
+                self.render(inference_source_sha256=value)
 
     def test_registry_images_are_pinned_and_built_images_are_source_tagged_only(self):
         result = self.render()
@@ -472,9 +521,8 @@ class CompositionTests(unittest.TestCase):
         ]
         self.assertEqual(alias + ":8000", plan["approved_upstream"])
         self.assertIn("server " + alias + ":8000 resolve;", plan["route_text"])
-        self.assertIn("location /v1/ { return 404; }", plan["route_text"])
-        for name in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi"):
-            self.assertIn(name + "_temp_path /tmp/", plan["route_text"])
+        self.assertIn("include /etc/nginx/http.conf;", plan["route_text"])
+        self.assertIn("include /etc/nginx/website.conf;", plan["route_text"])
         self.assertIs(plan["route_publication_required"], True)
 
     def test_renderer_never_claims_provisioning_ownership_lease_or_health_success(self):

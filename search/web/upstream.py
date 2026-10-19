@@ -19,7 +19,6 @@ class WebSettings:
     upstream: str
     key_file: Path
     revision: str = "development"
-    static_dir: Path = Path("/app/web-dist")
     edge_secret_file: Path | None = None
     upstream_ca_file: Path | None = None
 

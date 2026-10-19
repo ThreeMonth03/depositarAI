@@ -73,7 +73,7 @@ ssh -N -L 18083:127.0.0.1:18083 user@your-server
 保持連線，再於自己的瀏覽器開啟同一網址。這是私有試用入口；提供公眾使用時，
 需另外配置選用的 APISIX／OIDC 入口、登入供應者、網域及 HTTPS。
 其 `prepare-public-entry`、`up-public-entry`、`update-public-entry`、
-`rollback-public-entry`、`recover-public-entry` 使用獨立的 `--entry-config`，
+`rollback-public-entry` 使用獨立的 `--entry-config`，
 管理 CPU 入口及配額，不是整套模型／catalog 的更新工具。
 
 ## 打包交接與離線核對

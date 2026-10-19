@@ -408,57 +408,29 @@ class WebBodyDeadlineTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(upstream.calls)
 
 
-class StaticWebsiteTests(unittest.TestCase):
+class WebsiteRouteTests(unittest.TestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
-        self.static = root / "dist"
-        self.static.mkdir()
-        (self.static / "index.html").write_text("<h1>Search</h1>")
-        (self.static / "site.css").write_text("body { color: black; }")
-        (self.static / "nested").mkdir()
-        (self.static / "nested/index.html").write_text("nested page")
-        self.outside = root / "private.txt"
-        self.outside.write_text("outside static root")
         self.store = Sessions()
-        self.client = ASGITestClient(
-            create_app(
-                replace(SETTINGS, static_dir=self.static), FakeUpstream(), self.store
-            )
-        )
+        self.client = ASGITestClient(create_app(SETTINGS, FakeUpstream(), self.store))
         self.addCleanup(self.client.close)
 
-    def test_index_files_head_and_directory_redirect(self):
-        self.assertEqual(self.client.get("/").text, "<h1>Search</h1>")
-        response = self.client.get("/site.css")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("text/css", response.headers["content-type"])
-        head = self.client.request("HEAD", "/site.css")
-        self.assertEqual(head.status_code, 200)
-        self.assertEqual(head.content, b"")
-        self.assertEqual(
-            head.headers["content-length"], response.headers["content-length"]
-        )
-        redirect = self.client.get("/nested?x=1")
-        self.assertEqual(redirect.status_code, 307)
-        self.assertEqual(redirect.headers["location"], "/nested/?x=1")
-        self.assertEqual(self.client.get("/nested/").text, "nested page")
-        self.assertEqual(self.client.request("OPTIONS", "/site.css").status_code, 405)
-
-    def test_missing_paths_and_symlinks_cannot_escape_the_asset_root(self):
-        (self.static / "outside").symlink_to(self.outside)
-        (self.static / "nested/index.html").unlink()
-        (self.static / "nested/index.html").symlink_to(self.outside)
-        for path in ("/missing", "/outside", "/nested/", "/%2e%2e/private.txt"):
+    def test_bff_does_not_serve_frontend_files_or_fallback_pages(self):
+        for path in ("/", "/index.html", "/assets/site.css", "/missing"):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 404)
-                self.assertNotIn(self.outside.read_text(), response.text)
-        (self.static / "404.html").write_text("custom missing page")
-        response = self.client.get("/missing")
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.text, "custom missing page")
+
+    def test_api_routes_are_exact_and_missing_routes_do_not_create_sessions(self):
+        for path in ("/api/access/", "/api/missing", "/api/assets/site.css"):
+            with self.subTest(path=path):
+                response = self.client.get(path, headers={"Origin": ORIGIN})
+                self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.store.items, {})
+        self.assertEqual(self.client.get("/healthz").json(), {"status": "ok"})
+        self.assertEqual(
+            self.client.get("/api/access").json(),
+            {"auth_required": False, "authenticated": False},
+        )
 
     def test_shutdown_clears_ram_sessions(self):
         self.store.create()

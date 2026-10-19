@@ -67,14 +67,13 @@ Playwright image 缺少時會背景下載，與前景工作重疊。`browser-ima
 已有 pinned image 時下載 phase 為零；下載失敗或逾時仍會令 gate 失敗。
 npm cache 只保存下載內容，仍執行 locked install、格式與建置檢查。
 
-Browser 使用單一 worker，每例開始前由測試專用 supervisor 重啟隔離容器中的
-Nginx master，等待真實 health endpoint 可用，再以該案例的 token 回報 ready。
-新的 master 配置獨立的限流 shared-memory zone；單純 reload 會保留原 zone，
-無法隔離前一例的流量。這個控制通道僅存在於 CI fixture 的私有目錄。
+Browser 使用單一 worker，直接連到使用正常 image entrypoint 的隔離 Nginx。
+首頁、assets 與 API 請求都經過正式網站設定；案例不重啟 gateway，也沒有額外控制通道。
+並發資源載入案例核對靜態檔不會被共享代理 IP 誤擋，其他案例驗證 HTTP、MIME、
+安全標頭、缺檔、路徑限制及 API 路由隔離。
 
-首頁、assets 與實際 HTTP 請求仍經過正式 Nginx 設定，每個案例內保留
-`burst 12 / 3 requests per second` 限制。Browser suite 另確認超量 burst 回429，
-下一例可正常載入首頁與 assets；不要以放寬限流或用戶端重送取代隔離。
+公眾頻率、帳號與額度限制由 APISIX 負責，在 OSS runtime suite 使用實際入口驗證。
+內層 Nginx 不重複以代理 IP 計數，避免所有使用者共用一個限流預算。
 
 ## 失敗時從哪裡查
 

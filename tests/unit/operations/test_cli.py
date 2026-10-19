@@ -55,7 +55,12 @@ class CLIStartupTests(unittest.TestCase):
         )
 
     def test_native_help_and_argument_errors_load_only_the_cli_owner(self):
-        for arguments, expected_code in ((["--help"], 0), ([], 2), (["unknown"], 2)):
+        for arguments, expected_code in (
+            (["--help"], 0),
+            ([], 2),
+            (["unknown"], 2),
+            (["recover-public-entry"], 2),
+        ):
             with self.subTest(arguments=arguments):
                 report = self.run_isolated(f"""
                     sys.argv = [launcher, *{arguments!r}]
@@ -128,15 +133,17 @@ class CLIStartupTests(unittest.TestCase):
             from search.operations import cli
             from search.operations.deployment.public_entry import host
             calls = []
-            def prepare(config, release, image):
+            def prepare(config, release, image, frontend):
                 assert config == Path('/unused/entry.json')
                 assert release == Path('/unused/release.json') and image == 'image-fixture'
+                assert frontend == 'frontend-image-fixture'
                 calls.append('prepare')
                 return {'status': 'prepared'}
             host.prepare_public_entry = prepare
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 code = cli.main(['prepare-public-entry', '--entry-config', '/unused/entry.json',
-                    '--release-compose', '/unused/release.json', '--web-image', 'image-fixture'])
+                    '--release-compose', '/unused/release.json', '--web-image', 'image-fixture',
+                    '--web-nginx-image', 'frontend-image-fixture'])
             print(json.dumps({'code': code, 'out': json.loads(output.getvalue()),
                               'err': errors.getvalue(), 'calls': calls}))
         """)

@@ -1,4 +1,4 @@
-import { expect, test } from "./gateway";
+import { expect, test } from "@playwright/test";
 
 const session = {
   token: "recovery-test-session",

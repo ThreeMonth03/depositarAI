@@ -28,7 +28,9 @@ def evidence():
     cpu, catalog = release_evidence(), catalog_evidence()
     catalog_project = catalog["core_plan"]["project"]
     cpu_compose = cpu["compose"]
-    gpu_compose = composition._inference(product(), REVISION, 21599, 564)
+    gpu_compose = composition._inference(
+        product(), REVISION, 21599, 564, inference_source_sha256="6" * 64
+    )
     gpu_images = images()
     # All Ollama roles share one immutable image/config in a real daemon.
     ollama = copy.deepcopy(cpu["images"]["filtered-embedding"])

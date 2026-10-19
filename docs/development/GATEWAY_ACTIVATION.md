@@ -6,7 +6,7 @@
 
 ## 啟用順序
 
-1. 核對同來源的完成 release、catalog、查詢權限、GPU leases、映像及路由素材。
+1. 核對目前應用版本的完成 release、映像及路由素材，以及相容的 catalog、查詢權限與已封存 GPU leases。
 2. 確認沒有既有 gateway、active pointer 或未完成的啟用狀態。
 3. 啟動固定 bootstrap 設定：`/healthz` 為 200，其餘路徑為 503。
 4. 對完整 candidate configuration 執行 Nginx syntax check，原子發布 `active.conf`，
@@ -25,7 +25,9 @@ secret、GPU 或 published port。容器的 profile、退出、移除及完成�
 
 所有 native commands 與 HTTP 操作都有總預算；mutation 前保留完成及清理所需
 餘額。任何 syntax、HTTP、來源或 runtime 核對失敗，都保留 intent 與 checkpoints，
-停止後續發布。沒有自動 retry、adoption 或跨來源沿用 GPU authority。
+停止後續發布，不自動 retry 或接管未知 runtime。配方相容且已完成的 schema 2 推論
+服務可跨網站版本沿用原封存 GPU authority，保留原 revision 與 image IDs；
+舊 schema 1 須先安排明確交接，見[GPU 身分](PRIVATE_RUNTIME.md#gpu-資源與-runtime-身分)。
 
 Wrapper 的 started／failed 收據不能證明 pointer 尚未寫入。中斷時須一起檢查
 sealed pointer、activation intent 及 checkpoints；不要刪掉 state 後直接重跑。
@@ -33,7 +35,7 @@ sealed pointer、activation intent 及 checkpoints；不要刪掉 state 後直�
 
 這個命令只處理首次同主機私有 gateway 啟用，不提供完整產品 update、rollback、
 deactivation 或零停機保證。拆機 CPU 前端見[網站設定](../SEARCH_WEBSITE.md)，
-選用公眾入口有獨立的[更新及恢復流程](PUBLIC_ACCESS.md)。
+選用公眾入口有獨立的[更新及人工回退流程](PUBLIC_ACCESS.md)。
 
 來源責任分別是 `deployment/gateway/preparation.py`、`activation.py`、`runtime.py`
 與 probes；測試鏡射於 `tests/unit/deployment/gateway/`。

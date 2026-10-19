@@ -6,7 +6,7 @@
 
 目前提供同主機私有試用的準備、啟動、loopback activation 與素材打包命令。
 完整產品的 `install`、`update`、`rollback`、stop／retire 尚未提供；公眾入口有自己的
-update／rollback／recovery，不能用來更新整套模型、catalog 或私有 release。
+網站成對更新與人工回退，不能用來更新整套模型、catalog 或私有 release。
 
 ## 配置與 GPU 分工
 
@@ -168,7 +168,7 @@ inventory、helper cleanup 與完整 journal，才回報本次沒有新增 pass�
 |---|---|
 | `build-images` | 從 clean committed source 建置 conversation API、web、reranker、Nginx；封存 immutable image IDs，不啟動服務或推送 registry |
 | `prepare-secrets` | 在 product lock 下建立或核對 `state_root/secrets/api_key`；不輸出 key、不啟動 API |
-| `start-inference` | 要求同來源完成的 app images、本機 pinned Ollama image 與完整模型；核對 GPU ownership 後啟動三個私有 GPU 服務 |
+| `start-inference` | 要求已封存的推論映像、本機 pinned Ollama image 與完整模型；核對 GPU ownership 後啟動或重用三個私有 GPU 服務 |
 | `prepare-query` | 要求完整 catalog／vectors；建立條件投影與 query-only 身分，完成正／負權限檢查，不啟動網站 |
 
 產品 API key 供 web 呼叫 API，OpenSearch query identity 則由 `prepare-query`
@@ -187,9 +187,17 @@ inventory、helper cleanup 與完整 journal，才回報本次沒有新增 pass�
 連線。模型存在或 `/api/tags` digest 正確不代表已載入 VRAM；成功回報
 `model_warmup_verified=false`，真正暖機由 release／activation 的有界檢查負責。
 
+GPU 部署身分由固定模型、GPU／執行設定及 reranker 的完整來源配方決定。
+只改網站時可沿用已完成且配方相同的推論服務；其 image ID、原始來源 revision 與
+建置紀錄保持不變，不把舊映像重新標成新版本。模型、reranker 程式或執行配方改變時，
+須準備新的推論部署。網站版本更新仍使用當前 CPU app images，catalog 也獨立核對。
+
+新版推論紀錄使用 schema 2。舊 schema 1 runtime 不會自動認領；首次切換須由維護者
+安排服務交接，保留原設定與紀錄，不手動改寫收據來接受既有容器。
+
 ### 私有 CPU release 準備
 
-`start-release` 要求當前來源的 app images、API key、inference，以及相容且完整的
+`start-release` 要求當前來源的 CPU app images、API key、已核對的 inference，以及相容且完整的
 catalog／vectors／query authority。它啟動 web BFF、conversation API、CPU embedding，
 核對 immutable images、resource／mount／network identities，再封存 API client lease。
 此階段不發布 host ports；未知 peer 不能因名字看似正確就被接受或從 inventory 過濾。
@@ -223,13 +231,13 @@ process health、backend readiness、GPU residency 與完整 HTTP 搜尋各檢�
 ### 獨立公眾入口
 
 `prepare-public-entry`、`up-public-entry`、`update-public-entry` 接受
-`--entry-config`、`--release-compose`、`--web-image`；
-`rollback-public-entry`、`recover-public-entry` 只接受 `--entry-config`。
+`--entry-config`、`--release-compose`、`--web-image`、`--web-nginx-image`；
+`rollback-public-entry` 只接受 `--entry-config`。
 這些命令與 `restore-product` 都不使用產品 `--config`，混用時 CLI 會拒絕。
 
-公眾入口接到既有 private release，獨立管理 CPU BFF、APISIX、Redis 與 loopback 18084。
-更新只允許已核對的 public-web image 變更；Redis 配額資料與既有 runtime 身分須保留。
-入口 rollback／recovery 不會替模型、catalog 或整個產品回退。
+公眾入口接到既有 private release，獨立管理 CPU BFF、Nginx、APISIX、Redis 與 loopback 18084。
+網站以同一版本的 BFF／Nginx 映像成對更新，更新期間暫停入口；Redis 配額資料保留。
+失敗時由維護者明確回退到前一組網站版本；模型、catalog 與私有 backend 不隨之更換。
 設定、OIDC／HTTPS 前置條件、配額及更新用法見[公眾入口](PUBLIC_ACCESS.md)。
 
 ## 產品素材打包
@@ -298,7 +306,7 @@ CLI 成功結果以 JSON 寫入 stdout；被捕捉的操作錯誤以安全摘要
 | `2` 且只有 CLI 用法訊息 | 修正參數；不可當成向量 checkpoint |
 | `1`、`blocked` | 修正列出的主機、模型、儲存或權限條件，再執行檢查 |
 | `1`、`failed`／`recovery_required` | 停止後續操作，保留 stderr、state、intent 與 helper/runtime 證據，先查明原因 |
-| `1`、`update_failed_rolled_back` | 公眾入口更新失敗且已回退；仍視為失敗，查明 candidate 問題後再操作 |
+| `1`、`deployment_failed` | 公眾入口部署失敗，未自動回退；確認入口已停止，保留 pending，依[公眾入口指南](PUBLIC_ACCESS.md#更新與人工回退)人工回退或重試首次啟動 |
 
 產品操作採 nonblocking lock；同一 state 正在操作時，不另開另一個命令競爭。
 product 操作收據最多 128 筆、catalog slots 最多 16 個、向量歷史最多 128 輪，

@@ -4,7 +4,8 @@
 [搜尋指南](guide/using-search.md)；元件與資料流見[架構概覽](guide/architecture.md)，
 catalog、模型及服務平面的分工見[私有 runtime](development/PRIVATE_RUNTIME.md)。
 網站後端使用 Django／DRF 與 ADRF，呼叫私有 Conversation API；瀏覽器不持有
-服務 key，也不直接連線模型。只有 POST 接受 body；其他方法的 body 必須為空。
+服務 key，也不直接連線模型。React 靜態檔由 Nginx 提供，BFF 只提供健康檢查與
+`/api/` 端點。BFF 只有 POST 接受 body；其他方法的 body 必須為空。
 
 ## 選擇執行入口
 
@@ -52,8 +53,16 @@ bash scripts/search-web.sh status
 設定檔擁有上述欄位的值，shell 中同名環境變數不覆寫它們。
 [啟動腳本](../scripts/search-web.sh)先 render Compose 並拒絕非 HTTPS 上游、
 額外後端或不安全掛載，再以 `git archive HEAD` 建立兩個版本化前端映像。
+Nginx 映像包含 React build，Django BFF 映像只包含網站 API；兩者使用同一個 Git
+revision，並由同一份 Compose 啟動。更新或回退時一起選用同一版本的兩個映像，
+期間可短暫中斷；BFF 重啟會清除 RAM 中的搜尋 session，使用者需開始新搜尋。
 只有 Nginx 發布 `127.0.0.1:18081`，BFF 不發布 port。上游 client 驗證 TLS、
 不跟隨 redirect，也不採用環境中的代理設定。
+
+網站更新仍使用 `up`：先建置同一 Git 版本的兩個映像，再暫停入口，交給 Compose
+重建 BFF 與 Nginx，等待 API 和首頁健康檢查。更新期間會短暫無法存取。
+需要回退時，選回上一個已驗證的 Git commit，以原設定重新執行 `up`；保留舊映像，
+不要在故障處理前清除它們。此操作不更新私有搜尋 API、模型或索引。
 
 若私有 HTTPS API 使用內部 CA，在上述設定檔另加：
 
@@ -210,16 +219,18 @@ assistant-ui 訊息轉換。到期會清除本次搜尋與參考時間；先前�
 ## 呈現、資源與維護
 
 資料集文字以純文字呈現；連結只接受 `https://data.depositar.io/dataset/` 下的網址，
-拒絕帳密與非預設 port。BFF 的 CSP 限定同源 script／connect、禁止嵌入，並設定
+拒絕帳密與非預設 port。網站的 CSP 限定同源 script／connect、禁止嵌入，並設定
 `no-store`、`nosniff`、`no-referrer` 與停用地理位置等權限；style 仍允許 inline。
-[Nginx 設定](../deploy/config/web-nginx/nginx.conf)拒絕 `/v1/`，限制請求大小與頻率；
+Nginx 只接受靜態檔的 GET／HEAD，提供正確 MIME；缺檔回 404，其他方法回 405，
+不將未知 `/api/` 路徑改送首頁，也不公開隱藏檔或靜態根目錄外的檔案。
+[Nginx 設定](../deploy/config/web-nginx/website.conf)拒絕 `/v1/` 並限制請求大小；公眾頻率與額度由 APISIX 管理。
 access log 只記 request ID、method、status 與耗時，不記 IP、輸入、URL arguments、
 Authorization 或 session token。Uvicorn 不開 access log；新增記錄時須保留這個界線。
 
 | 獨立前端服務 | GPU | CPU 上限 | RAM 上限 |
 |---|---:|---:|---:|
-| 網站 BFF＋靜態頁面 | 0 | 1 核 | 512 MiB |
-| 網站 Nginx | 0 | 0.5 核 | 64 MiB |
+| Django BFF | 0 | 1 核 | 512 MiB |
+| 網站 Nginx 與 React 靜態檔 | 0 | 0.5 核 | 64 MiB |
 
 這些是前端 Compose 容器上限；模型與檢索資源由後端 runtime 管理。網站不提供
 任意 tool／SQL、PDF／CSV 內文問答或空間距離篩選。時間與格式條件在 OpenSearch

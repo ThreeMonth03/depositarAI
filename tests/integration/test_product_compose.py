@@ -27,6 +27,7 @@ class ProductComposeIntegrationTests(unittest.TestCase):
             REVISION,
             uid=1000,
             gid=1000,
+            inference_source_sha256="6" * 64,
         )[plane]
         result = subprocess.run(
             [

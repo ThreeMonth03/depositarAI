@@ -10,7 +10,7 @@ catalog，也讓資料準備不直接改動使用者入口。這頁說明元件�
 | 平面 | 服務與資源 | 責任 |
 |---|---|---|
 | Catalog | CPU：Fess、OpenSearch、Granite embedding | 準備 metadata、文字／向量索引與查詢權限；新資料使用隔離候選 |
-| Inference | GPU：scope 一張、planner 兩張、reranker 一張 | 用途檢查、搜尋條件規劃與候選排序；相同應用版本共用既有模型服務 |
+| Inference | GPU：scope 一張、planner 兩張、reranker 一張 | 用途檢查、搜尋條件規劃與候選排序；相同推論配方可跨網站版本沿用既有模型服務 |
 | Release 與 gateway | CPU：網站／session BFF、conversation API、query embedding、Nginx | 私有 release 提供查詢；獨立 singleton gateway 管理使用者入口 |
 
 Catalog、inference 與候選 release 均不發布 host ports。正常產品入口由 gateway
@@ -59,6 +59,10 @@ source、固定 image IDs，以及對應的 container、network 與完成收據�
 
 四張 GPU 以互不重疊的實體 UUID 指定：scope 一張、planner 兩張、reranker 一張。
 主機 GPU index 與容器內重新編號都不是穩定的資源身分。
+
+推論部署依固定模型、reranker 完整來源與 GPU 執行配方識別。只改網站時，可重用
+已完成的 schema 2 推論紀錄，保留原 image ID、建置 revision 與封存素材；舊 schema 1
+runtime 須安排明確交接，不自動接管或改寫收據。詳見[應用映像與推論](PRODUCT_LIFECYCLE.md#應用映像key-與推論)。
 
 Ownership 檢查盤點所有 running containers，包括尚未執行推論的 GPU claims，
 並核對 host compute PID。允許共用的既有服務須先證明 exact container ID、

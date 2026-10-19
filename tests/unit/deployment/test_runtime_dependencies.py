@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_LOCKS = {
     "deploy/docker/api/Dockerfile": "search/api/requirements-haystack.lock",
     "deploy/docker/reranker/Dockerfile": "search/reranker/requirements.lock",
+    "deploy/docker/web/Dockerfile": "search/web/requirements.lock",
 }
 
 

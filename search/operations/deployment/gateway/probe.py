@@ -106,10 +106,12 @@ def verify_gateway_http(
     emitted = []
     try:
         namespace["transport"] = UrllibTransport() if transport is None else transport
-        # Both strings are fixed repository code, never caller or HTTP input.
+        # These fragments are fixed repository code, never caller or HTTP input.
+        # The Nginx gateway must serve assets before any BFF session is created.
         # Override emit after defining the shared request helpers so no stdout
         # capture or raw response publication is needed on the host.
         exec(release_probe._HTTP_SCRIPT, namespace)
+        exec(release_probe._STATIC_ACCEPTANCE_SCRIPT, namespace)
         namespace["emit"] = emitted.append
         exec(release_probe._WEB_ACCEPTANCE_SCRIPT, namespace)
         if monotonic() - started > TOTAL_SECONDS or len(emitted) != 1:

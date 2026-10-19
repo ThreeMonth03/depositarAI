@@ -26,6 +26,7 @@ from search.operations.shared import private_io
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 RELEASE = re.compile(r"depositar-ai-release-[0-9a-f]{12}-[0-9a-f]{12}\Z")
 CAPABILITY = "io.depositar.ai.public-entry.version"
+FRONTEND_CAPABILITY = "io.depositar.ai.frontend.version"
 
 
 def _read(path, limit=2 * 1024**2):
@@ -60,13 +61,18 @@ def inspect_web_image(image):
     return strict_json(result.stdout)
 
 
-def bind_public_web(config, rendered, release, image, image_proof):
+def bind_public_web(
+    config, rendered, release, image, image_proof, frontend_image, frontend_proof
+):
     """Read-only binding; no GPU requests or changes to the private release."""
     labels = image_proof.get("Labels") if type(image_proof) is dict else None
     revision = (
         labels.get("org.opencontainers.image.revision")
         if type(labels) is dict
         else None
+    )
+    frontend_labels = (
+        frontend_proof.get("Labels") if type(frontend_proof) is dict else None
     )
     if (
         type(image) is not str
@@ -79,6 +85,16 @@ def bind_public_web(config, rendered, release, image, image_proof):
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
         raise ValueError("public_entry_web_image_invalid")
+    if (
+        type(frontend_image) is not str
+        or IMAGE.fullmatch(frontend_image) is None
+        or type(frontend_proof) is not dict
+        or frontend_proof.get("Id") != frontend_image
+        or type(frontend_labels) is not dict
+        or frontend_labels.get(FRONTEND_CAPABILITY) != "1"
+        or frontend_labels.get("org.opencontainers.image.revision") != revision
+    ):
+        raise ValueError("public_entry_frontend_image_invalid")
     if (
         type(release) is not dict
         or type(release.get("name")) is not str
@@ -124,7 +140,7 @@ def bind_public_web(config, rendered, release, image, image_proof):
     compose["services"]["public-web"] = {
         **composition._runtime(uid, gid, cpus=1, memory=512 * 1024**2, pids=64),
         "image": image,
-        "networks": ["website", "existing-release"],
+        "networks": {"website": {"aliases": ["web"]}, "existing-release": {}},
         "environment": {
             "WEB_ORIGIN": config.public_origin,
             "WEB_UPSTREAM": "http://conversation-api:8000",
@@ -137,9 +153,29 @@ def bind_public_web(config, rendered, release, image, image_proof):
         ],
         "healthcheck": composition._http_health(8000),
     }
+    compose["services"]["public-frontend"] = {
+        **composition._runtime(uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32),
+        "image": frontend_image,
+        "networks": ["website"],
+        "environment": {"NVIDIA_VISIBLE_DEVICES": "void"},
+        "depends_on": {"public-web": {"condition": "service_healthy"}},
+        "healthcheck": {
+            "test": [
+                "CMD-SHELL",
+                "wget -q -O /dev/null http://127.0.0.1:8080/healthz && wget -q -O - http://127.0.0.1:8080/ | grep -Fq '<div id=\"root\"></div>'",
+            ],
+            "interval": "5s",
+            "timeout": "3s",
+            "retries": 12,
+        },
+    }
+    compose["services"]["public-entry"]["depends_on"]["public-frontend"] = {
+        "condition": "service_healthy"
+    }
     result["status"] = "public_entry_prepared"
     plan = compose.setdefault("x-depositar-plan", {})
     plan["status"] = "public_entry_prepared"
+    plan["revision"] = revision
     plan["private_backend"] = {
         "schema_version": 1,
         "release_project": release["name"],
@@ -214,7 +250,12 @@ def _publish_prepared(root, assets, report):
 
 
 def prepare_public_entry(
-    config_path, release_compose, web_image, *, image_inspector=inspect_web_image
+    config_path,
+    release_compose,
+    web_image,
+    web_nginx_image,
+    *,
+    image_inspector=inspect_web_image,
 ):
     config = public_entry.load_public_entry_config(Path(config_path))
     release = strict_json(_read(release_compose))
@@ -224,6 +265,8 @@ def prepare_public_entry(
         release,
         web_image,
         image_inspector(web_image),
+        web_nginx_image,
+        image_inspector(web_nginx_image),
     )
     assets = {name: value.encode("utf-8") for name, value in rendered["assets"].items()}
     assets["compose.json"] = private_io.canonical(rendered["compose"])
@@ -232,6 +275,8 @@ def prepare_public_entry(
         "status": "public_entry_prepared",
         "compose_file": str(config.state_root / "public-entry/compose.json"),
         "web_image": web_image,
+        "web_nginx_image": web_nginx_image,
+        "revision": rendered["compose"]["x-depositar-plan"]["revision"],
         "files": {
             name: hashlib.sha256(raw).hexdigest() for name, raw in assets.items()
         },
@@ -247,6 +292,7 @@ def up_public_entry(
     config_path,
     release_compose,
     web_image,
+    web_nginx_image,
     *,
     runner=subprocess.run,
     image_inspector=inspect_web_image,
@@ -257,6 +303,7 @@ def up_public_entry(
         config_path,
         release_compose,
         web_image,
+        web_nginx_image,
         runner=runner,
         image_inspector=image_inspector,
     )
