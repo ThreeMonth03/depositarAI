@@ -1,4 +1,21 @@
 {
   "schema_version": 1,
-  "entries": []
+  "entries": [
+    {
+      "fingerprint": "b234b97f2b8eddc61b8fc006bc79f3184c85c69c:search/catalog_admin.py:generic-api-key:159",
+      "reasonCode": "nonsecret_argument_identifier"
+    },
+    {
+      "fingerprint": "b234b97f2b8eddc61b8fc006bc79f3184c85c69c:search/reranker/model.py:generic-api-key:13",
+      "reasonCode": "public_artifact_digest"
+    },
+    {
+      "fingerprint": "b234b97f2b8eddc61b8fc006bc79f3184c85c69c:search/reranker/model.py:generic-api-key:14",
+      "reasonCode": "public_artifact_digest"
+    },
+    {
+      "fingerprint": "b234b97f2b8eddc61b8fc006bc79f3184c85c69c:search/reranker/model.py:generic-api-key:15",
+      "reasonCode": "public_artifact_digest"
+    }
+  ]
 }
