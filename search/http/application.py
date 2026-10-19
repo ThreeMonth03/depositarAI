@@ -1,4 +1,4 @@
-"""Isolate Django application routes and state within each ASGI request."""
+"""Isolate Django application routes and lifetimes."""
 
 import asyncio
 from contextlib import AsyncExitStack
@@ -42,7 +42,6 @@ class ApplicationMiddleware:
     async def __call__(self, request):
         selected = request.scope["depositar.application"]
         request.urlconf = selected.urlconf
-        request.app_state = selected.state
         # The existing JSON contracts require UTF-8, independent of an untrusted
         # Content-Type charset parameter.
         request.encoding = "utf-8"
@@ -50,17 +49,16 @@ class ApplicationMiddleware:
 
 
 class Application:
-    def __init__(self, patterns, *, state=None, lifespan=None):
+    def __init__(self, patterns, *, lifespan=None):
         global _handler
         configure()
         with _handler_lock:
             if _handler is None:
                 _handler = get_asgi_application()
         self.handler = _handler
-        self.state = state
         self.lifespan = lifespan
         # Module objects are valid, identity-hashed Django URLconfs. Keeping one
-        # per factory avoids both global route replacement and app-state leaks.
+        # per factory avoids replacing another application's routes.
         self.urlconf = ModuleType("depositar_routes")
         self.urlconf.urlpatterns = tuple(patterns)
 
@@ -131,9 +129,9 @@ class Application:
         await send({"type": "lifespan.shutdown.complete"})
 
 
-def application(patterns, *, state=None, lifespan=None):
-    """Create a Django ASGI application with private routes, state and lifetime."""
-    return Application(patterns, state=state, lifespan=lifespan)
+def application(patterns, *, lifespan=None):
+    """Create a Django ASGI application with private routes and lifetime."""
+    return Application(patterns, lifespan=lifespan)
 
 
 # DRF resolves default classes during import. Configure the shared framework

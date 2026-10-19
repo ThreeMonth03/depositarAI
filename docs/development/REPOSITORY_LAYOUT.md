@@ -112,14 +112,8 @@ CI 入口與選取見 [CI performance](CI_PERFORMANCE.md)。原始碼交接使�
 [產品包](PRODUCT_RESTORE.md)管理，完整產品更新及回退的範圍見
 [產品 CLI](PRODUCT_LIFECYCLE.md)。
 
-## Git 外的資料與舊來源
+## Git 外的資料
 
 模型、索引、metadata 快照、私密 env、key、runtime journal、備份及原始執行結果
 放在專用外部儲存，不加入 Git。設定範本可以提交；`.gitignore` 不能取代內容審查。
 來源整理不隨意搬動 live data、mount 或 runtime 目錄。
-
-原工作目錄中不屬於本產品的未追蹤平台／研究來源，保存在 checkout 旁的
-`depositar-legacy-archive/2026-10-14-source-*/`。它不是產品依賴，也不進 build context。
-若需取回，先閱讀該封存的 `README.txt`；`python3 restore.py` 僅核對，
-`python3 restore.py --apply` 會核對 manifest 並只還原到空白、未追蹤的目的地。
-不要整包放回產品。採用其中元件前，先審查用途、依賴與私密輸入。

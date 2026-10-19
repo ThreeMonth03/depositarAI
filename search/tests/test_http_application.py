@@ -36,18 +36,19 @@ def http_scope():
 
 
 class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_concurrent_factories_keep_routes_and_state_separate(self):
+    async def test_concurrent_factories_keep_routes_separate(self):
         entered = {name: asyncio.Event() for name in ("api", "web")}
         release = asyncio.Event()
 
         def create(name):
             class Endpoint(APIView):
                 async def get(self, request):
+                    del request
                     entered[name].set()
                     await release.wait()
-                    return Response({"route": name, "state": request.app_state["name"]})
+                    return Response({"route": name})
 
-            return application([path("", Endpoint.as_view())], state={"name": name})
+            return application([path("", Endpoint.as_view())])
 
         apps = [create("api"), create("web")]
         self.assertIs(apps[0].handler, apps[1].handler)
@@ -70,7 +71,7 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
             responses = await asyncio.gather(*tasks)
         self.assertEqual(
             [response.json() for response in responses],
-            [{"route": "api", "state": "api"}, {"route": "web", "state": "web"}],
+            [{"route": "api"}, {"route": "web"}],
         )
         self.assertEqual(settings.INSTALLED_APPS, [])
 
@@ -161,16 +162,20 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def test_application_lifetimes_are_independent(self):
         running = set()
 
-        @asynccontextmanager
-        async def lifespan(app):
-            running.add(app.state)
-            try:
-                yield
-            finally:
-                running.remove(app.state)
+        def create(name):
+            @asynccontextmanager
+            async def lifespan(app):
+                del app
+                running.add(name)
+                try:
+                    yield
+                finally:
+                    running.remove(name)
 
-        api = application([], state="api", lifespan=lifespan)
-        web = application([], state="web", lifespan=lifespan)
+            return application([], lifespan=lifespan)
+
+        api = create("api")
+        web = create("web")
         async with LifespanManager(api):
             self.assertEqual(running, {"api"})
             async with LifespanManager(web):
