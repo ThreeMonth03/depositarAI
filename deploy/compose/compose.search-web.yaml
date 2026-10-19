@@ -1,0 +1,65 @@
+name: depositar-search-web
+
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  user: ${WEB_UID:?required}:${WEB_GID:?required}
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: "3"}
+
+services:
+  web:
+    <<: *runtime
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web/Dockerfile
+      args: {SOURCE_REVISION: "${SOURCE_REVISION:-development}"}
+    image: depositar-search-web:${SOURCE_REVISION:-development}
+    cpus: 1
+    mem_limit: 512M
+    memswap_limit: 512M
+    networks: [website, upstream-route]
+    environment:
+      WEB_ORIGIN: ${WEB_ORIGIN:?required}
+      WEB_UPSTREAM: ${WEB_UPSTREAM:?approved HTTPS endpoint required}
+      WEB_UPSTREAM_CA_FILE: ${WEB_UPSTREAM_CA_FILE:-}
+      NVIDIA_VISIBLE_DEVICES: void
+    volumes:
+      - type: bind
+        source: ${WEB_API_KEY_FILE:?required}
+        target: /run/secrets/api_key
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).close()"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  web-nginx:
+    <<: *runtime
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web-nginx/Dockerfile
+      args: {SOURCE_REVISION: "${SOURCE_REVISION:-development}"}
+    image: depositar-search-web-nginx:${SOURCE_REVISION:-development}
+    cpus: 0.5
+    mem_limit: 64M
+    memswap_limit: 64M
+    networks: [website, ingress]
+    ports: ["127.0.0.1:18081:8080"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"]
+    depends_on:
+      web: {condition: service_healthy}
+
+networks:
+  website: {internal: true}
+  # This CPU BFF route must reach the approved institute HTTPS endpoint or VPN.
+  # It does not publish backend ports or bypass the institute's ACL.
+  upstream-route: {internal: false}
+  ingress: {internal: false}

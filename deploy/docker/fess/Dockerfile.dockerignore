@@ -1,0 +1,14 @@
+**
+!deploy/
+deploy/**
+!deploy/docker/
+deploy/docker/**
+!deploy/docker/fess/
+deploy/docker/fess/**
+!deploy/docker/fess/entrypoint.sh
+!deploy/docker/fess/fess_healthcheck.sh
+!deploy/config/
+deploy/config/**
+!deploy/config/fess/
+deploy/config/fess/**
+!deploy/config/fess/scheduled_job.bulk

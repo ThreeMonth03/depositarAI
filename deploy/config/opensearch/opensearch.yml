@@ -1,0 +1,27 @@
+cluster.name: depositar-search-canary
+node.name: opensearch-search
+network.host: 0.0.0.0
+discovery.type: single-node
+node.store.allow_mmap: false
+
+# Fess uploads its reviewed analyzer dictionaries through the bundled
+# configsync plugin before creating the search index.  This path is a dedicated
+# writable bind mount; the rest of the OpenSearch configuration stays read-only.
+configsync.config_path: /usr/share/opensearch/config/dictionary/
+configsync.index: configsync
+
+plugins.security.ssl.transport.pemcert_filepath: node.pem
+plugins.security.ssl.transport.pemkey_filepath: node-key.pem
+plugins.security.ssl.transport.pemtrustedcas_filepath: root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: true
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: node.pem
+plugins.security.ssl.http.pemkey_filepath: node-key.pem
+plugins.security.ssl.http.pemtrustedcas_filepath: root-ca.pem
+plugins.security.allow_default_init_securityindex: true
+# The operator provisions query-only identities through the Security REST API.
+plugins.security.restapi.roles_enabled: [all_access]
+plugins.security.authcz.admin_dn:
+  - "CN=depositar-search-admin,OU=Search,O=depositar,C=TW"
+plugins.security.nodes_dn:
+  - "CN=opensearch-search,OU=Search,O=depositar,C=TW"

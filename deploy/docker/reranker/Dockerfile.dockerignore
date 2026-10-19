@@ -1,0 +1,10 @@
+**
+!search/
+search/**
+!search/__init__.py
+!search/serialization.py
+!search/secrets.py
+!search/reranker/
+search/reranker/**
+!search/reranker/*.py
+!search/reranker/requirements.lock

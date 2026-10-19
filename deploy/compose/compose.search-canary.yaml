@@ -1,0 +1,266 @@
+# Isolated, non-public search canary. This file is deliberately independent of
+# compose.yaml and has no published ports or Caddy route.
+name: depositar-search-canary
+
+services:
+  opensearch-search:
+    build:
+      context: ../docker/opensearch
+      args:
+        OPENSEARCH_BASE_IMAGE: ${SEARCH_OPENSEARCH_BASE_IMAGE:?SEARCH_OPENSEARCH_BASE_IMAGE is required}
+    image: ${SEARCH_OPENSEARCH_IMAGE:-depositar-opensearch-search-canary:3.8.0-local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    cpus: ${SEARCH_OPENSEARCH_CPU_LIMIT:-4}
+    mem_limit: ${SEARCH_OPENSEARCH_MEM_LIMIT:-8G}
+    memswap_limit: ${SEARCH_OPENSEARCH_MEM_LIMIT:-8G}
+    pids_limit: ${SEARCH_OPENSEARCH_PIDS_LIMIT:-2048}
+    environment:
+      HOME: /tmp/opensearch-home
+      NVIDIA_VISIBLE_DEVICES: void
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI: "true"
+      discovery.type: single-node
+      cluster.name: depositar-search-canary
+      node.name: opensearch-search
+      node.store.allow_mmap: "false"
+      OPENSEARCH_JAVA_OPTS: >-
+        -Xms2g -Xmx2g
+        -Djava.io.tmpdir=/run/opensearch-native
+    volumes:
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/data
+        target: /usr/share/opensearch/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/dictionary
+        target: /usr/share/opensearch/config/dictionary
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/opensearch.yml
+        target: /usr/share/opensearch/config/opensearch.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/root-ca.pem
+        target: /usr/share/opensearch/config/root-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/node.pem
+        target: /usr/share/opensearch/config/node.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/node-key.pem
+        target: /usr/share/opensearch/config/node-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/internal_users.yml
+        target: /usr/share/opensearch/config/opensearch-security/internal_users.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/roles.yml
+        target: /usr/share/opensearch/config/opensearch-security/roles.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/roles_mapping.yml
+        target: /usr/share/opensearch/config/opensearch-security/roles_mapping.yml
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=1770
+      # Bouncy Castle FIPS loads a small JNI probe from java.io.tmpdir. Keep
+      # the general /tmp noexec and isolate that requirement to this bounded
+      # container-private tmpfs instead of making all temporary files executable.
+      - /run/opensearch-native:rw,exec,nosuid,nodev,size=64m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /usr/share/opensearch/logs:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0750
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks: [search_backend]
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - /usr/local/bin/depositar-opensearch-healthcheck.py
+        - https://127.0.0.1:9200
+      interval: 20s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  fess-search:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/fess/Dockerfile
+      args:
+        FESS_BASE_IMAGE: ${SEARCH_FESS_BASE_IMAGE:?SEARCH_FESS_BASE_IMAGE is required}
+        FESS_OLLAMA_PLUGIN_URL: https://maven.codelibs.org/release/org/codelibs/fess/fess-llm-ollama/15.8.0/fess-llm-ollama-15.8.0.jar
+        FESS_OLLAMA_PLUGIN_SHA256: 08301d94101404ea8fd4ae9efb12cb61cf7d2f28b554653a1b65ee5233d39b84
+    image: ${SEARCH_FESS_IMAGE:-depositar-fess-search-canary:15.8.0-local}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    cpus: ${SEARCH_FESS_CPU_LIMIT:-4}
+    mem_limit: ${SEARCH_FESS_MEM_LIMIT:-8G}
+    memswap_limit: ${SEARCH_FESS_MEM_LIMIT:-8G}
+    pids_limit: ${SEARCH_FESS_PIDS_LIMIT:-2048}
+    environment:
+      HOME: /var/lib/fess
+      TZ: UTC
+      NVIDIA_VISIBLE_DEVICES: void
+      SEARCH_ENGINE_HTTP_URL: https://opensearch-search:9200
+      SEARCH_ENGINE_TYPE: opensearch
+      FESS_DICTIONARY_PATH: /usr/share/opensearch/config/dictionary/
+      FESS_HEAP_SIZE: 2g
+      FESS_CRAWLER_ENABLED: "false"
+      FESS_SCHEDULER_ENABLED: "false"
+      FESS_RAG_CHAT_ENABLED: "false"
+      FESS_LOGIN_REQUIRED: "true"
+      FESS_SEMANTIC_MODEL: granite-embedding:278m
+      FESS_PLUGINS: ""
+      FESS_JAVA_OPTS: >-
+        -Dfess.system.content_chunker.enabled=true
+        -Dfess.system.content_chunker.embedding.name=ollama
+        -Dfess.system.content_chunker.embedding.dimension=768
+        -Dfess.system.content_chunker.embedding.ollama.api.url=http://127.0.0.1:11434
+        -Dfess.system.content_chunker.embedding.ollama.model=granite-embedding:278m
+        -Dfess.system.content_chunker.embedding.ollama.document.prefix=
+        -Dfess.system.content_chunker.embedding.ollama.query.prefix=
+        -Dfess.system.content_chunker.job.concurrency=2
+        -Dfess.system.content_chunker.job.bulk_size=100
+        -Dfess.system.content_chunker.job.max_documents_per_run=${SEARCH_VECTOR_PASS_DOCUMENTS:-10000}
+        -Dfess.system.content_chunker.search.enabled=true
+        -Dfess.system.login.required=true
+        -Duser.timezone=UTC
+        -Dfess.config.thumbnail.crawler.enabled=false
+        -Dfess.config.rag.chat.enabled=false
+        -Dfess.config.api.access.token.required=true
+        -Dfess.config.rate.limit.enabled=true
+        -Dfess.config.paging.page.size=25
+        -Dfess.config.query.additional.api.response.fields=rf_score,searcher
+        -Dfess.config.query.orsearch.min.hit.count=-1
+        -Drank.fusion.searchers=default,semantic_chunk
+    secrets:
+      - source: fess_opensearch_password
+        target: fess_opensearch_password
+      - source: fess_app_cipher_key
+        target: fess_app_cipher_key
+      - source: fess_initial_admin_password
+        target: fess_initial_admin_password
+    volumes:
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/root-ca.pem
+        target: /run/opensearch-ca/root-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=1770
+      - /opt/fess:rw,noexec,nosuid,nodev,size=2m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /var/lib/fess:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /var/log/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /var/tmp/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [search_backend]
+    depends_on:
+      opensearch-search:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /usr/local/bin/depositar-fess-healthcheck]
+      interval: 20s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  ollama-embedding:
+    image: ${SEARCH_OLLAMA_IMAGE:?SEARCH_OLLAMA_IMAGE is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    cpus: ${SEARCH_OLLAMA_CPU_LIMIT:-12}
+    mem_limit: ${SEARCH_OLLAMA_MEM_LIMIT:-8G}
+    memswap_limit: ${SEARCH_OLLAMA_MEM_LIMIT:-8G}
+    pids_limit: ${SEARCH_OLLAMA_PIDS_LIMIT:-512}
+    environment:
+      HOME: /tmp/ollama-home
+      CUDA_VISIBLE_DEVICES: "-1"
+      NVIDIA_VISIBLE_DEVICES: void
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_MODELS: /models
+      OLLAMA_NO_CLOUD: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_MAX_QUEUE: "1"
+      OLLAMA_KEEP_ALIVE: 10m
+      DEPOSITAR_EMBEDDING_MODEL: granite-embedding:278m
+    volumes:
+      - type: bind
+        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/ollama/models
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=1g,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: service:fess-search
+    depends_on:
+      fess-search:
+        condition: service_started
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  search_backend:
+    internal: true
+    attachable: false
+
+secrets:
+  fess_opensearch_password:
+    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_opensearch_password
+  fess_app_cipher_key:
+    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_app_cipher_key
+  fess_initial_admin_password:
+    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_initial_admin_password

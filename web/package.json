@@ -1,0 +1,26 @@
+{
+  "name": "depositar-search-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "format:check": "prettier --check src tests *.ts *.json index.html",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "0.15.20",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "prettier": "3.9.8",
+    "vite": "8.3.0"
+  }
+}

@@ -1,0 +1,50 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/guide/**
+      - docs/requirements.lock
+      - mkdocs.yml
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - docs/guide/**
+      - docs/requirements.lock
+      - mkdocs.yml
+      - .github/workflows/docs.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build reader handbook
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact documentation source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record actual checkout
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" == "$GITHUB_SHA" ]]
+          printf 'DOCS_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
+      - name: Set up documentation Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install locked documentation dependencies
+        run: python -m pip install --disable-pip-version-check --require-hashes -r docs/requirements.lock
+      - name: Build reader handbook
+        run: python -m mkdocs build --strict --site-dir "$RUNNER_TEMP/depositar-docs-site"

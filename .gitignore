@@ -1,0 +1,33 @@
+.env
+.env.*
+!.env.example
+!/deploy/env/.env.search-canary.example
+!/deploy/env/.env.search-web.example
+/search-api-runtime
+/runtime
+/backups
+/data
+# Independent search-canary state must remain outside the source checkout.
+/search-runtime
+/search-canary-data/
+/search-canary-secrets/
+/search-canary-models/
+/search-canary-index/
+/search-canary-corpus/
+/search/.runtime/
+/search/data/
+/search/secrets/
+/search/models/
+/search/index/
+/search/corpus/
+*.log
+# Operational measurements can include private deployment details and data.
+/docs/benchmarks/
+__pycache__/
+*.pyc
+/.venv-docs/
+/site/
+/web/node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/

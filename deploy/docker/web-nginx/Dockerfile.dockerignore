@@ -1,0 +1,8 @@
+**
+!deploy/
+deploy/**
+!deploy/config/
+deploy/config/**
+!deploy/config/web-nginx/
+deploy/config/web-nginx/**
+!deploy/config/web-nginx/nginx.conf

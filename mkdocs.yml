@@ -1,0 +1,28 @@
+site_name: depositarAI 使用手冊
+site_description: 搜尋資料、部署維護與開發指南
+docs_dir: docs/guide
+
+nav:
+  - 首頁: index.md
+  - 搜尋資料: using-search.md
+  - 部署與維護: operations.md
+  - 架構概覽: architecture.md
+  - 開發與文件: development.md
+
+theme:
+  name: material
+  language: zh-TW
+  font: false
+  features:
+    - navigation.sections
+    - search.highlight
+
+plugins:
+  - search:
+      lang: [zh, en]
+
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    anchors: warn

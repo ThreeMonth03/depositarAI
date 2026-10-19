@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "catalog_storage": "docker-volume",
+  "state_root": "/home/OPERATOR/.local/share/depositarai/state",
+  "api_model_root": "/absolute/reviewed/models/api",
+  "embedding_model_root": "/absolute/reviewed/models/embedding",
+  "reranker_model_root": "/absolute/reviewed/models/reranker",
+  "gpus": {
+    "scope": "GPU-00000000-0000-0000-0000-000000000001",
+    "planner": [
+      "GPU-00000000-0000-0000-0000-000000000002",
+      "GPU-00000000-0000-0000-0000-000000000003"
+    ],
+    "reranker": "GPU-00000000-0000-0000-0000-000000000004"
+  },
+  "cache_ttl_seconds": 0
+}

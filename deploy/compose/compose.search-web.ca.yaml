@@ -1,0 +1,12 @@
+# Optional private CA for the standalone HTTPS upstream. The wrapper adds this
+# file only when its dedicated env file specifies WEB_UPSTREAM_CA_FILE.
+services:
+  web:
+    environment:
+      WEB_UPSTREAM_CA_FILE: /run/certs/upstream-ca.pem
+    volumes:
+      - type: bind
+        source: ${WEB_UPSTREAM_CA_FILE:?private upstream CA file required}
+        target: /run/certs/upstream-ca.pem
+        read_only: true
+        bind: {create_host_path: false}

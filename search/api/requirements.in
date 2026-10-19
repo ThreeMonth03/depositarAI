@@ -1,0 +1,5 @@
+Django==5.2.18
+djangorestframework==3.18.3
+adrf==0.1.14
+pydantic==2.13.5
+uvicorn==0.52.4

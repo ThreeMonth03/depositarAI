@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "state_root": "/absolute/private/product",
+  "public_origin": "https://search.example.org",
+  "oidc_issuer": "https://accounts.google.com",
+  "oidc_discovery": "https://accounts.google.com/.well-known/openid-configuration",
+  "oidc_client_id": "your-client-id.apps.googleusercontent.com",
+  "oidc_client_secret_file": "/absolute/private/secrets/oidc-client-secret",
+  "oidc_session_secret_file": "/absolute/private/secrets/oidc-session-secret",
+  "edge_secret_file": "/absolute/private/secrets/public-edge-key",
+  "redis_password_file": "/absolute/private/secrets/public-quota-redis-password",
+  "loopback_port": 18084,
+  "quota_per_account": 10,
+  "quota_global": 100,
+  "quota_window_seconds": 86400,
+  "session_limit": 10,
+  "session_window_seconds": 3600,
+  "trusted_proxy_cidrs": [],
+  "network_subnets": {
+    "website": "10.253.250.0/28",
+    "quota": "10.253.250.16/28",
+    "outbound": "10.253.250.32/28"
+  }
+}

@@ -1,0 +1,13 @@
+"""Pinned model identities and fixed request policy for the current product."""
+
+OLLAMA_BASE_URL = "http://127.0.0.1:11435"
+SCOPE_MODEL = "ministral-3:8b-instruct-2512-q4_K_M"
+SCOPE_MODEL_DIGEST = "1922accd5827ebe6829e536369195db25eaf664528dc66206d646ea3bb386b71"
+SCOPE_NUM_CTX = 4_096
+SCOPE_NUM_PREDICT = 64
+SCOPE_DEADLINE_SECONDS = 90.0
+PLANNER_MODEL = "gpt-oss:20b"
+PLANNER_MODEL_DIGEST = (
+    "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7"
+)
+MAX_REQUEST_BYTES = 96 * 1024

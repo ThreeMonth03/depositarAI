@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "state_root": "/srv/depositarai/runtime",
+  "api_model_root": "/srv/depositarai/models/api",
+  "embedding_model_root": "/srv/depositarai/models/embedding",
+  "reranker_model_root": "/srv/depositarai/models/reranker",
+  "gpus": {
+    "scope": "GPU-00000000-0000-0000-0000-000000000001",
+    "planner": [
+      "GPU-00000000-0000-0000-0000-000000000002",
+      "GPU-00000000-0000-0000-0000-000000000003"
+    ],
+    "reranker": "GPU-00000000-0000-0000-0000-000000000004"
+  },
+  "cache_ttl_seconds": 0
+}

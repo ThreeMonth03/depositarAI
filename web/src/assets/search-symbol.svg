@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>資料搜尋助理</title>
+  <rect x="6" y="6" width="40" height="48" rx="8" fill="#e6fbf2"/>
+  <path d="M17 18h16M17 26h12M17 34h8" fill="none" stroke="#00e09b" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="38" cy="33" r="12" fill="#fff" stroke="#173b35" stroke-width="4"/>
+  <path d="m47 42 10 10" fill="none" stroke="#173b35" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 64">
+  <title>資料搜尋助理</title>
+  <rect x="4" y="8" width="40" height="48" rx="8" fill="#e6fbf2"/>
+  <path d="M15 20h16M15 28h12M15 36h8" fill="none" stroke="#00e09b" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="36" cy="35" r="12" fill="#fff" stroke="#173b35" stroke-width="4"/>
+  <path d="m45 44 10 10" fill="none" stroke="#173b35" stroke-width="5" stroke-linecap="round"/>
+  <text x="65" y="32" fill="#173b35" font-family="system-ui, sans-serif" font-size="21" font-weight="700">資料搜尋</text>
+  <text x="66" y="49" fill="#45675f" font-family="system-ui, sans-serif" font-size="10" letter-spacing="2">DATA SEARCH</text>
+</svg>
