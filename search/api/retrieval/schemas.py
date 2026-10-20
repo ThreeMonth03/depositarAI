@@ -100,11 +100,6 @@ class Card(StrictModel):
     condition_status: Literal["match", "unknown", "not_checked"]
 
 
-class DisabledAnswer(StrictModel):
-    status: Literal["not_requested"] = "not_requested"
-    match: None = None
-
-
 class RetrievalResponse(StrictModel):
     api_version: Literal["1-draft"] = "1-draft"
     request_id: str
@@ -117,13 +112,10 @@ class RetrievalResponse(StrictModel):
     ranking: Literal["opensearch-haystack-rrf", "nvidia-rerank"]
     rerank_status: Literal["disabled", "not_run", "applied", "fallback"]
     candidate_count: int = Field(ge=0, le=20)
-    answer: DisabledAnswer
     warnings: list[str]
     timing_ms: dict[str, float]
     context_used: ContextUsed | None
-    planning_status: Literal["ready"] = "ready"
     parsed_conditions: Conditions
     applied_conditions: Conditions | None
-    clarification: None = None
     filter_scope: Literal["none", "index_prefilter"]
     condition_counts: ConditionCounts

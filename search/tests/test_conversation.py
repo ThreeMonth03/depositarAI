@@ -309,7 +309,9 @@ class ConversationHTTPTests(unittest.TestCase):
         self.assertEqual(
             value["search"]["context_used"]["reference_date"], "2026-09-18"
         )
-        self.assertEqual(value["search"]["answer"]["status"], "not_requested")
+        self.assertTrue(
+            {"answer", "planning_status", "clarification"}.isdisjoint(value["search"])
+        )
 
     def test_structured_refinement_filters_and_labels(self):
         self.backend.plan = {

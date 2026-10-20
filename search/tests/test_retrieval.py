@@ -57,8 +57,20 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.backend.calls[0][1]["conditions"], CONDITIONS)
         self.assertEqual(result["filter_scope"], "index_prefilter")
         self.assertEqual(len(self.backend.calls[2][1]["passages"]), 3)
-        self.assertEqual(result["answer"], {"status": "not_requested", "match": None})
         self.assertNotIn("_condition_states", result)
+
+    async def test_response_omits_retired_answer_and_planning_fields(self):
+        for retrieval in (
+            None,
+            report("氣候", count=0),
+            BackendFailure("PRIVATE"),
+        ):
+            with self.subTest(retrieval=type(retrieval).__name__):
+                self.backend.retrieval = retrieval
+                result = await self.search()
+                self.assertTrue(
+                    {"answer", "planning_status", "clarification"}.isdisjoint(result)
+                )
 
     async def test_server_owned_candidate_count_and_top_k(self):
         result = await self.search(top_k=2)

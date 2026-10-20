@@ -17,7 +17,10 @@ from unittest.mock import patch
 import httpx
 
 from search.tests.asgi_client import ASGITestClient
-from search.api.conversation.contract import SearchState, TurnResponse
+from search.api.conversation.contract import SearchState, TurnRequest, TurnResponse
+from search.api.conversation.engine import ConversationEngine
+from search.api.shared.config import Settings
+from search.tests.fixtures import ConversationFixture
 from search.web.app import create_app
 from search.web.sessions import SessionError, Sessions
 from search.web.upstream import Upstream, UpstreamError, WebSettings
@@ -489,6 +492,18 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def search_response(self):
+        engine = ConversationEngine(
+            Settings("a" * 40, "b" * 64, Path("/catalog"), Path("/unused"), True, 20),
+            ConversationFixture(),
+        )
+        response = asyncio.run(
+            engine.turn(TurnRequest(query="氣候"), "bff-transport-test")
+        )
+        self.assertEqual(response.status, "ok")
+        self.assertTrue(response.search.cards)
+        return response.model_dump()
+
     def invoke(self, handler):
         factory = httpx.AsyncClient
         with (
@@ -530,6 +545,30 @@ class TransportTests(unittest.TestCase):
             )
 
         self.assertEqual(self.invoke(handler).status, "rejected")
+
+    def test_current_search_response_passes_the_bff_boundary(self):
+        value = self.search_response()
+        self.assertTrue(
+            {"answer", "planning_status", "clarification"}.isdisjoint(value["search"])
+        )
+        result = self.invoke(lambda _request: httpx.Response(200, json=value))
+        self.assertEqual(result.model_dump(), value)
+
+    def test_removed_search_fields_are_rejected_instead_of_ignored(self):
+        value = self.search_response()
+        for field, previous in (
+            ("answer", {"status": "not_requested", "match": None}),
+            ("planning_status", "ready"),
+            ("clarification", None),
+        ):
+            with self.subTest(field=field), self.assertRaises(UpstreamError) as caught:
+                self.invoke(
+                    lambda _request: httpx.Response(
+                        200,
+                        json={**value, "search": {**value["search"], field: previous}},
+                    )
+                )
+            self.assertEqual(caught.exception.status, 503)
 
     def test_redirect_never_followed(self):
         calls = []

@@ -34,7 +34,9 @@ class ConversationRetrievalTests(unittest.TestCase):
             ],
         )
         self.assertEqual(self.backend.calls[2][1]["conditions"], CONDITIONS)
-        self.assertEqual(value["answer"], {"status": "not_requested", "match": None})
+        self.assertTrue(
+            {"answer", "planning_status", "clarification"}.isdisjoint(value)
+        )
         self.assertEqual(value["warnings"], ["unknown_condition_results_retained"])
 
     def test_retrieval_failure_never_falls_back_to_another_backend(self):

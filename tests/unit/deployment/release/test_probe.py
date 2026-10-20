@@ -591,6 +591,7 @@ class APIScriptTests(unittest.TestCase):
         for changes in (
             {"geography": 0},
             {"generated_answers": 0},
+            {"generated_answers": True},
             {"revision": "f" * 40},
         ):
             with self.subTest(changes=changes):
@@ -602,6 +603,17 @@ class APIScriptTests(unittest.TestCase):
         value, fixture = self.run_script([], bundle_id="f" * 64)
         self.assertFalse(value["api_version_verified"])
         self.assertFalse(fixture.calls)
+
+    def test_api_requires_explicit_disabled_generated_answers(self):
+        version = {
+            key: value
+            for key, value in self.version.items()
+            if key != "generated_answers"
+        }
+        value, fixture = self.run_script([("/v1/version", 200, version)])
+        self.assertFalse(value["api_version_verified"])
+        self.assertFalse(value["backend_ready"])
+        self.assertEqual(len(fixture.calls), 1)
 
 
 class WebControlFlowTests(unittest.TestCase):
@@ -648,11 +660,9 @@ class WebControlFlowTests(unittest.TestCase):
             catalog_manifest_sha256=MANIFEST,
             mode="ai",
             decision="search",
-            planning_status="ready",
             filter_scope="index_prefilter" if formats else "none",
             ranking="nvidia-rerank",
             rerank_status="applied",
-            answer=SimpleNamespace(status="not_requested"),
             context_used=self.context,
             cards=[card],
             candidate_count=2,
@@ -697,7 +707,13 @@ class WebControlFlowTests(unittest.TestCase):
         value = execute(probe._WEB_SCRIPT, fixture, modules=self.modules)
         return value, fixture
 
-    def test_two_http_turns_chain_versions_and_reset_without_exposing_tokens(self):
+    def test_two_http_turns_without_legacy_fields_chain_versions_and_reset(self):
+        for result in self.results:
+            self.assertTrue(
+                {"answer", "planning_status", "clarification"}.isdisjoint(
+                    vars(result.search)
+                )
+            )
         value, fixture = self.run_script()
         self.assertEqual(value["code"], "ready")
         self.assertTrue(value["two_turn_search_verified"])
@@ -750,14 +766,92 @@ class WebControlFlowTests(unittest.TestCase):
         self.assertFalse(value["session_reset_verified"])
         self.assertEqual(value["code"], "web_probe_failed")
 
-    def test_zero_cards_or_reranker_fallback_blocks_functional_acceptance(self):
-        self.results[0].search.cards = []
+    def assert_first_search_blocked(self, result):
+        validator = self.modules[
+            "search.api.conversation.contract"
+        ].TurnResponse.model_validate
+        validator.side_effect = [result, self.result(["CSV"])]
         responses = self.responses()[:3] + [
             ("/api/session", 200, {"status": "cleared"})
         ]
-        value, _fixture = self.run_script(responses)
+        value, fixture = self.run_script(responses)
+        self.assertEqual(value["code"], "web_probe_failed")
         self.assertFalse(value["two_turn_search_verified"])
+        self.assertFalse(value["session_reset_verified"])
         self.assertEqual(value["turns"], [])
+        self.assertEqual(fixture.calls[-1][0].method, "DELETE")
+        self.assertEqual(len(fixture.calls), 4)
+
+    def test_core_search_checks_remain_required_without_legacy_fields(self):
+        for field, invalid in (
+            ("cards", []),
+            ("revision", "f" * 40),
+            ("catalog_manifest_sha256", "f" * 64),
+            ("status", "unavailable"),
+            ("mode", "basic"),
+            ("decision", "clarify"),
+            ("filter_scope", "index_prefilter"),
+            ("ranking", "opensearch-haystack-rrf"),
+            ("rerank_status", "fallback"),
+            ("context_used", SimpleNamespace(timezone="UTC")),
+            ("candidate_count", 0),
+            ("candidate_count", 21),
+            ("parsed_conditions", None),
+            ("timing_ms", {"retrieval": -1}),
+        ):
+            with self.subTest(field=field, invalid=invalid):
+                result = self.result([])
+                setattr(result.search, field, invalid)
+                self.assert_first_search_blocked(result)
+
+    def test_result_cards_still_require_public_source_identity_and_order(self):
+        for field, invalid in (
+            ("rank", 2),
+            ("dataset_id", "not-a-public-dataset-id"),
+            ("url", "http://data.depositar.io/dataset/public-rainfall"),
+            ("url", "https://elsewhere.example.test/dataset/public-rainfall"),
+            ("url", "https://data.depositar.io/private/public-rainfall"),
+            ("url", "https://data.depositar.io/dataset/public-rainfall?private=1"),
+        ):
+            with self.subTest(field=field, invalid=invalid):
+                result = self.result([])
+                setattr(result.search.cards[0], field, invalid)
+                self.assert_first_search_blocked(result)
+        result = self.result([])
+        duplicate = copy.copy(result.search.cards[0])
+        duplicate.rank = 2
+        result.search.cards.append(duplicate)
+        self.assert_first_search_blocked(result)
+
+    def test_conversation_clarification_cannot_claim_completed_search(self):
+        result = self.result([])
+        result.status = "clarification_required"
+        result.reason = "ambiguous_time"
+        result.search = None
+        self.assert_first_search_blocked(result)
+
+    def test_refinement_requires_csv_state_filter_and_matching_cards(self):
+        for invalid in ("state", "applied_filter", "card_match"):
+            with self.subTest(invalid=invalid):
+                results = [self.result([]), self.result(["CSV"])]
+                if invalid == "state":
+                    results[1].state.formats = []
+                elif invalid == "applied_filter":
+                    results[1].search.applied_conditions.formats = []
+                else:
+                    results[1].search.cards[0].condition_status = "unknown"
+                self.modules[
+                    "search.api.conversation.contract"
+                ].TurnResponse.model_validate.side_effect = results
+                responses = self.responses()[:4] + [
+                    ("/api/session", 200, {"status": "cleared"})
+                ]
+                value, fixture = self.run_script(responses)
+                self.assertEqual(value["code"], "web_probe_failed")
+                self.assertFalse(value["two_turn_search_verified"])
+                self.assertFalse(value["session_reset_verified"])
+                self.assertEqual(len(value["turns"]), 2)
+                self.assertEqual(fixture.calls[-1][0].method, "DELETE")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,9 @@ API 不提供公開 Swagger UI；request／response 型別以
 [conversation/contract.py](../search/api/conversation/contract.py)為準，
 檢索結果型別位於 [retrieval/schemas.py](../search/api/retrieval/schemas.py)。
 
+API 與 BFF 共用嚴格的回應型別。變更契約時，兩者須協調切換；回退也須選回
+對應的 API 與 BFF。不要只更新其中一端，再把回應驗證失敗當成暫時網路問題。
+
 ## 一輪請求
 
 ```json
@@ -69,6 +72,8 @@ API 不提供公開 Swagger UI；request／response 型別以
 | `unavailable` | 暫時無法完成，HTTP 503；不要提交這一輪狀態。 |
 
 `search` 包含資料集卡片、解析／套用條件、實際參考時間、排序及降級資訊。
+需要澄清時，使用對話層的 `status`、`message` 與 `reason`；不另在檢索結果保存
+澄清或答案物件。是否提供生成式回答等功能，由 `/v1/version` 的功能旗標表示。
 每次搜尋都透過 OpenSearch 進行文字及向量檢索，兩路使用相同的時間與格式條件，
 再以 Haystack RRF 合併候選。成功套用條件時，`filter_scope` 為 `index_prefilter`；
 沒有條件時為 `none`。每路檢索及合併候選都有上限，不能宣稱找齊所有符合條件的

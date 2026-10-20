@@ -338,10 +338,9 @@ def turn(token, query, version):
         or result.revision != REVISION or not result.state.topic
         or search is None or search.status != "ok" or search.revision != REVISION
         or search.catalog_manifest_sha256 != MANIFEST or search.mode != "ai"
-        or search.decision != "search" or search.planning_status != "ready"
+        or search.decision != "search"
         or search.filter_scope != ("none" if version == 0 else "index_prefilter")
         or search.ranking != "nvidia-rerank" or search.rerank_status != "applied"
-        or search.answer.status != "not_requested"
         or search.context_used != context
         or not 1 <= len(search.cards) <= 3
         or not len(search.cards) <= search.candidate_count <= 20
