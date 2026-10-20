@@ -3,19 +3,22 @@
 The lifecycle owns the product lock; this facade also holds the catalog lock.
 There are no builds, pulls, query provisioning, GPU starts, public ports or
 route changes. A partial Compose start remains quarantined for explicit repair.
-Completed reuse freshly proves authority and behavior without another up.
+Start/reuse performs full functional acceptance. Gateway preparation rechecks
+completed authority and runtime without another start or model acceptance.
 """
 
 from __future__ import annotations
 
 from contextlib import ExitStack
 import copy
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import time
+from typing import Callable
 
 from search.operations.catalog import client_lease, execution, policy, query
 from search.operations.config import ProductConfig
@@ -318,6 +321,66 @@ def start_private_release(
     gpu_runner=None,
 ):
     """Start exactly three CPU services or freshly verify completed private reuse."""
+    return _run(
+        _start,
+        config,
+        store,
+        source_revision,
+        catalog_plan,
+        repo_root=repo_root,
+        source_runner=source_runner,
+        docker_runner=docker_runner,
+        catalog_runner=catalog_runner,
+        gpu_runner=gpu_runner,
+    )
+
+
+def verify_completed_private_release(
+    config,
+    store,
+    source_revision,
+    catalog_plan,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+    catalog_runner=None,
+    gpu_runner=None,
+):
+    """Recheck a completed release without starting services or model acceptance.
+
+    The returned completion contains the original successful ML acceptance.
+    This call freshly verifies its source, images, model files, query authority
+    and leased runtime, including the existing denied query-write checks. It
+    never creates a release, repairs state or repeats model/HTTP acceptance.
+    """
+    return _run(
+        _verify_completed,
+        config,
+        store,
+        source_revision,
+        catalog_plan,
+        repo_root=repo_root,
+        source_runner=source_runner,
+        docker_runner=docker_runner,
+        catalog_runner=catalog_runner,
+        gpu_runner=gpu_runner,
+    )
+
+
+def _run(
+    operation,
+    config,
+    store,
+    source_revision,
+    catalog_plan,
+    *,
+    repo_root,
+    source_runner,
+    docker_runner,
+    catalog_runner,
+    gpu_runner,
+):
     try:
         if (
             not isinstance(config, ProductConfig)
@@ -332,7 +395,7 @@ def start_private_release(
             config, catalog_plan, repo_root=repo_root, runner=catalog_runner
         )
         with execution.operation_lock(context):
-            return _start(
+            return operation(
                 config,
                 store,
                 source_revision,
@@ -357,10 +420,27 @@ def start_private_release(
         raise ReleaseError("release_verification_failed") from None
 
 
-def _start(
-    config, store, revision, context, repo, source_runner, docker_runner, gpu_runner
+@dataclass(frozen=True)
+class _ReleaseInputs:
+    host: _Host
+    identity: dict
+    authority: dict
+    key: dict
+    verify_client: Callable[[], None]
+    refresh: Callable[[], None]
+
+
+def _runtime_inputs(
+    stack,
+    config,
+    store,
+    revision,
+    context,
+    repo,
+    source_runner,
+    docker_runner,
+    deadline,
 ):
-    deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS
     authority = query.read_authority(context)
     key = credentials.read_api_key_authority(config, store)
     source_plan = source_bundle.committed_source_plan(
@@ -377,115 +457,282 @@ def _start(
     gpu_authority = inference._authority(config, store, source_plan, inference_plan)
     # All acquired model/ancestry/client handles must exit successfully before
     # publication; no success survives a failed final FD/path verification.
-    with ExitStack() as stack:
-        models, verify_models = stack.enter_context(
-            inference._verified_models(
-                config, deadline=deadline, include_embedding=True
-            )
+    models, verify_models = stack.enter_context(
+        inference._verified_models(config, deadline=deadline, include_embedding=True)
+    )
+    client = Path(
+        stack.enter_context(
+            tempfile.TemporaryDirectory(prefix="depositar-release-client-")
         )
-        client = Path(
-            stack.enter_context(
-                tempfile.TemporaryDirectory(prefix="depositar-release-client-")
-            )
-        )
-        client_fd = private_io.open_directory(client)
-        stack.callback(os.close, client_fd)
+    )
+    client_fd = private_io.open_directory(client)
+    stack.callback(os.close, client_fd)
 
-        def verify_client():
-            if os.listdir(client_fd):
-                raise ReleaseError("release_client_configuration_changed")
-            private_io.verify_directory(client_fd, client)
+    def verify_client():
+        if os.listdir(client_fd):
+            raise ReleaseError("release_client_configuration_changed")
+        private_io.verify_directory(client_fd, client)
 
-        verify_client()
-        docker = runtime_docker.Docker(
-            client,
-            docker_runner,
-            deadline=deadline,
-            max_commands=128,
-            verify_client=verify_client,
+    verify_client()
+    docker = runtime_docker.Docker(
+        client,
+        docker_runner,
+        deadline=deadline,
+        max_commands=128,
+        verify_client=verify_client,
+    )
+    if (
+        image_build._json(docker.call(["info", "--format", "{{json .OSType}}"]))
+        != "linux"
+    ):
+        raise ReleaseError("release_daemon_unsupported")
+    gpu_images = inference._images(docker, source_plan, gpu_authority)
+    images = _images(docker, source_plan, image_authority)
+    images["filtered-embedding"] = gpu_images["scope-model"]
+    catalog_images = execution.load_images(context)
+    catalog_inspections = {
+        role: docker.inspect(proof["image_id"])
+        for role, proof in catalog_images.items()
+    }
+    plans = composition.render_composition(
+        config,
+        context["plan"],
+        composition.QueryBindingPaths.for_catalog(config, context["plan"]),
+        revision,
+        uid=os.geteuid(),
+        gid=os.getegid(),
+        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+    )
+    gpu_compose, compose = (
+        copy.deepcopy(plans["inference"]),
+        copy.deepcopy(plans["release"]),
+    )
+    for role, image in gpu_images.items():
+        gpu_compose["services"][role]["image"] = image["Id"]
+    for role, image in images.items():
+        compose["services"][role]["image"] = image["Id"]
+        if role != "filtered-embedding":
+            proof = image_authority["images"][role]
+            compose["services"][role]["labels"] = {
+                "org.opencontainers.image.revision": revision,
+                "io.depositar.ai.source.revision": revision,
+                "io.depositar.ai.source.service": role,
+                "io.depositar.ai.source.sha256": proof["source_sha256"],
+            }
+    if b"$" in private_io.canonical(compose):
+        raise ReleaseError("release_compose_interpolation_forbidden")
+    gpu_identity = inference._runtime_identity(
+        gpu_compose,
+        {role: models[role] for role in ("api", "reranker")},
+        gpu_authority,
+        gpu_images,
+    )
+    verify_inference = _sealed_inference(
+        stack, config, store, gpu_compose, gpu_identity
+    )
+    host = _Host(
+        docker,
+        context,
+        authority,
+        catalog_images,
+        catalog_inspections,
+        gpu_compose,
+        gpu_images,
+        verify_inference,
+        compose,
+        images,
+        image_authority["images"]["conversation-api"],
+    )
+    identity = {
+        "schema_version": 1,
+        "revision": revision,
+        "project": compose["name"],
+        "bundle_id": context["bundle"].bundle_id,
+        "manifest_sha256": context["plan"]["manifest_sha256"],
+        "compose_sha256": execution.digest_record(compose),
+        "query_authority_sha256": execution.digest_record(authority),
+        "api_key_authority_sha256": execution.digest_record(key),
+        "source_manifest_sha256": image_authority["source_manifest_sha256"],
+        "model_manifest_sha256": execution.digest_record(models),
+        "image_ids": {role: image["Id"] for role, image in images.items()},
+        "image_config_sha256": {
+            role: execution.digest_record(image["Config"])
+            for role, image in images.items()
+        },
+        "active_changed": False,
+    }
+
+    def authority_check():
+        verify_models()
+        inference._source_revision(repo, revision, source_runner)
+        _same(query.read_authority(context), authority)
+        _same(credentials.read_api_key_authority(config, store), key)
+        _same(
+            image_evidence.read_completed_images(config, store, source_plan),
+            image_authority,
         )
-        if (
-            image_build._json(docker.call(["info", "--format", "{{json .OSType}}"]))
-            != "linux"
-        ):
-            raise ReleaseError("release_daemon_unsupported")
-        gpu_images = inference._images(docker, source_plan, gpu_authority)
-        images = _images(docker, source_plan, image_authority)
-        images["filtered-embedding"] = gpu_images["scope-model"]
-        catalog_images = execution.load_images(context)
-        catalog_inspections = {
-            role: docker.inspect(proof["image_id"])
-            for role, proof in catalog_images.items()
-        }
-        plans = composition.render_composition(
-            config,
-            context["plan"],
-            composition.QueryBindingPaths.for_catalog(config, context["plan"]),
-            revision,
-            uid=os.geteuid(),
-            gid=os.getegid(),
-            inference_source_sha256=source_plan["services"]["reranker"][
-                "source_sha256"
-            ],
-        )
-        gpu_compose, compose = (
-            copy.deepcopy(plans["inference"]),
-            copy.deepcopy(plans["release"]),
-        )
-        for role, image in gpu_images.items():
-            gpu_compose["services"][role]["image"] = image["Id"]
-        for role, image in images.items():
-            compose["services"][role]["image"] = image["Id"]
-            if role != "filtered-embedding":
-                proof = image_authority["images"][role]
-                compose["services"][role]["labels"] = {
-                    "org.opencontainers.image.revision": revision,
-                    "io.depositar.ai.source.revision": revision,
-                    "io.depositar.ai.source.service": role,
-                    "io.depositar.ai.source.sha256": proof["source_sha256"],
-                }
-        if b"$" in private_io.canonical(compose):
-            raise ReleaseError("release_compose_interpolation_forbidden")
-        gpu_identity = inference._runtime_identity(
-            gpu_compose,
-            {role: models[role] for role in ("api", "reranker")},
+        _same(execution.load_images(context), catalog_images)
+        _same(
+            inference._refresh_authority(config, store, source_plan, gpu_authority),
             gpu_authority,
-            gpu_images,
         )
-        verify_inference = _sealed_inference(
-            stack, config, store, gpu_compose, gpu_identity
+        _same(inference._images(docker, source_plan, gpu_authority), gpu_images)
+        _same(
+            _images(docker, source_plan, image_authority),
+            {role: images[role] for role in ("web", "conversation-api")},
         )
-        host = _Host(
-            docker,
+
+    return _ReleaseInputs(
+        host, identity, authority, key, verify_client, authority_check
+    )
+
+
+def _release_slots(parent_fd):
+    names = set(os.listdir(parent_fd))
+    if (
+        any(SLOT.fullmatch(value) is None for value in names)
+        or len(names) > inference.MAX_SLOTS
+    ):
+        raise ReleaseError("release_unknown_state")
+    return names
+
+
+def _load_completed(slot_fd, inputs):
+    if set(os.listdir(slot_fd)) != FILES:
+        raise ReleaseError("release_partial_state_recovery_required")
+    _same(image_build._record(slot_fd, "started.json"), inputs.identity)
+    _same(image_build._record(slot_fd, "compose.json"), inputs.host.compose)
+    inputs.host.lease = image_build._record(slot_fd, "lease.json")
+    return image_build._record(slot_fd, "complete.json")
+
+
+def _verify_runtime(config, context, inputs, gpu_runner):
+    host = inputs.host
+    _same(
+        query.verify_authority(context, observe_runtime=host.observe), inputs.authority
+    )
+    inference._gpu(
+        config,
+        inference_runtime.ownership_proofs(
+            host.inference_compose, host.last[0], host.inference_images
+        ),
+        gpu_runner,
+    )
+
+
+def _completed_receipt(identity, proof):
+    return {
+        **identity,
+        "status": "private_release_running",
+        **proof,
+        "runtime_verified": True,
+        "models_verified": True,
+        "query_permissions_verified": True,
+        "gpu_ownership_snapshot_verified": True,
+        "model_warmup_verified": True,
+        "readiness_verified": True,
+        "two_turn_search_verified": True,
+        "session_reset_verified": True,
+        "search_quality_verified": False,
+        "gateway_verified": False,
+        "ports_published": False,
+    }
+
+
+def _final_authority(
+    config, store, revision, context, repo, source_runner, inputs, deadline
+):
+    # Model, ancestry and Docker client handles must have exited before this fence.
+    _same(query.read_authority(context), inputs.authority)
+    _same(credentials.read_api_key_authority(config, store), inputs.key)
+    inference._source_revision(repo, revision, source_runner)
+    if time.monotonic() >= deadline:
+        raise ReleaseError("release_operation_deadline")
+    store._check_directory()
+
+
+def _verify_records(config, parent_fd, slot_fd, name, inputs, expected_files):
+    parent = config.state_root / "releases"
+    private_io.verify_directory(parent_fd, parent)
+    private_io.verify_directory(slot_fd, parent / name)
+    _same(image_build._record(slot_fd, "started.json"), inputs.identity)
+    _same(image_build._record(slot_fd, "compose.json"), inputs.host.compose)
+    _same(image_build._record(slot_fd, "lease.json"), inputs.host.lease)
+    if set(os.listdir(slot_fd)) != expected_files:
+        raise ReleaseError("release_state_inventory_changed")
+
+
+def _verify_completed(
+    config, store, revision, context, repo, source_runner, docker_runner, gpu_runner
+):
+    deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS
+    with ExitStack() as stack:
+        inputs = _runtime_inputs(
+            stack,
+            config,
+            store,
+            revision,
             context,
-            authority,
-            catalog_images,
-            catalog_inspections,
-            gpu_compose,
-            gpu_images,
-            verify_inference,
-            compose,
-            images,
-            image_authority["images"]["conversation-api"],
+            repo,
+            source_runner,
+            docker_runner,
+            deadline,
         )
-        identity = {
-            "schema_version": 1,
-            "revision": revision,
-            "project": compose["name"],
-            "bundle_id": context["bundle"].bundle_id,
-            "manifest_sha256": context["plan"]["manifest_sha256"],
-            "compose_sha256": execution.digest_record(compose),
-            "query_authority_sha256": execution.digest_record(authority),
-            "api_key_authority_sha256": execution.digest_record(key),
-            "source_manifest_sha256": image_authority["source_manifest_sha256"],
-            "model_manifest_sha256": execution.digest_record(models),
-            "image_ids": {role: image["Id"] for role, image in images.items()},
-            "image_config_sha256": {
-                role: execution.digest_record(image["Config"])
-                for role, image in images.items()
-            },
-            "active_changed": False,
-        }
+        host = inputs.host
+        name = host.compose["name"].removeprefix("depositar-ai-")
+        # Missing or partial releases are never repaired or started by this path.
+        parent_fd = private_io.open_child_directory(store.fd, "releases")
+        slot_fd = None
+        try:
+            if name not in _release_slots(parent_fd):
+                raise ReleaseError("release_completed_required")
+            slot_fd = private_io.open_child_directory(parent_fd, name)
+            completed = _load_completed(slot_fd, inputs)
+            _verify_runtime(config, context, inputs, gpu_runner)
+            proof = host.last[1]
+            result = _completed_receipt(inputs.identity, proof)
+            _same(completed, result, "release_completed_runtime_changed")
+            _same(store.read("release-candidate.json"), result)
+            _verify_runtime(config, context, inputs, gpu_runner)
+            _same(host.last[1], proof, "release_runtime_changed_during_verification")
+            inputs.refresh()
+            host.observe()
+            _same(host.last[1], proof, "release_runtime_changed_during_verification")
+            inputs.verify_client()
+            stack.close()
+            _final_authority(
+                config, store, revision, context, repo, source_runner, inputs, deadline
+            )
+            _verify_records(config, parent_fd, slot_fd, name, inputs, FILES)
+            _same(image_build._record(slot_fd, "complete.json"), result)
+            _same(store.read("release-candidate.json"), result)
+            return {**result, "runtime_reused": True}
+        finally:
+            if slot_fd is not None:
+                os.close(slot_fd)
+            os.close(parent_fd)
+
+
+def _start(
+    config, store, revision, context, repo, source_runner, docker_runner, gpu_runner
+):
+    deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS
+    # All acquired model/ancestry/client handles must exit before publication.
+    with ExitStack() as stack:
+        inputs = _runtime_inputs(
+            stack,
+            config,
+            store,
+            revision,
+            context,
+            repo,
+            source_runner,
+            docker_runner,
+            deadline,
+        )
+        host, identity = inputs.host, inputs.identity
+        docker, compose = host.docker, host.compose
+        gpu_compose, gpu_images = host.inference_compose, host.inference_images
         name = compose["name"].removeprefix("depositar-ai-")
         parent = config.state_root / "releases"
         parent_fd = private_io.open_child_directory(
@@ -494,21 +741,11 @@ def _start(
         # These state descriptors outlive the IO/model stack below.
         slot_fd = None
         try:
-            names = set(os.listdir(parent_fd))
-            if (
-                any(SLOT.fullmatch(value) is None for value in names)
-                or len(names) > inference.MAX_SLOTS
-            ):
-                raise ReleaseError("release_unknown_state")
+            names = _release_slots(parent_fd)
             reused = name in names
             if reused:
                 slot_fd = private_io.open_child_directory(parent_fd, name)
-                if set(os.listdir(slot_fd)) != FILES:
-                    raise ReleaseError("release_partial_state_recovery_required")
-                _same(image_build._record(slot_fd, "started.json"), identity)
-                _same(image_build._record(slot_fd, "compose.json"), compose)
-                host.lease = image_build._record(slot_fd, "lease.json")
-                completed = image_build._record(slot_fd, "complete.json")
+                completed = _load_completed(slot_fd, inputs)
             else:
                 if len(names) >= inference.MAX_SLOTS:
                     raise ReleaseError("release_retention_limit")
@@ -520,41 +757,10 @@ def _start(
                     raise ReleaseError("release_partial_state_recovery_required")
                 if any(inference._project_inventory(docker, compose["name"])):
                     raise ReleaseError("release_existing_runtime_not_adopted")
-            _same(
-                query.verify_authority(context, observe_runtime=host.observe), authority
-            )
-            inference._gpu(
-                config,
-                inference_runtime.ownership_proofs(
-                    gpu_compose, host.last[0], gpu_images
-                ),
-                gpu_runner,
-            )
-
-            def authority_check():
-                verify_models()
-                inference._source_revision(repo, revision, source_runner)
-                _same(query.read_authority(context), authority)
-                _same(credentials.read_api_key_authority(config, store), key)
-                _same(
-                    image_evidence.read_completed_images(config, store, source_plan),
-                    image_authority,
-                )
-                _same(execution.load_images(context), catalog_images)
-                _same(
-                    inference._refresh_authority(
-                        config, store, source_plan, gpu_authority
-                    ),
-                    gpu_authority,
-                )
-                _same(inference._images(docker, source_plan, gpu_authority), gpu_images)
-                _same(
-                    _images(docker, source_plan, image_authority),
-                    {role: images[role] for role in ("web", "conversation-api")},
-                )
+            _verify_runtime(config, context, inputs, gpu_runner)
 
             if not reused:
-                authority_check()
+                inputs.refresh()
                 private_io.verify_directory(parent_fd, parent)
                 slot_fd = private_io.open_child_directory(parent_fd, name, create=True)
                 for filename, value in (
@@ -617,22 +823,7 @@ def _start(
             else:
                 host.observe()
             proof = host.last[1]
-            result = {
-                **identity,
-                "status": "private_release_running",
-                **proof,
-                "runtime_verified": True,
-                "models_verified": True,
-                "query_permissions_verified": True,
-                "gpu_ownership_snapshot_verified": True,
-                "model_warmup_verified": True,
-                "readiness_verified": True,
-                "two_turn_search_verified": True,
-                "session_reset_verified": True,
-                "search_quality_verified": False,
-                "gateway_verified": False,
-                "ports_published": False,
-            }
+            result = _completed_receipt(identity, proof)
             if reused:
                 _same(completed, result, "release_completed_runtime_changed")
                 _same(store.read("release-candidate.json"), result)
@@ -658,7 +849,8 @@ def _start(
             ):
                 raise ReleaseError("release_acceptance_invalid")
             _same(
-                query.verify_authority(context, observe_runtime=host.observe), authority
+                query.verify_authority(context, observe_runtime=host.observe),
+                inputs.authority,
             )
             _same(host.last[1], proof, "release_runtime_changed_during_acceptance")
             inference._gpu(
@@ -668,26 +860,17 @@ def _start(
                 ),
                 gpu_runner,
             )
-            authority_check()
+            inputs.refresh()
             host.observe()
             _same(host.last[1], proof, "release_runtime_changed_during_acceptance")
-            verify_client()
+            inputs.verify_client()
             # Exit every model/source handle before a completion can be written.
             stack.close()
-            _same(query.read_authority(context), authority)
-            _same(credentials.read_api_key_authority(config, store), key)
-            inference._source_revision(repo, revision, source_runner)
-            if time.monotonic() >= deadline:
-                raise ReleaseError("release_operation_deadline")
-            store._check_directory()
-            private_io.verify_directory(parent_fd, parent)
-            private_io.verify_directory(slot_fd, parent / name)
-            _same(image_build._record(slot_fd, "started.json"), identity)
-            _same(image_build._record(slot_fd, "compose.json"), compose)
-            _same(image_build._record(slot_fd, "lease.json"), host.lease)
+            _final_authority(
+                config, store, revision, context, repo, source_runner, inputs, deadline
+            )
             expected_files = FILES if reused else FILES - {"complete.json"}
-            if set(os.listdir(slot_fd)) != expected_files:
-                raise ReleaseError("release_state_inventory_changed")
+            _verify_records(config, parent_fd, slot_fd, name, inputs, expected_files)
             if reused:
                 _same(image_build._record(slot_fd, "complete.json"), result)
                 _same(store.read("release-candidate.json"), result)

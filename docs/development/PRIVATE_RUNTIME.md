@@ -145,7 +145,8 @@ Conversation API 的 readiness 實作：成功結果最多快取30秒，backend 
 ## 入口與交付邊界
 
 `start-release` 在私有候選內核對 runtime、模型暖機、GPU ownership、查詢權限、
-API readiness、兩輪搜尋與 reset。Gateway activation 再核對接入的私有 website
+API readiness、兩輪搜尋與 reset。Gateway preparation 核對已完成的 release 與即時
+authority，不建立 release 服務或重跑模型驗收。Gateway activation 再核對接入的私有 website
 network 與 exact peers、實際 loopback 搜尋及 reset，最後才發布 active authority。
 單改路由檔或取得一項健康結果不足以完成切換。
 

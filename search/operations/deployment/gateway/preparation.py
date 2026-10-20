@@ -65,10 +65,11 @@ def prepare_gateway(
 ):
     """Reverify existing CPU3 and stage candidates, with no deployment mutation.
 
-    The caller holds the product lock. The existing release facade owns the
-    catalog lock and validates its completed lease, query, GPU, model and HTTP
-    evidence. A missing/partial release is rejected before invoking that facade,
-    so its start path can never be used to create CPU services here.
+    The caller holds the product lock. The completed release verifier owns the
+    catalog lock and rechecks its source, images, model files, query authority,
+    GPU ownership and leased runtime. The original model/HTTP acceptance stays
+    bound to that exact running identity; preparation does not repeat it. A
+    missing/partial release is rejected without starting or repairing services.
     """
     try:
         _require(
@@ -212,7 +213,7 @@ def _prepare(
 
             verify_gateway_image()
             no_gateway_runtime()
-            accepted = release.start_private_release(
+            accepted = release.verify_completed_private_release(
                 config,
                 store,
                 revision,

@@ -550,6 +550,9 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertLess(self.events.index("active-t"), self.events.index("reload"))
         self.assertLess(self.events.index("reload"), self.events.index("http"))
         self.assertIn("routed-proof", self.events[self.events.index("http") + 1 :])
+        self.http.assert_called_once()
+        self.start_release.assert_not_called()
+        self.private_probe.assert_not_called()
         native = json.loads(
             (self.gateway_root / "activation/compose.json").read_bytes()
         )

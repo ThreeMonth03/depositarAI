@@ -207,9 +207,12 @@ GPU residency，再檢查 API readiness、兩輪搜尋及 session reset；重用
 憑證留在容器內，收據不保存 prompt、搜尋卡片或回應原文。這些檢查用來確認啟動契約，
 不能代替搜尋品質、容量或任意輸入的評估。
 
-`prepare-gateway` 重新核對 completed release 並封存路由候選，不切換 active pointer。
-`activate-gateway` 是首次啟用入口：通過實際 runtime、loopback HTTP 搜尋／reset 檢查後，
-才發布 `127.0.0.1:18083` 並寫入 active authority。中斷或 partial activation 要求明確
+`prepare-gateway` 要求 `start-release` 已完成；它核對封存紀錄、實際 runtime、
+映像、模型檔案、GPU ownership 與查詢權限，再封存路由候選，不重跑暖機、搜尋或
+重建服務，也不切換 active pointer。缺少或不完整的 release 不會在此自動補建。
+`activate-gateway` 是首次啟用入口：先開啟只提供健康檢查的 loopback bootstrap，
+通過實際 runtime、`127.0.0.1:18083` 的 HTTP 搜尋／reset 檢查後才寫入 active authority。
+中斷或 partial activation 要求明確
 recovery；此命令不是完整產品 update／rollback 介面。
 
 ### timeout、readiness 與併發

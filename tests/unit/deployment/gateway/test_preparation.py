@@ -108,11 +108,23 @@ class GatewayPreparationTests(unittest.TestCase):
         ).start()
         self.acceptance = mock.patch.object(
             gateway.release,
-            "start_private_release",
+            "verify_completed_private_release",
             return_value={
                 **self.completed,
                 "runtime_reused": True,
             },
+        ).start()
+        self.start_release = mock.patch.object(
+            gateway.release,
+            "start_private_release",
+            side_effect=AssertionError("preparation must not start a release"),
+        ).start()
+        self.private_probe = mock.patch.object(
+            gateway.release.release_probe,
+            "verify_private_release",
+            side_effect=AssertionError(
+                "preparation must not repeat private acceptance"
+            ),
         ).start()
 
     def prepare(self):
@@ -173,6 +185,9 @@ class GatewayPreparationTests(unittest.TestCase):
         self.assertFalse((self.config.state_root / "active.json").exists())
         self.assertFalse((root / "routes/active.conf").exists())
         self.docker.call.assert_not_called()
+        self.acceptance.assert_called_once()
+        self.start_release.assert_not_called()
+        self.private_probe.assert_not_called()
 
     def test_completed_reuse_reverifies_authority_and_changes_no_candidates(self):
         self.prepare()
@@ -190,6 +205,9 @@ class GatewayPreparationTests(unittest.TestCase):
         }
         self.assertEqual(before, after)
         self.assertEqual(2, self.acceptance.call_count)
+        self.start_release.assert_not_called()
+        self.private_probe.assert_not_called()
+        self.docker.call.assert_not_called()
 
     def test_candidate_files_preserve_real_exact_three_release_host_boundary(self):
         host, unused_baseline, leased, lease, unused_verified = host_evidence()
@@ -236,13 +254,23 @@ class GatewayPreparationTests(unittest.TestCase):
         self.assertEqual(before, (prepared.stat().st_ino, prepared.read_bytes()))
         self.docker.call.assert_not_called()
 
-    def test_partial_release_rejected_before_facade_could_start_any_services(self):
-        (self.slot / "complete.json").unlink()
-        with self.assertRaisesRegex(gateway.GatewayError, "completed_release_required"):
-            self.prepare()
-        self.acceptance.assert_not_called()
-        self.docker.inspect.assert_not_called()
-        self.assertFalse((self.config.state_root / "gateway").exists())
+    def test_partial_release_rejected_before_authority_verification(self):
+        for filename in gateway.release.FILES:
+            with self.subTest(filename=filename):
+                path = self.slot / filename
+                contents = path.read_bytes()
+                path.unlink()
+                with self.assertRaisesRegex(
+                    gateway.GatewayError, "completed_release_required"
+                ):
+                    self.prepare()
+                self.acceptance.assert_not_called()
+                self.docker.inspect.assert_not_called()
+                self.start_release.assert_not_called()
+                self.private_probe.assert_not_called()
+                self.assertFalse((self.config.state_root / "gateway").exists())
+                path.write_bytes(contents)
+                path.chmod(0o600)
 
     def test_failed_release_reverification_publishes_nothing_and_hides_private_error(
         self,
@@ -253,14 +281,29 @@ class GatewayPreparationTests(unittest.TestCase):
         ):
             self.prepare()
         self.assertFalse((self.config.state_root / "gateway").exists())
+        self.start_release.assert_not_called()
+        self.private_probe.assert_not_called()
 
-    def test_start_result_cannot_be_adopted_as_completed_reuse(self):
-        self.acceptance.return_value = {**self.completed, "runtime_reused": False}
-        with self.assertRaisesRegex(gateway.GatewayError, "completed_release_required"):
-            self.prepare()
-        self.assertFalse((self.config.state_root / "gateway").exists())
+    def test_changed_verified_completion_cannot_be_prepared(self):
+        for change in (
+            {"runtime_reused": False},
+            {"revision": "f" * 40},
+            {"project": "depositar-ai-release-" + "f" * 12 + "-" + "f" * 12},
+        ):
+            with self.subTest(change=change):
+                self.acceptance.return_value = {
+                    **self.completed,
+                    "runtime_reused": True,
+                    **change,
+                }
+                with self.assertRaises(gateway.GatewayError):
+                    self.prepare()
+                self.assertFalse((self.config.state_root / "gateway").exists())
+                self.start_release.assert_not_called()
+                self.private_probe.assert_not_called()
+                self.docker.call.assert_not_called()
 
-    def test_foreign_singleton_is_rejected_before_release_probe(self):
+    def test_foreign_singleton_is_rejected_before_release_verification(self):
         self.inventory.return_value = (["f" * 64], {"depositar-ai-gateway_ingress"})
         with self.assertRaisesRegex(
             gateway.GatewayError, "existing_runtime_not_adopted"
@@ -321,7 +364,7 @@ class GatewayPreparationTests(unittest.TestCase):
                 self.prepare()
         self.assertFalse((self.config.state_root / "gateway/prepared.json").exists())
 
-    def test_release_receipt_drift_after_probe_blocks_publication(self):
+    def test_release_receipt_drift_after_verification_blocks_publication(self):
         def drift(*args, **kwargs):
             (self.slot / "lease.json").write_text('{"changed":true}\n')
             return {**self.completed, "runtime_reused": True}

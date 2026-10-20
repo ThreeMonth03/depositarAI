@@ -4,6 +4,12 @@
 與 runtime 後，首次開啟 `127.0.0.1:18083`。命令及前置條件見
 [產品 CLI](PRODUCT_LIFECYCLE.md)，日常啟動流程見[部署指南](../guide/operations.md)。
 
+先執行 `start-release` 完成私有模型暖機、readiness、搜尋與 reset 驗收。
+`prepare-gateway` 核對已完成的 release、實際容器與網路、映像、模型檔案、
+GPU ownership 及查詢權限，再封存候選路由；不建立或重啟 release 服務，
+也不重跑模型暖機與搜尋。缺少完成紀錄或實際狀態不符時，命令會停止，
+不代為補建 release。`activate-gateway` 會再次核對這些條件，並保留最後的入口搜尋驗收。
+
 ## 啟用順序
 
 1. 核對目前應用版本的完成 release、映像及路由素材，以及相容的 catalog、查詢權限與已封存 GPU leases。

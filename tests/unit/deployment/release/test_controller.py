@@ -209,11 +209,7 @@ class PrivateReleaseTests(unittest.TestCase):
         ).start()
         fixture = self
 
-        class Host:
-            def __init__(self, *args):
-                self.lease = None
-                self.last = None
-
+        class Host(release._Host):
             def observe(self, *args, **kwargs):
                 fixture.runtime_calls += 1
                 self.last = (
@@ -277,6 +273,23 @@ class PrivateReleaseTests(unittest.TestCase):
                 self.config, store, self.revision, self.plan, repo_root=self.root
             )
 
+    def verify_completed(self):
+        with locked_state(self.config) as store:
+            return release.verify_completed_private_release(
+                self.config, store, self.revision, self.plan, repo_root=self.root
+            )
+
+    def receipts(self):
+        return {
+            str(path.relative_to(self.config.state_root)): (
+                path.stat().st_ino,
+                path.stat().st_mtime_ns,
+                path.read_bytes(),
+            )
+            for path in self.config.state_root.rglob("*")
+            if path.is_file()
+        }
+
     def slot(self):
         return (
             self.config.state_root
@@ -322,6 +335,183 @@ class PrivateReleaseTests(unittest.TestCase):
             [call for call in calls if call[0] == "compose"],
             [call for call in self.docker.calls if call[0] == "compose"],
         )
+
+    def test_verification_requires_completion_without_creating_release_state(self):
+        before = self.receipts()
+        with self.assertRaises(release.ReleaseError):
+            self.verify_completed()
+        self.assertEqual(before, self.receipts())
+        self.assertFalse((self.config.state_root / "releases").exists())
+        self.assertFalse(self.docker.started)
+        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.probe.assert_not_called()
+
+    def test_completed_verification_is_readonly_without_repeating_acceptance(self):
+        started = self.invoke()
+        before = self.receipts()
+        self.docker.calls.clear()
+        queries = self.queries
+        observed = self.runtime_calls
+        model_checks = self.model_checks
+        result = self.verify_completed()
+        self.assertEqual(
+            {key: value for key, value in started.items() if key != "runtime_reused"},
+            {key: value for key, value in result.items() if key != "runtime_reused"},
+        )
+        self.assertTrue(result["runtime_reused"])
+        self.assertEqual(before, self.receipts())
+        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertEqual(1, self.probe.call_count)
+        self.assertGreater(self.queries, queries)
+        self.assertGreater(self.runtime_calls, observed)
+        self.assertGreater(self.model_checks, model_checks)
+
+    def test_partial_completed_verification_never_repairs_or_restarts(self):
+        self.invoke()
+        for filename in release.FILES:
+            with self.subTest(filename=filename):
+                path = self.slot() / filename
+                contents = path.read_bytes()
+                path.unlink()
+                before = self.receipts()
+                self.docker.calls.clear()
+                with self.assertRaises(release.ReleaseError):
+                    self.verify_completed()
+                self.assertEqual(before, self.receipts())
+                self.assertFalse(path.exists())
+                self.assertFalse(
+                    any(call[0] == "compose" for call in self.docker.calls)
+                )
+                self.assertEqual(1, self.probe.call_count)
+                path.write_bytes(contents)
+                path.chmod(0o600)
+
+    def test_completed_verification_rejects_missing_pointer_without_repair(self):
+        self.invoke()
+        pointer = self.config.state_root / "release-candidate.json"
+        pointer.unlink()
+        before = self.receipts()
+        self.docker.calls.clear()
+        with self.assertRaises(release.ReleaseError):
+            self.verify_completed()
+        self.assertEqual(before, self.receipts())
+        self.assertFalse(pointer.exists())
+        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertEqual(1, self.probe.call_count)
+
+    def test_completed_verification_rejects_authority_drift_without_acceptance(self):
+        self.invoke()
+        before = self.receipts()
+        for authority in ("source", "query", "credential", "image"):
+            with self.subTest(authority=authority):
+                query_authority = copy.deepcopy(self.authority)
+                images = copy.deepcopy(self.images)
+                self.source_changed = authority == "source"
+                self.key_drift_after_start = authority == "credential"
+                if authority == "query":
+                    self.authority["changed"] = True
+                elif authority == "image":
+                    self.images["web"]["Id"] = "sha256:" + "f" * 64
+                self.docker.calls.clear()
+                try:
+                    with self.assertRaises(release.ReleaseError):
+                        self.verify_completed()
+                    self.assertEqual(before, self.receipts())
+                    self.assertFalse(
+                        any(call[0] == "compose" for call in self.docker.calls)
+                    )
+                    self.assertEqual(1, self.probe.call_count)
+                finally:
+                    self.source_changed = False
+                    self.key_drift_after_start = False
+                    self.authority = query_authority
+                    self.images = images
+
+    def test_completed_verification_rejects_replaced_and_restarted_runtime(self):
+        self.invoke()
+        before = self.receipts()
+        original = copy.deepcopy(self.proof)
+        for change in ("container", "start"):
+            with self.subTest(change=change):
+                self.proof = copy.deepcopy(original)
+                if change == "container":
+                    self.proof["container_ids"]["web"] = "f" * 64
+                else:
+                    self.proof["start_identity_sha256"] = "f" * 64
+                self.docker.calls.clear()
+                with self.assertRaisesRegex(
+                    release.ReleaseError, "completed_runtime_changed"
+                ):
+                    self.verify_completed()
+                self.assertEqual(before, self.receipts())
+                self.assertFalse(
+                    any(call[0] == "compose" for call in self.docker.calls)
+                )
+                self.assertEqual(1, self.probe.call_count)
+
+    def test_runtime_drift_during_completed_verification_is_rejected(self):
+        self.invoke()
+        before = self.receipts()
+        observation = self.runtime_calls
+
+        def restart(count):
+            if count == observation + 2:
+                self.proof["start_identity_sha256"] = "f" * 64
+
+        self.on_observe = restart
+        self.docker.calls.clear()
+        with self.assertRaises(release.ReleaseError):
+            self.verify_completed()
+        self.assertEqual(before, self.receipts())
+        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertEqual(1, self.probe.call_count)
+
+    def test_completed_verification_handle_exit_failure_is_not_success(self):
+        self.invoke()
+        before = self.receipts()
+        self.close_failure = True
+        self.docker.calls.clear()
+        with self.assertRaises(release.ReleaseError):
+            self.verify_completed()
+        self.assertEqual(before, self.receipts())
+        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertEqual(1, self.probe.call_count)
+
+    def test_successful_model_handle_exit_cannot_hide_receipt_drift(self):
+        self.invoke()
+        for path in (
+            self.slot() / "lease.json",
+            self.slot() / "complete.json",
+            self.config.state_root / "release-candidate.json",
+        ):
+            with self.subTest(receipt=path.name):
+                contents = path.read_bytes()
+                changed = json.loads(contents)
+                changed["unexpected"] = True
+                changed = json.dumps(changed).encode()
+
+                @contextmanager
+                def mutate_on_close(*args, **kwargs):
+                    with self.models(*args, **kwargs) as materials:
+                        yield materials
+                    path.write_bytes(changed)
+
+                self.docker.calls.clear()
+                try:
+                    with (
+                        mock.patch.object(
+                            release.inference, "_verified_models", mutate_on_close
+                        ),
+                        self.assertRaises(release.ReleaseError),
+                    ):
+                        self.verify_completed()
+                    self.assertEqual(changed, path.read_bytes())
+                    self.assertFalse(
+                        any(call[0] == "compose" for call in self.docker.calls)
+                    )
+                    self.assertEqual(1, self.probe.call_count)
+                finally:
+                    path.write_bytes(contents)
 
     def test_failed_up_keeps_started_intent_and_refuses_blind_retry(self):
         self.docker.fail_up = True
