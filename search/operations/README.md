@@ -22,7 +22,7 @@ the command order, prerequisites and incomplete installer boundaries.
 | [deployment/runtime_docker.py](deployment/runtime_docker.py) | Shared local Docker client with fixed CLI environment, command/output accounting and client guards; controllers retain runtime authority |
 | [deployment/image_authority.py](deployment/image_authority.py) | Read and authenticate completed source/image evidence against the caller's source plan; no runtime mutation or GPU/model policy |
 | [public_entry/profile.py](deployment/public_entry/profile.py), [host.py](deployment/public_entry/host.py) | Optional APISIX/OIDC entrance configuration and atomic private-material preparation |
-| [public_entry/preflight.py](deployment/public_entry/preflight.py), [updates.py](deployment/public_entry/updates.py) | Private-backend admission and image-only CPU website startup/update/rollback/recovery, retaining Redis quota identity |
+| [public_entry/preflight.py](deployment/public_entry/preflight.py), [updates.py](deployment/public_entry/updates.py) | Private-backend admission and paired CPU website startup, update and manual rollback, retaining Redis quotas |
 | [shared/](shared/private_io.py) | Private IO, bounded HTTP/JSON, process-pipe capture, source identity and runtime probes |
 
 The CLI loads a command's domain when dispatching it. Help and argument parsing
@@ -71,7 +71,7 @@ File and package names follow the [naming rules](../../STYLE.md#檔案與目錄�
 Tests are split into [operations](../../tests/unit/operations/),
 [catalog](../../tests/unit/catalog/) and [deployment](../../tests/unit/deployment/)
 policy/failure cases. [tests/integration/](../../tests/integration/) covers rendered
-Compose and isolated real OSS bootstrap/update/recovery contracts. Use existing
+Compose and isolated real OSS bootstrap, update and manual rollback. Use existing
 gates from [CI](../../.github/workflows/ci.yml); unit receipts alone do not prove a
 live deployment is healthy.
 Public-entry unit tests mirror the source domain in

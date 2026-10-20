@@ -47,26 +47,20 @@ def _translate(node):
     raise ValueError("unsupported internal comparison")
 
 
-def condition_filter(conditions, policy="retain_unknown"):
+def condition_filter(conditions):
     validate_conditions(conditions)
     if "bbox" in conditions:
         raise ValueError("geographic index filtering not enabled")
-    if policy not in ("strict", "retain_unknown", "outside", "unknown", "all"):
-        raise ValueError("unknown filter policy")
-    filters = compile_filters(conditions)
-    match, outside = (_translate(filters[k]) for k in ("match", "outside"))
+    outside = _translate(compile_filters(conditions)["outside"])
+    # Retain matching and unknown observations; exclude only proven mismatches.
     # A missing/unmigrated projection is an error in the index, NOT an unknown
-    # observation date. All modes must fail closed for those documents.
-    query = {"filter": [{"term": {FIELD + ".schema": VERSION}}]}
-    if policy == "strict":
-        query["filter"].append(match)
-    elif policy == "outside":
-        query["filter"].append(outside)
-    elif policy == "retain_unknown":
-        query["must_not"] = [outside]
-    elif policy == "unknown":
-        query["must_not"] = [match, outside]
-    return {"bool": query}
+    # observation date, so those documents must fail closed.
+    return {
+        "bool": {
+            "filter": [{"term": {FIELD + ".schema": VERSION}}],
+            "must_not": [outside],
+        }
+    }
 
 
 def catalog_filter(bundle_id):
@@ -95,7 +89,6 @@ def retrieval_query(
     bundle_id,
     *,
     branch,
-    policy="retain_unknown",
     top_k=20,
     vector=None,
 ):
@@ -109,9 +102,7 @@ def retrieval_query(
         raise ValueError("top_k outside 1..20")
     literal = normalize_query(query)
     filt = {
-        "bool": {
-            "filter": [catalog_filter(bundle_id), condition_filter(conditions, policy)]
-        }
+        "bool": {"filter": [catalog_filter(bundle_id), condition_filter(conditions)]}
     }
     if branch == "lexical":
         ranked = {

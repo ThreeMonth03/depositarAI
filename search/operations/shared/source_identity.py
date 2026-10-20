@@ -21,7 +21,6 @@ SOURCE_PATHS = (
     "scripts/search_model_source.py",
     "scripts/validate_search_compose.py",
     "scripts/validate_search_web.py",
-    "scripts/check_gpu_assignments.py",
     "scripts/prepare_search_models.py",
 )
 

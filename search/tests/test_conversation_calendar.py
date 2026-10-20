@@ -10,6 +10,7 @@ from search.api.conversation.contract import (
     ModelTurnPlan,
     MESSAGES,
     SearchState,
+    TurnPlan,
     TurnRequest,
     model_plan_schema,
 )
@@ -279,7 +280,7 @@ class FormatSchemaTests(unittest.TestCase):
                     }
                 ).compile()
 
-    def test_model_can_explain_unsupported_calendar_but_cannot_apply_it(self):
+    def test_unsupported_calendar_reason_is_rejected(self):
         raw = {
             "action": "clarify",
             "topic": None,
@@ -287,20 +288,26 @@ class FormatSchemaTests(unittest.TestCase):
             "formats": "keep",
             "reason": "unsupported_calendar",
         }
-        self.assertEqual(
-            ModelTurnPlan.model_validate(raw).compile().reason, "unsupported_calendar"
-        )
+        for model, payload in (
+            (ModelTurnPlan, raw),
+            (
+                TurnPlan,
+                {
+                    **PLAN,
+                    "action": "clarify",
+                    "topic": None,
+                    "reason": "unsupported_calendar",
+                },
+            ),
+        ):
+            with self.subTest(model=model.__name__), self.assertRaises(ValueError):
+                model.model_validate(payload)
         branch = next(
             b
             for b in model_plan_schema()["anyOf"]
             if b["properties"]["action"]["enum"] == ["clarify"]
         )
-        # Retain legacy response compatibility, but never generate this reason.
         self.assertNotIn("unsupported_calendar", branch["properties"]["reason"]["enum"])
-        with self.assertRaises(ValueError):
-            ModelTurnPlan.model_validate(
-                {**raw, "time": {"start": "2024", "end": "2024"}}
-            ).compile()
 
     def test_generation_forbids_empty_or_unbounded_format_arrays(self):
         for branch in model_plan_schema()["anyOf"]:
@@ -484,16 +491,19 @@ class CalendarEngineTests(unittest.TestCase):
             self.assertIsNone(result.state.unapplied_time)
             self.assertNotIn(MESSAGES["lunar_time_unapplied"], result.notices)
 
-    def test_planner_calendar_clarification_uses_same_message_and_keeps_state(self):
+    def test_legacy_calendar_reason_is_unavailable_and_preserves_state(self):
         self.backend.plan = {
             **PLAN,
             "action": "clarify",
             "topic": None,
             "reason": "unsupported_calendar",
         }
-        state = SearchState(topic="氣候", formats=["CSV"])
+        state = SearchState(
+            topic="氣候", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+        )
         result = self.turn("用傳統陰陽合曆限定日期範圍", state=state)
-        self.assertEqual(result.message, MESSAGES["unsupported_calendar"])
+        self.assertEqual(result.status, "unavailable")
+        self.assertIsNone(result.search)
         self.assertEqual(result.state, state)
         self.assertEqual(
             [call[0] for call in self.backend.calls], ["scope", "conversation_plan"]

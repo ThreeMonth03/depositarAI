@@ -51,7 +51,7 @@ class IndexFilterTests(unittest.TestCase):
         self.assertEqual(source, before)
         self.assertEqual(projected["schema"], index.VERSION)
 
-    def test_generated_filters_equal_independent_reference(self):
+    def test_filter_retains_matches_and_unknowns_from_independent_reference(self):
         dates = [None, "2019", "2020", "2020-06", "2020-06-15", "2025", "invalid"]
         conditions = [
             {},
@@ -72,20 +72,17 @@ class IndexFilterTests(unittest.TestCase):
                 index.FIELD + "." + k: v
                 for k, v in index.metadata(doc, "a" * 64).items()
             }
-            for policy, expected in (
-                ("strict", state == "match"),
-                ("outside", state == "outside"),
-                ("unknown", state == "unknown"),
-                ("retain_unknown", state != "outside"),
-                ("all", True),
-            ):
-                self.assertEqual(
-                    evaluate(compiler.condition_filter(cond, policy), flat), expected
-                )
+            self.assertEqual(
+                evaluate(compiler.condition_filter(cond), flat), state != "outside"
+            )
 
-    def test_missing_schema_is_not_treated_as_unknown(self):
-        for policy in ("strict", "retain_unknown", "unknown", "outside", "all"):
-            self.assertFalse(evaluate(compiler.condition_filter({}, policy), {}))
+    def test_missing_or_mismatched_schema_is_not_treated_as_unknown(self):
+        for conditions, flat in itertools.product(
+            ({}, {"time": {"start": "2020", "end": None}}, {"formats": ["CSV"]}),
+            ({}, {index.FIELD + ".schema": "unsupported-schema"}),
+        ):
+            with self.subTest(conditions=conditions, flat=flat):
+                self.assertFalse(evaluate(compiler.condition_filter(conditions), flat))
 
     def test_invalid_conditions_and_unimplemented_geo_fail_closed(self):
         for value in (
@@ -96,8 +93,6 @@ class IndexFilterTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 compiler.condition_filter(value)
-        with self.assertRaises(ValueError):
-            compiler.condition_filter({}, "user_defined")
 
     def test_same_filter_in_lexical_vector_and_outer_boundary(self):
         args = ("去年水質 CSV", {"formats": ["CSV"]}, "a" * 64)

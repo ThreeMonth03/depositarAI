@@ -133,30 +133,6 @@ class WebHTTPTests(unittest.TestCase):
         self.assertIsNone(item.pending)
         self.assertEqual(item.version, 1)
 
-    def test_unsupported_calendar_is_not_saved_as_pending(self):
-        self.upstream.status, self.upstream.reason = (
-            "clarification_required",
-            "unsupported_calendar",
-        )
-        for state in (
-            SearchState(),
-            SearchState(
-                topic="水質", time={"start": "2024", "end": "2024"}, formats=["CSV"]
-            ),
-        ):
-            with self.subTest(state=state):
-                item = self.store.get(self.token)
-                item.state = state
-                item.pending = "舊的農曆區間問題"
-                response = self.turn(query="農曆正月到三月", version=item.version)
-                self.assertEqual(response.status_code, 200)
-                self.assertIsNone(item.pending)
-                self.assertEqual(item.state, state)
-        self.upstream.status, self.upstream.reason = "ok", "none"
-        self.turn(query="找2023年的水質CSV資料", version=item.version)
-        self.assertIsNone(self.upstream.calls[-1]["pending"])
-        self.assertEqual(self.upstream.calls[-1]["state"], state.model_dump())
-
     def test_origin_is_required_and_exact(self):
         for origin in (
             None,

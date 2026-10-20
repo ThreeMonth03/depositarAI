@@ -84,7 +84,7 @@ Browser 使用單一 worker，直接連到使用正常 image entrypoint 的隔�
 | `python-images`／`web-image` 慢 | Docker build 的 cache miss 與變更輸入，避免把無關來源放大成整包重建。 |
 | Unit 或契約失敗 | 第一個 traceback、失敗案例及該 phase exit code；先在相同來源重現最小範圍。 |
 | OSS readiness／bootstrap 失敗 | 該次隔離 fixture 的狀態與啟動 log，不延長所有 timeout 掩蓋真正錯誤。 |
-| Browser 429 或偶發互相影響 | 每例 gateway reset／ready、worker 數與 fixture 殘留；保留正式限流。 |
+| Browser 429 或偶發互相影響 | 先辨識回應來自 BFF、私有 API 或公眾 APISIX，再查並發與 fixture 殘留；公眾限流由 OSS suite 驗證。 |
 | 分流成功但彙整失敗 | 兩邊 SHA／tree、scope、suite outcome 與取消狀態。 |
 | 中斷後仍有背景工作 | 該次 image pull、process group 與 fixture cleanup；只清理已辨識的本輪資源。 |
 

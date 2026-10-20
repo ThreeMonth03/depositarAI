@@ -6,7 +6,7 @@ review，合併後不留長期分歧版本。舊程式與操作紀錄透過 Git 
 ## 目錄用途
 
 ```text
-depositar-platform/
+depositarAI/
 ├── README.md                  產品範圍與閱讀入口
 ├── STYLE.md                   程式及文件寫法
 ├── Makefile                   產品、前端及檢查入口

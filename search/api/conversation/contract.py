@@ -86,7 +86,6 @@ class TurnPlan(StrictModel):
         "ambiguous_time",
         "missing_topic",
         "unsupported_condition",
-        "unsupported_calendar",
         "location_not_supported",
         "off_topic",
         "unsafe",
@@ -113,7 +112,6 @@ class TurnPlan(StrictModel):
                 "ambiguous_time",
                 "missing_topic",
                 "unsupported_condition",
-                "unsupported_calendar",
                 "location_not_supported",
             },
             "reject": {"off_topic", "unsafe"},
@@ -183,7 +181,6 @@ class ModelTurnPlan(StrictModel):
         "ambiguous_time",
         "missing_topic",
         "unsupported_condition",
-        "unsupported_calendar",
         "location_not_supported",
         "off_topic",
         "unsafe",
@@ -296,7 +293,6 @@ def model_plan_schema(*, allow_refine=True, relative_only=False, relative_texts=
 
 MESSAGES = {
     "lunar_time_unapplied": "已保留農曆文字搜尋相關資料；未換算國曆，也未套用日期篩選，結果不保證符合該農曆期間。若需精確篩選，請補充國曆日期或起訖範圍。",
-    "unsupported_calendar": "目前不支援農曆日期或區間篩選。請重新提供完整的搜尋主題與國曆日期（可用西元或民國紀年；區間請提供起訖日期）。這個農曆請求不會保留為待完成條件，原本已套用的搜尋條件不會更改。",
     "ambiguous_time": "請提供明確年份或日期範圍，例如「2025 年」或「最近三年」。",
     "missing_topic": "你想找哪一類資料集？例如河川水質、氣候觀測或土地利用。",
     "unsupported_condition": "這個條件目前不支援。可搜尋主題、資料涵蓋時間與檔案格式；不支援更新日、排除條件或直接解讀檔案內容。",

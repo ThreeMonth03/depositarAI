@@ -242,14 +242,7 @@ def create_app(settings=None, upstream=None, sessions=None):
                     if result.status == "ok":
                         session.state, session.pending = result.state, None
                     elif result.status == "clarification_required":
-                        # A disabled calendar is not a resumable date ambiguity.
-                        # Preserve committed filters, but do not replay a rejected
-                        # lunar restriction into a later civil-date request.
-                        session.pending = (
-                            None
-                            if result.reason == "unsupported_calendar"
-                            else session.pending or payload.query
-                        )
+                        session.pending = session.pending or payload.query
                     # Rejections cannot poison state or pending clarification.
                     session.version += 1
                     return Response(

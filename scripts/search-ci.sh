@@ -60,7 +60,6 @@ python3 -m unittest -v \
   search.tests.test_index \
   search.tests.test_time_context \
   search.tests.test_reranker_service \
-  tests.test_gpu_assignments \
   tests.test_prepare_search_models \
   tests.test_search_canary_bootstrap \
   tests.test_search_ci_scope \
@@ -146,7 +145,6 @@ from pathlib import Path
 
 roots = (Path("search"), Path("deploy/docker"))
 files = [
-    Path("scripts/check_gpu_assignments.py"),
     Path("scripts/read_env.py"),
     Path("scripts/search_dictionary_permissions.py"),
     Path("scripts/search_model_source.py"),
