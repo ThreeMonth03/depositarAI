@@ -25,7 +25,7 @@ shell_files=(
   scripts/ci/install-gitleaks.sh
   scripts/ci/source-package.sh
   scripts/ci/source-restore.sh
-  scripts/bootstrap-search-canary.sh
+  scripts/bootstrap-catalog.sh
   scripts/search-lib.sh
   deploy/docker/fess/entrypoint.sh
   deploy/docker/fess/fess_healthcheck.sh
@@ -61,7 +61,7 @@ python3 -m unittest -v \
   search.tests.test_time_context \
   search.tests.test_reranker_service \
   tests.test_prepare_search_models \
-  tests.test_search_canary_bootstrap \
+  tests.test_catalog_bootstrap \
   tests.test_search_ci_scope \
   tests.unit.deployment.test_ci_compose_install \
   tests.unit.deployment.test_ci_workflows \
@@ -138,7 +138,7 @@ python3 -m unittest -v \
   tests.test_search_gitignore_policy \
   tests.test_search_image_hardening \
   tests.test_search_runtime_helpers \
-  tests.test_validate_search_compose
+  tests.test_validate_catalog_compose
 
 python3 - <<'PY'
 from pathlib import Path
@@ -148,7 +148,7 @@ files = [
     Path("scripts/read_env.py"),
     Path("scripts/search_dictionary_permissions.py"),
     Path("scripts/search_model_source.py"),
-    Path("scripts/validate_search_compose.py"),
+    Path("scripts/validate_catalog_compose.py"),
 ]
 for root in roots:
     files.extend(root.rglob("*.py"))
@@ -160,16 +160,10 @@ PY
 normalized_cpu_config="$(mktemp)"
 trap 'rm -f -- "$normalized_cpu_config"' EXIT HUP INT TERM
 docker compose \
-  --env-file deploy/env/.env.search-canary.example \
-  --file deploy/compose/compose.search-canary.yaml \
+  --env-file deploy/env/catalog.env.example \
+  --file deploy/compose/compose.catalog.yaml \
   config --format json >"$normalized_cpu_config"
-python3 scripts/validate_search_compose.py <"$normalized_cpu_config"
-
-# Render the distinct bounded product profile without starting any service.
-SEARCH_VECTOR_PASS_DOCUMENTS=256 \
-  docker compose --env-file deploy/env/.env.search-canary.example \
-    --file deploy/compose/compose.search-canary.yaml config --format json \
-  | python3 -c 'import json,sys; from scripts.validate_search_compose import validate; validate(json.load(sys.stdin), vector_pass_documents=256)'
+python3 scripts/validate_catalog_compose.py <"$normalized_cpu_config"
 
 echo "Search-only CI checks passed."
 ./scripts/test-search-api.sh

@@ -10,14 +10,13 @@
 
 ## 配置與 GPU 分工
 
-範本：[bind 儲存](../../deploy/env/product.example.json)、
-[Docker local volume](../../deploy/env/product-local-volume.example.json)。
+唯一範本：[product.example.json](../../deploy/env/product.example.json)。
 複製到 Git 外的私有位置，替換所有路徑與 UUID；不要將真實設定或憑證放入 Git。
 
 | 欄位 | 契約 |
 |---|---|
-| `schema_version` | 整數 `1` 使用 bind profile；整數 `2` 使用 Docker local volume |
-| `catalog_storage` | schema 2 必填且固定為 `"docker-volume"`；schema 1 不接受此欄位 |
+| `schema_version` | 固定為整數 `2` |
+| `catalog_storage` | 必填且固定為 `"docker-volume"` |
 | `state_root` | 專用產品 state、metadata cache、操作收據及 catalog 準備目錄 |
 | `api_model_root` | 已備妥的 Ollama scope／planner 模型快取 |
 | `embedding_model_root` | 已備妥的 Granite embedding 模型快取 |
@@ -27,7 +26,7 @@
 | `gpus.reranker` | 一個實體 GPU UUID，供候選重排 |
 | `cache_ttl_seconds` | 必填整數 `0`–`3600`；填 `0` 關閉 TTL 重用，不是排程間隔 |
 
-JSON 必須恰有對應 schema 的欄位，不接受重複鍵、額外欄位或以字串代替數字。
+JSON 必須恰有上述欄位，不接受重複鍵、額外欄位或以字串代替數字。
 四個 GPU UUID 必須互不重疊，且存在於硬體 inventory；容器內的 GPU 編號不能替代 UUID。
 設定不會替操作者取得 GPU 獨占權，啟動前仍須確認其他工作的 ownership。
 
@@ -42,10 +41,9 @@ JSON 必須恰有對應 schema 的欄位，不接受重複鍵、額外欄位或�
 
 ### 本機 Docker 索引 volume
 
-schema 1 的 catalog data 使用 bind，不能位於操作帳號的 home 下。
-schema 2 只將 OpenSearch data 改放固定 catalog project 專用的 Docker local named
-volume；metadata、模型、配置與憑證仍使用受保護的 bind mounts。此 profile 允許
-`state_root` 放在 home 下的專用子目錄，其他路徑與權限限制不變。
+OpenSearch 索引資料固定放在 catalog project 專用的 Docker local named volume；
+metadata、Fess dictionary、模型、配置與憑證仍使用受保護的私有路徑與 bind mounts。
+`state_root` 可放在 home 下的專用子目錄，須符合上述權限與路徑限制。
 
 CLI 建立並核對固定 volume identity；Compose 使用 external volume 與 `nocopy=true`。
 不接受任意 volume 名稱、driver options，亦不自動認領同名舊 volume。
@@ -56,6 +54,12 @@ local volume 使用 Docker daemon 的本機儲存，不會自動設定 quota 或
 容量須另計 metadata、保留版本、catalog 準備時複製的 embedding 模型、映像及交付包。
 `doctor` 的 `available_bytes` 是檔案系統可用量，不代表個人或群組 quota 剩餘額度。
 後續命令保持同一個 `state_root`；不要搬動目錄或修改收據來認領既有資料。
+
+儲存或 bootstrap 配方變更需要新 catalog slot，重新匯入 metadata 並建立向量；
+metadata builder 未變時，原有 sealed metadata 仍可核對後沿用。舊 bind 設定、state
+與 runtime 收據不原地遷移；改用本範本及新的私有 state，保留原始資料供交接。
+不要修改設定 marker、manifest 或完成收據來認領舊服務；詳見
+[Catalog cache](CATALOG_CACHE.md#catalog-storage-and-bootstrap-changes)。
 
 ## 現在可用的入口
 
@@ -133,6 +137,14 @@ review reasons。所有結果固定 `promotion_allowed=false`，不自動改寫 
 qualified tag 與 immutable image ID 成對傳給內部 bootstrap helper。操作者使用
 產品 CLI，不另拼接 bootstrap／Compose 指令；既有 security material 必須先核對
 才能重用，不能手動改 hash 來繞過 provenance。
+
+首次初始化索引 volume 還需要已核對的 catalog-admin image，以及本 slot 封存的
+`admin-image.json`。`build-catalog-images` 會準備服務與 admin images 及其收據，
+這個準備步驟可能建置映像，不是完全不 build 的安裝流程。
+`start-index --prebuilt-images /private/catalog-images.json` 本身不 build 或 pull；
+它要求這些 admin 素材已存在，缺少或不符時會在寫入啟動 intent 前拒絕。
+三個 catalog services 的映像收據不能取代 admin image 或 volume 初始化證據；
+不可從別的 slot 複製收據來補足前置條件。
 
 ### 相容重用與向量預算
 
@@ -277,7 +289,8 @@ history policy；來源先通過 exact Git／archive／CLI roundtrip，才匯出
 只有 payload、checksum、source 與 image authority 最後核對成功，才發布 `package.json`。
 失敗目的目錄保留診斷，不覆寫、不自動刪除或續寫；修正原因後改用新的目的目錄。
 
-使用既有 prepared slot 與本機映像時，可明確避免重新 build／pull：
+使用既有 prepared slot 與本機映像，且已完成本 slot 的 catalog-admin image 與
+`admin-image.json` 核對時，可明確避免重新 build／pull：
 
 ```sh
 python3 scripts/depositarai.py --config "$product_config" start-index \
@@ -285,7 +298,8 @@ python3 scripts/depositarai.py --config "$product_config" start-index \
 ```
 
 該收據須為操作帳號擁有的 `0600` regular file，禁止 symlink／hardlink。
-缺映像、source／project 不符、runtime 或 inspect 不符時直接失敗，不回退成線上 build。
+缺映像或 admin evidence、source／project 不符、runtime 或 inspect 不符時直接失敗，
+不回退成線上 build。`catalog-images.json` 本身不補建這些前置素材。
 從包選用原 catalog revision 時，`prepare-index --catalog-revision EXPECTED_CATALOG_REVISION`
 或 `stage-catalog --catalog-revision EXPECTED_CATALOG_REVISION` 仍須通過資料來源相容性檢查。
 

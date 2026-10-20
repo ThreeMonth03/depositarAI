@@ -138,19 +138,18 @@ class SearchCIScopeTests(unittest.TestCase):
             "search.tests.test_retrieval_results",
             "search.tests.test_scope",
             "search.tests.test_fess_catalog",
-            "tests.test_validate_search_compose",
-            "deploy/compose/compose.search-canary.yaml",
-            "SEARCH_VECTOR_PASS_DOCUMENTS=256",
-            "vector_pass_documents=256",
+            "tests.test_validate_catalog_compose",
+            "deploy/compose/compose.catalog.yaml",
+            "python3 scripts/validate_catalog_compose.py",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, script)
-        self.assertNotIn("compose.search-canary.gpu.yaml", script)
+        self.assertNotIn("compose.catalog.gpu.yaml", script)
         self.assertNotIn("SEARCH_OLLAMA_ACCELERATOR", script)
         self.assertNotIn("SEARCH_OLLAMA_GPU_DEVICE", script)
 
     def test_search_entrypoints_use_only_the_search_helper(self) -> None:
-        entrypoints = ("bootstrap-search-canary.sh",)
+        entrypoints = ("bootstrap-catalog.sh",)
         for name in entrypoints:
             with self.subTest(name=name):
                 source = (ROOT / "scripts" / name).read_text(encoding="utf-8")
@@ -193,7 +192,6 @@ class SearchCIScopeTests(unittest.TestCase):
         self.assertEqual(
             {
                 "help",
-                "search-canary-bootstrap",
                 "search-ci",
                 "test",
                 "ci",

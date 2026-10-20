@@ -23,6 +23,7 @@ GPU_UUID = re.compile(
 CONFIG_KEYS = frozenset(
     {
         "schema_version",
+        "catalog_storage",
         "state_root",
         "api_model_root",
         "embedding_model_root",
@@ -52,17 +53,19 @@ class ProductConfig:
     reranker_model_root: Path
     gpus: GPUConfig
     cache_ttl_seconds: int = 0
-    catalog_storage: str = "bind"
+    catalog_storage: str = "docker-volume"
 
     def to_dict(self) -> dict:
-        expected_storage = "docker-volume" if self.schema_version == 2 else "bind"
+        if type(self.schema_version) is not int or self.schema_version != 2:
+            raise ValueError("product_config_schema")
         if (
             type(self.catalog_storage) is not str
-            or self.catalog_storage != expected_storage
+            or self.catalog_storage != "docker-volume"
         ):
             raise ValueError("product_catalog_storage_invalid")
         value = {
             "schema_version": self.schema_version,
+            "catalog_storage": self.catalog_storage,
             "state_root": str(self.state_root),
             "api_model_root": str(self.api_model_root),
             "embedding_model_root": str(self.embedding_model_root),
@@ -74,8 +77,6 @@ class ProductConfig:
             },
             "cache_ttl_seconds": self.cache_ttl_seconds,
         }
-        if self.schema_version == 2:
-            value["catalog_storage"] = self.catalog_storage
         return value
 
 
@@ -141,17 +142,12 @@ def validate_config(
     if type(value) is not dict:
         raise ValueError("product_config_fields")
     schema = value.get("schema_version")
-    fields = CONFIG_KEYS | (
-        {"catalog_storage"} if type(schema) is int and schema == 2 else set()
-    )
-    if set(value) != fields:
+    if set(value) != CONFIG_KEYS:
         raise ValueError("product_config_fields")
-    if type(schema) is not int or schema not in (1, 2):
+    if type(schema) is not int or schema != 2:
         raise ValueError("product_config_schema")
-    catalog_storage = value["catalog_storage"] if schema == 2 else "bind"
-    if type(catalog_storage) is not str or catalog_storage != (
-        "docker-volume" if schema == 2 else "bind"
-    ):
+    catalog_storage = value["catalog_storage"]
+    if type(catalog_storage) is not str or catalog_storage != "docker-volume":
         raise ValueError("product_catalog_storage_invalid")
     ttl = value["cache_ttl_seconds"]
     if type(ttl) is not int or not 0 <= ttl <= 3600:

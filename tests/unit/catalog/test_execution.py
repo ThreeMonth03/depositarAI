@@ -82,6 +82,10 @@ class CatalogExecutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             execution.validate_storage_mounts(receipt, [row, other])
 
+    def test_missing_volume_evidence_never_skips_mount_validation(self):
+        with self.assertRaisesRegex(ValueError, "volume_binding_changed"):
+            execution.validate_storage_mounts(None, [])
+
     def test_real_child_recreates_iid_with_private_mode_without_parent_umask_changes(
         self,
     ):

@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 
 from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME
-from scripts import search_model_source, validate_search_compose
+from scripts import search_model_source, validate_catalog_compose
 from search.operations.catalog import execution as catalog_execution
 from search.operations.deployment import composition, image_build, source_bundle
 from search.operations.shared import private_io
@@ -296,8 +296,8 @@ def _catalog_images(plan, receipt):
         "catalog_images_inventory_invalid",
     )
     bases = {
-        "fess-search": validate_search_compose.FESS_BASE_IMAGE,
-        "opensearch-search": validate_search_compose.OPENSEARCH_BASE_IMAGE,
+        "fess-search": validate_catalog_compose.FESS_BASE_IMAGE,
+        "opensearch-search": validate_catalog_compose.OPENSEARCH_BASE_IMAGE,
     }
     clean = {
         "schema_version": 1,

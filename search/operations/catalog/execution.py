@@ -476,8 +476,6 @@ def require_storage(context):
     """Observe the sealed local volume without changing a running service."""
     from search.operations.catalog import volume_policy
 
-    if not volume_policy.enabled(context["compose"]):
-        return None
     identity = volume_policy.identity(
         catalog_identity(context),
         compose=context["compose"],
@@ -516,8 +514,8 @@ def require_storage(context):
 
 def validate_storage_mounts(storage_proof, containers):
     """Bind the sealed volume to the same unfiltered Docker container snapshot."""
-    if storage_proof is None:
-        return
+    if type(storage_proof) is not dict:
+        raise RuntimeError("catalog_runtime_volume_binding_changed")
     matches = []
     for row in containers:
         role = row.get("Config", {}).get("Labels", {}).get("com.docker.compose.service")

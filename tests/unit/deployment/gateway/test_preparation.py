@@ -210,7 +210,7 @@ class GatewayPreparationTests(unittest.TestCase):
         self.docker.call.assert_not_called()
 
     def test_candidate_files_preserve_real_exact_three_release_host_boundary(self):
-        host, unused_baseline, leased, lease, unused_verified = host_evidence()
+        host, unused_baseline, leased, lease, unused_verified = host_evidence(self)
         host.docker = SnapshotDocker(leased)
         host.lease = lease
         with mock.patch.object(

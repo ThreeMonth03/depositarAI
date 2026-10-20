@@ -6,7 +6,7 @@ COPY --chown=root:root opensearch_healthcheck.py /usr/local/bin/depositar-opense
 # OpenSearch's startup wrapper otherwise tries to create this file under
 # config. Bake an empty keystore into the immutable image so the runtime root
 # filesystem can remain read-only. The upstream config contains this
-# placeholder even though the canary mounts its own opensearch.yml.
+# placeholder even though the catalog mounts its own opensearch.yml.
 RUN set -eu; \
     FESS_DICTIONARY_PATH=/usr/share/opensearch/config/dictionary/ \
       /usr/share/opensearch/bin/opensearch-keystore create >/dev/null 2>&1; \

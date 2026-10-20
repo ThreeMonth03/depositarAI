@@ -1,4 +1,4 @@
-cluster.name: depositar-search-canary
+cluster.name: depositar-catalog
 node.name: opensearch-search
 network.host: 0.0.0.0
 discovery.type: single-node

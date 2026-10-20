@@ -21,20 +21,20 @@ def check_ignore(path: str) -> subprocess.CompletedProcess[str]:
 class SearchGitIgnorePolicyTests(unittest.TestCase):
     def test_generated_private_search_paths_are_ignored(self):
         paths = (
-            ".env.search-canary",
+            ".env.catalog",
             ".env.search-api",
             ".env.search-rerank",
             ".env.search-web",
-            "deploy/env/.env.search-canary",
+            "deploy/env/.env.catalog",
             "deploy/env/.env.search-api",
             "deploy/env/.env.search-rerank",
             "search-api-runtime",
             "search-runtime",
-            "search-canary-data/opensearch/nodes/0",
-            "search-canary-secrets/opensearch-password",
-            "search-canary-models/blobs/model",
-            "search-canary-index/nodes/0",
-            "search-canary-corpus/depositar.jsonl.gz",
+            "catalog-data/opensearch/nodes/0",
+            "catalog-secrets/opensearch-password",
+            "catalog-models/blobs/model",
+            "catalog-index/nodes/0",
+            "catalog-corpus/depositar.jsonl.gz",
             "search/secrets/opensearch-password",
             "search/models/blobs/model",
             "search/index/nodes/0",
@@ -48,7 +48,7 @@ class SearchGitIgnorePolicyTests(unittest.TestCase):
 
     def test_reviewable_search_inputs_are_not_ignored(self):
         paths = (
-            "deploy/env/.env.search-canary.example",
+            "deploy/env/catalog.env.example",
             "deploy/env/.env.search-web.example",
             "deploy/env/product.example.json",
         )

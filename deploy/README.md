@@ -24,7 +24,7 @@
 ## 檔案放置
 
 - `docker/`：上述七種映像及各自的 build-context allowlist。
-- `compose/compose.search-canary.yaml`：產品 catalog 準備流程仍使用的索引配置。
+- `compose/compose.catalog.yaml`：產品 catalog 準備流程仍使用的索引配置。
 - `compose/compose.search-web.yaml`：拆機 CPU 前端。
 - `env/`：產品、公眾入口、catalog 與拆機前端的非私密範本。
 - `config/`：Nginx、Fess、OpenSearch 的設定。

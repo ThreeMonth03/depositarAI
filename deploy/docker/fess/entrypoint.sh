@@ -6,7 +6,7 @@ readonly fess_home=/usr/share/fess
 readonly override_dir=/opt/fess
 
 die() {
-  printf 'Fess canary bootstrap refused: %s\n' "$1" >&2
+  printf 'Fess catalog bootstrap refused: %s\n' "$1" >&2
   exit 1
 }
 
@@ -211,7 +211,7 @@ disable_existing_scheduled_jobs() {
 
   now=$(( $(date +%s) * 1000 ))
   printf '%s\n' \
-    "{\"script\":{\"lang\":\"painless\",\"source\":\"ctx._source.available = false; ctx._source.cronExpression = params.cron; ctx._source.updatedBy = params.actor; ctx._source.updatedTime = params.now\",\"params\":{\"cron\":\"\",\"actor\":\"depositar-search-canary-bootstrap\",\"now\":${now}}},\"query\":{\"match_all\":{}}}" \
+    "{\"script\":{\"lang\":\"painless\",\"source\":\"ctx._source.available = false; ctx._source.cronExpression = params.cron; ctx._source.updatedBy = params.actor; ctx._source.updatedTime = params.now\",\"params\":{\"cron\":\"\",\"actor\":\"depositar-catalog-bootstrap\",\"now\":${now}}},\"query\":{\"match_all\":{}}}" \
     >"$update_request"
 
   # The readiness read and this mutation are separate requests. Retry only

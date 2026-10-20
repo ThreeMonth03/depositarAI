@@ -32,25 +32,37 @@ def _canonical(value):
     ).encode("utf-8")
 
 
-def enabled(compose):
-    """Recognize the named-volume profile, including malformed declarations."""
-    declarations = compose.get("volumes", {})
-    mounts = compose["services"]["opensearch-search"].get("volumes", [])
-    return ALIAS in declarations or any(
-        type(mount) is dict
-        and mount.get("type") == "volume"
-        and (mount.get("source") == ALIAS or mount.get("target") == TARGET)
-        for mount in mounts
-    )
-
-
 def identity(catalog_identity, *, compose, work_root, data_root, uid, gid):
     """Bind supplied catalog identity and operator roots without touching paths."""
     if type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
         raise RuntimeError("catalog_volume_operator_must_be_nonroot")
     name = catalog_identity["project"] + "-index"
-    declaration = compose.get("volumes", {}).get(ALIAS)
-    if _canonical(declaration) != _canonical({"name": name, "external": True}):
+    declarations = compose.get("volumes") if type(compose) is dict else None
+    services = compose.get("services") if type(compose) is dict else None
+    service = services.get("opensearch-search") if type(services) is dict else None
+    mounts = service.get("volumes") if type(service) is dict else None
+    if (
+        type(declarations) is not dict
+        or _canonical(declarations)
+        != _canonical({ALIAS: {"name": name, "external": True}})
+        or type(mounts) is not list
+        or any(type(mount) is not dict for mount in mounts)
+    ):
+        raise RuntimeError("catalog_volume_profile_changed")
+    index_mounts = [mount for mount in mounts if mount.get("target") == TARGET]
+    if len(index_mounts) != 1:
+        raise RuntimeError("catalog_volume_profile_changed")
+    mount = index_mounts[0]
+    if mount.get("read_only", False) is not False or _canonical(
+        {key: value for key, value in mount.items() if key != "read_only"}
+    ) != _canonical(
+        {
+            "type": "volume",
+            "source": ALIAS,
+            "target": TARGET,
+            "volume": {"nocopy": True},
+        }
+    ):
         raise RuntimeError("catalog_volume_profile_changed")
     return {
         **catalog_identity,

@@ -30,7 +30,7 @@ class ProductPackagingTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.repo.mkdir(mode=0o700)
         self.config = ProductConfig(
-            1,
+            2,
             self.root / "state",
             self.root / "api",
             self.root / "embedding",

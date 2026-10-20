@@ -6,13 +6,12 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any, Callable
-from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
 
-from validate_search_compose import (  # noqa: E402
+from validate_catalog_compose import (  # noqa: E402
     FESS_BASE_IMAGE,
     FESS_IMAGE,
     FESS_PLUGIN_SHA256,
@@ -23,15 +22,15 @@ from validate_search_compose import (  # noqa: E402
     assert_exact_runtime_device_requests,
     validate,
 )
-import validate_search_compose as compose_policy  # noqa: E402
+import validate_catalog_compose as compose_policy  # noqa: E402
 
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
 DIGEST_C = "c" * 64
-CANARY_ROOT = "/srv/depositar/search-canary"
-RUNTIME_UID = "21599"
-RUNTIME_GID = "564"
+CATALOG_ROOT = "/srv/depositar/catalog"
+RUNTIME_UID = "1000"
+RUNTIME_GID = "1000"
 GPU_DEVICE = "GPU-01234567-89ab-cdef-0123-456789abcdef"
 CATALOG_PROJECT = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
 CATALOG_VOLUME_NAME = CATALOG_PROJECT + "-index"
@@ -40,7 +39,7 @@ CATALOG_VOLUME_NAME = CATALOG_PROJECT + "-index"
 def bind_mount(relative: str, target: str, *, read_only: bool) -> dict[str, Any]:
     value = {
         "type": "bind",
-        "source": f"{CANARY_ROOT}/{relative}",
+        "source": f"{CATALOG_ROOT}/{relative}",
         "target": target,
         "bind": {"create_host_path": False},
     }
@@ -116,7 +115,7 @@ def valid_config() -> dict[str, Any]:
                     "-Dfess.system.content_chunker.embedding.ollama.query.prefix= "
                     "-Dfess.system.content_chunker.job.concurrency=2 "
                     "-Dfess.system.content_chunker.job.bulk_size=100 "
-                    "-Dfess.system.content_chunker.job.max_documents_per_run=10000 "
+                    "-Dfess.system.content_chunker.job.max_documents_per_run=256 "
                     "-Dfess.system.content_chunker.search.enabled=true "
                     "-Dfess.system.login.required=true "
                     "-Duser.timezone=UTC "
@@ -187,7 +186,7 @@ def valid_config() -> dict[str, Any]:
                 "NVIDIA_VISIBLE_DEVICES": "void",
                 "DISABLE_INSTALL_DEMO_CONFIG": "true",
                 "DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI": "true",
-                "cluster.name": "depositar-search-canary",
+                "cluster.name": "depositar-catalog",
                 "discovery.type": "single-node",
                 "node.name": "opensearch-search",
                 "node.store.allow_mmap": "false",
@@ -198,11 +197,12 @@ def valid_config() -> dict[str, Any]:
             "networks": {"search_backend": None},
             "ulimits": {"nofile": {"soft": 65536, "hard": 65536}},
             "volumes": [
-                bind_mount(
-                    "opensearch/data",
-                    "/usr/share/opensearch/data",
-                    read_only=False,
-                ),
+                {
+                    "type": "volume",
+                    "source": "catalog-index",
+                    "target": "/usr/share/opensearch/data",
+                    "volume": {"nocopy": True},
+                },
                 bind_mount(
                     "opensearch/dictionary",
                     "/usr/share/opensearch/config/dictionary",
@@ -292,12 +292,13 @@ def valid_config() -> dict[str, Any]:
     ollama["healthcheck"]["test"] = ["CMD", "ollama", "list"]
 
     return {
-        "name": "depositar-search-canary",
+        "name": CATALOG_PROJECT,
+        "volumes": {"catalog-index": {"name": CATALOG_VOLUME_NAME, "external": True}},
         "networks": {"search_backend": {"internal": True}},
         "secrets": {
             name: {
-                "file": f"{CANARY_ROOT}/secrets/{name}",
-                "name": f"depositar-search-canary_{name}",
+                "file": f"{CATALOG_ROOT}/secrets/{name}",
+                "name": f"{CATALOG_PROJECT}_{name}",
             }
             for name in (
                 "fess_opensearch_password",
@@ -316,56 +317,33 @@ def valid_config() -> dict[str, Any]:
 Mutation = tuple[str, Callable[[dict[str, Any]], None]]
 
 
-def valid_catalog_volume_config() -> dict[str, Any]:
-    config = valid_config()
-    config["name"] = CATALOG_PROJECT
-    for name, definition in config["secrets"].items():
-        definition["name"] = CATALOG_PROJECT + "_" + name
-    config["services"]["opensearch-search"]["volumes"][0] = {
-        "type": "volume",
-        "source": "catalog-index",
-        "target": "/usr/share/opensearch/data",
-        "volume": {"nocopy": True},
-    }
-    config["volumes"] = {
-        "catalog-index": {"name": CATALOG_VOLUME_NAME, "external": True}
-    }
-    return config
-
-
 class CatalogVolumeComposePolicyTests(unittest.TestCase):
     def validate(self, config, *, volume_name=CATALOG_VOLUME_NAME):
-        with patch.object(compose_policy, "EXPECTED_PROJECT", CATALOG_PROJECT):
-            validate(config, catalog_volume_name=volume_name)
+        config["volumes"]["catalog-index"]["name"] = volume_name
+        validate(config)
 
     def assert_mutations_fail(self, mutations):
         for label, mutate in mutations:
             with self.subTest(label=label), self.assertRaises(ValueError):
-                config = valid_catalog_volume_config()
+                config = valid_config()
                 mutate(config)
-                self.validate(config)
+                validate(config)
 
-    def test_named_index_profile_requires_explicit_opt_in_and_exact_project(self):
-        config = valid_catalog_volume_config()
+    def test_named_index_is_required_and_bound_to_exact_project(self):
+        config = valid_config()
         original = copy.deepcopy(config)
-        self.validate(config)
+        validate(config)
         self.assertEqual(original, config)
         self.assertEqual(
-            Path(CANARY_ROOT),
-            compose_policy.derive_canary_root(
-                config["services"]["opensearch-search"],
-                catalog_volume_name=CATALOG_VOLUME_NAME,
-            ),
+            Path(CATALOG_ROOT),
+            compose_policy.derive_catalog_root(config["services"]["opensearch-search"]),
         )
-        with patch.object(compose_policy, "EXPECTED_PROJECT", CATALOG_PROJECT):
-            with self.assertRaises(ValueError):
-                validate(config)
         config.pop("volumes")
         config["services"]["opensearch-search"]["volumes"][0] = bind_mount(
             "opensearch/data", "/usr/share/opensearch/data", read_only=False
         )
         with self.assertRaises(ValueError):
-            self.validate(config)
+            validate(config)
 
     def test_volume_name_cannot_select_another_project_or_arbitrary_storage(self):
         for name in (
@@ -380,7 +358,7 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
             "depositar-ai-catalog-" + "c" * 12 + "-" + "b" * 12 + "-index",
         ):
             with self.subTest(name=name), self.assertRaises(ValueError):
-                self.validate(valid_catalog_volume_config(), volume_name=name)
+                self.validate(valid_config(), volume_name=name)
 
     def test_top_level_volume_definition_is_closed_and_external(self):
         self.assert_mutations_fail(
@@ -409,17 +387,22 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
             {"unknown": True},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                config = valid_catalog_volume_config()
+                config = valid_config()
                 config["volumes"]["catalog-index"].update(changes)
-                self.validate(config)
+                validate(config)
 
     def test_named_data_mount_is_exact_writable_and_nocopy(self):
+        config = valid_config()
+        config["services"]["opensearch-search"]["volumes"][0]["read_only"] = False
+        validate(config)
         for changes in (
             {"type": "bind"},
             {"source": "another-volume"},
             {"target": "/tmp/index"},
             {"read_only": True},
-            {"read_only": False},
+            {"read_only": 1},
+            {"read_only": 0},
+            {"read_only": None},
             {"bind": {"create_host_path": False}},
             {"consistency": "cached"},
             {"volume": {}},
@@ -429,9 +412,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
             {"volume": {"nocopy": True, "unknown": True}},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                config = valid_catalog_volume_config()
+                config = valid_config()
                 config["services"]["opensearch-search"]["volumes"][0].update(changes)
-                self.validate(config)
+                validate(config)
         self.assert_mutations_fail(
             (
                 (
@@ -457,17 +440,17 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
         for source in (
             "opensearch/dictionary",
             "/opensearch/dictionary",
-            CANARY_ROOT + "/opensearch/../opensearch/dictionary",
-            CANARY_ROOT + "//opensearch/dictionary",
-            CANARY_ROOT + "/opensearch/./dictionary",
-            CANARY_ROOT + "/opensearch/data",
+            CATALOG_ROOT + "/opensearch/../opensearch/dictionary",
+            CATALOG_ROOT + "//opensearch/dictionary",
+            CATALOG_ROOT + "/opensearch/./dictionary",
+            CATALOG_ROOT + "/opensearch/data",
             "/other/catalog/opensearch/dictionary",
         ):
             with self.subTest(source=source), self.assertRaises(ValueError):
-                config = valid_catalog_volume_config()
+                config = valid_config()
                 config["services"]["opensearch-search"]["volumes"][1]["source"] = source
-                self.validate(config)
-        config = valid_catalog_volume_config()
+                validate(config)
+        config = valid_config()
         for role, service in config["services"].items():
             for number, mount in enumerate(service["volumes"]):
                 if mount["type"] != "bind":
@@ -487,18 +470,16 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
 
 
 class SearchComposePolicyTests(unittest.TestCase):
-    def test_product_vector_profile_is_explicit_closed_and_not_legacy_default(self):
-        config = valid_config()
-        options = config["services"]["fess-search"]["environment"]["FESS_JAVA_OPTS"]
-        config["services"]["fess-search"]["environment"]["FESS_JAVA_OPTS"] = (
-            options.replace("max_documents_per_run=10000", "max_documents_per_run=256")
-        )
-        validate(config, vector_pass_documents=256)
-        with self.assertRaises(ValueError):
-            validate(config)
-        for invalid in (True, "256", 0, 255, 257, 50000):
+    def test_only_fixed_product_vector_budget_is_accepted(self):
+        validate(valid_config())
+        for invalid in (10000, True, "256 ", 0, 255, 257, 50000):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
-                validate(config, vector_pass_documents=invalid)
+                config = valid_config()
+                env = config["services"]["fess-search"]["environment"]
+                env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(
+                    "max_documents_per_run=256", f"max_documents_per_run={invalid}"
+                )
+                validate(config)
 
     def assert_mutations_fail(self, mutations: tuple[Mutation, ...]) -> None:
         for label, mutate in mutations:
@@ -851,7 +832,7 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     "different UID",
                     lambda c: c["services"]["opensearch-search"].update(
-                        user="1000:564"
+                        user=f"{int(RUNTIME_UID) + 1}:{RUNTIME_GID}"
                     ),
                 ),
             )
@@ -1019,7 +1000,7 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     "changed mount source",
                     lambda c: c["services"]["fess-search"]["volumes"][0].update(
-                        source=f"{CANARY_ROOT}/opensearch/config/other-ca.pem"
+                        source=f"{CATALOG_ROOT}/opensearch/config/other-ca.pem"
                     ),
                 ),
                 (
@@ -1042,9 +1023,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                 ),
                 (
-                    "explicit read-only field on writable data",
+                    "nonboolean read-only field on writable data",
                     lambda c: c["services"]["opensearch-search"]["volumes"][0].update(
-                        read_only=False
+                        read_only=0
                     ),
                 ),
                 ("missing create_host_path", remove_create_host_path),
@@ -1129,7 +1110,7 @@ class SearchComposePolicyTests(unittest.TestCase):
                     lambda c: c["services"]["ollama-embedding"]["tmpfs"].__setitem__(
                         0,
                         c["services"]["ollama-embedding"]["tmpfs"][0].replace(
-                            f"uid={RUNTIME_UID}", "uid=1000"
+                            f"uid={RUNTIME_UID}", f"uid={int(RUNTIME_UID) + 1}"
                         ),
                     ),
                 ),
@@ -1214,13 +1195,13 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     "fess output image",
                     lambda c: c["services"]["fess-search"].update(
-                        image="depositar-fess-search-canary:unreviewed"
+                        image="depositar-fess-catalog:unreviewed"
                     ),
                 ),
                 (
                     "opensearch output image",
                     lambda c: c["services"]["opensearch-search"].update(
-                        image="depositar-opensearch-search-canary:unreviewed"
+                        image="depositar-opensearch-catalog:unreviewed"
                     ),
                 ),
                 (
@@ -1293,8 +1274,8 @@ class SearchComposePolicyTests(unittest.TestCase):
     def test_only_exact_fess_secret_files_are_accepted(self) -> None:
         def add_admin_secret(config: dict[str, Any]) -> None:
             config["secrets"]["opensearch_admin_password"] = {
-                "file": f"{CANARY_ROOT}/secrets/opensearch_admin_password",
-                "name": "depositar-search-canary_opensearch_admin_password",
+                "file": f"{CATALOG_ROOT}/secrets/opensearch_admin_password",
+                "name": "depositar-catalog_opensearch_admin_password",
             }
             config["services"]["opensearch-search"]["secrets"] = [
                 {
@@ -1688,7 +1669,11 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "auto-created data source",
-                    lambda c: data_mount(c)["bind"].update(create_host_path=True),
+                    lambda c: data_mount(c).update(
+                        type="bind",
+                        source=CATALOG_ROOT + "/opensearch/data",
+                        bind={"create_host_path": True},
+                    ),
                 ),
                 (
                     "duplicate data mount",

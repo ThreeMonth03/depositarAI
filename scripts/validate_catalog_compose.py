@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the rendered, isolated Depositár search-canary Compose policy."""
+"""Validate the rendered, isolated Depositár catalog Compose policy."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 
-EXPECTED_PROJECT = "depositar-search-canary"
+CATALOG_PROJECT = re.compile(r"depositar-ai-catalog-[0-9a-f]{12}-[0-9a-f]{12}\Z")
 EXPECTED_SERVICES = {"fess-search", "opensearch-search", "ollama-embedding"}
 EXPECTED_NETWORK = "search_backend"
 CATALOG_VOLUME_NAME = re.compile(
@@ -32,8 +32,8 @@ OLLAMA_IMAGE = (
     "ollama/ollama:0.32.14@sha256:"
     "9d30908e41144b1f1da89b9d8e33c07e4aeb43ff41a8660241b1686e2cc330ad"
 )
-FESS_IMAGE = "depositar-fess-search-canary:15.8.0-local"
-OPENSEARCH_IMAGE = "depositar-opensearch-search-canary:3.8.0-local"
+FESS_IMAGE = "depositar-fess-catalog:15.8.0-local"
+OPENSEARCH_IMAGE = "depositar-opensearch-catalog:3.8.0-local"
 FESS_PLUGIN_URL = (
     "https://maven.codelibs.org/release/org/codelibs/fess/"
     "fess-llm-ollama/15.8.0/fess-llm-ollama-15.8.0.jar"
@@ -109,7 +109,7 @@ FESS_JAVA_OPTIONS = (
     "-Dfess.system.content_chunker.embedding.ollama.query.prefix=",
     "-Dfess.system.content_chunker.job.concurrency=2",
     "-Dfess.system.content_chunker.job.bulk_size=100",
-    "-Dfess.system.content_chunker.job.max_documents_per_run=10000",
+    "-Dfess.system.content_chunker.job.max_documents_per_run=256",
     "-Dfess.system.content_chunker.search.enabled=true",
     "-Dfess.system.login.required=true",
     "-Duser.timezone=UTC",
@@ -150,7 +150,7 @@ EXPECTED_ENVIRONMENTS = {
         "DISABLE_INSTALL_DEMO_CONFIG": "true",
         "DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI": "true",
         "discovery.type": "single-node",
-        "cluster.name": EXPECTED_PROJECT,
+        "cluster.name": "depositar-catalog",
         "node.name": "opensearch-search",
         "node.store.allow_mmap": "false",
         "OPENSEARCH_JAVA_OPTS": " ".join(OPENSEARCH_JAVA_OPTIONS),
@@ -320,12 +320,9 @@ def assert_exact_service_shape(service: Mapping[str, Any], name: str) -> None:
 def assert_exact_environment(
     service: Mapping[str, Any],
     name: str,
-    vector_pass_documents: int = 10000,
 ) -> None:
     actual = environment(service, name)
     expected = dict(EXPECTED_ENVIRONMENTS[name])
-    if name == "fess-search":
-        expected["FESS_JAVA_OPTS"] = " ".join(vector_options(vector_pass_documents))
     actual_keys = set(actual)
     expected_keys = set(expected)
     require(
@@ -396,6 +393,7 @@ def assert_exact_secrets(
     config: Mapping[str, Any],
     services: Mapping[str, Mapping[str, Any]],
     root: PurePosixPath,
+    project: str,
 ) -> None:
     top_secrets = as_mapping(config.get("secrets"), "top-level secrets")
     require(set(top_secrets) == FESS_SECRET_NAMES, "top-level secret allowlist changed")
@@ -406,7 +404,7 @@ def assert_exact_secrets(
             f"top-level secret {name}: fields changed",
         )
         require(
-            definition.get("name") == f"{EXPECTED_PROJECT}_{name}",
+            definition.get("name") == f"{project}_{name}",
             f"top-level secret {name}: generated name changed",
         )
         require(
@@ -594,8 +592,10 @@ def assert_catalog_volume_name(name: Any) -> None:
 
 
 def assert_catalog_data_mount(mount: Mapping[str, Any]) -> None:
+    fields = {"type", "source", "target", "volume"}
     require(
-        set(mount) == {"type", "source", "target", "volume"}
+        set(mount) in (fields, fields | {"read_only"})
+        and ("read_only" not in mount or mount["read_only"] is False)
         and mount.get("type") == "volume"
         and mount.get("source") == "catalog-index"
         and mount.get("target") == "/usr/share/opensearch/data",
@@ -608,56 +608,46 @@ def assert_catalog_data_mount(mount: Mapping[str, Any]) -> None:
     )
 
 
-def derive_canary_root(
-    opensearch: Mapping[str, Any], *, catalog_volume_name: str | None = None
-) -> PurePosixPath:
+def derive_catalog_root(opensearch: Mapping[str, Any]) -> PurePosixPath:
     data_mounts = [
         mount
         for mount in volumes(opensearch, "opensearch-search")
         if mount.get("target") == "/usr/share/opensearch/data"
     ]
     require(len(data_mounts) == 1, "opensearch-search: one data mount is required")
-    root_mount = data_mounts[0]
-    leaf = "data"
-    if catalog_volume_name is not None:
-        assert_catalog_volume_name(catalog_volume_name)
-        assert_catalog_data_mount(root_mount)
-        dictionary = [
-            mount
-            for mount in volumes(opensearch, "opensearch-search")
-            if mount.get("target") == "/usr/share/opensearch/config/dictionary"
-        ]
-        require(
-            len(dictionary) == 1 and dictionary[0].get("type") == "bind",
-            "opensearch-search: one dictionary bind mount is required",
-        )
-        root_mount, leaf = dictionary[0], "dictionary"
-    source = str(root_mount.get("source") or "")
+    assert_catalog_data_mount(data_mounts[0])
+    dictionary = [
+        mount
+        for mount in volumes(opensearch, "opensearch-search")
+        if mount.get("target") == "/usr/share/opensearch/config/dictionary"
+    ]
+    require(
+        len(dictionary) == 1 and dictionary[0].get("type") == "bind",
+        "opensearch-search: one dictionary bind mount is required",
+    )
+    source = str(dictionary[0].get("source") or "")
     source_path = PurePosixPath(source)
     require(
-        source_path.is_absolute(), "opensearch-search: data source must be absolute"
+        source_path.is_absolute(),
+        "opensearch-search: dictionary source must be absolute",
     )
     require(
         ".." not in source_path.parts and str(source_path) == source,
-        "opensearch-search: unsafe data source",
+        "opensearch-search: unsafe dictionary source",
     )
     require(
-        source_path.name == leaf and source_path.parent.name == "opensearch",
-        "opensearch-search: data source path changed",
+        source_path.name == "dictionary" and source_path.parent.name == "opensearch",
+        "opensearch-search: dictionary source path changed",
     )
     root = source_path.parent.parent
-    require(root != PurePosixPath("/"), "search canary storage root is too broad")
+    require(root != PurePosixPath("/"), "catalog storage root is too broad")
     return root
 
 
 def assert_exact_volumes(
     services: Mapping[str, Mapping[str, Any]],
     root: PurePosixPath,
-    *,
-    catalog_volume_name: str | None = None,
 ) -> None:
-    if catalog_volume_name is not None:
-        assert_catalog_volume_name(catalog_volume_name)
     for name, policies in EXPECTED_VOLUME_PATHS.items():
         service_mounts = volumes(services[name], name)
         require(
@@ -674,11 +664,7 @@ def assert_exact_volumes(
         )
         for relative_source, target, read_only in policies:
             mount = mounts_by_target[target]
-            if (
-                catalog_volume_name is not None
-                and name == "opensearch-search"
-                and target == "/usr/share/opensearch/data"
-            ):
+            if name == "opensearch-search" and target == "/usr/share/opensearch/data":
                 assert_catalog_data_mount(mount)
                 continue
             expected_fields = {"type", "source", "target", "bind"}
@@ -758,52 +744,27 @@ def assert_granite_only(services: Mapping[str, Mapping[str, Any]]) -> None:
                 )
 
 
-def vector_options(document_limit: int) -> tuple[str, ...]:
-    """Only the legacy and bounded product profiles are reviewed."""
-    require(
-        type(document_limit) is int and document_limit in {256, 10000},
-        "vector pass profile is not reviewed",
-    )
-    return tuple(
-        option.replace(
-            "max_documents_per_run=10000", f"max_documents_per_run={document_limit}"
-        )
-        for option in FESS_JAVA_OPTIONS
-    )
-
-
-def validate(
-    config: Any,
-    *,
-    vector_pass_documents: int = 10000,
-    catalog_volume_name: str | None = None,
-) -> None:
-    approved_vector_options = vector_options(vector_pass_documents)
+def validate(config: Any) -> None:
     config = as_mapping(config, "Compose config")
+    project = config.get("name")
     require(
-        config.get("name") == EXPECTED_PROJECT, "search canary project name changed"
+        type(project) is str and CATALOG_PROJECT.fullmatch(project) is not None,
+        "one qualified catalog project is required",
     )
     require("configs" not in config, "top-level Compose configs are forbidden")
-    if catalog_volume_name is None:
-        require("volumes" not in config, "top-level named volumes are forbidden")
-    else:
-        assert_catalog_volume_name(catalog_volume_name)
-        require(
-            catalog_volume_name == EXPECTED_PROJECT + "-index",
-            "catalog index volume must belong to this exact catalog project",
-        )
-        top_volumes = as_mapping(config.get("volumes"), "top-level volumes")
-        require(
-            set(top_volumes) == {"catalog-index"},
-            "catalog index volume allowlist changed",
-        )
-        definition = as_mapping(top_volumes["catalog-index"], "catalog index volume")
-        require(
-            set(definition) == {"name", "external"}
-            and definition.get("name") == catalog_volume_name
-            and definition.get("external") is True,
-            "catalog index volume definition changed",
-        )
+    top_volumes = as_mapping(config.get("volumes"), "top-level volumes")
+    require(
+        set(top_volumes) == {"catalog-index"},
+        "catalog index volume allowlist changed",
+    )
+    definition = as_mapping(top_volumes["catalog-index"], "catalog index volume")
+    assert_catalog_volume_name(definition.get("name"))
+    require(
+        set(definition) == {"name", "external"}
+        and definition.get("name") == project + "-index"
+        and definition.get("external") is True,
+        "catalog index volume definition changed",
+    )
 
     services = as_mapping(config.get("services"), "services")
     require(
@@ -823,7 +784,7 @@ def validate(
         service = as_mapping(services.get(name), f"{name}: service")
         typed_services[name] = service
         assert_exact_service_shape(service, name)
-        assert_exact_environment(service, name, vector_pass_documents)
+        assert_exact_environment(service, name)
         assert_linux_boundary(service, name)
         assert_resources_and_health(service, name)
         assert_no_plaintext_credentials(service, name)
@@ -842,9 +803,9 @@ def validate(
     opensearch = typed_services["opensearch-search"]
     ollama = typed_services["ollama-embedding"]
 
-    root = derive_canary_root(opensearch, catalog_volume_name=catalog_volume_name)
-    assert_exact_volumes(typed_services, root, catalog_volume_name=catalog_volume_name)
-    assert_exact_secrets(config, typed_services, root)
+    root = derive_catalog_root(opensearch)
+    assert_exact_volumes(typed_services, root)
+    assert_exact_secrets(config, typed_services, root, project)
     assert_exact_tmpfs(typed_services, runtime_identity)
 
     assert_exact_build(
@@ -896,7 +857,7 @@ def validate(
         if option.startswith("-Dfess.system.login.required=")
     ]
     require(
-        tuple(fess_java_options) == approved_vector_options,
+        tuple(fess_java_options) == FESS_JAVA_OPTIONS,
         "fess-search: reviewed FESS_JAVA_OPTS changed",
     )
     require(
@@ -980,9 +941,9 @@ def main() -> int:
     try:
         validate(json.load(sys.stdin))
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as error:
-        print(f"Error: invalid search-canary Compose policy: {error}", file=sys.stderr)
+        print(f"Error: invalid catalog Compose policy: {error}", file=sys.stderr)
         return 1
-    print("Search-canary Compose isolation and resource policy passed.")
+    print("Catalog Compose isolation and resource policy passed.")
     return 0
 
 

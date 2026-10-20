@@ -35,7 +35,8 @@ class ProductConfigTests(unittest.TestCase):
             path.mkdir(mode=0o700)
             self.models.append(path)
         self.value = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "catalog_storage": "docker-volume",
             "state_root": str(self.state_parent / "state"),
             "api_model_root": str(self.models[0]),
             "embedding_model_root": str(self.models[1]),
@@ -114,7 +115,10 @@ class ProductConfigTests(unittest.TestCase):
     def test_schema_and_cache_values_are_strict(self):
         for key, invalid in (
             ("schema_version", True),
-            ("schema_version", 2),
+            ("schema_version", 1),
+            ("schema_version", 3),
+            ("schema_version", 2.0),
+            ("schema_version", "2"),
             ("cache_ttl_seconds", True),
             ("cache_ttl_seconds", -1),
             ("cache_ttl_seconds", 3601),

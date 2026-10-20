@@ -11,11 +11,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_PATHS = (
-    "deploy/compose/compose.search-canary.yaml",
+    "deploy/compose/compose.catalog.yaml",
     "deploy/compose/compose.search-web.yaml",
 )
 ENV_NAMES = (
-    ".env.search-canary.example",
+    "catalog.env.example",
     ".env.search-web.example",
 )
 PRODUCTION_DOCKERFILES = (
@@ -117,11 +117,11 @@ class RepositoryLayoutTests(unittest.TestCase):
 
     def test_compose_builds_resolve_to_declared_contexts_and_dockerfiles(self) -> None:
         expected = {
-            ("deploy/compose/compose.search-canary.yaml", "opensearch-search"): (
+            ("deploy/compose/compose.catalog.yaml", "opensearch-search"): (
                 "../docker/opensearch",
                 "Dockerfile",
             ),
-            ("deploy/compose/compose.search-canary.yaml", "fess-search"): (
+            ("deploy/compose/compose.catalog.yaml", "fess-search"): (
                 "../..",
                 "deploy/docker/fess/Dockerfile",
             ),

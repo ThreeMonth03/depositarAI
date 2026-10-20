@@ -75,8 +75,16 @@ reservation。它不能阻止其他管理員在檢查後啟動工作或修改 ru
 ## Catalog 平台配置
 
 產品 CLI 封存並驗證 Fess／OpenSearch Compose、bootstrap、security templates 與
-排程設定。檔案分別放在 `deploy/compose/`、`deploy/config/opensearch/`、
-`deploy/config/fess/`；真實安全素材留在私有 state，不在文件複製第二份配置。
+排程設定。Catalog 共用 `deploy/compose/compose.catalog.yaml`、
+`deploy/env/catalog.env.example` 及內部 `scripts/bootstrap-catalog.sh`；
+`scripts/validate_catalog_compose.py` 核對配置。Bootstrap 只由產品 CLI 以封存的
+product 配置呼叫，不提供另一個獨立啟動入口。
+安全與排程範本在 `deploy/config/opensearch/`、`deploy/config/fess/`；
+真實安全素材留在私有 state，不在文件複製第二份配置。
+
+OpenSearch 索引資料使用 catalog project 專用的 Docker local volume。建立與重用時
+均核對固定身分、driver、labels、初始化收據與實際 mount；不接受任意 driver options
+或只憑同名就接管 volume。Metadata、dictionary、模型與憑證仍各自保留私有路徑。
 
 OpenSearch 保持 authentication／TLS，查詢身分與管理身分分開。
 ConfigSync 使用所需的獨立索引與持久 dictionary mount，其餘配置唯讀；

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
-from dataclasses import replace
 import builtins
 import copy
 import json
@@ -20,10 +19,11 @@ from search.operations.catalog import volume_policy
 from search.operations.deployment import composition
 from search.operations.deployment.gateway import activation
 from search.operations.shared import private_io
-from search.operations.state import _marker, locked_state
+from search.operations.state import locked_state
 from tests.unit.deployment.gateway import test_preparation as preparation_tests
 from tests.unit.deployment.gateway import test_probe_runtime as native_tests
 from tests.unit.deployment.gateway.test_runtime import evidence as gateway_evidence
+from tests.unit.deployment.catalog_fixtures import sealed_catalog_storage
 from tests.unit.deployment.release.test_host import (
     SnapshotDocker,
     evidence as host_evidence,
@@ -153,8 +153,8 @@ printf '{"nginx_t":true,"healthz":200,"other":503}\n'
         )
 
 
-def routed_fixture():
-    host, unused_baseline, leased, lease, unused_verified = host_evidence()
+def routed_fixture(test):
+    host, unused_baseline, leased, lease, unused_verified = host_evidence(test)
     host.lease = lease
     host.docker = SnapshotDocker(leased)
     host.observe()
@@ -203,7 +203,7 @@ class RoutedHostTests(unittest.TestCase):
     def test_full_four_peer_route_keeps_original_catalog_gpu_and_private_strict_three(
         self,
     ):
-        private, routed = routed_fixture()
+        private, routed = routed_fixture(self)
         with self.assertRaises(ValueError):
             private.observe()
         result = routed.observe()
@@ -216,7 +216,7 @@ class RoutedHostTests(unittest.TestCase):
     def test_foreign_peer_is_rejected_on_each_unfiltered_network(self):
         for kind in ("website", "ingress", "catalog", "inference", "ranking"):
             with self.subTest(kind=kind):
-                unused_private, routed = routed_fixture()
+                unused_private, routed = routed_fixture(self)
                 if kind == "website":
                     name = routed.compose["networks"][kind]["name"]
                 elif kind == "ingress":
@@ -234,7 +234,7 @@ class RoutedHostTests(unittest.TestCase):
     def test_unknown_gateway_project_container_and_endpoint_mismatch_are_rejected(self):
         for changed in ("extra", "endpoint"):
             with self.subTest(changed=changed):
-                unused_private, routed = routed_fixture()
+                unused_private, routed = routed_fixture(self)
                 row = routed.docker.groups[composition.GATEWAY_PROJECT][0]
                 if changed == "extra":
                     other = copy.deepcopy(row)
@@ -610,104 +610,35 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertNotIn("up", self.events)
         self.http.assert_not_called()
 
-    def test_real_native_collectors_images_and_probe_fit_exact_shared_128_call_budget(
+    def test_native_collectors_and_probe_keep_128_calls_and_six_volume_observations(
         self,
     ):
         self.native_call_budget()
 
-    def test_volume_profile_keeps_shared_128_and_adds_six_separate_metadata_reads(self):
-        self.native_call_budget(volume=True)
-
     def test_changed_volume_metadata_blocks_before_gateway_intent_or_ports(self):
-        self.native_call_budget(volume=True, bad_metadata=True)
+        self.native_call_budget(bad_metadata=True)
 
-    def native_call_budget(self, *, volume=False, bad_metadata=False):
-        catalog_calls = []
+    def native_call_budget(self, *, bad_metadata=False):
         self.context["compose"] = {
             "name": self.plan["project"],
             "services": {"opensearch-search": {"volumes": []}},
         }
-        metadata = None
-        if volume:
-            config = replace(
-                self.config, schema_version=2, catalog_storage="docker-volume"
-            )
-            # Configure only the synthetic fixture before the operation. The
-            # real marker comparison remains enabled; no state is adopted.
-            with locked_state(self.config) as fixture_store:
-                fixture_store.write("product.json", _marker(config), replace=True)
-            self.config = config
-            directory = self.config.state_root / "catalog-volume-budget"
-            directory.mkdir(mode=0o700)
-            data = directory / "data"
-            data.mkdir(mode=0o700)
-            self.context.update(root=directory, data=data)
-            self.plan.update(
-                revision=self.revision,
-                compose_sha256="a" * 64,
-                security_material_sha256="b" * 64,
-            )
-            volume_name = self.plan["project"] + "-index"
-            self.context["compose"]["volumes"] = {
-                "catalog-index": {"name": volume_name, "external": True}
+        volume_name = self.plan["project"] + "-index"
+        self.context["compose"]["volumes"] = {
+            "catalog-index": {"name": volume_name, "external": True}
+        }
+        self.context["compose"]["services"]["opensearch-search"]["volumes"] = [
+            {
+                "type": "volume",
+                "source": "catalog-index",
+                "target": volume_policy.TARGET,
+                "volume": {"nocopy": True},
             }
-            self.context["compose"]["services"]["opensearch-search"]["volumes"] = [
-                {
-                    "type": "volume",
-                    "source": "catalog-index",
-                    "target": volume_policy.TARGET,
-                    "volume": {"nocopy": True},
-                }
-            ]
-            identity = volume_policy.identity(
-                activation.execution.catalog_identity(self.context),
-                compose=self.context["compose"],
-                work_root=directory,
-                data_root=data,
-                uid=os.geteuid(),
-                gid=os.getegid(),
-            )
-            metadata = {
-                "name": volume_name,
-                "driver": "local",
-                "scope": "local",
-                "options": None,
-                "labels": volume_policy.labels(identity),
-                "created_at": "2026-10-13T00:00:00Z",
-                "mountpoint": "/opaque/catalog-index",
-            }
-            image = "sha256:" + "1" * 64
-            for name, record in {
-                "admin-image.json": {"image_id": image},
-                "volume-started.json": volume_policy.started(identity, image),
-                "volume.json": volume_policy.expected_receipt(
-                    identity, image, metadata
-                ),
-            }.items():
-                activation.execution.write_record(directory, name, record)
-
-            def catalog_runner(argv, *, timeout):
-                catalog_calls.append(argv)
-                self.assertEqual(
-                    [
-                        "docker",
-                        "volume",
-                        "inspect",
-                        "--format",
-                        volume_policy.INSPECT_FORMAT,
-                        volume_name,
-                    ],
-                    argv,
-                )
-                self.assertEqual(30, timeout)
-                observed = (
-                    {**metadata, "mountpoint": "/changed"} if bad_metadata else metadata
-                )
-                return SimpleNamespace(
-                    stdout=json.dumps(observed), stderr="", returncode=0
-                )
-
-            self.context["runner"] = catalog_runner
+        ]
+        storage = sealed_catalog_storage(self, self.context)
+        metadata, catalog_calls = storage.metadata, storage.calls
+        if bad_metadata:
+            storage.metadata = {**metadata, "mountpoint": "/changed"}
         source_plan, web, web_proof = native_tests.materials()
         web_proof = REAL_VALIDATE_IMAGE(source_plan, "web", web["Id"], web)
         self.image_authority["images"]["web"] = web_proof
@@ -766,21 +697,20 @@ class GatewayActivationTests(unittest.TestCase):
             ]
             for index, project in enumerate(projects)
         }
-        if volume:
-            index_row = groups[self.plan["project"]][-1]
-            index_row.update(
-                Config={"Labels": {"com.docker.compose.service": "opensearch-search"}},
-                Mounts=[
-                    {
-                        "Type": "volume",
-                        "Name": metadata["name"],
-                        "Source": metadata["mountpoint"],
-                        "Driver": "local",
-                        "Destination": volume_policy.TARGET,
-                        "RW": True,
-                    }
-                ],
-            )
+        index_row = groups[self.plan["project"]][-1]
+        index_row.update(
+            Config={"Labels": {"com.docker.compose.service": "opensearch-search"}},
+            Mounts=[
+                {
+                    "Type": "volume",
+                    "Name": metadata["name"],
+                    "Source": metadata["mountpoint"],
+                    "Driver": "local",
+                    "Destination": volume_policy.TARGET,
+                    "RW": True,
+                }
+            ],
+        )
         names = [
             projects[0] + "_search_backend",
             *(entry["name"] for entry in self.gpu_compose["networks"].values()),
@@ -917,7 +847,7 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertEqual(12, len(native.calls))
         self.assertEqual(4, self.events.count("routed-proof"))
         self.assertEqual(2, self.events.count("private-proof"))
-        self.assertEqual(6 if volume else 0, len(catalog_calls))
+        self.assertEqual(6, len(catalog_calls))
 
     def test_native_boolean_claim_cannot_be_a_truthy_integer(self):
         def forged(docker, **options):

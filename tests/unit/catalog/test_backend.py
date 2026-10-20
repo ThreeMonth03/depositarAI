@@ -18,8 +18,8 @@ from search.catalog.build import builder
 from search.catalog.errors import CatalogError
 from search.operations.catalog import backend
 from search.operations.config import GPUConfig, ProductConfig
-from tests.test_validate_search_compose import (
-    CANARY_ROOT,
+from tests.test_validate_catalog_compose import (
+    CATALOG_ROOT,
     RUNTIME_GID,
     RUNTIME_UID,
     valid_config,
@@ -35,17 +35,13 @@ HASH_IMAGE_ID = "sha256:" + "c" * 64
 def adapted_config(data_root, project):
     original = valid_config()
     raw = json.dumps(original)
-    raw = raw.replace(CANARY_ROOT, str(data_root))
+    raw = raw.replace(CATALOG_ROOT, str(data_root))
     raw = raw.replace(f"{RUNTIME_UID}:{RUNTIME_GID}", f"{os.geteuid()}:{os.getegid()}")
     raw = raw.replace(f"uid={RUNTIME_UID}", f"uid={os.geteuid()}")
     raw = raw.replace(f"gid={RUNTIME_GID}", f"gid={os.getegid()}")
     config = json.loads(raw)
-    config["services"]["fess-search"]["environment"]["FESS_JAVA_OPTS"] = config[
-        "services"
-    ]["fess-search"]["environment"]["FESS_JAVA_OPTS"].replace(
-        "max_documents_per_run=10000", "max_documents_per_run=256"
-    )
     config["name"] = project
+    config["volumes"]["catalog-index"]["name"] = project + "-index"
     config["networks"]["search_backend"]["name"] = project + "_search_backend"
     config["networks"]["search_backend"]["attachable"] = False
     config["networks"]["search_backend"]["ipam"] = {}
@@ -65,7 +61,7 @@ class CatalogBackendTests(unittest.TestCase):
             roots[name].mkdir(mode=0o700)
         uuids = tuple(f"GPU-0000000{i}-0000-4000-8000-000000000001" for i in range(4))
         self.config = ProductConfig(
-            1,
+            2,
             roots["state"],
             roots["api-models"],
             roots["embedding-models"],
@@ -130,7 +126,7 @@ class CatalogBackendTests(unittest.TestCase):
             tooling = Path(argv[3]).parents[1]
             values = dict(
                 line.split("=", 1)
-                for line in (tooling / ".env.search-canary").read_text().splitlines()
+                for line in (tooling / ".env.catalog").read_text().splitlines()
                 if line and not line.startswith("#")
             )
             self.assertEqual(argv[5], values["COMPOSE_PROJECT_NAME"])
@@ -140,7 +136,7 @@ class CatalogBackendTests(unittest.TestCase):
             )
             self.assertEqual(argv[5].rsplit("-", 1)[1], argv[7].split(":")[1][:12])
             self.assertEqual(["--hash-image-id", HASH_IMAGE_ID], argv[8:])
-            data = Path(values["SEARCH_CANARY_DATA_ROOT"])
+            data = Path(values["SEARCH_CATALOG_DATA_ROOT"])
             data.mkdir(mode=0o700)
             for name in ("state", "secrets", "opensearch", "opensearch/config"):
                 (data / name).mkdir(mode=0o700)
@@ -243,10 +239,7 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual(first, self.prepare())
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
-    def test_volume_profile_seals_one_external_index_without_creating_a_volume(self):
-        self.config = replace(
-            self.config, schema_version=2, catalog_storage="docker-volume"
-        )
+    def test_seals_one_external_index_without_creating_a_volume(self):
         with patch.object(Path, "home", return_value=self.root):
             plan = self.prepare()
             self.calls.clear()
@@ -270,21 +263,13 @@ class CatalogBackendTests(unittest.TestCase):
             },
             mount,
         )
-        env = (Path(plan["tooling_root"]) / ".env.search-canary").read_text()
-        self.assertIn("SEARCH_CANARY_CATALOG_STORAGE=docker-volume\n", env)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
         self.assertFalse((Path(plan["work_root"]) / "volume.json").exists())
         self.config = replace(self.config, schema_version=1, catalog_storage="bind")
         with self.assertRaises(ValueError):
             self.prepare()
 
-    def test_volume_profile_rejects_changed_bootstrap_data_bind_before_replacement(
-        self,
-    ):
-        self.config = replace(
-            self.config, schema_version=2, catalog_storage="docker-volume"
-        )
-
+    def test_rejects_changed_bootstrap_index_volume(self):
         def change_data_mount(compose):
             mount = next(
                 value
@@ -296,14 +281,6 @@ class CatalogBackendTests(unittest.TestCase):
         self.compose_mutation = change_data_mount
         with self.assertRaises(ValueError):
             self.prepare()
-
-    def test_legacy_bind_profile_keeps_home_state_forbidden(self):
-        with patch.object(Path, "home", return_value=self.root):
-            with self.assertRaisesRegex(
-                backend.BackendError, "outside the operator home"
-            ):
-                self.prepare()
-        self.assertEqual([], self.calls)
 
     def test_hash_helper_receipt_seals_exact_sources_and_immutable_build_identity(self):
         prepared = self.prepare()
@@ -567,7 +544,7 @@ class CatalogBackendTests(unittest.TestCase):
             project=first["project"],
             uid=os.geteuid(),
             gid=os.getegid(),
-            policy_source=(ROOT / "scripts/validate_search_compose.py").read_bytes(),
+            policy_source=(ROOT / "scripts/validate_catalog_compose.py").read_bytes(),
         )
         for path in ("relative", "/tmp/source/../other", "/tmp//source", True):
             with (
@@ -713,7 +690,7 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
     def test_dirty_bootstrap_source_fails_before_any_slot_is_created(self):
-        self.dirty_source = "scripts/bootstrap-search-canary.sh"
+        self.dirty_source = "scripts/bootstrap-catalog.sh"
         with self.assertRaisesRegex(backend.BackendError, "commit"):
             self.prepare()
         self.assertFalse((self.config.state_root / "catalogs").exists())
@@ -809,7 +786,7 @@ class CatalogBackendTests(unittest.TestCase):
 
     def test_sealed_environment_cannot_be_rewritten(self):
         result = self.prepare()
-        path = Path(result["tooling_root"]) / ".env.search-canary"
+        path = Path(result["tooling_root"]) / ".env.catalog"
         path.write_bytes(path.read_bytes() + b"SECRET=not-allowed\n")
         with self.assertRaisesRegex(backend.BackendError, "environment changed"):
             self.prepare()
@@ -841,7 +818,11 @@ class CatalogBackendTests(unittest.TestCase):
 
         def replace_work(config):
             data_root = Path(
-                config["services"]["opensearch-search"]["volumes"][0]["source"]
+                next(
+                    mount["source"]
+                    for mount in config["services"]["opensearch-search"]["volumes"]
+                    if mount["target"] == "/usr/share/opensearch/config/dictionary"
+                )
             ).parents[1]
             work = data_root.parent
             saved = work.with_name(work.name + "-saved")
@@ -890,7 +871,7 @@ class CatalogBackendTests(unittest.TestCase):
         project = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
         data = self.root / "data"
         config = adapted_config(data, project)
-        policy = (ROOT / "scripts/validate_search_compose.py").read_bytes()
+        policy = (ROOT / "scripts/validate_catalog_compose.py").read_bytes()
         arguments = dict(
             repo_root=ROOT,
             data_root=data,
@@ -901,7 +882,7 @@ class CatalogBackendTests(unittest.TestCase):
         )
         backend.validate_compose(config, **arguments)
         mutations = (
-            lambda c: c.update(name="depositar-search-canary"),
+            lambda c: c.update(name="depositar-catalog"),
             lambda c: c["networks"]["search_backend"].update(internal=False),
             lambda c: c["networks"]["search_backend"].update(name="shared-network"),
             lambda c: c["networks"]["search_backend"].update(external=True),

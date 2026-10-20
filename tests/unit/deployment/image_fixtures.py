@@ -147,7 +147,7 @@ class ImageStagingFixture:
         tree["search/catalog/query.py"]["mode"] = "100755"
         self.plan = source_bundle.plan_source_bundle(self.revision, tree, self.sources)
         self.config = ProductConfig(
-            1,
+            2,
             self.root / "product",
             self.root / "api-models",
             self.root / "embedding-models",

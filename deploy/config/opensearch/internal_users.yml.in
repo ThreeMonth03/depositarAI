@@ -8,7 +8,7 @@ admin:
   reserved: true
   backend_roles:
     - admin
-  description: Canary operator; password is generated locally
+  description: Catalog operator; password is generated locally
 
 fess:
   hash: "__FESS_HASH__"

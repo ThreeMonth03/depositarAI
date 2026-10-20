@@ -8,7 +8,6 @@ use an isolated password-hash helper, but the retrieval services are not started
 from __future__ import annotations
 
 import ast
-import copy
 import hashlib
 import os
 from pathlib import Path
@@ -39,18 +38,18 @@ APPROVED_OPENSEARCH_BASE = (
 )
 MAX_SLOTS = 16
 STAGED_FILES = (
-    "scripts/bootstrap-search-canary.sh",
+    "scripts/bootstrap-catalog.sh",
     "scripts/search-lib.sh",
     "scripts/read_env.py",
     "scripts/search_dictionary_permissions.py",
     "scripts/search_model_source.py",
-    "deploy/env/.env.search-canary.example",
+    "deploy/env/catalog.env.example",
     "deploy/config/opensearch/opensearch.yml",
     "deploy/config/opensearch/internal_users.yml.in",
     "deploy/config/opensearch/roles.yml",
     "deploy/config/opensearch/roles_mapping.yml",
-    "deploy/compose/compose.search-canary.yaml",
-    "scripts/validate_search_compose.py",
+    "deploy/compose/compose.catalog.yaml",
+    "scripts/validate_catalog_compose.py",
 )
 BUILD_FILES = (
     "deploy/docker/fess/Dockerfile",
@@ -347,9 +346,8 @@ def validate_compose(
     gid,
     policy_source,
     sealed_build_root=None,
-    catalog_volume_name=None,
 ):
-    """Reuse the full reviewed policy with only its project identity rebound."""
+    """Validate sealed catalog policy and the isolated slot source paths."""
     if PROJECT.fullmatch(project) is None or config.get("name") != project:
         raise BackendError("catalog slot project identity mismatch")
     networks = config.get("networks")
@@ -369,11 +367,8 @@ def validate_compose(
             "catalog slot network must be unique, internal and non-external"
         )
     module = types.ModuleType("depositar_sealed_catalog_policy")
-    module.__file__ = str(repo_root / "scripts/validate_search_compose.py")
+    module.__file__ = str(repo_root / "scripts/validate_catalog_compose.py")
     exec(compile(policy_source, module.__file__, "exec"), module.__dict__)
-    # The reviewed allowlists, including the historical cluster.name, were
-    # constructed at exec time. Only actual project/secret names are rebound.
-    module.EXPECTED_PROJECT = project
     if sealed_build_root is not None:
         # Retained Compose records refer to the original source checkout.
         # This is metadata only: actual builds use our sealed minimal context,
@@ -387,12 +382,7 @@ def validate_compose(
         ):
             raise BackendError("sealed catalog build root is invalid")
         module.PROJECT_ROOT = Path(sealed_build_root)
-    volume_options = (
-        {}
-        if catalog_volume_name is None
-        else {"catalog_volume_name": catalog_volume_name}
-    )
-    module.validate(config, vector_pass_documents=256, **volume_options)
+    module.validate(config)
     for service in config["services"].values():
         if (
             service.get("ports")
@@ -415,11 +405,9 @@ def validate_compose(
             path = Path(mount["source"])
             if data_root not in path.parents:
                 raise BackendError("catalog slot mount escapes its isolated data root")
-    if str(
-        module.derive_canary_root(
-            config["services"]["opensearch-search"], **volume_options
-        )
-    ) != str(data_root):
+    if str(module.derive_catalog_root(config["services"]["opensearch-search"])) != str(
+        data_root
+    ):
         raise BackendError("catalog slot data root changed")
     for secret in config.get("secrets", {}).values():
         if data_root not in Path(secret["file"]).parents:
@@ -528,13 +516,12 @@ def _environment(template, *, data_root, config, uid, gid, project):
         raise BackendError("bootstrap project must be a qualified catalog slot")
     replacements = {
         "COMPOSE_PROJECT_NAME": project,
-        "SEARCH_CANARY_DATA_ROOT": str(data_root),
-        "SEARCH_CANARY_STORAGE_ALLOWED_ROOT": str(config.state_root),
-        "SEARCH_CANARY_STORAGE_REQUIRED_FS_TYPES": "",
-        "SEARCH_CANARY_RUNTIME_UID": str(uid),
-        "SEARCH_CANARY_RUNTIME_GID": str(gid),
-        "SEARCH_CANARY_MODEL_SOURCE": str(config.embedding_model_root),
-        "SEARCH_VECTOR_PASS_DOCUMENTS": "256",
+        "SEARCH_CATALOG_DATA_ROOT": str(data_root),
+        "SEARCH_CATALOG_STORAGE_ALLOWED_ROOT": str(config.state_root),
+        "SEARCH_CATALOG_STORAGE_REQUIRED_FS_TYPES": "",
+        "SEARCH_CATALOG_RUNTIME_UID": str(uid),
+        "SEARCH_CATALOG_RUNTIME_GID": str(gid),
+        "SEARCH_CATALOG_MODEL_SOURCE": str(config.embedding_model_root),
     }
     found = set()
     lines = []
@@ -550,38 +537,7 @@ def _environment(template, *, data_root, config, uid, gid, project):
         raise BackendError("bootstrap template is missing a required setting")
     if any(re.search(r"[\s$`,'\"\\]", value) for value in replacements.values()):
         raise BackendError("bootstrap paths contain unsupported characters")
-    if config.catalog_storage == "docker-volume":
-        if any(
-            line.split("=", 1)[0] == "SEARCH_CANARY_CATALOG_STORAGE" for line in lines
-        ):
-            raise BackendError("duplicate generated storage profile")
-        lines.append("SEARCH_CANARY_CATALOG_STORAGE=docker-volume")
     return ("\n".join(lines) + "\n").encode("utf-8")
-
-
-def _index_volume(compose, project):
-    """Replace one reviewed bind with a fixed externally managed local volume."""
-    result = copy.deepcopy(compose)
-    if "volumes" in result:
-        raise BackendError("bootstrap must render the original bind profile")
-    mounts = result["services"]["opensearch-search"]["volumes"]
-    targets = [
-        number
-        for number, mount in enumerate(mounts)
-        if mount.get("target") == "/usr/share/opensearch/data"
-    ]
-    if len(targets) != 1 or mounts[targets[0]].get("type") != "bind":
-        raise BackendError("bootstrap index mount changed")
-    mounts[targets[0]] = {
-        "type": "volume",
-        "source": "catalog-index",
-        "target": "/usr/share/opensearch/data",
-        "volume": {"nocopy": True},
-    }
-    result["volumes"] = {
-        "catalog-index": {"name": project + "-index", "external": True}
-    }
-    return result
 
 
 def security_material_digest(data_root):
@@ -665,11 +621,6 @@ def _prepare_or_load(
     config = validate_config(config.to_dict(), repo_root=repo_root)
     if os.geteuid() == 0 or os.getegid() == 0:
         raise BackendError("catalog preparation requires the non-root product operator")
-    if (
-        Path.home() in config.state_root.parents
-        and config.catalog_storage != "docker-volume"
-    ):
-        raise BackendError("catalog state must be outside the operator home")
     bundle_path = storage.real_path(bundle_path)
     catalog = CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
     runner = _runner(repo_root) if runner is None else runner
@@ -772,27 +723,22 @@ def _prepare_or_load(
                 project=project,
                 uid=os.geteuid(),
                 gid=os.getegid(),
-                policy_source=sources["scripts/validate_search_compose.py"],
+                policy_source=sources["scripts/validate_catalog_compose.py"],
                 sealed_build_root=compose.get("services", {})
                 .get("fess-search", {})
                 .get("build", {})
                 .get("context"),
-                catalog_volume_name=(
-                    project + "-index"
-                    if config.catalog_storage == "docker-volume"
-                    else None
-                ),
             )
             _verify_staged_sources(tooling, sources)
             env = _environment(
-                sources["deploy/env/.env.search-canary.example"],
+                sources["deploy/env/catalog.env.example"],
                 data_root=data_root,
                 config=config,
                 uid=os.geteuid(),
                 gid=os.getegid(),
                 project=project,
             )
-            if _staged_bytes(tooling, ".env.search-canary") != env:
+            if _staged_bytes(tooling, ".env.catalog") != env:
                 raise BackendError("sealed bootstrap environment changed")
             private_io.verify_directory(state_fd, config.state_root)
             private_io.verify_directory(catalogs_fd, config.state_root / "catalogs")
@@ -813,9 +759,9 @@ def _prepare_or_load(
             for name in (*STAGED_FILES, *BUILD_FILES):
                 _write_file(tooling / name, sources[name])
             _write_file(
-                tooling / ".env.search-canary",
+                tooling / ".env.catalog",
                 _environment(
-                    sources["deploy/env/.env.search-canary.example"],
+                    sources["deploy/env/catalog.env.example"],
                     data_root=data_root,
                     config=config,
                     uid=os.geteuid(),
@@ -849,7 +795,7 @@ def _prepare_or_load(
                     "bash",
                     "--noprofile",
                     "--norc",
-                    str(tooling / "scripts/bootstrap-search-canary.sh"),
+                    str(tooling / "scripts/bootstrap-catalog.sh"),
                     "--isolated-project",
                     project,
                     "--hash-image",
@@ -872,28 +818,15 @@ def _prepare_or_load(
                     "--project-directory",
                     str(repo_root / "deploy/compose"),
                     "--env-file",
-                    str(tooling / ".env.search-canary"),
+                    str(tooling / ".env.catalog"),
                     "-f",
-                    str(tooling / "deploy/compose/compose.search-canary.yaml"),
+                    str(tooling / "deploy/compose/compose.catalog.yaml"),
                     "config",
                     "--format",
                     "json",
                 ],
             )
             compose = metadata_source.strict_json(rendered.encode("utf-8"))
-            if config.catalog_storage == "docker-volume":
-                # Validate the original bootstrap output before replacing its
-                # data mount; never hide a changed bind path by overwriting it.
-                validate_compose(
-                    compose,
-                    repo_root=repo_root,
-                    data_root=data_root,
-                    project=project,
-                    uid=os.geteuid(),
-                    gid=os.getegid(),
-                    policy_source=sources["scripts/validate_search_compose.py"],
-                )
-                compose = _index_volume(compose, project)
             phase = "validate_compose"
             validate_compose(
                 compose,
@@ -902,12 +835,7 @@ def _prepare_or_load(
                 project=project,
                 uid=os.geteuid(),
                 gid=os.getegid(),
-                policy_source=sources["scripts/validate_search_compose.py"],
-                catalog_volume_name=(
-                    project + "-index"
-                    if config.catalog_storage == "docker-volume"
-                    else None
-                ),
+                policy_source=sources["scripts/validate_catalog_compose.py"],
             )
             private_io.verify_directory(state_fd, config.state_root)
             private_io.verify_directory(catalogs_fd, config.state_root / "catalogs")

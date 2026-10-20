@@ -56,7 +56,7 @@ python3 scripts/depositarai.py --config /absolute/private/product.json build-vec
 
 剩餘時間須足以容納完整 helper 才開始下一輪；`--max-passes` 是上限，不保證本次
 會執行指定輪數。產品 profile 固定為每 pass 256，不是已實測最佳吞吐量；
-不可套用舊 canary profile，也不自動設定 cron。
+向量命令不自動設定 cron。
 
 `2,400` 秒是接受的最小 wall budget，**不保證開始任何 pass**。目前 preflight
 （model、image 與歷史證據檢查）消耗本次 wall budget；開工前仍須有完整

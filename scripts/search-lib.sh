@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Minimal shared helpers for the standalone Depositár search product.
+# Minimal shell helpers for sealed product catalog preparation.
 
 die() {
   echo "Error: $*" >&2
@@ -29,7 +29,7 @@ load_search_env() {
   # read_env.py validates keys and shell-quotes every value; no content from
   # the environment file is evaluated as code.
   eval "$parsed"
-  export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-depositar-search-canary}"
+  export COMPOSE_PROJECT_NAME
   [[ "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
     || die "COMPOSE_PROJECT_NAME must contain only lowercase letters, digits, hyphens, and underscores"
 }
@@ -37,7 +37,7 @@ load_search_env() {
 require_env() {
   local name
   for name in "$@"; do
-    [[ -n "${!name:-}" ]] || die "$name is required in .env.search-canary"
+    [[ -n "${!name:-}" ]] || die "$name is required in .env.catalog"
   done
 }
 

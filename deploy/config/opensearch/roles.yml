@@ -5,7 +5,7 @@ _meta:
 
 # Fess has to create aliases, templates, pipelines and its own indices. Cluster
 # operations are broad, while index access remains restricted to Fess prefixes.
-# A narrower action trace is a required gate before promoting this canary.
+# A narrower action trace is a required gate before promoting this catalog.
 fess_backend:
   reserved: false
   hidden: false
@@ -28,7 +28,7 @@ fess_backend:
         - indices_all
     # ConfigSync 3.8 stores Fess analyzer dictionaries in the exact regular
     # index configured by configsync.index. Its legacy migration source is
-    # .configsync; this new canary deliberately receives no access to that or
+    # .configsync; this new catalog deliberately receives no access to that or
     # to any other dot-prefixed OpenSearch index.
     - index_patterns:
         - "configsync"

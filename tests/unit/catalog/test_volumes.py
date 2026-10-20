@@ -159,16 +159,54 @@ class CatalogVolumeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "extra_volumes"):
             volumes.require(self.fixture.context)
 
-    def test_profile_detection_does_not_hide_a_malformed_named_mount(self):
-        self.assertTrue(volumes.enabled(self.fixture.context))
-        self.fixture.context["compose"]["volumes"].clear()
-        self.assertTrue(volumes.enabled(self.fixture.context))
-        with self.assertRaisesRegex(ValueError, "profile_changed"):
-            volumes.require(self.fixture.context)
-        self.fixture.context["compose"]["services"]["opensearch-search"]["volumes"][0][
-            "type"
-        ] = "bind"
-        self.assertFalse(volumes.enabled(self.fixture.context))
+    def test_missing_or_malformed_volume_never_falls_back_to_bind(self):
+        original = copy.deepcopy(self.fixture.context["compose"])
+        for change in (
+            lambda compose, mount: compose.pop("volumes"),
+            lambda compose, mount: compose["volumes"].clear(),
+            lambda compose, mount: compose["volumes"].update(other={}),
+            lambda compose, mount: compose["services"].clear(),
+            lambda compose, mount: mount.update(type="bind"),
+            lambda compose, mount: mount.update(source="other-volume"),
+            lambda compose, mount: mount.update(read_only=True),
+            lambda compose, mount: mount.update(read_only=1),
+            lambda compose, mount: mount.update(volume={"nocopy": 1}),
+            lambda compose, mount: mount.update(
+                volume={"nocopy": True, "subpath": "other"}
+            ),
+            lambda compose, mount: mount.update(unexpected=True),
+            lambda compose, mount: compose["services"]["opensearch-search"][
+                "volumes"
+            ].append(copy.deepcopy(mount)),
+            lambda compose, mount: compose["services"]["opensearch-search"][
+                "volumes"
+            ].clear(),
+        ):
+            compose = copy.deepcopy(original)
+            mount = compose["services"]["opensearch-search"]["volumes"][0]
+            change(compose, mount)
+            self.fixture.context["compose"] = compose
+            for verify in (volumes.ensure, volumes.require, execution.require_storage):
+                with self.subTest(compose=compose, verify=verify.__name__):
+                    with self.assertRaisesRegex(ValueError, "profile_changed"):
+                        verify(self.fixture.context)
+            self.assertEqual([], self.fixture.calls)
+            self.fixture.image.assert_not_called()
+
+    def test_explicit_readwrite_mount_matches_compose_default(self):
+        kwargs = {
+            "compose": self.fixture.context["compose"],
+            "work_root": self.fixture.root,
+            "data_root": self.fixture.data,
+            "uid": os.geteuid(),
+            "gid": os.getegid(),
+        }
+        catalog = execution.catalog_identity(self.fixture.context)
+        implicit = volume_policy.identity(catalog, **kwargs)
+        kwargs["compose"]["services"]["opensearch-search"]["volumes"][0][
+            "read_only"
+        ] = False
+        self.assertEqual(implicit, volume_policy.identity(catalog, **kwargs))
 
     def test_security_failure_precedes_all_volume_commands(self):
         self.fixture.start_intent()

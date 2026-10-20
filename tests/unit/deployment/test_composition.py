@@ -26,12 +26,13 @@ UUIDS = tuple(f"GPU-0000000{index}-0000-4000-8000-000000000001" for index in ran
 
 def product():
     return ProductConfig(
-        1,
+        2,
         Path("/srv/private/depositar-ai"),
         Path("/srv/models/api"),
         Path("/srv/models/embedding"),
         Path("/srv/models/reranker"),
         GPUConfig(UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[3]),
+        catalog_storage="docker-volume",
     )
 
 
@@ -80,53 +81,42 @@ class CompositionTests(unittest.TestCase):
             **options,
         )
 
-    def test_schema_two_local_catalog_storage_preserves_private_plane_plans(self):
-        local = replace(self.config, schema_version=2, catalog_storage="docker-volume")
+    def test_volume_configuration_renders_without_io(self):
         with (
             mock.patch("builtins.open", side_effect=AssertionError("no file reads")),
             mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
         ):
-            self.assertEqual(self.render(), self.render(config=local))
-        self.assertNotIn("catalog_storage", self.config.to_dict())
+            result = self.render()
+        self.assertEqual("sealed_reference_only", result["catalog_reference"]["status"])
+        self.assertEqual(2, self.config.to_dict()["schema_version"])
+        self.assertEqual("docker-volume", self.config.to_dict()["catalog_storage"])
 
     def test_product_schema_and_catalog_storage_pairing_is_closed(self):
-        for schema in (True, False, 1.0, 2.0, "1", "2", None, 0, -1, 3):
+        for schema in (True, False, 1, 1.0, 2.0, "1", "2", None, 0, -1, 3):
             with (
                 self.subTest(schema=schema),
                 self.assertRaisesRegex(ValueError, "composition_config_invalid"),
             ):
                 self.render(config=replace(self.config, schema_version=schema))
-        for schema, storage in (
-            (1, "docker-volume"),
-            (1, "unknown"),
-            (1, False),
-            (2, "bind"),
-            (2, "unknown"),
-            (2, True),
-            (2, 1),
-            (2, None),
-        ):
+        for storage in ("bind", "unknown", True, 1, None):
             with (
-                self.subTest(schema=schema, storage=storage),
+                self.subTest(storage=storage),
                 self.assertRaisesRegex(ValueError, "composition_config_invalid"),
             ):
-                self.render(
-                    config=replace(
-                        self.config, schema_version=schema, catalog_storage=storage
-                    )
-                )
+                self.render(config=replace(self.config, catalog_storage=storage))
 
-    def test_local_volume_profile_keeps_root_gpu_and_catalog_guards(self):
-        local = replace(self.config, schema_version=2, catalog_storage="docker-volume")
+    def test_volume_configuration_keeps_root_gpu_and_catalog_guards(self):
         for changed in (
-            replace(local, api_model_root=Path("/srv/../models")),
-            replace(local, api_model_root=local.state_root / "models"),
-            replace(local, gpus=GPUConfig(UUIDS[0], (UUIDS[0], UUIDS[2]), UUIDS[3])),
+            replace(self.config, api_model_root=Path("/srv/../models")),
+            replace(self.config, api_model_root=self.config.state_root / "models"),
+            replace(
+                self.config, gpus=GPUConfig(UUIDS[0], (UUIDS[0], UUIDS[2]), UUIDS[3])
+            ),
         ):
             with self.subTest(config=changed), self.assertRaises(ValueError):
                 self.render(config=changed)
         with self.assertRaises(ValueError):
-            self.render(config=local, plan={**self.catalog, "schema_version": 2})
+            self.render(plan={**self.catalog, "schema_version": 2})
 
     def test_returns_separate_catalog_inference_release_and_singleton_gateway(self):
         result = self.render()
@@ -388,7 +378,7 @@ class CompositionTests(unittest.TestCase):
             self.assertTrue(
                 result[plane]["x-depositar-plan"]["immutable_built_images_required"]
             )
-        self.assertNotIn("depositar-search-canary", json.dumps(result))
+        self.assertNotIn("depositar-catalog", json.dumps(result))
         self.assertNotIn("depositar-search-api_inference", json.dumps(result))
 
     def test_model_identity_comes_from_pinned_production_authorities(self):
@@ -557,7 +547,7 @@ class CompositionTests(unittest.TestCase):
             "status": "ready",
             "revision": "1" * 40,
             "document_count": True,
-            "project": "depositar-search-canary",
+            "project": "depositar-catalog",
             "manifest_sha256": "not-a-digest",
             "source_sha256": {"../secret": "d" * 64},
             "work_root": "/srv/other-catalog",

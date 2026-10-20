@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from types import SimpleNamespace
 import unittest
 
 from search.operations.catalog import client_lease, policy
@@ -14,11 +15,12 @@ from tests.unit.catalog.test_client_lease import (
     leased_runtime_evidence as catalog_evidence,
 )
 from tests.unit.deployment.test_composition import product
+from tests.unit.deployment.catalog_fixtures import sealed_catalog_storage
 from tests.unit.deployment.test_inference_runtime import images, snapshot
 from tests.unit.deployment.release.test_runtime import evidence as release_evidence
 
 
-def evidence():
+def evidence(test):
     """Align existing catalog, GPU and website fixtures to one actual topology.
 
     These are Docker inspection fixtures, not self-authenticating host receipts.
@@ -78,7 +80,12 @@ def evidence():
     baseline[1].pop(website_network["Name"])
     for network in baseline[1].values():
         network["Containers"].pop(api_id, None)
-    context = {"plan": catalog["core_plan"], "compose": catalog["core_compose"]}
+    context = {
+        "plan": catalog["core_plan"],
+        "compose": catalog["core_compose"],
+        "bundle": SimpleNamespace(bundle_id=cpu["lease"]["bundle_id"]),
+    }
+    sealed_catalog_storage(test, context)
     catalog_proof = policy.validate_runtime(
         context["plan"],
         context["compose"],
@@ -157,7 +164,7 @@ class SnapshotDocker:
 
 class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_baseline_to_actual_lease_proves_all_three_planes_without_mutation(self):
-        host, baseline, leased, expected_lease, verified = evidence()
+        host, baseline, leased, expected_lease, verified = evidence(self)
         original = copy.deepcopy((baseline, leased))
         baseline_result = host.observe(snapshot=baseline)
         self.assertEqual(baseline_result[0], host.authority["runtime"])
@@ -179,10 +186,57 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
         self.assertNotIn("/srv", json.dumps(host.last))
         self.assertNotIn("never-save-this-value", json.dumps(host.last))
 
+    def test_changed_volume_receipts_cannot_authorize_runtime(self):
+        for filename in ("admin-image.json", "volume-started.json", "volume.json"):
+            with self.subTest(filename=filename):
+                host, baseline, _leased, _lease, _verified = evidence(self)
+                record = release.execution.read_record(host.context["root"], filename)
+                field = (
+                    "image_id" if filename == "admin-image.json" else "helper_image_id"
+                )
+                record[field] = "sha256:" + "f" * 64
+                release.execution.write_record(
+                    host.context["root"], filename, record, replace=True
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "catalog_volume_receipt_changed"
+                ):
+                    host.observe(snapshot=baseline)
+                self.assertIsNone(host.last)
+
+    def test_actual_index_volume_mount_must_match_sealed_storage(self):
+        for field, changed in (
+            ("Name", "unknown-index"),
+            ("Source", "/different/docker/volume"),
+            ("Driver", "unknown"),
+            ("Destination", "/different/index"),
+            ("RW", False),
+            ("Type", "bind"),
+        ):
+            with self.subTest(field=field):
+                host, baseline, _leased, _lease, _verified = evidence(self)
+                index = next(
+                    row
+                    for row in baseline[0][host.context["plan"]["project"]]
+                    if row["Config"]["Labels"]["com.docker.compose.service"]
+                    == "opensearch-search"
+                )
+                mount = next(
+                    mount
+                    for mount in index["Mounts"]
+                    if mount["Destination"] == "/usr/share/opensearch/data"
+                )
+                mount[field] = changed
+                with self.assertRaisesRegex(
+                    ValueError, "catalog_runtime_volume_binding_changed"
+                ):
+                    host.observe(snapshot=baseline)
+                self.assertIsNone(host.last)
+
     def test_unleased_api_on_catalog_or_gpu_network_is_not_adopted(self):
         for network_kind in ("catalog", "inference", "ranking"):
             with self.subTest(network_kind=network_kind):
-                host, baseline, leased, expected, _verified = evidence()
+                host, baseline, leased, expected, _verified = evidence(self)
                 name = next(
                     name
                     for name in leased[1]
@@ -201,7 +255,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_every_plane_rejects_unknown_unfiltered_network_peer(self):
         for network_kind in ("catalog", "inference", "ranking", "website"):
             with self.subTest(network_kind=network_kind):
-                host, _baseline, leased, _expected, _verified = evidence()
+                host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
                 suffix = {
                     "catalog": "_search_backend",
@@ -217,7 +271,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_api_replacement_capability_and_catalog_identity_drift_reject(self):
         for kind in ("replacement", "gpu", "environment", "catalog_id", "invalid_pid"):
             with self.subTest(kind=kind):
-                host, _baseline, leased, _expected, _verified = evidence()
+                host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
                 api = next(
                     row
@@ -240,7 +294,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_gpu_process_restart_cannot_match_sealed_baseline_receipt(self):
         for field, value in (("Pid", 9999), ("StartedAt", "2026-10-12T12:00:00Z")):
             with self.subTest(field=field):
-                host, _baseline, leased, _expected, _verified = evidence()
+                host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
                 row = leased[0][host.inference_compose["name"]][0]
                 row["State"][field] = value
@@ -252,7 +306,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_cpu_pid_restart_changes_proof_for_post_acceptance_fence(self):
         for service in ("conversation-api", "web", "filtered-embedding"):
             with self.subTest(service=service):
-                host, _baseline, leased, _expected, _verified = evidence()
+                host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
                 host.observe(snapshot=leased)
                 before = copy.deepcopy(host.last[1])
@@ -279,7 +333,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_collect_handles_shuffled_actual_rows_and_observe_uses_real_validators(
         self,
     ):
-        host, baseline, leased, expected, _verified = evidence()
+        host, baseline, leased, expected, _verified = evidence(self)
         host.docker = SnapshotDocker(baseline)
         collected = host.collect(clients=False)
         host.observe(snapshot=collected)
@@ -305,7 +359,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_collector_rejects_extra_project_container_or_network(self):
         for kind in ("container", "network"):
             with self.subTest(kind=kind):
-                host, baseline, _leased, _expected, _verified = evidence()
+                host, baseline, _leased, _expected, _verified = evidence(self)
                 host.docker = SnapshotDocker(baseline)
                 if kind == "container":
                     host.docker.extra_ids = ["f" * 64]
@@ -319,7 +373,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
     def test_make_lease_does_not_adopt_absent_or_duplicate_api(self):
         for kind in ("absent", "duplicate"):
             with self.subTest(kind=kind):
-                host, _baseline, leased, _expected, _verified = evidence()
+                host, _baseline, leased, _expected, _verified = evidence(self)
                 rows = leased[0][host.compose["name"]]
                 api = next(
                     row

@@ -23,7 +23,8 @@
 | 修改程式或文件 | [參與開發](docs/guide/development.md) |
 
 網站與搜尋後端可分開部署；後端經由受限的私有連線提供 API。試用網址由維運者
-提供，自行部署所需的環境、設定與啟動步驟，請從部署指南開始。
+提供。自行部署使用單一[產品設定範本](deploy/env/product.example.json)，
+OpenSearch 索引使用 Docker local volume；主機條件與啟動步驟請從部署指南開始。
 
 ## 本機預覽文件
 

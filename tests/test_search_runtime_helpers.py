@@ -192,7 +192,7 @@ class SearchRuntimeStaticTests(unittest.TestCase):
                 "paging.page.size 25"
             ),
         )
-        compose = (ROOT / "deploy/compose/compose.search-canary.yaml").read_text(
+        compose = (ROOT / "deploy/compose/compose.catalog.yaml").read_text(
             encoding="utf-8"
         )
         self.assertEqual(1, compose.count("-Dfess.config.paging.page.size=25"))
@@ -292,7 +292,7 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         roles = (ROOT / "deploy/config/opensearch/roles.yml").read_text(
             encoding="utf-8"
         )
-        compose = (ROOT / "deploy/compose/compose.search-canary.yaml").read_text(
+        compose = (ROOT / "deploy/compose/compose.catalog.yaml").read_text(
             encoding="utf-8"
         )
         entrypoint = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(

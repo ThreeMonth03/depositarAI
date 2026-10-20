@@ -72,6 +72,28 @@ partial slot keeps its existing recovery rules, rather than silently switching
 to a different slot. Automatic selection is bounded by the existing slot and
 journal limits and never prunes old data.
 
+## Catalog storage and bootstrap changes
+
+The product configuration uses schema `2` with
+`catalog_storage: "docker-volume"`. OpenSearch index data belongs to a fixed
+catalog-specific Docker local volume. Its sealed identity, local driver,
+labels, initialization receipt and actual mount must agree before startup or
+reuse. Compose references that volume as external with `nocopy: true`; an
+existing volume is not adopted by name alone.
+
+Storage and bootstrap inputs belong to the catalog recipe. A change requires a
+new catalog slot, metadata import and vector generation. It does not itself
+change the metadata builder: an intact sealed metadata bundle remains reusable
+when its builder sources and manifest still pass validation. Keep its original
+identity and snapshot rather than downloading the same source unnecessarily.
+
+Old bind-based product state and runtime receipts are not migrated in place.
+Prepare a private state root using the current
+[configuration template](../../deploy/env/product.example.json), retain the old
+state for handoff, and follow the normal preparation flow. Do not rewrite
+`product.json`, catalog manifests or completion receipts, copy live index files,
+or attach an old volume to make it appear to be a new completed catalog.
+
 ## When metadata generation sources change
 
 `search.catalog.build` owns offline bundle generation. Its manifest binds the
@@ -132,12 +154,25 @@ when preparing its fresh slot:
 ```bash
 python3 scripts/depositarai.py --config /private/product.json prepare-index \
   --catalog-revision ORIGINAL_CATALOG_COMMIT
-python3 scripts/depositarai.py --config /private/product.json start-index \
-  --prebuilt-images /private/package/catalog-images.json
+python3 scripts/depositarai.py --config /private/product.json build-catalog-images
+python3 scripts/depositarai.py --config /private/product.json start-index
 python3 scripts/depositarai.py --config /private/product.json import-index
 python3 scripts/depositarai.py --config /private/product.json build-vectors
 python3 scripts/depositarai.py --config /private/product.json prepare-query
 ```
+
+`build-catalog-images` prepares the service images and catalog-admin helper,
+including their sealed receipts for this slot; it may build images. This is
+source-based preparation, not an archive-only installer. Volume initialization
+requires a verified local catalog-admin image and this slot's completed
+`admin-image.json` in addition to the three catalog service images.
+
+`start-index --prebuilt-images /private/package/catalog-images.json` is an
+alternative only after those admin prerequisites already exist and pass
+verification. That startup path does not build or pull missing images; it
+rejects absent or invalid admin evidence before writing startup intent. A
+package's three-service image receipt alone cannot cold-start a new catalog,
+and `restore-product` does not install images or restore runtime receipts.
 
 The explicit revision option requires the same source compatibility check; it
 does not permit an incompatible catalog. `stage-catalog --catalog-revision COMMIT`

@@ -12,7 +12,10 @@
 - 使用已提交且沒有未提交修改的 checkout；整個準備流程使用同一版本與設定。
 
 從 `deploy/env/product.example.json` 複製設定到 Git 外，調整 `state_root`、三個
-模型目錄及 GPU UUID。設定與 state 須由操作帳號擁有；模型目錄可由 root 或操作
+模型目錄及 GPU UUID。產品設定固定為 `schema_version: 2` 與
+`catalog_storage: "docker-volume"`；OpenSearch 索引放在 Docker daemon 管理的本機
+named volume，metadata、配置、憑證及模型另存於私有目錄。
+設定與 state 須由操作帳號擁有；模型目錄可由 root 或操作
 帳號擁有，須可讀且不可由群組或其他使用者寫入。各目錄須彼此不重疊，不能指向
 repository、home 根目錄或 symlink；設定檔設為0600，state 使用私有目錄。
 範本的路徑與 UUID 都要替換，不能直接當成可用設定。
@@ -35,6 +38,12 @@ python3 scripts/depositarai.py --config "$product_config" stage-catalog
 
 這一步同步公開 metadata、準備隔離索引、匯入資料並建立向量，尚不開啟網站。
 已有相容且完整的 catalog 時會核對後重用，應用程式修改不必每次重新向量化。
+
+儲存或 bootstrap 配方不同時，須準備新的 catalog slot，再匯入 metadata 與建立向量。
+metadata builder 未變時，可以保留並沿用通過核對的 sealed metadata。
+舊 bind 設定使用新的私有 state 準備 schema 2 部署，保留原 state 及收據供交接；
+不修改舊 marker、不直接搬移索引或複製 runtime 收據。
+完整原則見 [Catalog cache](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/CATALOG_CACHE.md#catalog-storage-and-bootstrap-changes)。
 
 若輸出 `status=checkpoint` 且退出碼為2，表示本輪預算已用完；保持相同來源、
 設定與資料，重新執行同一命令續跑。只有完整完成後，才進入服務啟動。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from search.operations.catalog.policy import (
     validate_runtime,
 )
 from tests.unit.catalog import test_backend as backend_fixture
+from tests.unit.catalog.volume_fixtures import VolumeDocker
 
 REVISION, ROOT = backend_fixture.REVISION, backend_fixture.ROOT
 
@@ -54,6 +56,7 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.root = Path(self.plan["work_root"])
         self.compose = json.loads(Path(self.plan["compose_file"]).read_text())
         self.calls = []
+        self.volume = VolumeDocker(self)
         self.images = {}
         self.containers = []
         self.network = None
@@ -92,6 +95,8 @@ class CatalogRuntimeTests(unittest.TestCase):
                 return self.completed(argv)
             return self.fixture.runner(argv, timeout=timeout)
         self.assertEqual("docker", argv[0])
+        if argv[1] in {"volume", "run"}:
+            return self.volume.runner(argv, timeout=timeout)
         if argv[1] == "build":
             tag = argv[argv.index("--tag") + 1]
             service = next(
@@ -238,9 +243,19 @@ class CatalogRuntimeTests(unittest.TestCase):
             mounts = [
                 {
                     "Type": entry["type"],
-                    "Source": entry["source"],
+                    "Source": self.volume.mountpoint
+                    if entry["type"] == "volume"
+                    else entry["source"],
                     "Destination": entry["target"],
                     "RW": not entry.get("read_only", False),
+                    **(
+                        {
+                            "Name": self.compose["volumes"][entry["source"]]["name"],
+                            "Driver": "local",
+                        }
+                        if entry["type"] == "volume"
+                        else {}
+                    ),
                 }
                 for entry in expected["volumes"]
             ]
@@ -287,6 +302,16 @@ class CatalogRuntimeTests(unittest.TestCase):
                     },
                 },
                 "HostConfig": {
+                    "Mounts": [
+                        {
+                            "Type": "volume",
+                            "Source": self.compose["volumes"][entry["source"]]["name"],
+                            "Target": entry["target"],
+                            "VolumeOptions": {"NoCopy": True},
+                        }
+                        for entry in expected["volumes"]
+                        if entry["type"] == "volume"
+                    ],
                     "Runtime": "runc",
                     "ReadonlyRootfs": True,
                     "CapDrop": ["ALL"],
@@ -415,7 +440,53 @@ class CatalogRuntimeTests(unittest.TestCase):
             "NetworkSettings": {"Networks": {}},
         }
 
-    def prebuilt_receipt(self):
+    def prebuilt_admin_image(self):
+        if (self.root / "admin-image.json").exists():
+            return
+        context = {"plan": self.plan, "repo": ROOT, "runner": self.runner}
+        sources = {
+            name: hashlib.sha256(execution.sealed_source(context, name)).hexdigest()
+            for name in runtime.administration.ADMIN_FILES
+        }
+        labels = execution.image_labels(
+            {"plan": self.plan},
+            "catalog-admin",
+            sources,
+            runtime.administration.ADMIN_BASE,
+        )
+        image_id = "sha256:" + "3" * 64
+        reference = self.plan["project"] + "-catalog-admin:1"
+        self.images[reference] = self.images[image_id] = {
+            "Id": image_id,
+            "Config": {
+                "Labels": labels,
+                "Entrypoint": [
+                    "python3",
+                    "-E",
+                    "-s",
+                    "-B",
+                    "-u",
+                    "-m",
+                    "search.catalog_admin",
+                ],
+                "WorkingDir": "/opt/depositar-search",
+                "Cmd": None,
+            },
+        }
+        execution.write_record(
+            self.root,
+            "admin-image.json",
+            {
+                "image_id": image_id,
+                "reference": reference,
+                "labels": labels,
+                "sources": sources,
+            },
+        )
+
+    def prebuilt_receipt(self, *, admin_image=True):
+        if admin_image:
+            self.prebuilt_admin_image()
         images = {}
         for name, number in (("opensearch-search", "2"), ("fess-search", "1")):
             sources = {
@@ -650,6 +721,74 @@ class CatalogRuntimeTests(unittest.TestCase):
                 )
         self.assertEqual(receipt, self.start())
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
+        self.assertEqual(
+            1,
+            sum(argv[:3] == ["docker", "volume", "create"] for argv, _ in self.calls),
+        )
+        initialize = next(
+            index for index, (argv, _) in enumerate(self.calls) if "--cap-add" in argv
+        )
+        up = next(index for index, (argv, _) in enumerate(self.calls) if "up" in argv)
+        self.assertLess(initialize, up)
+        self.assertEqual(
+            {"uid": os.geteuid(), "gid": os.getegid(), "mode": 0o700},
+            self.volume.ownership,
+        )
+        self.assertTrue((self.root / "volume.json").is_file())
+
+    def test_existing_unowned_volume_blocks_start_without_adoption(self):
+        self.volume.metadata = {"name": self.plan["project"] + "-index"}
+        with self.assertRaisesRegex(ValueError, "existing_without_receipt"):
+            self.start()
+        self.assertFalse(self.containers)
+        self.assertFalse((self.root / "volume-started.json").exists())
+        self.assertFalse(
+            any(
+                argv[:3] == ["docker", "volume", "create"]
+                or argv[:2] == ["docker", "run"]
+                or "up" in argv
+                for argv, _ in self.calls
+            )
+        )
+
+    def test_failed_volume_initialization_quarantines_start_without_retry(self):
+        self.volume.fail_initialize = True
+        with self.assertRaises(backend.BackendError):
+            self.start()
+        self.assertTrue((self.root / "volume-started.json").exists())
+        self.assertTrue((self.root / "start-failure.json").exists())
+        self.assertFalse((self.root / "volume.json").exists())
+        self.assertFalse(any("up" in argv for argv, _ in self.calls))
+        self.calls.clear()
+        self.volume.calls.clear()
+        with self.assertRaisesRegex(ValueError, "quarantined"):
+            self.start()
+        self.assertFalse(self.volume.calls)
+        self.assertFalse(self.containers)
+
+    def test_start_rejects_volume_metadata_drift_before_runtime_completion(self):
+        self.startup_mutation = lambda: self.volume.metadata.update(
+            created_at="changed-after-compose-up"
+        )
+        with self.assertRaisesRegex(ValueError, "volume_receipt_changed"):
+            self.start()
+        self.assertTrue(self.containers)
+        self.assertTrue((self.root / "volume.json").exists())
+        self.assertFalse((self.root / "runtime.json").exists())
+        self.assertTrue((self.root / "start-failure.json").exists())
+
+    def test_start_rejects_bind_replacement_of_the_sealed_index_volume(self):
+        def bind_replacement():
+            for row in self.containers:
+                for mount in row["Mounts"]:
+                    if mount["Destination"] == "/usr/share/opensearch/data":
+                        mount["Type"] = "bind"
+
+        self.startup_mutation = bind_replacement
+        with self.assertRaisesRegex(ValueError, "volume_binding_changed"):
+            self.start()
+        self.assertFalse((self.root / "runtime.json").exists())
+        self.assertTrue((self.root / "start-failure.json").exists())
 
     def test_prebuilt_start_and_reuse_never_build_or_pull(self):
         prebuilt = self.prebuilt_receipt()
@@ -668,6 +807,32 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertEqual(1, sum("up" in argv for argv in docker_calls))
         self.assertFalse(any(self.root.glob("build-*")))
         self.assertFalse(any(self.root.glob("image-*.iid")))
+
+    def test_prebuilt_missing_or_changed_admin_image_rejects_before_start_intent(self):
+        prebuilt = self.prebuilt_receipt(admin_image=False)
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                if changed:
+                    self.prebuilt_admin_image()
+                    image = self.images["sha256:" + "3" * 64]
+                    image["Config"]["Labels"][runtime.LABEL_PREFIX + "revision"] = (
+                        "9" * 40
+                    )
+                self.calls.clear()
+                with self.assertRaisesRegex(
+                    ValueError, "admin_image_evidence_missing|source_labels_changed"
+                ):
+                    self.start(prebuilt_images=prebuilt)
+                self.assertFalse((self.root / "start-started.json").exists())
+                self.assertFalse((self.root / "start-failure.json").exists())
+                self.assertFalse((self.root / "volume-started.json").exists())
+                self.assertFalse(self.volume.calls)
+                self.assertFalse(
+                    any(
+                        argv[0] == "docker" and argv[1] in {"build", "pull", "compose"}
+                        for argv, _ in self.calls
+                    )
+                )
 
     def test_image_stage_builds_and_reverifies_without_starting_or_switching(self):
         result = self.stage_images()
@@ -1067,7 +1232,7 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_named_index_core_proof_uses_actual_volume_name_driver_and_nocopy(self):
         self.create_services()
-        compose = backend._index_volume(self.compose, self.plan["project"])
+        compose = self.compose
         rows = copy.deepcopy(self.containers)
         row = next(
             value

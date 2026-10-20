@@ -33,7 +33,7 @@ CORE_IDS = {"fess-search": "2" * 64, "opensearch-search": "3" * 64}
 def evidence(*, catalog_revision=REVISION):
     """Use the actual renderer; only a future trusted host seal adds ID/labels."""
     config = ProductConfig(
-        1,
+        2,
         Path("/srv/private/depositar-ai"),
         Path("/srv/models/api"),
         Path("/srv/models/embedding"),
@@ -255,7 +255,11 @@ def leased_runtime_evidence(*, catalog_revision=REVISION):
                 "ollama-embedding": "30s",
             }[role],
         )
-    fixture = SimpleNamespace(plan=plan, compose=compose)
+    fixture = SimpleNamespace(
+        plan=plan,
+        compose=compose,
+        volume=SimpleNamespace(mountpoint="/opaque/docker/volume"),
+    )
     runtime_fixture.CatalogRuntimeTests.create_services(fixture)
     images, inspections = {}, {}
     for row in fixture.containers:

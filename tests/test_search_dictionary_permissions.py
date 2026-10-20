@@ -132,9 +132,7 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
                 POLICY.enforce(str(self.root), False)
 
     def test_bootstrap_uses_the_shared_policy(self) -> None:
-        bootstrap = (ROOT / "scripts/bootstrap-search-canary.sh").read_text(
-            encoding="utf-8"
-        )
+        bootstrap = (ROOT / "scripts/bootstrap-catalog.sh").read_text(encoding="utf-8")
         self.assertLess(
             bootstrap.index("flock -n 9"),
             bootstrap.index('"$dictionary_permissions" --converge'),

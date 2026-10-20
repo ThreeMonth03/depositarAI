@@ -16,10 +16,10 @@ SOURCE_PATHS = (
     "scripts/search-web.sh",
     "scripts/read_env.py",
     "scripts/search-lib.sh",
-    "scripts/bootstrap-search-canary.sh",
+    "scripts/bootstrap-catalog.sh",
     "scripts/search_dictionary_permissions.py",
     "scripts/search_model_source.py",
-    "scripts/validate_search_compose.py",
+    "scripts/validate_catalog_compose.py",
     "scripts/validate_search_web.py",
     "scripts/prepare_search_models.py",
 )

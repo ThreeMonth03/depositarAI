@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -20,6 +21,15 @@ APPROVED_OS_IMAGE = (
 HASH_REVISION = "a" * 40
 HASH_IMAGE = "depositar-opensearch-search-hash:" + HASH_REVISION
 HASH_IMAGE_ID = "sha256:" + "b" * 64
+PROJECT = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
+BOOTSTRAP_OPTIONS = (
+    "--isolated-project",
+    PROJECT,
+    "--hash-image",
+    HASH_IMAGE,
+    "--hash-image-id",
+    HASH_IMAGE_ID,
+)
 SECRET_NAMES = (
     "opensearch_admin_password",
     "fess_opensearch_password",
@@ -46,7 +56,7 @@ def sha256(path: Path) -> str:
     return value.hexdigest()
 
 
-class SearchCanaryBootstrapTests(unittest.TestCase):
+class CatalogBootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="depositar-bootstrap-test-")
         self.base = Path(self.temporary.name)
@@ -63,7 +73,7 @@ class SearchCanaryBootstrapTests(unittest.TestCase):
         (project / "deploy" / "config").mkdir(parents=True)
         fake_bin.mkdir(parents=True)
         for relative in (
-            "scripts/bootstrap-search-canary.sh",
+            "scripts/bootstrap-catalog.sh",
             "scripts/search-lib.sh",
             "scripts/read_env.py",
             "scripts/search_dictionary_permissions.py",
@@ -78,18 +88,18 @@ class SearchCanaryBootstrapTests(unittest.TestCase):
         )
         env_text = "\n".join(
             (
-                "COMPOSE_PROJECT_NAME=depositar-search-canary",
-                f"SEARCH_CANARY_DATA_ROOT={root}",
-                f"SEARCH_CANARY_STORAGE_ALLOWED_ROOT={workspace}",
-                "SEARCH_CANARY_STORAGE_REQUIRED_FS_TYPES=",
-                f"SEARCH_CANARY_RUNTIME_UID={os.getuid()}",
-                f"SEARCH_CANARY_RUNTIME_GID={os.getgid()}",
-                "SEARCH_CANARY_MODEL_SOURCE=",
+                "COMPOSE_PROJECT_NAME=" + PROJECT,
+                f"SEARCH_CATALOG_DATA_ROOT={root}",
+                f"SEARCH_CATALOG_STORAGE_ALLOWED_ROOT={workspace}",
+                "SEARCH_CATALOG_STORAGE_REQUIRED_FS_TYPES=",
+                f"SEARCH_CATALOG_RUNTIME_UID={os.getuid()}",
+                f"SEARCH_CATALOG_RUNTIME_GID={os.getgid()}",
+                "SEARCH_CATALOG_MODEL_SOURCE=",
                 f"SEARCH_OPENSEARCH_BASE_IMAGE={APPROVED_OS_IMAGE}",
                 "",
             )
         )
-        write_file(project / ".env.search-canary", env_text, 0o600)
+        write_file(project / ".env.catalog", env_text, 0o600)
         self.write_default_fake_docker(fake_bin)
         return project, root, fake_bin
 
@@ -100,7 +110,7 @@ class SearchCanaryBootstrapTests(unittest.TestCase):
             """#!/usr/bin/env bash
 set -eu
 case "${1:-}" in
-  ps) exit 0 ;;
+  ps|volume) exit 0 ;;
   version) exit 42 ;;
   *) exit 42 ;;
 esac
@@ -163,8 +173,8 @@ exec /usr/bin/sha256sum "$@"
         root.mkdir(parents=True, mode=0o700)
         root.chmod(0o700)
         write_file(
-            root / ".depositar-search-canary-root",
-            "schema=1\nproject=depositar-search-canary\nkind=search-canary-data\n",
+            root / ".depositar-catalog-root",
+            f"schema=1\nproject={PROJECT}\nkind=catalog-data\n",
             0o600,
         )
 
@@ -249,7 +259,10 @@ exec /usr/bin/sha256sum "$@"
         fake_bin: Path,
         *arguments: str,
         include_hash_image: bool = True,
+        include_project: bool = True,
     ) -> subprocess.CompletedProcess[str]:
+        if include_project and "--isolated-project" not in arguments:
+            arguments = ("--isolated-project", PROJECT, *arguments)
         if include_hash_image and "--hash-image" not in arguments:
             arguments = (
                 *arguments,
@@ -261,7 +274,7 @@ exec /usr/bin/sha256sum "$@"
         environment = os.environ.copy()
         environment["PATH"] = f"{fake_bin}:/usr/bin:/bin"
         return subprocess.run(
-            [str(project / "scripts" / "bootstrap-search-canary.sh"), *arguments],
+            [str(project / "scripts" / "bootstrap-catalog.sh"), *arguments],
             cwd=project,
             env=environment,
             text=True,
@@ -383,7 +396,76 @@ exec /usr/bin/sha256sum "$@"
                 )
                 self.assertFalse((root / "secrets").exists())
 
-    def test_absent_secret_set_is_blocked_when_canary_container_exists(self) -> None:
+    def test_existing_index_volume_or_unknown_inventory_cannot_regenerate_secrets(self):
+        for existing in (True, False):
+            with self.subTest(existing=existing):
+                project, root, fake_bin = self.workspace(f"volume-guard-{existing}")
+                log = fake_bin.parent / "docker.log"
+                volume_result = (
+                    f"printf '%s\\n' '{PROJECT}-index'; exit 0"
+                    if existing
+                    else "exit 47"
+                )
+                write_file(
+                    fake_bin / "docker",
+                    f"""#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >>'{log}'
+case "${{1:-}}" in
+  ps) exit 0 ;;
+  volume) {volume_result} ;;
+  *) exit 48 ;;
+esac
+""",
+                    0o700,
+                )
+                result = self.run_bootstrap(project, fake_bin)
+                self.assertNotEqual(result.returncode, 0)
+                expected = (
+                    "catalog index volume exists"
+                    if existing
+                    else "working Docker daemon"
+                )
+                self.assertIn(expected, result.stderr)
+                self.assertFalse((root / "secrets").exists())
+                self.assertIn(
+                    f"volume ls --quiet --filter name={PROJECT}-index", log.read_text()
+                )
+
+    def test_all_product_flags_are_required_before_any_state_creation(self):
+        for arguments in (
+            (),
+            ("--hash-image", HASH_IMAGE, "--hash-image-id", HASH_IMAGE_ID),
+            ("--isolated-project", PROJECT),
+            ("--isolated-project", PROJECT, "--hash-image", HASH_IMAGE),
+            ("--isolated-project", PROJECT, "--hash-image-id", HASH_IMAGE_ID),
+            ("--adopt-existing",),
+        ):
+            with self.subTest(arguments=arguments):
+                project, root, fake_bin = self.workspace(
+                    "flags-" + str(len(list(self.base.iterdir())))
+                )
+                result = self.run_bootstrap(
+                    project,
+                    fake_bin,
+                    *arguments,
+                    include_hash_image=False,
+                    include_project=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(root.exists())
+
+    def test_unmanaged_nonempty_root_cannot_be_adopted(self):
+        project, root, fake_bin = self.workspace("unmanaged")
+        root.mkdir(mode=0o700)
+        write_file(root / "existing", "unmanaged\n", 0o600)
+        result = self.run_bootstrap(project, fake_bin)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to adopt", result.stderr)
+        self.assertFalse((root / ".depositar-catalog-root").exists())
+        self.assertFalse((root / "secrets").exists())
+
+    def test_absent_secret_set_is_blocked_when_catalog_container_exists(self) -> None:
         project, root, fake_bin = self.workspace("existing-container")
         self.prepare_managed_root(root)
         write_file(
@@ -401,22 +483,8 @@ esac
         result = self.run_bootstrap(project, fake_bin)
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("a search canary container exists", result.stderr)
+        self.assertIn("a catalog container exists", result.stderr)
         self.assertFalse((root / "secrets").exists())
-
-    def isolated_project_workspace(self, name: str) -> tuple[Path, Path, Path, str]:
-        project, root, fake_bin = self.workspace(name)
-        isolated = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
-        env = project / ".env.search-canary"
-        write_file(
-            env,
-            env.read_text().replace(
-                "COMPOSE_PROJECT_NAME=depositar-search-canary",
-                "COMPOSE_PROJECT_NAME=" + isolated,
-            ),
-            0o600,
-        )
-        return project, root, fake_bin, isolated
 
     def fake_existing_project(self, fake_bin: Path, existing: str) -> Path:
         log = fake_bin.parent / "docker-arguments.log"
@@ -431,6 +499,7 @@ case "${{1:-}}" in
       || printf '%s\\n' '0123456789ab'
     exit 0
     ;;
+  volume) exit 0 ;;
   *) exit 42 ;;
 esac
 """,
@@ -438,13 +507,13 @@ esac
         )
         return log
 
-    def test_isolated_catalog_initializes_its_own_secrets_with_old_canary_running(
+    def test_isolated_catalog_initializes_its_own_secrets_with_another_catalog_running(
         self,
     ) -> None:
-        project, root, fake_bin, isolated = self.isolated_project_workspace(
-            "isolated-old-live"
-        )
-        log = self.fake_existing_project(fake_bin, "depositar-search-canary")
+        project, root, fake_bin = self.workspace("isolated-old-live")
+        isolated = PROJECT
+        other_project = "depositar-ai-catalog-" + "c" * 12 + "-" + "d" * 12
+        log = self.fake_existing_project(fake_bin, other_project)
         old_secret = self.base / "old-live-secret"
         write_file(old_secret, "must remain unchanged\n", 0o600)
 
@@ -460,20 +529,19 @@ esac
         )
         self.assertIn(
             "project=" + isolated + "\n",
-            (root / ".depositar-search-canary-root").read_text(),
+            (root / ".depositar-catalog-root").read_text(),
         )
         self.assertIn("label=com.docker.compose.project=" + isolated, log.read_text())
         self.assertNotIn(
-            "label=com.docker.compose.project=depositar-search-canary", log.read_text()
+            "label=com.docker.compose.project=" + other_project, log.read_text()
         )
         self.assertEqual("must remain unchanged\n", old_secret.read_text())
 
     def test_isolated_catalog_refuses_credentials_when_same_project_exists(
         self,
     ) -> None:
-        project, root, fake_bin, isolated = self.isolated_project_workspace(
-            "isolated-new-live"
-        )
+        project, root, fake_bin = self.workspace("isolated-new-live")
+        isolated = PROJECT
         log = self.fake_existing_project(fake_bin, isolated)
 
         result = self.run_bootstrap(project, fake_bin, "--isolated-project", isolated)
@@ -490,7 +558,7 @@ esac
         qualified = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
         for arguments in (
             ("--isolated-project",),
-            ("--isolated-project", "depositar-search-canary"),
+            ("--isolated-project", "depositar-catalog"),
             ("--isolated-project", qualified.upper()),
             ("--isolated-project", qualified + "-extra"),
             ("--isolated-project", qualified, "--isolated-project", qualified),
@@ -501,22 +569,14 @@ esac
                 self.assertIn("--isolated-project", result.stderr)
                 self.assertFalse(root.exists())
 
-    def test_isolated_project_auto_created_env_uses_qualified_project(self) -> None:
-        project, root, fake_bin = self.workspace("isolated-auto-env")
-        (project / ".env.search-canary").unlink()
-        example = project / "deploy/env/.env.search-canary.example"
-        example.parent.mkdir(parents=True)
-        shutil.copy2(REPOSITORY / "deploy/env/.env.search-canary.example", example)
-        isolated = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
-
-        result = self.run_bootstrap(project, fake_bin, "--isolated-project", isolated)
-
-        self.assertEqual(2, result.returncode)
-        self.assertIn("Created .env.search-canary", result.stdout)
-        env = (project / ".env.search-canary").read_text()
-        self.assertIn("COMPOSE_PROJECT_NAME=" + isolated + "\n", env)
-        self.assertIn(f"SEARCH_CANARY_RUNTIME_UID={os.getuid()}\n", env)
-        self.assertIn(f"SEARCH_CANARY_RUNTIME_GID={os.getgid()}\n", env)
+    def test_missing_sealed_environment_is_rejected_without_creating_it(self) -> None:
+        project, root, fake_bin = self.workspace("missing-sealed-env")
+        env = project / ".env.catalog"
+        env.unlink()
+        result = self.run_bootstrap(project, fake_bin)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be a regular file", result.stderr)
+        self.assertFalse(env.exists())
         self.assertFalse(root.exists())
 
     def test_absent_secret_set_is_blocked_when_docker_state_cannot_be_proved(
@@ -586,7 +646,7 @@ esac
         environment["PATH"] = f"{fake_bin}:/usr/bin:/bin"
         environment["FAKE_OPENSSL_COUNT"] = str(counter)
         result = subprocess.run(
-            [str(project / "scripts" / "bootstrap-search-canary.sh")],
+            [str(project / "scripts" / "bootstrap-catalog.sh"), *BOOTSTRAP_OPTIONS],
             cwd=project,
             env=environment,
             text=True,
@@ -615,7 +675,7 @@ set -eu
   printf '\n'
 } >>"$FAKE_DOCKER_LOG"
 case "${1:-}" in
-  ps|version) exit 0 ;;
+  ps|volume|version) exit 0 ;;
   image)
     printf '%s\n' '{"id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
     exit 0
@@ -646,7 +706,9 @@ esac
 
         result = subprocess.run(
             [
-                str(project / "scripts" / "bootstrap-search-canary.sh"),
+                str(project / "scripts" / "bootstrap-catalog.sh"),
+                "--isolated-project",
+                PROJECT,
                 "--hash-image",
                 HASH_IMAGE,
                 "--hash-image-id",
@@ -689,12 +751,12 @@ esac
             self.assertIn("\t" + HASH_IMAGE_ID + "\t", line)
             self.assertNotIn(HASH_IMAGE, line)
             self.assertNotIn(APPROVED_OS_IMAGE, line)
-        bootstrap_source = (
-            project / "scripts" / "bootstrap-search-canary.sh"
-        ).read_text(encoding="utf-8")
+        bootstrap_source = (project / "scripts" / "bootstrap-catalog.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("--user 1000:1000", bootstrap_source)
         self.assertIn(
-            '--user "$SEARCH_CANARY_RUNTIME_UID:$SEARCH_CANARY_RUNTIME_GID"',
+            '--user "$SEARCH_CATALOG_RUNTIME_UID:$SEARCH_CATALOG_RUNTIME_GID"',
             bootstrap_source,
         )
         for name in SECRET_NAMES:
@@ -708,7 +770,7 @@ esac
         result = self.run_bootstrap(project, fake_bin, include_hash_image=False)
         self.assertNotEqual(0, result.returncode)
         self.assertIn(
-            "requires --hash-image from sealed product preparation", result.stderr
+            "--hash-image and --hash-image-id are required together", result.stderr
         )
         self.assertFalse((root / "opensearch/config/internal_users.yml").exists())
 
@@ -754,7 +816,7 @@ esac
                     fake_bin / "docker",
                     "#!/usr/bin/env bash\nset -eu\n"
                     'case "${1:-}" in\n'
-                    "  ps|version) exit 0 ;;\n"
+                    "  ps|volume|version) exit 0 ;;\n"
                     f"  image) printf '%s\\n' '{raw}'; exit 0 ;;\n"
                     "  run) exit 99 ;;\n"
                     "  *) exit 42 ;;\nesac\n",
@@ -767,40 +829,22 @@ esac
                     (root / "opensearch/config/internal_users.yml").exists()
                 )
 
-    def test_schema_one_migrates_only_while_data_is_empty(self) -> None:
-        project, root, fake_bin = self.workspace("schema-migration")
+    def test_schema_one_security_manifest_is_rejected_without_migration(self) -> None:
+        project, root, fake_bin = self.workspace("schema-one-rejected")
         self.prepare_managed_root(root)
         values = self.prepare_secrets(root)
         self.prepare_security(root, values, schema=1)
         self.write_fake_openssl(fake_bin)
-
+        manifest = root / "opensearch/config/security-material.sha256"
+        original = manifest.read_bytes()
         result = self.run_bootstrap(project, fake_bin)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("pinned Granite model is missing", result.stderr)
-        manifest = root / "opensearch" / "config" / "security-material.sha256"
-        lines = manifest.read_text(encoding="ascii").splitlines()
-        self.assertEqual("schema=2", lines[0])
-        self.assertEqual(9, len(lines))
+        self.assertIn("unsupported schema", result.stderr)
+        self.assertEqual(manifest.read_bytes(), original)
         for name in SECRET_NAMES:
-            expected = sha256(root / "secrets" / name)
-            self.assertIn(f"{name}_sha256={expected}", lines)
-            self.assertNotIn(values[name], result.stdout + result.stderr)
-
-        blocked_project, blocked_root, blocked_bin = self.workspace("schema-blocked")
-        self.prepare_managed_root(blocked_root)
-        blocked_values = self.prepare_secrets(blocked_root)
-        self.prepare_security(blocked_root, blocked_values, schema=1)
-        write_file(blocked_root / "opensearch" / "data" / "node-state", "used\n", 0o600)
-        self.write_fake_openssl(blocked_bin)
-        blocked = self.run_bootstrap(blocked_project, blocked_bin)
-        self.assertNotEqual(blocked.returncode, 0)
-        self.assertIn("cannot be upgraded after service data exists", blocked.stderr)
-        self.assertEqual(
-            "schema=1",
-            (blocked_root / "opensearch" / "config" / "security-material.sha256")
-            .read_text(encoding="ascii")
-            .splitlines()[0],
-        )
+            self.assertEqual(
+                (root / "secrets" / name).read_text().strip(), values[name]
+            )
 
     def model_workspace(self, name: str) -> tuple[Path, Path, Path, Path]:
         project, root, fake_bin = self.workspace(name)
@@ -820,6 +864,33 @@ esac
             self.assertTrue(path.is_dir())
             self.assertFalse(path.is_symlink())
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+
+    def test_private_home_subdirectory_is_allowed_without_platform_integration(self):
+        project, root, fake_bin, _ = self.model_workspace("private-home")
+        root.parent.chmod(0o700)
+        # The product helper has no dependency on the base platform dotenv.
+        write_file(project / ".env", "DATA_ROOT=" + str(root) + "\n", 0o600)
+        with patch.dict(os.environ, {"HOME": str(self.base)}):
+            result = self.run_bootstrap(project, fake_bin)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o700)
+        self.assertFalse((project / "search-runtime").is_symlink())
+
+    def test_home_itself_or_nonprivate_parent_is_rejected(self):
+        project, root, fake_bin = self.workspace("home-itself")
+        with patch.dict(os.environ, {"HOME": str(root)}):
+            result = self.run_bootstrap(project, fake_bin)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot be HOME", result.stderr)
+        self.assertFalse(root.exists())
+
+        project, root, fake_bin = self.workspace("home-unsafe-parent")
+        root.parent.chmod(0o750)
+        with patch.dict(os.environ, {"HOME": str(self.base)}):
+            result = self.run_bootstrap(project, fake_bin)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("product control state parent must have mode 700", result.stderr)
+        self.assertFalse(root.exists())
 
     def test_real_stdlib_helper_seeds_all_four_pinned_fixture_files(self) -> None:
         project, root, fake_bin = self.workspace("model-source-seeding")
@@ -848,7 +919,7 @@ esac
             write_file(source / "blobs" / ("sha256-" + digest), value, 0o400)
         # Replace only this isolated, nonsecret test fixture's authorities. The
         # checked-in production model pins and sizes remain unchanged.
-        script = project / "scripts/bootstrap-search-canary.sh"
+        script = project / "scripts/bootstrap-catalog.sh"
         raw = script.read_text()
         for old, new in (
             (
@@ -865,11 +936,11 @@ esac
             self.assertIn(old, raw)
             raw = re.sub(r"\b" + old + r"\b", new, raw)
         script.write_text(raw)
-        env = project / ".env.search-canary"
+        env = project / ".env.catalog"
         env.write_text(
             env.read_text().replace(
-                "SEARCH_CANARY_MODEL_SOURCE=\n",
-                f"SEARCH_CANARY_MODEL_SOURCE={source}\n",
+                "SEARCH_CATALOG_MODEL_SOURCE=\n",
+                f"SEARCH_CATALOG_MODEL_SOURCE={source}\n",
             )
         )
 
@@ -886,24 +957,15 @@ esac
         self.assertEqual(0o1770, stat.S_IMODE(allocated.stat().st_mode))
         self.assertEqual(0o700, stat.S_IMODE(source.stat().st_mode))
 
-    def test_roles_mapping_accepts_only_the_legacy_trailing_empty_line(self) -> None:
-        project, root, fake_bin, _model_root = self.model_workspace(
-            "roles-mapping-legacy-newline"
-        )
-        roles_mapping = root / "opensearch" / "config" / "roles_mapping.yml"
-        roles_mapping.chmod(0o600)
-        roles_mapping.write_bytes(roles_mapping.read_bytes() + b"\n")
-        roles_mapping.chmod(0o400)
-
+    def test_roles_mapping_requires_exact_reviewed_bytes(self) -> None:
+        project, root, fake_bin, _model_root = self.model_workspace("roles-mapping")
         accepted = self.run_bootstrap(project, fake_bin)
-
         self.assertEqual(0, accepted.returncode, accepted.stderr)
-
+        roles_mapping = root / "opensearch/config/roles_mapping.yml"
         roles_mapping.chmod(0o600)
         roles_mapping.write_bytes(roles_mapping.read_bytes() + b"\n")
         roles_mapping.chmod(0o400)
         rejected = self.run_bootstrap(project, fake_bin)
-
         self.assertNotEqual(0, rejected.returncode)
         self.assertIn(
             "rendered roles_mapping.yml differs from its reviewed template",

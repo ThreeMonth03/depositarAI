@@ -71,7 +71,7 @@ def enforce(data_root: str, converge: bool) -> None:
             not stat.S_ISDIR(root_metadata.st_mode)
             or root_metadata.st_uid != expected_uid
         ):
-            raise PolicyError("the canary data root has unsafe metadata")
+            raise PolicyError("the catalog data root has unsafe metadata")
         expected_device = root_metadata.st_dev
 
         opensearch_fd = _open_directory(root_fd, "opensearch")

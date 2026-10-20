@@ -17,7 +17,7 @@ from search.operations.deployment import gpu_ownership as ownership
 UUIDS = tuple(f"GPU-00000000-0000-0000-0000-{index:012d}" for index in range(1, 5))
 GPUS = GPUConfig(UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[3])
 CONFIG = ProductConfig(
-    1, Path("/state"), Path("/api"), Path("/embedding"), Path("/reranker"), GPUS
+    2, Path("/state"), Path("/api"), Path("/embedding"), Path("/reranker"), GPUS
 )
 INVENTORY = "\n".join(f"{value}, {index}" for index, value in enumerate(UUIDS))
 IMAGE = "sha256:" + "a" * 64

@@ -281,10 +281,10 @@ class ProductPackageTests(unittest.TestCase):
             "images": {},
         }
         for service, base in (
-            ("fess-search", package.validate_search_compose.FESS_BASE_IMAGE),
+            ("fess-search", package.validate_catalog_compose.FESS_BASE_IMAGE),
             (
                 "opensearch-search",
-                package.validate_search_compose.OPENSEARCH_BASE_IMAGE,
+                package.validate_catalog_compose.OPENSEARCH_BASE_IMAGE,
             ),
             ("ollama-embedding", None),
         ):

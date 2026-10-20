@@ -25,7 +25,7 @@ class ProductCredentialsTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = ProductConfig(
-            1,
+            2,
             self.root / "state",
             self.root / "api",
             self.root / "embedding",

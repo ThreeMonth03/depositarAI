@@ -6,24 +6,16 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/scripts/search-lib.sh"
 cd "$project_dir"
 
-search_project="depositar-search-canary"
-readonly search_env_file="$project_dir/.env.search-canary"
-readonly example_env_file="$project_dir/deploy/env/.env.search-canary.example"
-readonly runtime_link="$project_dir/search-runtime"
+search_project=""
+readonly search_env_file="$project_dir/.env.catalog"
 readonly dictionary_permissions="$project_dir/scripts/search_dictionary_permissions.py"
 readonly model_source_helper="$project_dir/scripts/search_model_source.py"
 
-adopt_existing=false
 isolated_project_seen=false
 hash_image=""
 hash_image_id=""
 while (( $# > 0 )); do
   case "$1" in
-    --adopt-existing)
-      [[ "$adopt_existing" == false ]] || die "--adopt-existing may only be supplied once"
-      adopt_existing=true
-      shift
-      ;;
     --isolated-project)
       [[ $# -ge 2 && "$isolated_project_seen" == false ]] \
         || die "--isolated-project requires one unique catalog project"
@@ -49,12 +41,13 @@ while (( $# > 0 )); do
       hash_image_id=$2
       shift 2
       ;;
-    *) die "usage: $0 [--adopt-existing] [--isolated-project depositar-ai-catalog-<bundle12>-<revision12>] [--hash-image depositar-opensearch-search-hash:<revision40> --hash-image-id sha256:<digest64>]" ;;
+    *) die "usage: $0 --isolated-project depositar-ai-catalog-<bundle12>-<revision12> --hash-image depositar-opensearch-search-hash:<revision40> --hash-image-id sha256:<digest64>" ;;
   esac
 done
-[[ ( -z "$hash_image" && -z "$hash_image_id" ) \
-  || ( -n "$hash_image" && -n "$hash_image_id" ) ]] \
-  || die "--hash-image and --hash-image-id must be supplied together"
+[[ "$isolated_project_seen" == true ]] \
+  || die "--isolated-project is required"
+[[ -n "$hash_image" && -n "$hash_image_id" ]] \
+  || die "--hash-image and --hash-image-id are required together"
 readonly search_project
 readonly hash_image
 readonly hash_image_id
@@ -113,159 +106,88 @@ require_command timeout
   || die "$dictionary_permissions is missing or unsafe"
 [[ -f "$model_source_helper" && ! -L "$model_source_helper" ]] \
   || die "$model_source_helper is missing or unsafe"
-if [[ ! -e "$search_env_file" && ! -L "$search_env_file" ]]; then
-  [[ -f "$example_env_file" && ! -L "$example_env_file" ]] \
-    || die "$example_env_file is missing or unsafe"
-  old_umask="$(umask)"
-  umask 077
-  env_tmp="$(mktemp "$project_dir/.env.search-canary.tmp.XXXXXX")"
-  trap 'rm -f -- "${env_tmp:-}"' EXIT
-  python3 - "$example_env_file" "$env_tmp" "$(id -u)" "$(id -g)" "$search_project" <<'PY'
-import sys
-from pathlib import Path
-
-source_path, destination_path, runtime_uid, runtime_gid, project = sys.argv[1:]
-lines = Path(source_path).read_text(encoding="utf-8").splitlines()
-replacements = {
-    "COMPOSE_PROJECT_NAME=": project,
-    "SEARCH_CANARY_RUNTIME_UID=": runtime_uid,
-    "SEARCH_CANARY_RUNTIME_GID=": runtime_gid,
-}
-for prefix, value in replacements.items():
-    matches = [index for index, line in enumerate(lines) if line.startswith(prefix)]
-    if len(matches) != 1:
-        raise SystemExit(f"{source_path} must contain exactly one {prefix[:-1]} entry")
-    lines[matches[0]] = prefix + value
-Path(destination_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-PY
-  chmod 600 "$env_tmp"
-  if ! ln -- "$env_tmp" "$search_env_file"; then
-    die "$search_env_file appeared during bootstrap; inspect it and retry"
-  fi
-  rm -f -- "$env_tmp"
-  env_tmp=""
-  trap - EXIT
-  umask "$old_umask"
-  echo "Created .env.search-canary. Review it, then run this command again."
-  exit 2
-fi
-
-assert_regular_owned_mode "$search_env_file" 600 ".env.search-canary"
+assert_regular_owned_mode "$search_env_file" 600 ".env.catalog"
 export COMPOSE_PROJECT_NAME="$search_project"
-# Only the sealed dotenv file can opt into the product volume profile.
-unset SEARCH_CANARY_CATALOG_STORAGE
 load_search_env "$project_dir" "$search_env_file"
-catalog_storage="${SEARCH_CANARY_CATALOG_STORAGE-bind}"
-case "$catalog_storage" in
-  bind|docker-volume) ;;
-  *) die "SEARCH_CANARY_CATALOG_STORAGE must be bind or docker-volume" ;;
-esac
-readonly catalog_storage
 [[ "$COMPOSE_PROJECT_NAME" == "$search_project" ]] \
   || die "COMPOSE_PROJECT_NAME must remain $search_project"
 require_env \
-  SEARCH_CANARY_DATA_ROOT SEARCH_CANARY_RUNTIME_UID SEARCH_CANARY_RUNTIME_GID \
+  SEARCH_CATALOG_DATA_ROOT SEARCH_CATALOG_RUNTIME_UID SEARCH_CATALOG_RUNTIME_GID \
   SEARCH_OPENSEARCH_BASE_IMAGE
 require_command realpath
-[[ "$SEARCH_CANARY_RUNTIME_UID" =~ ^[1-9][0-9]*$ \
-  && "$SEARCH_CANARY_RUNTIME_UID" == "$(id -u)" ]] \
-  || die "SEARCH_CANARY_RUNTIME_UID must equal the invoking non-root UID ($(id -u))"
-[[ "$SEARCH_CANARY_RUNTIME_GID" =~ ^[1-9][0-9]*$ \
-  && "$SEARCH_CANARY_RUNTIME_GID" == "$(id -g)" ]] \
-  || die "SEARCH_CANARY_RUNTIME_GID must equal the invoking non-root GID ($(id -g))"
+[[ "$SEARCH_CATALOG_RUNTIME_UID" =~ ^[1-9][0-9]*$ \
+  && "$SEARCH_CATALOG_RUNTIME_UID" == "$(id -u)" ]] \
+  || die "SEARCH_CATALOG_RUNTIME_UID must equal the invoking non-root UID ($(id -u))"
+[[ "$SEARCH_CATALOG_RUNTIME_GID" =~ ^[1-9][0-9]*$ \
+  && "$SEARCH_CATALOG_RUNTIME_GID" == "$(id -g)" ]] \
+  || die "SEARCH_CATALOG_RUNTIME_GID must equal the invoking non-root GID ($(id -g))"
 [[ "$(id -u)" != 0 ]] \
-  || die "run the search canary as its dedicated non-root operator, not root"
+  || die "run the catalog as its dedicated non-root operator, not root"
 
-raw_search_root="$SEARCH_CANARY_DATA_ROOT"
-[[ "$raw_search_root" == /* ]] || die "SEARCH_CANARY_DATA_ROOT must be absolute"
+raw_search_root="$SEARCH_CATALOG_DATA_ROOT"
+[[ "$raw_search_root" == /* ]] || die "SEARCH_CATALOG_DATA_ROOT must be absolute"
 assert_no_symlink_components "$raw_search_root"
-SEARCH_CANARY_DATA_ROOT="$(realpath -m -- "$raw_search_root")"
-export SEARCH_CANARY_DATA_ROOT
-[[ "$SEARCH_CANARY_DATA_ROOT" != / ]] \
-  || die "SEARCH_CANARY_DATA_ROOT cannot be /"
+SEARCH_CATALOG_DATA_ROOT="$(realpath -m -- "$raw_search_root")"
+export SEARCH_CATALOG_DATA_ROOT
+[[ "$SEARCH_CATALOG_DATA_ROOT" != / ]] \
+  || die "SEARCH_CATALOG_DATA_ROOT cannot be /"
 
 canonical_project_dir="$(realpath -e -- "$project_dir")"
-if path_is_within "$SEARCH_CANARY_DATA_ROOT" "$canonical_project_dir" \
-  || path_is_within "$canonical_project_dir" "$SEARCH_CANARY_DATA_ROOT"; then
-  die "SEARCH_CANARY_DATA_ROOT cannot overlap the repository"
+if path_is_within "$SEARCH_CATALOG_DATA_ROOT" "$canonical_project_dir" \
+  || path_is_within "$canonical_project_dir" "$SEARCH_CATALOG_DATA_ROOT"; then
+  die "SEARCH_CATALOG_DATA_ROOT cannot overlap the repository"
 fi
 if [[ -n "${HOME:-}" ]]; then
   canonical_home="$(realpath -m -- "$HOME")"
-  if path_is_within "$SEARCH_CANARY_DATA_ROOT" "$canonical_home"; then
-    [[ "$SEARCH_CANARY_DATA_ROOT" != "$canonical_home" ]] \
-      || die "SEARCH_CANARY_DATA_ROOT cannot be HOME"
-    [[ "$catalog_storage" == docker-volume && "$isolated_project_seen" == true ]] \
-      || die "SEARCH_CANARY_DATA_ROOT cannot be stored under HOME"
-    if [[ -e "$SEARCH_CANARY_DATA_ROOT" ]]; then
-      assert_directory_owned_mode "$SEARCH_CANARY_DATA_ROOT" 700 "product control state"
+  if path_is_within "$SEARCH_CATALOG_DATA_ROOT" "$canonical_home"; then
+    [[ "$SEARCH_CATALOG_DATA_ROOT" != "$canonical_home" ]] \
+      || die "SEARCH_CATALOG_DATA_ROOT cannot be HOME"
+    if [[ -e "$SEARCH_CATALOG_DATA_ROOT" ]]; then
+      assert_directory_owned_mode "$SEARCH_CATALOG_DATA_ROOT" 700 "product control state"
     else
-      assert_directory_owned_mode "$(dirname -- "$SEARCH_CANARY_DATA_ROOT")" 700 \
+      assert_directory_owned_mode "$(dirname -- "$SEARCH_CATALOG_DATA_ROOT")" 700 \
         "product control state parent"
     fi
   fi
 fi
 
-if [[ -e "$project_dir/.env" || -L "$project_dir/.env" ]]; then
-  [[ -f "$project_dir/.env" && ! -L "$project_dir/.env" ]] \
-    || die "$project_dir/.env must not be a symlink or special file"
-  base_data_root="$({
-    python3 - "$project_dir" "$project_dir/.env" <<'PY'
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
-from read_env import parse_env
-
-print(parse_env(Path(sys.argv[2])).get("DATA_ROOT", ""))
-PY
-  })"
-  if [[ -n "$base_data_root" ]]; then
-    [[ "$base_data_root" == /* ]] || die "DATA_ROOT in .env must be absolute"
-    canonical_base_data_root="$(realpath -m -- "$base_data_root")"
-    if path_is_within "$SEARCH_CANARY_DATA_ROOT" "$canonical_base_data_root" \
-      || path_is_within "$canonical_base_data_root" "$SEARCH_CANARY_DATA_ROOT"; then
-      die "SEARCH_CANARY_DATA_ROOT must not overlap the base platform DATA_ROOT"
-    fi
-  fi
-fi
-
-if [[ -n "${SEARCH_CANARY_STORAGE_ALLOWED_ROOT:-}" ]]; then
-  [[ "$SEARCH_CANARY_STORAGE_ALLOWED_ROOT" == /* ]] \
-    || die "SEARCH_CANARY_STORAGE_ALLOWED_ROOT must be absolute"
-  [[ -d "$SEARCH_CANARY_STORAGE_ALLOWED_ROOT" \
-    && ! -L "$SEARCH_CANARY_STORAGE_ALLOWED_ROOT" ]] \
-    || die "SEARCH_CANARY_STORAGE_ALLOWED_ROOT must be an existing non-symlink directory"
-  allowed_root="$(realpath -e -- "$SEARCH_CANARY_STORAGE_ALLOWED_ROOT")"
+if [[ -n "${SEARCH_CATALOG_STORAGE_ALLOWED_ROOT:-}" ]]; then
+  [[ "$SEARCH_CATALOG_STORAGE_ALLOWED_ROOT" == /* ]] \
+    || die "SEARCH_CATALOG_STORAGE_ALLOWED_ROOT must be absolute"
+  [[ -d "$SEARCH_CATALOG_STORAGE_ALLOWED_ROOT" \
+    && ! -L "$SEARCH_CATALOG_STORAGE_ALLOWED_ROOT" ]] \
+    || die "SEARCH_CATALOG_STORAGE_ALLOWED_ROOT must be an existing non-symlink directory"
+  allowed_root="$(realpath -e -- "$SEARCH_CATALOG_STORAGE_ALLOWED_ROOT")"
   [[ "$allowed_root" != / ]] \
-    || die "SEARCH_CANARY_STORAGE_ALLOWED_ROOT cannot be /"
-  path_is_within "$SEARCH_CANARY_DATA_ROOT" "$allowed_root" \
-    || die "SEARCH_CANARY_DATA_ROOT is outside SEARCH_CANARY_STORAGE_ALLOWED_ROOT"
-  [[ "$SEARCH_CANARY_DATA_ROOT" != "$allowed_root" ]] \
-    || die "SEARCH_CANARY_DATA_ROOT must be below SEARCH_CANARY_STORAGE_ALLOWED_ROOT"
+    || die "SEARCH_CATALOG_STORAGE_ALLOWED_ROOT cannot be /"
+  path_is_within "$SEARCH_CATALOG_DATA_ROOT" "$allowed_root" \
+    || die "SEARCH_CATALOG_DATA_ROOT is outside SEARCH_CATALOG_STORAGE_ALLOWED_ROOT"
+  [[ "$SEARCH_CATALOG_DATA_ROOT" != "$allowed_root" ]] \
+    || die "SEARCH_CATALOG_DATA_ROOT must be below SEARCH_CATALOG_STORAGE_ALLOWED_ROOT"
 fi
 
-if [[ -n "${SEARCH_CANARY_STORAGE_REQUIRED_FS_TYPES:-}" ]]; then
+if [[ -n "${SEARCH_CATALOG_STORAGE_REQUIRED_FS_TYPES:-}" ]]; then
   require_command findmnt
-  fs_probe="${allowed_root:-$SEARCH_CANARY_DATA_ROOT}"
+  fs_probe="${allowed_root:-$SEARCH_CATALOG_DATA_ROOT}"
   actual_fs="$(findmnt -n -T "$fs_probe" -o FSTYPE)"
   fs_match=false
   IFS=',' read -r -a required_fs_types \
-    <<<"$SEARCH_CANARY_STORAGE_REQUIRED_FS_TYPES"
+    <<<"$SEARCH_CATALOG_STORAGE_REQUIRED_FS_TYPES"
   for expected_fs in "${required_fs_types[@]}"; do
     [[ -n "$expected_fs" && "$actual_fs" == "$expected_fs" ]] && fs_match=true
   done
   $fs_match \
-    || die "storage filesystem for $fs_probe is $actual_fs; expected $SEARCH_CANARY_STORAGE_REQUIRED_FS_TYPES"
+    || die "storage filesystem for $fs_probe is $actual_fs; expected $SEARCH_CATALOG_STORAGE_REQUIRED_FS_TYPES"
   fs_options="$(findmnt -n -T "$fs_probe" -o OPTIONS)"
   [[ ",$fs_options," == *,rw,* ]] \
     || die "storage filesystem for $fs_probe is not mounted read-write"
 fi
 
 root_existed=false
-if [[ -e "$SEARCH_CANARY_DATA_ROOT" || -L "$SEARCH_CANARY_DATA_ROOT" ]]; then
+if [[ -e "$SEARCH_CATALOG_DATA_ROOT" || -L "$SEARCH_CATALOG_DATA_ROOT" ]]; then
   root_existed=true
-  assert_directory_owned_mode "$SEARCH_CANARY_DATA_ROOT" 700 \
-    "search canary data root"
+  assert_directory_owned_mode "$SEARCH_CATALOG_DATA_ROOT" 700 \
+    "catalog data root"
 fi
 
 old_umask="$(umask)"
@@ -276,13 +198,12 @@ lock_tmp=""
 security_stage=""
 model_tmp=""
 secret_stage=""
-manifest_tmp=""
 cleanup_bootstrap_temps() {
   rm -f -- \
     "${marker_tmp:-}" "${secret_tmp:-}" "${lock_tmp:-}" \
-    "${model_tmp:-}" "${manifest_tmp:-}"
+    "${model_tmp:-}"
   if [[ -n "${security_stage:-}" \
-    && "$security_stage" == "$SEARCH_CANARY_DATA_ROOT/state/.security-config.tmp."* ]]; then
+    && "$security_stage" == "$SEARCH_CATALOG_DATA_ROOT/state/.security-config.tmp."* ]]; then
     rm -f -- \
       "$security_stage/opensearch.yml" \
       "$security_stage/root-ca.pem" \
@@ -300,7 +221,7 @@ cleanup_bootstrap_temps() {
     rmdir -- "$security_stage" 2>/dev/null || true
   fi
   if [[ -n "${secret_stage:-}" \
-    && "$secret_stage" == "$SEARCH_CANARY_DATA_ROOT/state/.secret-set.tmp."* ]]; then
+    && "$secret_stage" == "$SEARCH_CATALOG_DATA_ROOT/state/.secret-set.tmp."* ]]; then
     rm -f -- \
       "$secret_stage/opensearch_admin_password" \
       "$secret_stage/fess_opensearch_password" \
@@ -310,20 +231,20 @@ cleanup_bootstrap_temps() {
   fi
 }
 trap cleanup_bootstrap_temps EXIT
-mkdir -p -- "$SEARCH_CANARY_DATA_ROOT"
+mkdir -p -- "$SEARCH_CATALOG_DATA_ROOT"
 if ! $root_existed; then
-  chmod 700 "$SEARCH_CANARY_DATA_ROOT"
+  chmod 700 "$SEARCH_CATALOG_DATA_ROOT"
 fi
-assert_directory_owned_mode "$SEARCH_CANARY_DATA_ROOT" 700 \
-  "search canary data root"
+assert_directory_owned_mode "$SEARCH_CATALOG_DATA_ROOT" 700 \
+  "catalog data root"
 
-marker="$SEARCH_CANARY_DATA_ROOT/.depositar-search-canary-root"
+marker="$SEARCH_CATALOG_DATA_ROOT/.depositar-catalog-root"
 verify_marker() {
-  assert_regular_owned_mode "$marker" 600 "search canary managed-root marker"
+  assert_regular_owned_mode "$marker" 600 "catalog managed-root marker"
   grep -Fqx 'schema=1' "$marker" || die "$marker has an unsupported schema"
   grep -Fqx "project=$search_project" "$marker" \
     || die "$marker belongs to a different project"
-  grep -Fqx 'kind=search-canary-data' "$marker" \
+  grep -Fqx 'kind=catalog-data' "$marker" \
     || die "$marker has the wrong kind"
 }
 
@@ -331,17 +252,16 @@ if [[ -e "$marker" || -L "$marker" ]]; then
   verify_marker
 else
   existing_entry="$({
-    find "$SEARCH_CANARY_DATA_ROOT" -mindepth 1 -maxdepth 1 \
+    find "$SEARCH_CATALOG_DATA_ROOT" -mindepth 1 -maxdepth 1 \
       ! -name .snap -print -quit
   })"
-  if [[ -n "$existing_entry" ]] && ! $adopt_existing; then
-    die "$SEARCH_CANARY_DATA_ROOT is non-empty and unmanaged; inspect it, then rerun with --adopt-existing"
-  fi
-  marker_tmp="$(mktemp "$SEARCH_CANARY_DATA_ROOT/.managed-root.tmp.XXXXXX")"
+  [[ -z "$existing_entry" ]] \
+    || die "$SEARCH_CATALOG_DATA_ROOT is non-empty and unmanaged; refusing to adopt it"
+  marker_tmp="$(mktemp "$SEARCH_CATALOG_DATA_ROOT/.managed-root.tmp.XXXXXX")"
   {
     printf 'schema=1\n'
     printf 'project=%s\n' "$search_project"
-    printf 'kind=search-canary-data\n'
+    printf 'kind=catalog-data\n'
   } >"$marker_tmp"
   chmod 600 "$marker_tmp"
   if ! ln -- "$marker_tmp" "$marker"; then
@@ -370,15 +290,15 @@ ensure_runtime_directory() {
   chmod 700 "$directory"
 }
 
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/opensearch"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/opensearch/data"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/opensearch/dictionary"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/opensearch/config"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/fess"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/fess/data"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/ollama"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/ollama/models"
-ensure_runtime_directory "$SEARCH_CANARY_DATA_ROOT/state"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/opensearch"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/opensearch/data"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/opensearch/dictionary"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/opensearch/config"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/fess"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/fess/data"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/ollama"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/ollama/models"
+ensure_runtime_directory "$SEARCH_CATALOG_DATA_ROOT/state"
 
 secret_names=(
   opensearch_admin_password
@@ -386,13 +306,13 @@ secret_names=(
   fess_app_cipher_key
   fess_initial_admin_password
 )
-secret_dir="$SEARCH_CANARY_DATA_ROOT/secrets"
+secret_dir="$SEARCH_CATALOG_DATA_ROOT/secrets"
 
-lock_file="$SEARCH_CANARY_DATA_ROOT/state/operations.lock"
+lock_file="$SEARCH_CATALOG_DATA_ROOT/state/operations.lock"
 if [[ -e "$lock_file" || -L "$lock_file" ]]; then
-  assert_regular_owned_mode "$lock_file" 600 "search canary operations lock"
+  assert_regular_owned_mode "$lock_file" 600 "catalog operations lock"
 else
-  lock_tmp="$(mktemp "$SEARCH_CANARY_DATA_ROOT/state/.operations.lock.tmp.XXXXXX")"
+  lock_tmp="$(mktemp "$SEARCH_CATALOG_DATA_ROOT/state/.operations.lock.tmp.XXXXXX")"
   chmod 600 "$lock_tmp"
   if ! ln -- "$lock_tmp" "$lock_file"; then
     die "$lock_file appeared during bootstrap; inspect it and retry"
@@ -402,19 +322,19 @@ else
 fi
 require_command flock
 exec 9<>"$lock_file"
-flock -n 9 || die "another search canary deploy/down/bootstrap operation is already running"
+flock -n 9 || die "another catalog deploy/down/bootstrap operation is already running"
 
 # A cold Ceph metadata cache can take tens of seconds even for this bounded
 # (4,096-entry / 16-level) walk.  Keep a hard deadline while avoiding a false
 # deployment failure on the reviewed shared filesystem.
 timeout --signal=TERM --kill-after=5s 60s \
-  python3 "$dictionary_permissions" --converge "$SEARCH_CANARY_DATA_ROOT" \
+  python3 "$dictionary_permissions" --converge "$SEARCH_CATALOG_DATA_ROOT" \
   || die "could not safely converge the ConfigSync dictionary tree"
 
 assert_recoverable_secret_initialization_state() {
-  local existing_canary_containers
+  local existing_catalog_containers existing_index_volumes
 
-  python3 - "$SEARCH_CANARY_DATA_ROOT" "$(id -u)" <<'PY'
+  python3 - "$SEARCH_CATALOG_DATA_ROOT" "$(id -u)" <<'PY'
 from pathlib import Path
 import stat
 import sys
@@ -435,7 +355,7 @@ def entry_names(directory: Path) -> set[str]:
 
 
 expected_root_entries = {
-    ".depositar-search-canary-root",
+    ".depositar-catalog-root",
     "opensearch",
     "fess",
     "ollama",
@@ -499,27 +419,34 @@ if (
 PY
 
   require_command docker
-  if ! existing_canary_containers="$({
+  if ! existing_catalog_containers="$({
     docker ps --all --quiet \
       --filter "label=com.docker.compose.project=$search_project"
   })"; then
     die "a working Docker daemon is required to prove that credential initialization is safe"
   fi
-  [[ -z "$existing_canary_containers" ]] \
-    || die "a search canary container exists; refusing to regenerate credentials"
+  [[ -z "$existing_catalog_containers" ]] \
+    || die "a catalog container exists; refusing to regenerate credentials"
+  if ! existing_index_volumes="$({
+    docker volume ls --quiet --filter "name=$search_project-index"
+  })"; then
+    die "a working Docker daemon is required to prove that credential initialization is safe"
+  fi
+  [[ -z "$existing_index_volumes" ]] \
+    || die "a catalog index volume exists; refusing to regenerate credentials"
 }
 
 verify_secret_set() {
   local candidate name value
   local count=0
 
-  assert_directory_owned_mode "$secret_dir" 700 "search canary secrets directory"
+  assert_directory_owned_mode "$secret_dir" 700 "catalog secrets directory"
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
     name="$(basename -- "$candidate")"
     case "$name" in
       opensearch_admin_password|fess_opensearch_password|fess_app_cipher_key|fess_initial_admin_password) ;;
-      *) die "unexpected entry in the immutable search canary secret set: $name" ;;
+      *) die "unexpected entry in the immutable catalog secret set: $name" ;;
     esac
     assert_regular_owned_mode "$candidate" 600 "$name secret"
     value="$(<"$candidate")"
@@ -539,17 +466,17 @@ verify_secret_set() {
     ((count += 1))
   done < <(find "$secret_dir" -mindepth 1 -maxdepth 1 -print)
   [[ "$count" == "${#secret_names[@]}" ]] \
-    || die "immutable search canary secret set is incomplete; refusing to regenerate it"
+    || die "immutable catalog secret set is incomplete; refusing to regenerate it"
   for name in "${secret_names[@]}"; do
     [[ -f "$secret_dir/$name" && ! -L "$secret_dir/$name" ]] \
-      || die "immutable search canary secret is missing; refusing to regenerate it: $name"
+      || die "immutable catalog secret is missing; refusing to regenerate it: $name"
   done
   for ((left_index = 0; left_index < ${#secret_names[@]}; left_index++)); do
     for ((right_index = left_index + 1; right_index < ${#secret_names[@]}; right_index++)); do
       if cmp -s \
         "$secret_dir/${secret_names[$left_index]}" \
         "$secret_dir/${secret_names[$right_index]}"; then
-        die "search canary secrets must all have distinct values"
+        die "catalog secrets must all have distinct values"
       fi
     done
   done
@@ -560,7 +487,7 @@ if [[ -e "$secret_dir" || -L "$secret_dir" ]]; then
 else
   assert_recoverable_secret_initialization_state
   require_command openssl
-  secret_stage="$(mktemp -d "$SEARCH_CANARY_DATA_ROOT/state/.secret-set.tmp.XXXXXX")"
+  secret_stage="$(mktemp -d "$SEARCH_CATALOG_DATA_ROOT/state/.secret-set.tmp.XXXXXX")"
   chmod 700 "$secret_stage"
   for name in "${secret_names[@]}"; do
     if [[ "$name" == fess_app_cipher_key ]]; then
@@ -575,7 +502,7 @@ else
       if cmp -s \
         "$secret_stage/${secret_names[$left_index]}" \
         "$secret_stage/${secret_names[$right_index]}"; then
-        die "generated search canary secrets unexpectedly match"
+        die "generated catalog secrets unexpectedly match"
       fi
     done
   done
@@ -598,23 +525,15 @@ for template_name in \
     || die "required OpenSearch security template is missing or unsafe: $template_path"
 done
 
-security_config_dir="$SEARCH_CANARY_DATA_ROOT/opensearch/config"
+security_config_dir="$SEARCH_CATALOG_DATA_ROOT/opensearch/config"
 security_manifest="$security_config_dir/security-material.sha256"
 
 render_security_manifest() {
-  local schema="$1"
-  local config_root="$2"
+  local config_root="$1"
   local file_name digest
 
-  [[ "$schema" == 1 || "$schema" == 2 ]] \
-    || die "internal error: unsupported security-material schema"
-  printf 'schema=%s\n' "$schema"
+  printf 'schema=2\n'
   for file_name in "${secret_names[@]}"; do
-    if [[ "$schema" == 1 \
-      && "$file_name" != opensearch_admin_password \
-      && "$file_name" != fess_opensearch_password ]]; then
-      continue
-    fi
     digest="$(sha256sum "$secret_dir/$file_name" | awk '{print $1}')"
     printf '%s_sha256=%s\n' "$file_name" "$digest"
   done
@@ -622,23 +541,6 @@ render_security_manifest() {
     digest="$(sha256sum "$config_root/$file_name" | awk '{print $1}')"
     printf '%s_sha256=%s\n' "$file_name" "$digest"
   done
-}
-
-reviewed_yaml_matches() {
-  local template_path="$1"
-  local rendered_path="$2"
-  python3 - "$template_path" "$rendered_path" <<'PY'
-import sys
-from pathlib import Path
-
-template = Path(sys.argv[1]).read_bytes()
-rendered = Path(sys.argv[2]).read_bytes()
-# A previous reviewed template ended with one additional empty line. YAML gives
-# that byte no meaning, so accept exactly that legacy representation and no
-# other drift. Fresh bootstrap generations remain byte-identical to the
-# checked-in template.
-raise SystemExit(0 if rendered in (template, template + b"\n") else 1)
-PY
 }
 
 verify_security_material() {
@@ -679,7 +581,7 @@ verify_security_material() {
     || die "rendered opensearch.yml differs from its reviewed template"
   cmp -s "$security_template_dir/roles.yml" "$security_config_dir/roles.yml" \
     || die "rendered roles.yml differs from its reviewed template"
-  reviewed_yaml_matches "$security_template_dir/roles_mapping.yml" \
+  cmp -s "$security_template_dir/roles_mapping.yml" \
     "$security_config_dir/roles_mapping.yml" \
     || die "rendered roles_mapping.yml differs from its reviewed template"
   ! grep -Fq '__ADMIN_HASH__' "$security_config_dir/internal_users.yml" \
@@ -698,9 +600,9 @@ if len(hashes) != 2 or len(set(hashes)) != 2:
 PY
 
   manifest_schema="$(sed -n 's/^schema=//p' "$security_manifest")"
-  [[ "$manifest_schema" == 1 || "$manifest_schema" == 2 ]] \
+  [[ "$manifest_schema" == 2 ]] \
     || die "security-material manifest has an unsupported schema"
-  expected_manifest="$({ render_security_manifest "$manifest_schema" "$security_config_dir"; })"
+  expected_manifest="$({ render_security_manifest "$security_config_dir"; })"
   actual_manifest="$(<"$security_manifest")"
   [[ "$actual_manifest" == "$expected_manifest" ]] \
     || die "security-material manifest does not exactly bind its credentials and files"
@@ -738,40 +640,11 @@ PY
     || die "OpenSearch node certificate and private key do not match"
 
   for secret_name in "${secret_names[@]}"; do
-    if grep -Fq -f "$SEARCH_CANARY_DATA_ROOT/secrets/$secret_name" -- \
+    if grep -Fq -f "$SEARCH_CATALOG_DATA_ROOT/secrets/$secret_name" -- \
       "$security_config_dir"/*; then
       die "$secret_name plaintext leaked into OpenSearch security material"
     fi
   done
-
-  if [[ "$manifest_schema" == 1 ]]; then
-    for pristine_path in \
-      "$SEARCH_CANARY_DATA_ROOT/opensearch/data" \
-      "$SEARCH_CANARY_DATA_ROOT/fess/data"; do
-      pristine_entry="$({ find "$pristine_path" -mindepth 1 -print -quit; })"
-      [[ -z "$pristine_entry" ]] \
-        || die "schema-1 credential manifest cannot be upgraded after service data exists"
-    done
-    require_command docker
-    if ! canary_containers="$({
-      docker ps --all --quiet \
-        --filter "label=com.docker.compose.project=$search_project"
-    })"; then
-      die "could not prove the canary is stopped before credential-manifest migration"
-    fi
-    [[ -z "$canary_containers" ]] \
-      || die "schema-1 credential manifest can only be upgraded while the canary is stopped"
-    manifest_tmp="$(mktemp "$security_config_dir/.security-material.tmp.XXXXXX")"
-    render_security_manifest 2 "$security_config_dir" >"$manifest_tmp"
-    chmod 600 "$manifest_tmp"
-    mv -T -- "$manifest_tmp" "$security_manifest"
-    manifest_tmp=""
-    manifest_schema=2
-    expected_manifest="$({ render_security_manifest 2 "$security_config_dir"; })"
-    [[ "$(<"$security_manifest")" == "$expected_manifest" ]] \
-      || die "credential-manifest schema migration did not complete safely"
-    echo "Upgraded the pristine credential manifest to schema 2."
-  fi
 }
 
 existing_security_entry="$({
@@ -782,8 +655,6 @@ if [[ -n "$existing_security_entry" ]]; then
 else
   require_command docker
   require_command openssl
-  [[ -n "$hash_image" ]] \
-    || die "new security material requires --hash-image from sealed product preparation; the upstream base does not support arbitrary non-root operators"
   docker version >/dev/null 2>&1 || die "a working Docker daemon is required to hash OpenSearch passwords"
   hash_image_metadata="$({
     docker image inspect --format \
@@ -828,12 +699,12 @@ PY
   readonly verified_hash_image_id
 
   stale_security_stage="$({
-    find "$SEARCH_CANARY_DATA_ROOT/state" -mindepth 1 -maxdepth 1 \
+    find "$SEARCH_CATALOG_DATA_ROOT/state" -mindepth 1 -maxdepth 1 \
       -type d -name '.security-config.tmp.*' -print -quit
   })"
   [[ -z "$stale_security_stage" ]] \
     || die "stale security-material staging directory requires inspection: $stale_security_stage"
-  security_stage="$(mktemp -d "$SEARCH_CANARY_DATA_ROOT/state/.security-config.tmp.XXXXXX")"
+  security_stage="$(mktemp -d "$SEARCH_CATALOG_DATA_ROOT/state/.security-config.tmp.XXXXXX")"
   chmod 700 "$security_stage"
 
   generate_bcrypt_hash() {
@@ -849,7 +720,7 @@ PY
         --pull=never \
         --runtime=runc \
         --env NVIDIA_VISIBLE_DEVICES=void \
-        --user "$SEARCH_CANARY_RUNTIME_UID:$SEARCH_CANARY_RUNTIME_GID" \
+        --user "$SEARCH_CATALOG_RUNTIME_UID:$SEARCH_CATALOG_RUNTIME_GID" \
         --hostname hash-helper \
         --network none \
         --read-only \
@@ -869,8 +740,8 @@ PY
     printf '%s' "$result"
   }
 
-  admin_hash="$(generate_bcrypt_hash "$SEARCH_CANARY_DATA_ROOT/secrets/opensearch_admin_password")"
-  fess_hash="$(generate_bcrypt_hash "$SEARCH_CANARY_DATA_ROOT/secrets/fess_opensearch_password")"
+  admin_hash="$(generate_bcrypt_hash "$SEARCH_CATALOG_DATA_ROOT/secrets/opensearch_admin_password")"
+  fess_hash="$(generate_bcrypt_hash "$SEARCH_CATALOG_DATA_ROOT/secrets/fess_opensearch_password")"
   [[ "$admin_hash" != "$fess_hash" ]] \
     || die "OpenSearch account hashes unexpectedly match"
 
@@ -958,7 +829,7 @@ PY
     "$security_stage/node.pem" \
     "$security_stage/node-key.pem"
 
-  render_security_manifest 2 "$security_stage" \
+  render_security_manifest "$security_stage" \
     >"$security_stage/security-material.sha256"
   chmod 600 "$security_stage/security-material.sha256"
 
@@ -973,22 +844,22 @@ readonly granite_model_sha256="a658c903bf83a9d84fe1b9869874229ddfdfc1c88b04f958f
 readonly granite_config_sha256="eb0753f1773ea272958bcbd3d5c2a248b6edc665e02274fc720b1dbd58b02153"
 readonly granite_license_sha256="492069a62c2545ecde9f8cbc5c3d46adadaa3f95c0e1f68aea7ed2cca548484b"
 readonly granite_manifest_relative="manifests/registry.ollama.ai/library/granite-embedding/278m"
-model_root="$SEARCH_CANARY_DATA_ROOT/ollama/models"
+model_root="$SEARCH_CATALOG_DATA_ROOT/ollama/models"
 ensure_runtime_directory "$model_root/blobs"
 ensure_runtime_directory "$model_root/manifests"
 ensure_runtime_directory "$model_root/manifests/registry.ollama.ai"
 ensure_runtime_directory "$model_root/manifests/registry.ollama.ai/library"
 ensure_runtime_directory "$model_root/manifests/registry.ollama.ai/library/granite-embedding"
 
-model_source="${SEARCH_CANARY_MODEL_SOURCE:-}"
+model_source="${SEARCH_CATALOG_MODEL_SOURCE:-}"
 if [[ -n "$model_source" ]]; then
-  [[ "$model_source" == /* ]] || die "SEARCH_CANARY_MODEL_SOURCE must be absolute"
+  [[ "$model_source" == /* ]] || die "SEARCH_CATALOG_MODEL_SOURCE must be absolute"
   assert_no_symlink_components "$model_source"
   [[ -d "$model_source" && ! -L "$model_source" ]] \
-    || die "SEARCH_CANARY_MODEL_SOURCE must be an existing non-symlink Ollama models directory"
+    || die "SEARCH_CATALOG_MODEL_SOURCE must be an existing non-symlink Ollama models directory"
   model_source="$(realpath -e -- "$model_source")"
   [[ "$model_source" != "$model_root" ]] \
-    || die "SEARCH_CANARY_MODEL_SOURCE must differ from the canary model destination"
+    || die "SEARCH_CATALOG_MODEL_SOURCE must differ from the catalog model destination"
   python3 "$model_source_helper" check --source-root "$model_source"
 fi
 
@@ -1007,7 +878,7 @@ copy_or_verify_model_file() {
       || die "pinned Granite model file must have exactly one hard link: $relative_path"
   else
     [[ -n "$source" ]] \
-      || die "pinned Granite model is missing; set SEARCH_CANARY_MODEL_SOURCE to a reviewed Ollama models directory"
+      || die "pinned Granite model is missing; set SEARCH_CATALOG_MODEL_SOURCE to a reviewed Ollama models directory"
     assert_no_symlink_components "$source"
     [[ -f "$source" && ! -L "$source" ]] \
       || die "pinned Granite source file is missing or unsafe: $source"
@@ -1094,14 +965,14 @@ while stack:
         or directory_metadata.st_uid != operator_uid
         or stat.S_IMODE(directory_metadata.st_mode) != 0o700
     ):
-        raise SystemExit(f"Error: unsafe directory in canary model tree: {directory}")
+        raise SystemExit(f"Error: unsafe directory in catalog model tree: {directory}")
     with os.scandir(directory) as entries:
         for entry in entries:
             path = Path(entry.path)
             relative = path.relative_to(root).as_posix()
             metadata = entry.stat(follow_symlinks=False)
             if stat.S_ISLNK(metadata.st_mode):
-                raise SystemExit(f"Error: symlink is forbidden in canary model tree: {relative}")
+                raise SystemExit(f"Error: symlink is forbidden in catalog model tree: {relative}")
             if stat.S_ISDIR(metadata.st_mode):
                 actual_directories.add(relative)
                 stack.append(path)
@@ -1111,10 +982,10 @@ while stack:
                     or stat.S_IMODE(metadata.st_mode) != 0o400
                     or metadata.st_nlink != 1
                 ):
-                    raise SystemExit(f"Error: unsafe file in canary model tree: {relative}")
+                    raise SystemExit(f"Error: unsafe file in catalog model tree: {relative}")
                 actual_files.add(relative)
             else:
-                raise SystemExit(f"Error: special file is forbidden in canary model tree: {relative}")
+                raise SystemExit(f"Error: special file is forbidden in catalog model tree: {relative}")
 
 if actual_directories != expected_directories or actual_files != expected_files:
     extras = sorted(
@@ -1126,7 +997,7 @@ if actual_directories != expected_directories or actual_files != expected_files:
         | (expected_files - actual_files)
     )
     raise SystemExit(
-        f"Error: canary model tree is not exact; extras={extras!r}, missing={missing!r}"
+        f"Error: catalog model tree is not exact; extras={extras!r}, missing={missing!r}"
     )
 PY
 
@@ -1165,21 +1036,11 @@ finally:
     os.close(descriptor)
 PY
 }
-converge_private_catalog_directory "$SEARCH_CANARY_DATA_ROOT/catalog"
-converge_private_catalog_directory "$SEARCH_CANARY_DATA_ROOT/state/catalog-imports"
-
-if [[ -L "$runtime_link" ]]; then
-  runtime_target="$(realpath -e -- "$runtime_link")"
-  [[ "$runtime_target" == "$SEARCH_CANARY_DATA_ROOT" ]] \
-    || die "$runtime_link points to $runtime_target, expected $SEARCH_CANARY_DATA_ROOT"
-elif [[ -e "$runtime_link" ]]; then
-  die "$runtime_link exists and is not a symlink; move it after inspection"
-else
-  ln -s -- "$SEARCH_CANARY_DATA_ROOT" "$runtime_link"
-fi
+converge_private_catalog_directory "$SEARCH_CATALOG_DATA_ROOT/catalog"
+converge_private_catalog_directory "$SEARCH_CATALOG_DATA_ROOT/state/catalog-imports"
 
 trap - EXIT
 umask "$old_umask"
-echo "Search canary storage ready:"
-echo "  search-runtime -> $SEARCH_CANARY_DATA_ROOT"
+echo "Catalog storage ready:"
+echo "  private control/model root: $SEARCH_CATALOG_DATA_ROOT"
 echo "  secrets created or verified without printing their values"

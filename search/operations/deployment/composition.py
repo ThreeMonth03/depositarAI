@@ -83,10 +83,9 @@ def _configuration(config):
     if (
         not isinstance(config, ProductConfig)
         or type(config.schema_version) is not int
-        or config.schema_version not in (1, 2)
+        or config.schema_version != 2
         or type(config.catalog_storage) is not str
-        or config.catalog_storage
-        != ("docker-volume" if config.schema_version == 2 else "bind")
+        or config.catalog_storage != "docker-volume"
     ):
         raise ValueError("composition_config_invalid")
     roots = (

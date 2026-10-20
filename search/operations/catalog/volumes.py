@@ -18,11 +18,6 @@ _PROBE = (
 )
 
 
-def enabled(context):
-    """Recognize the named-volume profile, including malformed declarations."""
-    return volume_policy.enabled(context["compose"])
-
-
 def _identity(context):
     return volume_policy.identity(
         execution.catalog_identity(context),
@@ -174,7 +169,7 @@ def ensure(context):
         raise RuntimeError("catalog_volume_requires_explicit_recovery")
     if _exists(context, identity["name"]):
         raise RuntimeError("catalog_volume_existing_without_receipt")
-    image = _image(context, read_only=False)
+    image = _image(context, read_only=True)
     execution.write_record(
         root,
         "volume-started.json",

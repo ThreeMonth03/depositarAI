@@ -175,6 +175,8 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
             if images is not None and images != staged["images"]:
                 raise RuntimeError("catalog_prebuilt_images_differ_from_stage")
             images = staged["images"]
+        if prebuilt_images is not None:
+            administration._admin_image(context, read_only=True)
         if (root / "runtime.json").exists():
             receipt, running_images = execution.require_runtime(context)
             if images is not None and images != running_images:
@@ -189,6 +191,7 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
         try:
             if images is None:
                 images = _build_services(context)
+                administration._admin_image(context)
             elif staged is None:
                 execution.write_record(
                     root,
@@ -220,8 +223,7 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
             execution.load_images(
                 context
             )  # Repeat immutable ID/source proof immediately before startup.
-            if volumes.enabled(context):
-                volumes.ensure(context)
+            volumes.ensure(context)
             commands.command_output(
                 runner,
                 execution.compose_command(

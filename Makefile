@@ -15,11 +15,6 @@ test: search-ci
 
 ci: search-ci
 
-# Shared catalog helper referenced by the sealed environment template.
-.PHONY: search-canary-bootstrap
-search-canary-bootstrap:
-	bash scripts/bootstrap-search-canary.sh
-
 .PHONY: search-web-ci
 search-web-ci:
 	bash scripts/test-search-web.sh

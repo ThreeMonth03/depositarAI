@@ -26,6 +26,9 @@ Reranker 的固定版本同時提供 LICENSE 與 model card 中的 Llama 相關�
   `scripts/prepare_search_models.py`；先以 `--help` 確認參數，再選擇全新目的目錄。
 - Metadata 快照、封存 bundle、索引／向量及操作收據各自保留來源身分。
   不能把模型快取、catalog cache 與 source checkout 混用同一目錄。
+- OpenSearch 索引及向量放在 catalog 專用的 Docker local volume；metadata、模型、
+  dictionary、配置與收據另存於私有路徑。備份須同時涵蓋 volume 與必要的私有素材，
+  只複製 `state_root` 不會包含索引資料。
 - 真實 env、secrets 與安全設定以私有權限另存；不輸出完整 env 到 PR 或文件。
 - 備份與交付包另計空間，不能把同一磁碟的另一份檔案當成異地備份。
 
@@ -40,7 +43,7 @@ metadata-only 的容量估計。
 資料已關閉。保存 exact configuration、secrets、bundle manifest 及 immutable image ID，
 核對副本的完整檔案清單及 digest。
 
-原生 snapshot 與還原須在獨立目錄與隔離服務進行，先恢復到全新資料目錄，
+原生 snapshot 與還原須在隔離服務與全新的 catalog volume 進行，
 通過以下核對後才考慮接入產品：
 
 1. Snapshot 的索引範圍、alias、mapping 與資料 inventory 符合預期。

@@ -79,7 +79,8 @@ class ProductDoctorTests(unittest.TestCase):
             roots[name] = str(path)
         self.config = validate_config(
             {
-                "schema_version": 1,
+                "schema_version": 2,
+                "catalog_storage": "docker-volume",
                 "state_root": str(self.private / "state"),
                 **roots,
                 "gpus": {

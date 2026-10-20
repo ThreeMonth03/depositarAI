@@ -1,9 +1,10 @@
 {
-  "schema_version": 1,
-  "state_root": "/srv/depositarai/runtime",
-  "api_model_root": "/srv/depositarai/models/api",
-  "embedding_model_root": "/srv/depositarai/models/embedding",
-  "reranker_model_root": "/srv/depositarai/models/reranker",
+  "schema_version": 2,
+  "catalog_storage": "docker-volume",
+  "state_root": "/home/OPERATOR/.local/share/depositarai/state",
+  "api_model_root": "/absolute/reviewed/models/api",
+  "embedding_model_root": "/absolute/reviewed/models/embedding",
+  "reranker_model_root": "/absolute/reviewed/models/reranker",
   "gpus": {
     "scope": "GPU-00000000-0000-0000-0000-000000000001",
     "planner": [

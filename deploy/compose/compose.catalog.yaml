@@ -1,6 +1,5 @@
-# Isolated, non-public search canary. This file is deliberately independent of
-# compose.yaml and has no published ports or Caddy route.
-name: depositar-search-canary
+# Isolated product catalog: CPU-only, internal and without published ports.
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
 
 services:
   opensearch-search:
@@ -8,11 +7,11 @@ services:
       context: ../docker/opensearch
       args:
         OPENSEARCH_BASE_IMAGE: ${SEARCH_OPENSEARCH_BASE_IMAGE:?SEARCH_OPENSEARCH_BASE_IMAGE is required}
-    image: ${SEARCH_OPENSEARCH_IMAGE:-depositar-opensearch-search-canary:3.8.0-local}
+    image: ${SEARCH_OPENSEARCH_IMAGE:-depositar-opensearch-catalog:3.8.0-local}
     restart: unless-stopped
     init: true
     read_only: true
-    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    user: ${SEARCH_CATALOG_RUNTIME_UID:?SEARCH_CATALOG_RUNTIME_UID is required}:${SEARCH_CATALOG_RUNTIME_GID:?SEARCH_CATALOG_RUNTIME_GID is required}
     cpus: ${SEARCH_OPENSEARCH_CPU_LIMIT:-4}
     mem_limit: ${SEARCH_OPENSEARCH_MEM_LIMIT:-8G}
     memswap_limit: ${SEARCH_OPENSEARCH_MEM_LIMIT:-8G}
@@ -23,72 +22,72 @@ services:
       DISABLE_INSTALL_DEMO_CONFIG: "true"
       DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI: "true"
       discovery.type: single-node
-      cluster.name: depositar-search-canary
+      cluster.name: depositar-catalog
       node.name: opensearch-search
       node.store.allow_mmap: "false"
       OPENSEARCH_JAVA_OPTS: >-
         -Xms2g -Xmx2g
         -Djava.io.tmpdir=/run/opensearch-native
     volumes:
-      - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/data
+      - type: volume
+        source: catalog-index
         target: /usr/share/opensearch/data
-        bind:
-          create_host_path: false
+        volume:
+          nocopy: true
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/dictionary
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/dictionary
         target: /usr/share/opensearch/config/dictionary
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/opensearch.yml
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/opensearch.yml
         target: /usr/share/opensearch/config/opensearch.yml
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/root-ca.pem
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/root-ca.pem
         target: /usr/share/opensearch/config/root-ca.pem
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/node.pem
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/node.pem
         target: /usr/share/opensearch/config/node.pem
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/node-key.pem
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/node-key.pem
         target: /usr/share/opensearch/config/node-key.pem
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/internal_users.yml
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/internal_users.yml
         target: /usr/share/opensearch/config/opensearch-security/internal_users.yml
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/roles.yml
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/roles.yml
         target: /usr/share/opensearch/config/opensearch-security/roles.yml
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/roles_mapping.yml
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/roles_mapping.yml
         target: /usr/share/opensearch/config/opensearch-security/roles_mapping.yml
         read_only: true
         bind:
           create_host_path: false
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=1770
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=1770
       # Bouncy Castle FIPS loads a small JNI probe from java.io.tmpdir. Keep
       # the general /tmp noexec and isolate that requirement to this bounded
       # container-private tmpfs instead of making all temporary files executable.
-      - /run/opensearch-native:rw,exec,nosuid,nodev,size=64m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
-      - /usr/share/opensearch/logs:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0750
+      - /run/opensearch-native:rw,exec,nosuid,nodev,size=64m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
+      - /usr/share/opensearch/logs:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0750
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     ulimits:
@@ -120,11 +119,11 @@ services:
         FESS_BASE_IMAGE: ${SEARCH_FESS_BASE_IMAGE:?SEARCH_FESS_BASE_IMAGE is required}
         FESS_OLLAMA_PLUGIN_URL: https://maven.codelibs.org/release/org/codelibs/fess/fess-llm-ollama/15.8.0/fess-llm-ollama-15.8.0.jar
         FESS_OLLAMA_PLUGIN_SHA256: 08301d94101404ea8fd4ae9efb12cb61cf7d2f28b554653a1b65ee5233d39b84
-    image: ${SEARCH_FESS_IMAGE:-depositar-fess-search-canary:15.8.0-local}
+    image: ${SEARCH_FESS_IMAGE:-depositar-fess-catalog:15.8.0-local}
     restart: unless-stopped
     init: true
     read_only: true
-    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    user: ${SEARCH_CATALOG_RUNTIME_UID:?SEARCH_CATALOG_RUNTIME_UID is required}:${SEARCH_CATALOG_RUNTIME_GID:?SEARCH_CATALOG_RUNTIME_GID is required}
     cpus: ${SEARCH_FESS_CPU_LIMIT:-4}
     mem_limit: ${SEARCH_FESS_MEM_LIMIT:-8G}
     memswap_limit: ${SEARCH_FESS_MEM_LIMIT:-8G}
@@ -153,7 +152,7 @@ services:
         -Dfess.system.content_chunker.embedding.ollama.query.prefix=
         -Dfess.system.content_chunker.job.concurrency=2
         -Dfess.system.content_chunker.job.bulk_size=100
-        -Dfess.system.content_chunker.job.max_documents_per_run=${SEARCH_VECTOR_PASS_DOCUMENTS:-10000}
+        -Dfess.system.content_chunker.job.max_documents_per_run=256
         -Dfess.system.content_chunker.search.enabled=true
         -Dfess.system.login.required=true
         -Duser.timezone=UTC
@@ -174,17 +173,17 @@ services:
         target: fess_initial_admin_password
     volumes:
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/opensearch/config/root-ca.pem
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/opensearch/config/root-ca.pem
         target: /run/opensearch-ca/root-ca.pem
         read_only: true
         bind:
           create_host_path: false
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=1770
-      - /opt/fess:rw,noexec,nosuid,nodev,size=2m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
-      - /var/lib/fess:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
-      - /var/log/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
-      - /var/tmp/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=1770
+      - /opt/fess:rw,noexec,nosuid,nodev,size=2m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
+      - /var/lib/fess:rw,noexec,nosuid,nodev,size=256m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
+      - /var/log/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
+      - /var/tmp/fess:rw,noexec,nosuid,nodev,size=512m,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     networks: [search_backend]
@@ -208,7 +207,7 @@ services:
     restart: unless-stopped
     init: true
     read_only: true
-    user: ${SEARCH_CANARY_RUNTIME_UID:?SEARCH_CANARY_RUNTIME_UID is required}:${SEARCH_CANARY_RUNTIME_GID:?SEARCH_CANARY_RUNTIME_GID is required}
+    user: ${SEARCH_CATALOG_RUNTIME_UID:?SEARCH_CATALOG_RUNTIME_UID is required}:${SEARCH_CATALOG_RUNTIME_GID:?SEARCH_CATALOG_RUNTIME_GID is required}
     cpus: ${SEARCH_OLLAMA_CPU_LIMIT:-12}
     mem_limit: ${SEARCH_OLLAMA_MEM_LIMIT:-8G}
     memswap_limit: ${SEARCH_OLLAMA_MEM_LIMIT:-8G}
@@ -227,13 +226,13 @@ services:
       DEPOSITAR_EMBEDDING_MODEL: granite-embedding:278m
     volumes:
       - type: bind
-        source: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/ollama/models
+        source: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/ollama/models
         target: /models
         read_only: true
         bind:
           create_host_path: false
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=1g,uid=${SEARCH_CANARY_RUNTIME_UID},gid=${SEARCH_CANARY_RUNTIME_GID},mode=0700
+      - /tmp:rw,noexec,nosuid,nodev,size=1g,uid=${SEARCH_CATALOG_RUNTIME_UID},gid=${SEARCH_CATALOG_RUNTIME_GID},mode=0700
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     network_mode: service:fess-search
@@ -252,6 +251,11 @@ services:
         max-size: 10m
         max-file: "5"
 
+volumes:
+  catalog-index:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}-index
+
 networks:
   search_backend:
     internal: true
@@ -259,8 +263,8 @@ networks:
 
 secrets:
   fess_opensearch_password:
-    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_opensearch_password
+    file: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/secrets/fess_opensearch_password
   fess_app_cipher_key:
-    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_app_cipher_key
+    file: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/secrets/fess_app_cipher_key
   fess_initial_admin_password:
-    file: ${SEARCH_CANARY_DATA_ROOT:?SEARCH_CANARY_DATA_ROOT is required}/secrets/fess_initial_admin_password
+    file: ${SEARCH_CATALOG_DATA_ROOT:?SEARCH_CATALOG_DATA_ROOT is required}/secrets/fess_initial_admin_password
