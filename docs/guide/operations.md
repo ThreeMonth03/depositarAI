@@ -1,7 +1,7 @@
 # 部署與維護
 
 目前的正常部署方式是在同一台已備好模型與 GPU 的 Linux 主機上進行私有試用。
-產品 CLI 可準備資料、啟動服務、開啟本機入口及匯出交付素材；從零安裝整套產品、
+`up-private` 串接資料準備與首次私有網站啟用；主機軟體與模型須預先備妥。
 完整產品更新與回退仍未提供。以下命令都在 repository 根目錄，以操作帳號執行。
 
 ## 先準備主機與設定
@@ -30,14 +30,45 @@ python3 scripts/depositarai.py --config "$product_config" doctor --deep
 `doctor` 核對主機、儲存與模型條件，`--deep` 另外讀取大型模型的 SHA256。
 回報 `blocked` 時，先修正列出的條件；它不會代為下載模型或調整主機設定。
 
-## 準備搜尋資料
+## 首次啟用私有網站
 
 ```sh
-python3 scripts/depositarai.py --config "$product_config" stage-catalog
+python3 scripts/depositarai.py --config "$product_config" up-private
 ```
 
-這一步同步公開 metadata、準備隔離索引、匯入資料並建立向量，尚不開啟網站。
-已有相容且完整的 catalog 時會核對後重用，應用程式修改不必每次重新向量化。
+命令在同一設定、固定 clean Git 版本與 product lock 下，先執行 `stage-catalog`，
+再串接映像建置、API key、推論服務、查詢權限、私有 release、gateway 準備與啟用。
+最後通過網站入口驗收後，才回報 `gateway_active`。
+
+已有啟用紀錄、gateway 目錄或不確定的啟用狀態時，命令會在同步資料前拒絕。
+若已用細項 CLI 準備應用映像、API key、推論、查詢或 release，也改由細項命令
+診斷及完成；`up-private` 不接管已開始的服務準備流程。
+任何一步失敗就停止，保留狀態供調查，不自動修復或回退。這是首次私有啟用入口；
+既有網站的更新、回退與公眾 OIDC 入口須另行管理。
+
+若輸出 `status=checkpoint` 且退出碼為2，表示向量預算用完；本輪不繼續建置應用
+映像、啟動 GPU 或啟用網站。保持同一來源、設定與資料，重新執行同一命令續跑。
+先前只完成資料準備而尚未啟用網站時，相容且完整的 catalog 可核對後重用，
+不必重建向量。
+
+使用已下載快照時：
+
+```sh
+python3 scripts/depositarai.py --config "$product_config" up-private \
+  --snapshot /absolute/path/datasets.jsonl.gz
+```
+
+這會離線重新驗證、建置 metadata，不使用 TTL cache，也不確認來源網站目前是否
+仍公開。`--force` 只略過同步的 TTL；`--max-passes` 與 `--wall-seconds` 限制向量
+階段，不是整個啟用流程的時限。`--catalog-revision` 可指定資料配方相容的原始
+catalog 版本；它不略過相容性或收據檢查。
+
+逐步的 `stage-catalog`、`build-images`、`prepare-secrets`、`start-inference`、
+`prepare-query`、`start-release`、`prepare-gateway` 與 `activate-gateway` 仍可用於
+診斷及明確的分段操作，參數與前置條件見
+[產品 CLI 參考](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/PRODUCT_LIFECYCLE.md)。
+
+## 資料重用與配方變更
 
 儲存或 bootstrap 配方不同時，須準備新的 catalog slot，再匯入 metadata 與建立向量。
 metadata builder 未變時，可以保留並沿用通過核對的 sealed metadata。
@@ -45,32 +76,14 @@ metadata builder 未變時，可以保留並沿用通過核對的 sealed metadat
 不修改舊 marker、不直接搬移索引或複製 runtime 收據。
 完整原則見 [Catalog cache](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/CATALOG_CACHE.md#catalog-storage-and-bootstrap-changes)。
 
-若輸出 `status=checkpoint` 且退出碼為2，表示本輪預算已用完；保持相同來源、
-設定與資料，重新執行同一命令續跑。只有完整完成後，才進入服務啟動。
-需要使用已下載快照時，加上 `--snapshot /absolute/path/datasets.jsonl.gz`。
-這會離線重新驗證、建置 metadata，不確認來源網站目前是否仍公開。
-
 Metadata builder 或資料配方變更時，需要新 catalog、重新匯入及建立向量。
 既有 state 的 metadata 基準若無法通過當前來源校驗，`--snapshot` 或 `--force`
 也不會繞過它；先保留原始快照、收據與服務，安排隔離資料準備及部署交接。
 目前命令不會自動遷移這種基準，也不會更新或回退現役 catalog。
 
-## 啟動網站入口
+## 連線與試用
 
-以下命令以 `&&` 串接，任一步失敗便停止後續操作：
-
-```sh
-python3 scripts/depositarai.py --config "$product_config" build-images &&
-python3 scripts/depositarai.py --config "$product_config" prepare-secrets &&
-python3 scripts/depositarai.py --config "$product_config" start-inference &&
-python3 scripts/depositarai.py --config "$product_config" prepare-query &&
-python3 scripts/depositarai.py --config "$product_config" start-release &&
-python3 scripts/depositarai.py --config "$product_config" prepare-gateway &&
-python3 scripts/depositarai.py --config "$product_config" activate-gateway
-```
-
-這個流程依序建立映像與私有 key、啟動模型、準備唯讀查詢權限、啟動 CPU 網站服務，
-最後驗證並開啟 `127.0.0.1:18083`。請在主機上開啟 `http://127.0.0.1:18083`，
+`up-private` 完成後，請在主機上開啟 `http://127.0.0.1:18083`，
 實際搜尋、追問及建立新搜尋，確認使用流程正常。
 
 遠端試用可從自己的電腦建立 SSH tunnel，將 `user@your-server` 換成連線目標：
@@ -118,7 +131,7 @@ python3 scripts/depositarai.py restore-product \
 | 情況 | 處理方式 |
 |---|---|
 | `doctor` 回報 `blocked` | 依檢查項修正 Docker、GPU、模型或儲存條件，再檢查一次 |
-| `stage-catalog` 回報 `checkpoint` | 保持同一來源與資料續跑；不要當成網站已可使用 |
+| `up-private`／`stage-catalog` 回報 `checkpoint` | 保持同一來源、設定與資料續跑；此時尚未啟用網站 |
 | `failed`、`recovery_required` 或不確定的中斷 | 停止後續步驟，保留錯誤與 state 目錄，先查明失敗原因；不要刪除狀態後重試 |
 | 來源變更或目錄／映像不符 | 回到準備流程核對版本；不要手動改寫完成紀錄或套用其他版本的結果 |
 | 網頁無法連線 | 確認 activation 已完成、SSH tunnel 仍連線，以及本機18083未被占用 |

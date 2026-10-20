@@ -4,7 +4,8 @@
 首次部署的操作順序見[部署與維護](../guide/operations.md)；元件與網路責任見
 [私有 runtime](PRIVATE_RUNTIME.md)。命令由 repository 根目錄，以非 root 操作帳號執行。
 
-目前提供同主機私有試用的準備、啟動、loopback activation 與素材打包命令。
+已備妥 Docker、GPU 與模型的主機，可用 `up-private` 串接首次私有啟用。
+另保留分段準備、啟動、loopback activation 與素材打包命令，供診斷與維護使用。
 完整產品的 `install`、`update`、`rollback`、stop／retire 尚未提供；公眾入口有自己的
 網站成對更新與人工回退，不能用來更新整套模型、catalog 或私有 release。
 
@@ -81,6 +82,31 @@ probe 可能建立有界、無網路／無 GPU 的臨時容器，所需 probe im
 `runtime_verified=false` 不表示 gateway 一定停止，而是此命令不觀察線上服務。
 未完成操作可能回報 `recovery_required`，不可把 staging 狀態當成 HTTP health check。
 
+### 首次私有啟用
+
+```sh
+python3 scripts/depositarai.py --config "$product_config" up-private
+```
+
+`up-private` 持有同一 product lock、設定與固定 clean source revision，依序執行：
+`stage-catalog`、`build-images`、`prepare-secrets`、`start-inference`、
+`prepare-query`、`start-release`、`prepare-gateway`、`activate-gateway`。
+它呼叫既有控制器，不另建一套部署配方。成功結果保留 gateway 的實際驗收證據，
+並附上應用與 catalog revision 及步驟摘要。
+
+這個命令只處理首次啟用。既有 `active.json`、gateway 目錄、成功啟用歷史或
+不完整的操作紀錄都會在同步前拒絕；失敗停止後續步驟，不修復或切換現役服務。
+它可重用乾淨的 catalog staging／checkpoint，但不接管細項 CLI 已準備的應用映像、
+API key、推論、query 或 release；這些中途流程須以原細項命令診斷及完成。
+向量回傳 checkpoint 時，以退出碼2及 `staging_only=true` 結束，不進入應用映像
+建置、GPU 或網站階段；保持同一來源、設定及資料後可重跑。
+這不是從零安裝主機軟體／模型、完整產品 update／rollback 或公眾 OIDC 入口工具。
+
+參數與 `stage-catalog` 相同：`--snapshot`、`--force`、`--max-passes`、
+`--wall-seconds`、`--catalog-revision`。Snapshot 仍是離線建置 metadata 的輸入，
+不是跳過建置的 sealed bundle；預算只限制向量階段。以下分段命令仍保留原本的
+副作用、前置條件及失敗處理。
+
 ### metadata 與候選索引
 
 | 命令 | 用途與副作用 |
@@ -94,7 +120,7 @@ probe 可能建立有界、無網路／無 GPU 的臨時容器，所需 probe im
 | `build-vectors` | 在固定預算內建立向量或從乾淨 checkpoint 續跑 |
 | `stage-catalog` | 持有同一 product lock，串接 sync、prepare、catalog images、start、import、vectors |
 
-`sync` 與 `stage-catalog` 接受 `--snapshot /absolute/private/datasets.jsonl.gz`，
+`sync`、`stage-catalog` 與 `up-private` 接受 `--snapshot /absolute/private/datasets.jsonl.gz`，
 亦可使用 JSONL；離線快照不發下載請求，也不使用 TTL cache。沒有 `--snapshot` 時，
 從固定公開來源匿名下載，完整掃描兩次並確認一致；`--force` 略過設定的 TTL，
 不略過下載、資料或 digest 檢查。沒有自動安裝 cron／timer。
@@ -160,8 +186,8 @@ inventory、helper cleanup 與完整 journal，才回報本次沒有新增 pass�
 不會自動改選其他 slot。只改 host orchestration 不必然重建資料，但必須通過既有
 相容性規則。query／release 仍須重新證明實際索引、向量、權限與 client lease。
 
-`build-vectors`、`stage-catalog` 都接受以下參數；它們限制向量階段，不是整個
-`stage-catalog` 的總執行時間：
+`build-vectors`、`stage-catalog`、`up-private` 都接受以下參數；它們限制向量階段，
+不是整個資料準備或啟用流程的總執行時間：
 
 | 參數 | 預設 | 可接受範圍 |
 |---|---|---|
@@ -318,7 +344,7 @@ CLI 成功結果以 JSON 寫入 stdout；被捕捉的操作錯誤以安全摘要
 
 | 退出碼／狀態 | 下一步 |
 |---|---|
-| `0` | 指定命令完成；向量完成為 `vectors-complete`，不推論整套網站已可用 |
+| `0` | 指定命令完成；`up-private` 成功為 `gateway_active`，單獨的 `vectors-complete` 不代表網站已啟用 |
 | `2` 且 `status=checkpoint` | 向量預算正常停止；確認同一來源／資料與乾淨 checkpoint，再續跑 |
 | `2` 且只有 CLI 用法訊息 | 修正參數；不可當成向量 checkpoint |
 | `1`、`blocked` | 修正列出的主機、模型、儲存或權限條件，再執行檢查 |

@@ -22,6 +22,31 @@ from search.operations.state import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+UP_PRIVATE_ERROR_CODES = frozenset(
+    {
+        "product_private_existing_activation",
+        "product_private_recovery_required",
+        "product_private_receipt_capacity",
+        "product_private_gateway_inventory_unverified",
+        "product_private_catalog_unverified",
+        "product_private_step_unverified",
+    }
+)
+
+
+class UpPrivateError(ValueError):
+    """Closed diagnostics for the first private activation flow."""
+
+
+def _inactive_step(report, status):
+    if (
+        type(report) is not dict
+        or report.get("status") != status
+        or report.get("active_changed") is not False
+    ):
+        raise UpPrivateError("product_private_step_unverified")
+
+
 def revision(repo_root=ROOT):
     return require_clean_revision(repo_root)
 
@@ -180,17 +205,35 @@ def status(config: ProductConfig):
 
 def prepare_secrets(config: ProductConfig, *, repo_root=ROOT, runner=None):
     """Create/reverify the private product API key; no ports or service starts."""
-    from search.operations.deployment.credentials import prepare_api_key
-
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
+        return _prepare_secrets_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
+        )
+
+
+def _prepare_secrets_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    runner=None,
+):
+    from search.operations.deployment.credentials import prepare_api_key
+
+    _require_revision(source_revision, repo_root)
+    with operation(store, "prepare-secrets", source_revision):
+        report = prepare_api_key(
+            config, store, source_revision, repo_root=repo_root, runner=runner
+        )
         _require_revision(source_revision, repo_root)
-        with operation(store, "prepare-secrets", source_revision):
-            report = prepare_api_key(
-                config, store, source_revision, repo_root=repo_root, runner=runner
-            )
-            _require_revision(source_revision, repo_root)
-            return report
+        _inactive_step(report, "secrets-ready")
+        return report
 
 
 def start_inference(
@@ -202,23 +245,45 @@ def start_inference(
     gpu_runner=None,
 ):
     """Start/reverify unpublished GPU services; runtime is not model warmup."""
-    from search.operations.deployment.inference import start_private_inference
-
     source_revision = revision(repo_root)
     with locked_state(config) as store:
+        return _start_inference_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            gpu_runner=gpu_runner,
+        )
+
+
+def _start_inference_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+    gpu_runner=None,
+):
+    from search.operations.deployment.inference import start_private_inference
+
+    _require_revision(source_revision, repo_root)
+    with operation(store, "start-inference", source_revision):
+        report = start_private_inference(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            gpu_runner=gpu_runner,
+        )
         _require_revision(source_revision, repo_root)
-        with operation(store, "start-inference", source_revision):
-            report = start_private_inference(
-                config,
-                store,
-                source_revision,
-                repo_root=repo_root,
-                source_runner=source_runner,
-                docker_runner=docker_runner,
-                gpu_runner=gpu_runner,
-            )
-            _require_revision(source_revision, repo_root)
-            return report
+        _inactive_step(report, "runtime_running")
+        return report
 
 
 def start_release(
@@ -231,36 +296,60 @@ def start_release(
     gpu_runner=None,
 ):
     """Start/reverify one private CPU release; no gateway or live activation."""
-    from search.operations.deployment.release.controller import start_private_release
-
     source_revision = revision(repo_root)
     with locked_state(config) as store:
+        return _start_release_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+        )
+
+
+def _start_release_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+    catalog_runner=None,
+    gpu_runner=None,
+):
+    from search.operations.deployment.release.controller import start_private_release
+
+    _require_revision(source_revision, repo_root)
+    with operation(store, "start-release", source_revision) as outcome:
+        candidate = _candidate(store)
+        if candidate["source_revision"] != source_revision:
+            raise ValueError("product_release_candidate_source_changed")
+        plan = _index_plan(
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=catalog_runner,
+        )
+        report = start_private_release(
+            config,
+            store,
+            source_revision,
+            plan,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+        )
         _require_revision(source_revision, repo_root)
-        with operation(store, "start-release", source_revision) as outcome:
-            candidate = _candidate(store)
-            if candidate["source_revision"] != source_revision:
-                raise ValueError("product_release_candidate_source_changed")
-            plan = _index_plan(
-                store,
-                candidate,
-                source_revision,
-                repo_root=repo_root,
-                runner=catalog_runner,
-            )
-            report = start_private_release(
-                config,
-                store,
-                source_revision,
-                plan,
-                repo_root=repo_root,
-                source_runner=source_runner,
-                docker_runner=docker_runner,
-                catalog_runner=catalog_runner,
-                gpu_runner=gpu_runner,
-            )
-            _require_revision(source_revision, repo_root)
-            outcome.update(_outcome(candidate))
-            return report
+        outcome.update(_outcome(candidate))
+        _inactive_step(report, "private_release_running")
+        return report
 
 
 def prepare_gateway(
@@ -273,38 +362,62 @@ def prepare_gateway(
     gpu_runner=None,
 ):
     """Reverify completed CPU3 and stage a gateway candidate; no live routing."""
+    source_revision = revision(repo_root)
+    with locked_state(config) as store:
+        return _prepare_gateway_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+        )
+
+
+def _prepare_gateway_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+    catalog_runner=None,
+    gpu_runner=None,
+):
     from search.operations.deployment.gateway.preparation import (
         prepare_gateway as prepare,
     )
 
-    source_revision = revision(repo_root)
-    with locked_state(config) as store:
+    _require_revision(source_revision, repo_root)
+    with operation(store, "prepare-gateway", source_revision) as outcome:
+        candidate = _candidate(store)
+        if candidate["source_revision"] != source_revision:
+            raise ValueError("product_gateway_candidate_source_changed")
+        plan = _index_plan(
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=catalog_runner,
+        )
+        report = prepare(
+            config,
+            store,
+            source_revision,
+            plan,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+        )
         _require_revision(source_revision, repo_root)
-        with operation(store, "prepare-gateway", source_revision) as outcome:
-            candidate = _candidate(store)
-            if candidate["source_revision"] != source_revision:
-                raise ValueError("product_gateway_candidate_source_changed")
-            plan = _index_plan(
-                store,
-                candidate,
-                source_revision,
-                repo_root=repo_root,
-                runner=catalog_runner,
-            )
-            report = prepare(
-                config,
-                store,
-                source_revision,
-                plan,
-                repo_root=repo_root,
-                source_runner=source_runner,
-                docker_runner=docker_runner,
-                catalog_runner=catalog_runner,
-                gpu_runner=gpu_runner,
-            )
-            _require_revision(source_revision, repo_root)
-            outcome.update(_outcome(candidate))
-            return report
+        outcome.update(_outcome(candidate))
+        _inactive_step(report, "gateway_prepared")
+        return report
 
 
 def activate_gateway(
@@ -318,47 +431,72 @@ def activate_gateway(
     http_probe=None,
 ):
     """First activation only; partial attempts require explicit recovery."""
+    source_revision = revision(repo_root)
+    with locked_state(config) as store:
+        return _activate_gateway_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+            http_probe=http_probe,
+        )
+
+
+def _activate_gateway_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+    catalog_runner=None,
+    gpu_runner=None,
+    http_probe=None,
+):
     from search.operations.deployment.gateway.activation import (
         activate_gateway as activate,
     )
 
-    source_revision = revision(repo_root)
-    with locked_state(config) as store:
-        _require_revision(source_revision, repo_root)
-        with operation(store, "activate-gateway", source_revision) as outcome:
-            candidate = _candidate(store)
-            if candidate["source_revision"] != source_revision:
-                raise ValueError("product_gateway_candidate_source_changed")
-            plan = _index_plan(
-                store,
-                candidate,
-                source_revision,
-                repo_root=repo_root,
-                runner=catalog_runner,
-            )
-            metadata = _outcome(candidate)
-            report = activate(
-                config,
-                store,
-                source_revision,
-                plan,
-                repo_root=repo_root,
-                source_runner=source_runner,
-                docker_runner=docker_runner,
-                catalog_runner=catalog_runner,
-                gpu_runner=gpu_runner,
-                http_probe=http_probe,
-            )
-            if (
-                report.get("active_changed") is not True
-                or report.get("activation_performed") is not True
-                or report.get("confers_runtime_authority") is not True
-                or report.get("status") != "gateway_active"
-            ):
-                raise ValueError("product_gateway_activation_result_invalid")
-            outcome.update(metadata)
-            outcome["active_changed"] = True
-            return report
+    _require_revision(source_revision, repo_root)
+    with operation(store, "activate-gateway", source_revision) as outcome:
+        candidate = _candidate(store)
+        if candidate["source_revision"] != source_revision:
+            raise ValueError("product_gateway_candidate_source_changed")
+        plan = _index_plan(
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=catalog_runner,
+        )
+        metadata = _outcome(candidate)
+        report = activate(
+            config,
+            store,
+            source_revision,
+            plan,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+            catalog_runner=catalog_runner,
+            gpu_runner=gpu_runner,
+            http_probe=http_probe,
+        )
+        if (
+            report.get("active_changed") is not True
+            or report.get("activation_performed") is not True
+            or report.get("confers_runtime_authority") is not True
+            or report.get("status") != "gateway_active"
+        ):
+            raise ValueError("product_gateway_activation_result_invalid")
+        outcome.update(metadata)
+        outcome["active_changed"] = True
+        return report
 
 
 def prepare_index(
@@ -571,46 +709,84 @@ def build_images(
     config: ProductConfig, *, repo_root=ROOT, source_runner=None, docker_runner=None
 ):
     """Build/reverify committed private product images; never start services."""
-    from search.operations.deployment.image_staging import stage_product_images
-
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
+        return _build_images_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+        )
+
+
+def _build_images_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    source_runner=None,
+    docker_runner=None,
+):
+    from search.operations.deployment.image_staging import stage_product_images
+
+    _require_revision(source_revision, repo_root)
+    with operation(store, "build-images", source_revision):
+        result = stage_product_images(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            source_runner=source_runner,
+            docker_runner=docker_runner,
+        )
         _require_revision(source_revision, repo_root)
-        with operation(store, "build-images", source_revision):
-            result = stage_product_images(
-                config,
-                store,
-                source_revision,
-                repo_root=repo_root,
-                source_runner=source_runner,
-                docker_runner=docker_runner,
-            )
-            _require_revision(source_revision, repo_root)
-            return result
+        _inactive_step(result, "images_staged")
+        return result
 
 
 def prepare_query(config: ProductConfig, *, repo_root=ROOT, runner=None):
     """Provision verified query-only access to a complete isolated catalog."""
-    from search.operations.catalog import query
-
     source_revision = revision(repo_root)
     with locked_state(config) as store:
+        return _prepare_query_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
+        )
+
+
+def _prepare_query_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    runner=None,
+):
+    from search.operations.catalog import query
+
+    _require_revision(source_revision, repo_root)
+    with operation(store, "prepare-query", source_revision) as outcome:
+        candidate = _candidate(store)
+        plan = _index_plan(
+            store, candidate, source_revision, repo_root=repo_root, runner=runner
+        )
+        result = query.provision(config, plan, repo_root=repo_root, runner=runner)
         _require_revision(source_revision, repo_root)
-        with operation(store, "prepare-query", source_revision) as outcome:
-            candidate = _candidate(store)
-            plan = _index_plan(
-                store, candidate, source_revision, repo_root=repo_root, runner=runner
-            )
-            result = query.provision(config, plan, repo_root=repo_root, runner=runner)
-            _require_revision(source_revision, repo_root)
-            if (
-                result.get("status") != "query-ready"
-                or result.get("active_changed") is not False
-            ):
-                raise ValueError("product_query_preparation_not_verified")
-            store.write("query-candidate.json", result, replace=True)
-            outcome.update(_outcome(candidate))
-            return result
+        if (
+            type(result) is not dict
+            or result.get("status") != "query-ready"
+            or result.get("active_changed") is not False
+        ):
+            raise ValueError("product_query_preparation_not_verified")
+        store.write("query-candidate.json", result, replace=True)
+        outcome.update(_outcome(candidate))
+        return result
 
 
 def build_vectors(
@@ -697,6 +873,18 @@ def _import_staged(store, candidate, source_revision, *, catalog_revision=None):
     )
 
 
+def _validate_stage_budget(max_passes, wall_seconds):
+    from search.operations.catalog.vectors import HELPER_TIMEOUT, MAX_PASSES
+
+    if (
+        type(max_passes) is not int
+        or not 1 <= max_passes <= MAX_PASSES
+        or type(wall_seconds) is not int
+        or not HELPER_TIMEOUT <= wall_seconds <= 36000
+    ):
+        raise ValueError("catalog_vector_budget_invalid")
+
+
 def stage_catalog(
     config: ProductConfig,
     *,
@@ -720,126 +908,291 @@ def stage_catalog(
     Matching import receipts skip another import; vectors still revalidate
     private runtime, helper/admin evidence, full inventory and the journal.
     """
-    from search.operations.catalog.vectors import HELPER_TIMEOUT, MAX_PASSES
-
-    if (
-        type(max_passes) is not int
-        or not 1 <= max_passes <= MAX_PASSES
-        or type(wall_seconds) is not int
-        or not HELPER_TIMEOUT <= wall_seconds <= 36000
-    ):
-        raise ValueError("catalog_vector_budget_invalid")
+    _validate_stage_budget(max_passes, wall_seconds)
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
-        _sync_locked(
+        return _stage_catalog_locked(
             config,
             store,
             source_revision,
             repo_root=repo_root,
             snapshot=snapshot,
             force=force,
-            baseline=None,
             fetch=fetch,
-        )
-        _prepare_locked(
-            config,
-            store,
-            source_revision,
-            repo_root=repo_root,
             runner=runner,
+            max_passes=max_passes,
+            wall_seconds=wall_seconds,
             catalog_revision=catalog_revision,
         )
-        plan = _index_plan(
-            store,
-            _candidate(store),
-            source_revision,
-            repo_root=repo_root,
-            runner=runner,
-        )
-        root = Path(plan["work_root"])
-        # Presence is only a skip hint for the reviewed granular-start path.
-        # start-index must still prove the complete runtime; no image-stage
-        # authority is reconstructed from it. Partial markers cannot skip.
-        markers = {"image-stage-started.json", "image-stage-complete.json"}
-        present = set()
-        for name in markers | {"runtime.json"}:
-            try:
-                metadata = (root / name).lstat()
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                raise ValueError("product_stage_catalog_hint_invalid")
-            present.add(name)
-        image_staging_skipped = "runtime.json" in present and not present & markers
-        if not image_staging_skipped:
-            _index_locked(
-                config,
-                store,
-                source_revision,
-                "build-catalog-images",
-                repo_root=repo_root,
-                runner=runner,
-            )
+
+
+def _stage_catalog_locked(
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    snapshot=None,
+    force=False,
+    fetch=None,
+    runner=None,
+    max_passes=16,
+    wall_seconds=7200,
+    catalog_revision=None,
+):
+    _sync_locked(
+        config,
+        store,
+        source_revision,
+        repo_root=repo_root,
+        snapshot=snapshot,
+        force=force,
+        baseline=None,
+        fetch=fetch,
+    )
+    _prepare_locked(
+        config,
+        store,
+        source_revision,
+        repo_root=repo_root,
+        runner=runner,
+        catalog_revision=catalog_revision,
+    )
+    plan = _index_plan(
+        store,
+        _candidate(store),
+        source_revision,
+        repo_root=repo_root,
+        runner=runner,
+    )
+    root = Path(plan["work_root"])
+    # Presence is only a skip hint for the reviewed granular-start path.
+    # start-index must still prove the complete runtime; no image-stage
+    # authority is reconstructed from it. Partial markers cannot skip.
+    markers = {"image-stage-started.json", "image-stage-complete.json"}
+    present = set()
+    for name in markers | {"runtime.json"}:
+        try:
+            metadata = (root / name).lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("product_stage_catalog_hint_invalid")
+        present.add(name)
+    image_staging_skipped = "runtime.json" in present and not present & markers
+    if not image_staging_skipped:
         _index_locked(
             config,
             store,
             source_revision,
-            "start-index",
+            "build-catalog-images",
             repo_root=repo_root,
             runner=runner,
         )
-        candidate = _candidate(store)
-        import_skipped = _import_staged(
-            store, candidate, source_revision, catalog_revision=plan["revision"]
+    _index_locked(
+        config,
+        store,
+        source_revision,
+        "start-index",
+        repo_root=repo_root,
+        runner=runner,
+    )
+    candidate = _candidate(store)
+    import_skipped = _import_staged(
+        store, candidate, source_revision, catalog_revision=plan["revision"]
+    )
+    if not import_skipped:
+        _index_locked(
+            config,
+            store,
+            source_revision,
+            "import-index",
+            repo_root=repo_root,
+            runner=runner,
         )
-        if not import_skipped:
-            _index_locked(
-                config,
-                store,
-                source_revision,
-                "import-index",
-                repo_root=repo_root,
-                runner=runner,
+    result = _vectors_locked(
+        config,
+        store,
+        source_revision,
+        repo_root=repo_root,
+        runner=runner,
+        max_passes=max_passes,
+        wall_seconds=wall_seconds,
+    )
+    complete = result["status"] == "vectors-complete"
+    return {
+        **result,
+        "schema_version": 1,
+        "operation": "stage-catalog",
+        "source_revision": source_revision,
+        "catalog_revision": plan["revision"],
+        "catalog_reused": complete and result.get("passes_this_invocation") == 0,
+        "bundle_id": candidate["bundle_id"],
+        "manifest_sha256": candidate["manifest_sha256"],
+        "document_count": candidate["document_count"],
+        "staging_only": True,
+        "active_changed": False,
+        "runtime_verified": complete,
+        "image_staging_skipped": image_staging_skipped,
+        "import_skipped": import_skipped,
+        "steps": [
+            {"operation": name, "status": status}
+            for name, status in (
+                ("sync", "staged"),
+                ("prepare-index", "staged"),
+                (
+                    "build-catalog-images",
+                    "skipped_existing_runtime" if image_staging_skipped else "staged",
+                ),
+                ("start-index", "staged"),
+                ("import-index", "skipped" if import_skipped else "staged"),
+                ("build-vectors", result["status"]),
             )
-        result = _vectors_locked(
+        ],
+    }
+
+
+def up_private(
+    config: ProductConfig,
+    *,
+    snapshot=None,
+    force=False,
+    repo_root=ROOT,
+    fetch=None,
+    runner=None,
+    source_runner=None,
+    docker_runner=None,
+    gpu_runner=None,
+    max_passes=16,
+    wall_seconds=7200,
+    catalog_revision=None,
+    http_probe=None,
+):
+    """First private activation on a prepared host, under one product lock.
+
+    Catalog checkpoints stop before application images, keys or GPU startup.
+    Existing activation or interrupted work is never repaired or adopted.
+    Every owner retains its granular receipt and actual runtime acceptance.
+    """
+    from search.operations.deployment import first_activation
+
+    _validate_stage_budget(max_passes, wall_seconds)
+    source_revision = revision(repo_root)
+    with locked_state(config, create=True) as store:
+        _require_revision(source_revision, repo_root)
+        try:
+            first_activation.require_first_activation(
+                store, docker_runner=docker_runner
+            )
+        except first_activation.FirstActivationError as error:
+            raise UpPrivateError(*error.args) from None
+        catalog = _stage_catalog_locked(
             config,
             store,
             source_revision,
             repo_root=repo_root,
+            snapshot=snapshot,
+            force=force,
+            fetch=fetch,
             runner=runner,
             max_passes=max_passes,
             wall_seconds=wall_seconds,
+            catalog_revision=catalog_revision,
         )
-        complete = result["status"] == "vectors-complete"
+        if type(catalog) is not dict:
+            raise UpPrivateError("product_private_catalog_unverified")
+        candidate = _candidate(store)
+        plan = _index_plan(
+            store, candidate, source_revision, repo_root=repo_root, runner=runner
+        )
+        complete = catalog.get("status") == "vectors-complete"
+        if (
+            catalog.get("status") not in {"vectors-complete", "checkpoint"}
+            or candidate["source_revision"] != source_revision
+            or catalog.get("source_revision") != source_revision
+            or catalog.get("catalog_revision") != plan["revision"]
+            or catalog.get("active_changed") is not False
+            or catalog.get("runtime_verified") is not complete
+            or any(
+                catalog.get(key) != candidate[key]
+                for key in ("bundle_id", "manifest_sha256", "document_count")
+            )
+        ):
+            raise UpPrivateError("product_private_catalog_unverified")
+        if not complete:
+            return {**catalog, "operation": "up-private"}
+        steps = list(catalog["steps"])
+        source_options = {
+            "source_runner": source_runner,
+            "docker_runner": docker_runner,
+        }
+        runtime_options = {
+            **source_options,
+            "catalog_runner": runner,
+            "gpu_runner": gpu_runner,
+        }
+        for name, action, options in (
+            ("build-images", _build_images_locked, source_options),
+            ("prepare-secrets", _prepare_secrets_locked, {"runner": source_runner}),
+            (
+                "start-inference",
+                _start_inference_locked,
+                {
+                    **source_options,
+                    "gpu_runner": gpu_runner,
+                },
+            ),
+            ("prepare-query", _prepare_query_locked, {"runner": runner}),
+            ("start-release", _start_release_locked, runtime_options),
+            ("prepare-gateway", _prepare_gateway_locked, runtime_options),
+        ):
+            _require_private_candidate(
+                store,
+                candidate,
+                plan,
+                source_revision,
+                repo_root=repo_root,
+                runner=runner,
+            )
+            report = action(
+                config, store, source_revision, repo_root=repo_root, **options
+            )
+            steps.append({"operation": name, "status": report["status"]})
+        _require_private_candidate(
+            store, candidate, plan, source_revision, repo_root=repo_root, runner=runner
+        )
+        report = _activate_gateway_locked(
+            config,
+            store,
+            source_revision,
+            repo_root=repo_root,
+            **runtime_options,
+            http_probe=http_probe,
+        )
+        # The native owner fences source before publishing active.json. Do not
+        # add a fallible post-activation check which could claim no change.
         return {
-            **result,
-            "schema_version": 1,
-            "operation": "stage-catalog",
+            **report,
+            "operation": "up-private",
             "source_revision": source_revision,
             "catalog_revision": plan["revision"],
-            "catalog_reused": complete and result.get("passes_this_invocation") == 0,
-            "bundle_id": candidate["bundle_id"],
-            "manifest_sha256": candidate["manifest_sha256"],
-            "document_count": candidate["document_count"],
-            "staging_only": True,
-            "active_changed": False,
-            "runtime_verified": complete,
-            "image_staging_skipped": image_staging_skipped,
-            "import_skipped": import_skipped,
             "steps": [
-                {"operation": name, "status": status}
-                for name, status in (
-                    ("sync", "staged"),
-                    ("prepare-index", "staged"),
-                    (
-                        "build-catalog-images",
-                        "skipped_existing_runtime"
-                        if image_staging_skipped
-                        else "staged",
-                    ),
-                    ("start-index", "staged"),
-                    ("import-index", "skipped" if import_skipped else "staged"),
-                    ("build-vectors", result["status"]),
-                )
+                *steps,
+                {"operation": "activate-gateway", "status": report["status"]},
             ],
         }
+
+
+def _require_private_candidate(
+    store, candidate, plan, source_revision, *, repo_root, runner
+):
+    _require_revision(source_revision, repo_root)
+    current = _candidate(store)
+    if (
+        current != candidate
+        or _index_plan(
+            store, current, source_revision, repo_root=repo_root, runner=runner
+        )
+        != plan
+    ):
+        raise UpPrivateError("product_private_catalog_unverified")

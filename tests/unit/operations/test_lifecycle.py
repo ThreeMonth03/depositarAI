@@ -437,7 +437,11 @@ class ProductLifecycleTests(unittest.TestCase):
                     if row["operation"] == "start-inference"
                 ],
             )
-            return {"status": "runtime_running", "model_warmup_verified": False}
+            return {
+                "status": "runtime_running",
+                "active_changed": False,
+                "model_warmup_verified": False,
+            }
 
         with patch.object(inference, "start_private_inference", side_effect=start):
             report = lifecycle.start_inference(self.config)
@@ -543,14 +547,14 @@ class ProductLifecycleTests(unittest.TestCase):
                 ],
             )
             return {
-                "status": "runtime_running",
+                "status": "private_release_running",
                 "active_changed": False,
                 "gateway_started": False,
             }
 
         with patch.object(release, "start_private_release", side_effect=start):
             report = lifecycle.start_release(self.config, **runners)
-        self.assertEqual("runtime_running", report["status"])
+        self.assertEqual("private_release_running", report["status"])
         self.assertFalse(report["gateway_started"])
         state = lifecycle.status(self.config)
         self.assertIsNone(state["active_release"])

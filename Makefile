@@ -3,7 +3,8 @@
 
 help:
 	@printf '%s\n' \
-	  'Product: make product-<command> CONFIG=/absolute/path/to/product.json' \
+	  'Private trial: make product-up-private CONFIG=/absolute/path/to/product.json' \
+	  'Product steps: make product-<command> CONFIG=/absolute/path/to/product.json' \
 	  'Start here: docs/guide/operations.md' \
 	  'Remote frontend: docs/SEARCH_WEBSITE.md' \
 	  'Checks: make test | make search-web-ci'
@@ -26,10 +27,10 @@ product-doctor product-sync product-status product-prepare-index product-start-i
 	python3 scripts/depositarai.py --config "$(CONFIG)" $(patsubst product-%,%,$@)
 
 .PHONY: product-package
-.PHONY: product-activate-gateway
-product-activate-gateway:
+.PHONY: product-up-private product-activate-gateway
+product-up-private product-activate-gateway:
 	@test -n "$(CONFIG)" || { echo "CONFIG=/absolute/path/to/product.json is required" >&2; exit 2; }
-	python3 scripts/depositarai.py --config "$(CONFIG)" activate-gateway
+	python3 scripts/depositarai.py --config "$(CONFIG)" $(patsubst product-%,%,$@)
 
 product-package:
 	@test -n "$(CONFIG)" -a -n "$(DESTINATION)" -a -n "$(SCANNER)" || { echo "CONFIG, DESTINATION and SCANNER absolute paths are required" >&2; exit 2; }

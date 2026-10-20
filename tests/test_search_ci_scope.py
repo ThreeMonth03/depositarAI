@@ -63,6 +63,7 @@ class SearchCIScopeTests(unittest.TestCase):
         api_gate = (ROOT / "scripts/test-search-api.sh").read_text(encoding="utf-8")
         self.assertIn("search.tests.test_readiness", api_gate)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("product-up-private", makefile)
         self.assertIn("product-stage-catalog", makefile)
         self.assertIn("product-build-images", makefile)
         self.assertIn("product-prepare-query", makefile)
@@ -188,18 +189,26 @@ class SearchCIScopeTests(unittest.TestCase):
 
     def test_project_entrypoints_expose_product_and_checks(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        targets = set(re.findall(r"^([a-z][a-z0-9-]*):", makefile, flags=re.MULTILINE))
-        self.assertEqual(
-            {
-                "help",
-                "search-ci",
-                "test",
-                "ci",
-                "search-web-ci",
-                "product-package",
-                "product-activate-gateway",
-            },
-            targets,
+        targets = {
+            name
+            for group in re.findall(
+                r"^([a-z][a-z0-9 -]*):", makefile, flags=re.MULTILINE
+            )
+            for name in group.split()
+        }
+        required = {
+            "help",
+            "search-ci",
+            "test",
+            "ci",
+            "search-web-ci",
+            "product-package",
+            "product-activate-gateway",
+            "product-up-private",
+        }
+        self.assertTrue(required <= targets)
+        self.assertTrue(
+            all(name in required or name.startswith("product-") for name in targets)
         )
         self.assertRegex(makefile, r"(?m)^test: search-ci$")
         self.assertRegex(makefile, r"(?m)^ci: search-ci$")

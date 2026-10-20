@@ -101,6 +101,12 @@ def _operator_error_code(error, command):
         if error_type is not ProjectionError:
             return None
         codes = _CATALOG_PROJECTION_CODES
+    elif command == "up-private" and owner == "search.operations.lifecycle":
+        from search.operations import lifecycle
+
+        if error_type is not lifecycle.UpPrivateError:
+            return None
+        codes = lifecycle.UP_PRIVATE_ERROR_CODES
     elif (
         command == "restore-product"
         and owner == "search.operations.deployment.product_restore"
@@ -258,18 +264,36 @@ def parser():
     )
     vectors.add_argument("--max-passes", type=int, default=16)
     vectors.add_argument("--wall-seconds", type=int, default=7200)
-    stage = commands.add_parser(
-        "stage-catalog",
-        help="one locked metadata/index/vector staging flow; no website or activation",
-    )
-    stage.add_argument("--snapshot", type=Path, help="absolute JSONL(.gz), no network")
-    stage.add_argument("--force", action="store_true", help="bypass opt-in cache TTL")
-    stage.add_argument("--max-passes", type=int, default=16)
-    stage.add_argument("--wall-seconds", type=int, default=7200)
-    stage.add_argument(
-        "--catalog-revision",
-        help="original catalog revision from a compatible product package",
-    )
+    for command, description in (
+        (
+            "stage-catalog",
+            "one locked metadata/index/vector staging flow; no website or activation",
+        ),
+        (
+            "up-private",
+            "first private website activation on a prepared host; no update or public ingress",
+        ),
+    ):
+        stage = commands.add_parser(
+            command,
+            help=description,
+            description=description,
+            epilog="Pass --config /absolute/private/product.json before the command.",
+        )
+        stage.add_argument(
+            "--snapshot",
+            type=Path,
+            help="absolute JSONL(.gz); rebuild metadata offline",
+        )
+        stage.add_argument(
+            "--force", action="store_true", help="bypass opt-in cache TTL"
+        )
+        stage.add_argument("--max-passes", type=int, default=16)
+        stage.add_argument("--wall-seconds", type=int, default=7200)
+        stage.add_argument(
+            "--catalog-revision",
+            help="original catalog revision from a compatible product package",
+        )
     return result
 
 
@@ -329,8 +353,13 @@ def _runtime_report(options):
             force=options.force,
             baseline=baseline,
         )
-    elif options.command == "stage-catalog":
-        report = lifecycle.stage_catalog(
+    elif options.command in {"stage-catalog", "up-private"}:
+        stage = (
+            lifecycle.stage_catalog
+            if options.command == "stage-catalog"
+            else lifecycle.up_private
+        )
+        report = stage(
             config,
             snapshot=options.snapshot,
             force=options.force,

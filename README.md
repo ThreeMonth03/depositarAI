@@ -24,7 +24,13 @@
 
 網站與搜尋後端可分開部署；後端經由受限的私有連線提供 API。試用網址由維運者
 提供。自行部署使用單一[產品設定範本](deploy/env/product.example.json)，
-OpenSearch 索引使用 Docker local volume；主機條件與啟動步驟請從部署指南開始。
+主機備妥 Docker、GPU 與固定模型後，以同一設定首次啟用私有網站：
+
+```sh
+python3 scripts/depositarai.py --config /absolute/private/product.json up-private
+```
+
+主機條件、向量 checkpoint 續跑與遠端連線方式見部署指南。
 
 ## 本機預覽文件
 
