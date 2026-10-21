@@ -110,7 +110,7 @@ class RemoteBackendTests(runtime_fixture.PublicEntryRuntimeFixture):
                     "quota_global": 6,
                     "quota_guest_pool": 2,
                     "quota_user_pool": 4,
-                    "quota_window_seconds": 3600,
+                    "quota_window_seconds": cls.quota_window_seconds,
                 }
             )
         )

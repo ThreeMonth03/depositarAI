@@ -104,8 +104,11 @@ docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm \
 docker run --rm --network none --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=$project_dir/web,dst=/web,readonly" --workdir /web "$node_image" npm run format:check
 begin_phase web-image
-docker build -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
-docker build -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
+ci_source_revision="$(git rev-parse HEAD)"
+docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
+  -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
+docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
+  -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
 if [[ "$suite" != oss ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.

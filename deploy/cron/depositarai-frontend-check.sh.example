@@ -1,0 +1,69 @@
+#!/bin/sh
+umask 077
+
+operator_source=/absolute/pinned/operator-source
+frontend_config=/absolute/private/frontend/check.json
+monitor_root=/absolute/private/frontend-monitor
+
+# Cron must never email checker output or private paths.
+exec >/dev/null 2>&1
+
+check_tmp=
+run_tmp=
+cleanup() {
+    [ -z "$check_tmp" ] || rm -f -- "$check_tmp"
+    [ -z "$run_tmp" ] || rm -f -- "$run_tmp"
+}
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+summary() {
+    logger -t depositarai-frontend-check -- "frontend check completed; exit_code=$1"
+}
+
+# The operator creates and verifies this private directory before installation.
+if [ ! -d "$monitor_root" ] || [ -L "$monitor_root" ] ||
+    [ "$(stat -c %a -- "$monitor_root")" != 700 ] ||
+    [ "$(stat -c %u -- "$monitor_root")" != "$(id -u)" ]; then
+    summary 78
+    exit 78
+fi
+
+exec 9>"$monitor_root/.check.lock"
+flock -n 9
+lock_code=$?
+if [ "$lock_code" -eq 1 ]; then
+    exit 0
+elif [ "$lock_code" -ne 0 ]; then
+    summary "$lock_code"
+    exit "$lock_code"
+fi
+
+check_tmp=$(mktemp "$monitor_root/.check.XXXXXX") || exit 74
+run_tmp=$(mktemp "$monitor_root/.run.XXXXXX") || exit 74
+
+timeout --signal=TERM --kill-after=10s 120s \
+    python3 -I -S -B "$operator_source/scripts/check_search_web.py" \
+    --config "$frontend_config" >"$check_tmp" 2>&1
+run_code=$?
+
+# A nonzero checker result, including timeout's 124, remains the exit status.
+# Receipt write failures must not turn a failed check into success.
+if mv -f -- "$check_tmp" "$monitor_root/last-check.json"; then
+    check_tmp=
+elif [ "$run_code" -eq 0 ]; then
+    run_code=74
+fi
+checked_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+if [ -n "$checked_at" ] &&
+    printf '{"checked_at":"%s","exit_code":%s}\n' "$checked_at" "$run_code" >"$run_tmp" &&
+    mv -f -- "$run_tmp" "$monitor_root/last-run.json"; then
+    run_tmp=
+elif [ "$run_code" -eq 0 ]; then
+    run_code=74
+fi
+
+summary "$run_code"
+exit "$run_code"
