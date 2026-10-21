@@ -561,6 +561,48 @@ class TransportTests(unittest.TestCase):
         result = self.invoke(lambda _request: httpx.Response(200, json=value))
         self.assertEqual(result.model_dump(), value)
 
+    def test_dataset_coverage_passes_through_without_inferred_dates(self):
+        for coverage in (
+            {"start": "2020", "end": "2025", "status": "complete"},
+            {"start": "2024-03", "end": "2024-03", "status": "complete"},
+            {"start": "2020", "end": None, "status": "partial"},
+            {"start": None, "end": "2025", "status": "partial"},
+            {"start": None, "end": None, "status": "absent"},
+            {"start": "not a date", "end": None, "status": "invalid"},
+        ):
+            with self.subTest(coverage=coverage):
+                value = self.search_response()
+                value["state"]["time"] = {"start": "2024", "end": "2024"}
+                value["search"]["cards"][0].update(
+                    temporal_coverage=coverage, metadata_modified="2020-01-01"
+                )
+                result = self.invoke(lambda _request: httpx.Response(200, json=value))
+                self.assertEqual(
+                    result.model_dump()["search"]["cards"][0]["temporal_coverage"],
+                    coverage,
+                )
+
+    def test_missing_or_inconsistent_dataset_coverage_rejects_upstream(self):
+        for coverage in (
+            None,
+            {"start": None, "end": None, "status": "complete"},
+            {"start": "2024", "end": "2024", "status": "partial"},
+            {"start": "2024", "end": None, "status": "absent"},
+            {"start": 2024, "end": None, "status": "partial"},
+            {"start": "2024", "end": "2024", "status": "estimated"},
+            {"start": "2024-13", "end": "2025", "status": "complete"},
+        ):
+            with self.subTest(coverage=coverage):
+                value = self.search_response()
+                card = value["search"]["cards"][0]
+                if coverage is None:
+                    del card["temporal_coverage"]
+                else:
+                    card["temporal_coverage"] = coverage
+                with self.assertRaises(UpstreamError) as caught:
+                    self.invoke(lambda _request: httpx.Response(200, json=value))
+                self.assertEqual(caught.exception.status, 503)
+
     def test_removed_search_fields_are_rejected_instead_of_ignored(self):
         value = self.search_response()
         for field, previous in (

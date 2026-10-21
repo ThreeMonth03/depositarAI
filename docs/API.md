@@ -84,6 +84,28 @@ API 與 BFF 共用嚴格的回應型別。變更契約時，兩者須協調切�
 `rerank_status`／warnings。查詢不經過 Fess；Fess 負責資料匯入、inventory
 與向量管理工作。
 
+每張 card 的 `temporal_coverage` 來自同一 sealed catalog 的資料涵蓋欄位，
+與查詢年份無關，也不使用建立或更新日期補值：
+
+```json
+{
+  "temporal_coverage": {"start": "2020", "end": "2025", "status": "complete"}
+}
+```
+
+`start`／`end` 為原始精度的日期字串或 `null`，保留年、月或日，不補造缺失端點。
+`status` 描述這兩個日期欄位的品質，與本次查詢的 `condition_status` 分開：
+
+| `status` | 含義 |
+|---|---|
+| `complete` | 兩端日期可解析且順序合理；不代表整個查詢期間都有觀測資料。 |
+| `partial` | 僅提供一端有效日期；缺少結束日不代表持續更新至今。 |
+| `absent` | 兩端都未提供。 |
+| `invalid` | 無法依支援的日期格式判讀，或區間順序不合理；呼叫端應顯示無法判讀，不宣稱涵蓋期間。 |
+
+此欄位為必要契約。採用此版本時，conversation API、BFF 與 frontend 須配套更新；
+回退也使用對應版本，不能將新版結果交給舊版嚴格 schema。
+
 | HTTP | 處理方式 |
 |---|---|
 | 400／408／411／413／415／422 | 修正格式、長度、欄位或時區；不要原樣重送。 |

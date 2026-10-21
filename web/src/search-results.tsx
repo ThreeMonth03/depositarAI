@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { safeDatasetUrl } from "./api";
-import type { Card, SearchState, TurnResult } from "./api";
+import type { Card, SearchState, TemporalCoverage, TurnResult } from "./api";
 
 function dateLabel(value: string): string {
   const [year, month, day] = value.split("-");
@@ -16,6 +16,14 @@ function timeLabel({ start, end }: NonNullable<SearchState["time"]>): string {
   if (startLabel === endLabel) return startLabel;
   if (start.length === 4 && end.length === 4) return `${start}～${end} 年`;
   return `${startLabel}～${endLabel}`;
+}
+
+function coverageLabel({ start, end, status }: TemporalCoverage): string {
+  if (status === "absent") return "未提供";
+  if (status === "invalid") return "日期資訊無法判讀";
+  if (status === "partial")
+    return `${start === null ? "起始未提供" : dateLabel(start)}～${end === null ? "結束未提供" : dateLabel(end)}`;
+  return timeLabel({ start, end });
 }
 
 function Conditions({ state }: { state: SearchState }) {
@@ -67,7 +75,8 @@ function ResultCard({ card, rank }: { card: Card; rank: number }) {
         </button>
       )}
       <div className="card-foot">
-        <div className="format-tags" aria-label="資料格式">
+        <div className="format-tags" aria-label="資料集資訊">
+          <span>資料涵蓋：{coverageLabel(card.temporal_coverage)}</span>
           {card.resource_formats.map((format) => (
             <span key={format}>{format}</span>
           ))}

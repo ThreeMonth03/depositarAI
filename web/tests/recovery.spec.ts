@@ -26,6 +26,7 @@ const reply = {
           snippet: "公開資料說明",
           organization_title: "測試機構",
           resource_formats: ["CSV"],
+          temporal_coverage: { start: null, end: null, status: "absent" },
           condition_status: "match",
         },
       ],
@@ -150,6 +151,27 @@ test("malformed successful turns keep prior results and require an explicit new 
         },
       },
     },
+    ...[
+      undefined,
+      null,
+      { start: "2024", end: "2024", status: "estimated" },
+      { start: null, end: null, status: "complete" },
+      { start: null, end: null, status: "invalid" },
+      { start: "2024", end: "2024", status: "partial" },
+      { start: "2024", end: null, status: "absent" },
+      { start: 2024, end: null, status: "partial" },
+      { start: "", end: null, status: "partial" },
+    ].map((temporal_coverage) => ({
+      ...reply,
+      version: 2,
+      result: {
+        ...reply.result,
+        search: {
+          ...reply.result.search,
+          cards: [{ ...reply.result.search.cards[0], temporal_coverage }],
+        },
+      },
+    })),
     { ...reply, version: 2, result: { ...reply.result, notices: [{}] } },
     {
       ...reply,

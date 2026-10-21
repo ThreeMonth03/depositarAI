@@ -217,7 +217,13 @@ def search(payload, settings):
     results = []
     for hit in fused:
         row = {k: json.loads(json.dumps(by_id[hit.id][k])) for k in METADATA_FIELDS}
+        metadata = bundle.condition_metadata[hit.id]
         row.update(
+            temporal_coverage={
+                "start": metadata["temporal"]["start"],
+                "end": metadata["temporal"]["end"],
+                "status": project(metadata)["time_status"],
+            },
             raw_score=hit.score,
             rank_fusion_score=hit.score,
             searchers=[

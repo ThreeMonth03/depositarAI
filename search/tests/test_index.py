@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from search.api.retrieval import index
 from search.api.retrieval.results import ValidatedSearch
 from search.planning import index_filters
+from search.tests import catalog_fixtures
 from search.tests.fixtures import IDS, CONDITIONS, report
 from search.tests.fixtures import condition_document
 
@@ -209,12 +211,72 @@ class IndexBoundaryTests(unittest.TestCase):
                 client.embed("水質")
             self.assertEqual(send.call_count, 1)
 
+    def test_cards_use_sealed_coverage_without_index_or_query_date_inference(self):
+        original_record = catalog_fixtures._record
+        coverage = (
+            ("2020", "2025", "complete"),
+            ("2024-2", "2024-02-29", "complete"),
+            ("2024", None, "partial"),
+            (None, None, "absent"),
+            ("2024-02-30", "2024", "invalid"),
+        )
+
+        def record(number, name):
+            start, end, _ = coverage[number - 1]
+            return {
+                **original_record(number, name),
+                "title": "2030 年氣候資料",
+                "start_time": start,
+                "end_time": end,
+                "created_time": "2010",
+            }
+
+        with patch.object(catalog_fixtures, "_record", side_effect=record):
+            built = catalog_fixtures.BuiltBundle(count=len(coverage))
+        self.addCleanup(built.close)
+        bundle = built.bundle
+        by_id = {row["dataset_id"]: row for row in bundle.documents}
+        self.assertTrue(all("temporal_coverage" not in row for row in by_id.values()))
+        fused = [
+            SimpleNamespace(id=identifier, score=1 / rank)
+            for rank, identifier in enumerate(by_id, 1)
+        ]
+        branches = {name: set(by_id) for name in ("lexical", "vector")}
+        pipeline = SimpleNamespace(retrieve=lambda *_args: (fused, branches))
+        client = SimpleNamespace(by_id=by_id, embed=lambda _query: [0.0] * 768)
+        with (
+            patch.object(index, "IndexClient", return_value=client),
+            patch.dict(sys.modules, {"search.api.retrieval.pipeline": pipeline}),
+        ):
+            result = index.search(
+                {"query": "找 2040 年氣候", "top_k": len(coverage), "conditions": {}},
+                SimpleNamespace(
+                    bundle_path=built.path,
+                    manifest_sha256=built.manifest_sha256,
+                ),
+            )
+        cards = ValidatedSearch.from_report(
+            "找 2040 年氣候",
+            result,
+            conditions={},
+            manifest_sha256=built.manifest_sha256,
+        ).cards()
+        for card, (start, end, status) in zip(cards, coverage):
+            self.assertEqual(
+                card["temporal_coverage"],
+                {"start": start, "end": end, "status": status},
+            )
+            self.assertEqual(card["metadata_modified"], "2026-01-02T00:00:00")
+
 
 @unittest.skipUnless(importlib.util.find_spec("haystack"), "Pinned pipeline dependency")
 class IndexPipelineTests(unittest.TestCase):
     def test_empty_time_format_and_combined_searches_use_the_same_pipeline(self):
         row = report("氣候", count=1)["results"][0]
-        bundle = SimpleNamespace(manifest_sha256="b" * 64)
+        bundle = SimpleNamespace(
+            manifest_sha256="b" * 64,
+            condition_metadata={row["dataset_id"]: condition_document("2020", "2025")},
+        )
         for conditions in (
             {},
             CONDITIONS,

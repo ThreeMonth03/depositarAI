@@ -67,6 +67,7 @@ class RetrievalResultTests(unittest.TestCase):
             "organization_title",
             "resource_formats",
             "metadata_modified",
+            "temporal_coverage",
         }
         for rank, card in enumerate(cards, 1):
             self.assertEqual(set(card), expected)
@@ -227,10 +228,80 @@ class RetrievalResultTests(unittest.TestCase):
             query, source, conditions={}, manifest_sha256="b" * 64
         )
         source["results"][0]["resource_formats"].clear()
+        source["results"][0]["temporal_coverage"]["start"] = "1900"
         self.assertEqual(found.cards()[0]["resource_formats"], ["CSV", "PDF"])
+        self.assertEqual(found.cards()[0]["temporal_coverage"]["start"], "2020")
         cards = found.cards()
         cards[0]["resource_formats"].clear()
+        cards[0]["temporal_coverage"]["end"] = "2099"
         self.assertEqual(found.cards()[0]["resource_formats"], ["CSV", "PDF"])
+        self.assertEqual(found.cards()[0]["temporal_coverage"]["end"], "2025")
+
+    def test_temporal_coverage_preserves_precision_and_exposes_all_statuses(self):
+        for start, end, status in (
+            ("2024", "2025", "complete"),
+            ("2024-2", "2024-02-29", "complete"),
+            ("2024", None, "partial"),
+            (None, "2024-12", "partial"),
+            (None, None, "absent"),
+            ("not a date", "2024", "invalid"),
+            ("2025", "2024", "invalid"),
+            ("2024-02-30", None, "invalid"),
+        ):
+            with self.subTest(start=start, end=end):
+                source = report("氣候", count=1)
+                coverage = {"start": start, "end": end, "status": status}
+                source["results"][0]["temporal_coverage"] = coverage
+                card = ValidatedSearch.from_report(
+                    "氣候", source, conditions={}, manifest_sha256="b" * 64
+                ).cards()[0]
+                self.assertEqual(card["temporal_coverage"], coverage)
+                self.assertEqual(card["metadata_modified"], "2026-09-10T00:00:00")
+
+    def test_malformed_or_inconsistent_temporal_coverage_fails_closed(self):
+        class StringSubclass(str):
+            pass
+
+        class DictSubclass(dict):
+            pass
+
+        complete = {"start": "2024", "end": "2024", "status": "complete"}
+        for coverage in (
+            None,
+            [],
+            {},
+            DictSubclass(complete),
+            {**complete, "created": "2020"},
+            {**complete, "start": True},
+            {**complete, "start": ""},
+            {**complete, "start": "x" * 129, "status": "invalid"},
+            {**complete, "start": "2024\u202e", "status": "invalid"},
+            {**complete, "start": "bad\ud800", "status": "invalid"},
+            {**complete, "start": StringSubclass("2024")},
+            {**complete, "start": "２０２４", "status": "invalid"},
+            {**complete, "start": "2024\n", "status": "invalid"},
+            {**complete, "status": StringSubclass("complete")},
+            {**complete, "status": True},
+            {**complete, "status": "match"},
+            {**complete, "status": "absent"},
+            {**complete, "start": None},
+            {**complete, "start": "invalid date"},
+            {**complete, "start": "2025"},
+            {"start": None, "end": None, "status": "invalid"},
+        ):
+            with self.subTest(coverage=repr(coverage)):
+                source = report("氣候", count=1)
+                source["results"][0]["temporal_coverage"] = coverage
+                with self.assertRaises(ResultError):
+                    ValidatedSearch.from_report(
+                        "氣候", source, conditions={}, manifest_sha256="b" * 64
+                    )
+        source = report("氣候", count=1)
+        del source["results"][0]["temporal_coverage"]
+        with self.assertRaises(ResultError):
+            ValidatedSearch.from_report(
+                "氣候", source, conditions={}, manifest_sha256="b" * 64
+            )
 
     def test_empty_time_and_format_requests_bind_the_same_exact_report_contract(self):
         for conditions in (

@@ -7,10 +7,11 @@ import hashlib
 import math
 import re
 from typing import Any, Mapping, Optional, Tuple
-import unicodedata
 import urllib.parse
 
 from search.catalog.query import MAX_TOP_K, normalize_query
+
+from .metadata import bounded_text, validate_temporal_coverage
 
 
 TOP_K = 5
@@ -47,7 +48,13 @@ METADATA_FIELDS = (
     "resource_count",
 )
 _RESULT_FIELDS = frozenset(
-    (*METADATA_FIELDS, "raw_score", "rank_fusion_score", "searchers")
+    (
+        *METADATA_FIELDS,
+        "temporal_coverage",
+        "raw_score",
+        "rank_fusion_score",
+        "searchers",
+    )
 )
 
 
@@ -59,25 +66,6 @@ _RETRIEVAL_FIELDS = frozenset(
         "ranking",
         "results",
     }
-)
-
-
-_BIDI_CONTROLS = frozenset(
-    chr(value)
-    for value in (
-        0x061C,
-        0x200E,
-        0x200F,
-        0x202A,
-        0x202B,
-        0x202C,
-        0x202D,
-        0x202E,
-        0x2066,
-        0x2067,
-        0x2068,
-        0x2069,
-    )
 )
 
 
@@ -111,23 +99,6 @@ def _exact_keys(value: Mapping[str, Any], expected: frozenset[str]) -> bool:
         return False
 
 
-def _bounded_text(value: Any, maximum: int) -> bool:
-    if type(value) is not str or len(value) > maximum:
-        return False
-    try:
-        encoded = value.encode("utf-8", "strict")
-    except UnicodeError:
-        return False
-    return (
-        encoded.decode("utf-8", "strict") == value
-        and unicodedata.normalize("NFKC", value) == value
-        and not any(character in _BIDI_CONTROLS for character in value)
-        and not any(
-            unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
-        )
-    )
-
-
 def _exact_int(value: Any, minimum: int, maximum: int) -> bool:
     return type(value) is int and minimum <= value <= maximum
 
@@ -144,8 +115,8 @@ def _finite_score(value: Any, *, positive: bool = False) -> bool:
 
 def _canonical_dataset_url(value: Any, slug: Any) -> bool:
     if (
-        not _bounded_text(value, 4_096)
-        or not _bounded_text(slug, 256)
+        not bounded_text(value, 4_096)
+        or not bounded_text(slug, 256)
         or not slug
         or slug in (".", "..")
         or "@" in slug
@@ -190,7 +161,7 @@ def validate_result(row: Any) -> dict[str, Any]:
         if (
             type(items) is not list
             or len(items) > maximum_items
-            or not all(_bounded_text(item, 1_024) for item in items)
+            or not all(bounded_text(item, 1_024) for item in items)
             or len(items) != len(set(items))
         ):
             raise ResultError("invalid retrieval result array")
@@ -203,13 +174,19 @@ def validate_result(row: Any) -> dict[str, Any]:
         raise ResultError("invalid retrieval provenance")
 
     if not all(
-        _bounded_text(row.get(field), maximum)
+        bounded_text(row.get(field), maximum)
         for field, maximum in _RESULT_TEXT_LIMITS.items()
     ):
         raise ResultError("invalid retrieval text")
 
     # Copy every nested collection before an injected adapter can mutate it.
     copied = dict(row)
+    try:
+        copied["temporal_coverage"] = validate_temporal_coverage(
+            row["temporal_coverage"]
+        )
+    except ValueError:
+        raise ResultError("invalid temporal coverage") from None
     for field in ("tags", "groups", "resource_formats", "searchers"):
         copied[field] = list(row[field])
     return copied
@@ -275,6 +252,7 @@ def _card(row: Mapping[str, Any], rank: int) -> dict[str, Any]:
         "organization_title": row["organization_title"],
         "resource_formats": list(row["resource_formats"]),
         "metadata_modified": row["metadata_modified"],
+        "temporal_coverage": dict(row["temporal_coverage"]),
     }
 
 

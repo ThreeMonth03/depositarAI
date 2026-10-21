@@ -10,7 +10,8 @@ COPY search/catalog/__init__.py search/catalog/errors.py \
 COPY search/api/__init__.py /app/search/api/
 COPY search/api/conversation/__init__.py search/api/conversation/calendar.py \
     search/api/conversation/contract.py search/api/conversation/time.py /app/search/api/conversation/
-COPY search/api/retrieval/__init__.py search/api/retrieval/schemas.py /app/search/api/retrieval/
+COPY search/api/retrieval/__init__.py search/api/retrieval/metadata.py \
+    search/api/retrieval/schemas.py /app/search/api/retrieval/
 COPY search/api/shared/__init__.py search/api/shared/admission.py \
     search/api/shared/schemas.py /app/search/api/shared/
 COPY search/planning/__init__.py search/planning/clock.py \

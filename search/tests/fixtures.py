@@ -45,6 +45,7 @@ def result(index: int, score: float) -> dict:
         "license_title": "Creative Commons Attribution",
         "metadata_created": "2026-01-01T00:00:00",
         "metadata_modified": "2026-09-10T00:00:00",
+        "temporal_coverage": {"start": "2020", "end": "2025", "status": "complete"},
         "resource_count": 2,
         "raw_score": score * 10,
         "rank_fusion_score": score,

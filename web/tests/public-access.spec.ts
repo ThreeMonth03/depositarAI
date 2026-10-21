@@ -344,6 +344,7 @@ const searchReply = {
           snippet: "河川觀測資料",
           organization_title: "測試資料機構",
           resource_formats: ["CSV"],
+          temporal_coverage: { start: null, end: null, status: "absent" },
           condition_status: "match",
         },
       ],
