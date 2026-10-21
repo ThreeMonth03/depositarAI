@@ -248,6 +248,97 @@ class FrontendCheckTests(unittest.TestCase):
         with patch.object(check, "_homepage", return_value=2):
             return check.check(self.path, runner=self.runner)
 
+    def wire_profile(self, version=3):
+        self.config.update(schema_version=2, conversation_contract_version=version)
+        self.runner.images[WEB_IMAGE]["Config"]["Labels"][
+            "io.depositar.ai.conversation.version"
+        ] = str(version)
+        self.save()
+
+    def test_schema2_verifies_selected_bff_and_passes_exact_contract_to_tls_probe(self):
+        for version in (2, 3):
+            with self.subTest(version=version):
+                self.runner = Runner(self.root)
+                self.wire_profile(version)
+                result = self.run_check()
+                self.assertEqual(result["schema_version"], 2)
+                self.assertEqual(result["conversation_contract_version"], version)
+                self.assertEqual(result["runtime"]["web"]["image"], WEB_IMAGE)
+                calls = [call for call in self.runner.calls if "exec" in call]
+                self.assertEqual(len(calls), 1)
+                source = calls[0][calls[0].index("-c") + 1]
+                self.assertIn(
+                    "EXPECTED_CONTRACT_VERSION=" + str(version) + "\n", source
+                )
+
+    def test_schema2_requires_bounded_integer_contract_and_exact_fields(self):
+        self.wire_profile()
+        for invalid in (True, False, None, 0, 33, 3.0, "3"):
+            self.config["conversation_contract_version"] = invalid
+            self.save()
+            with (
+                self.subTest(value=invalid),
+                self.assertRaises(check.FrontendCheckError),
+            ):
+                check.load_config(self.path)
+        del self.config["conversation_contract_version"]
+        self.save()
+        with self.assertRaises(check.FrontendCheckError):
+            check.load_config(self.path)
+        for version in (1, 32):
+            self.wire_profile(version)
+            self.assertEqual(
+                check.load_config(self.path)["conversation_contract_version"], version
+            )
+
+    def test_schema2_rejects_missing_or_wrong_immutable_bff_label_before_probe(self):
+        self.wire_profile()
+        label = "io.depositar.ai.conversation.version"
+        # A caller-supplied container label cannot override immutable image proof.
+        self.runner.rows[IDS["web"]]["Config"]["Labels"][label] = "3"
+        for value in (None, "2", "03", "3.0", 3, True):
+            self.runner.images[WEB_IMAGE]["Config"]["Labels"][label] = value
+            with (
+                self.subTest(label=value),
+                self.assertRaisesRegex(
+                    check.FrontendCheckError, "^frontend_check_contract_changed$"
+                ),
+            ):
+                self.run_check()
+            self.assertFalse(any("exec" in call for call in self.runner.calls))
+
+    def test_schema2_bff_label_is_checked_again_after_upstream_probe(self):
+        self.wire_profile()
+        original = self.runner.__call__
+
+        def runner(argv, **kwargs):
+            result = original(argv, **kwargs)
+            if argv[5] == "exec":
+                self.runner.images[WEB_IMAGE]["Config"]["Labels"][
+                    "io.depositar.ai.conversation.version"
+                ] = "2"
+            return result
+
+        with patch.object(check, "_homepage", return_value=2):
+            with self.assertRaisesRegex(
+                check.FrontendCheckError, "^frontend_check_contract_changed$"
+            ):
+                check.check(self.path, runner=runner)
+
+    def test_schema1_keeps_legacy_receipt_and_does_not_infer_a_wire_version(self):
+        self.runner.images[WEB_IMAGE]["Config"]["Labels"][
+            "io.depositar.ai.conversation.version"
+        ] = "3"
+        result = self.run_check()
+        self.assertEqual(result["schema_version"], 1)
+        self.assertNotIn("conversation_contract_version", result)
+        call = next(call for call in self.runner.calls if "exec" in call)
+        self.assertIn("EXPECTED_CONTRACT_VERSION=None\n", call[call.index("-c") + 1])
+        self.config["conversation_contract_version"] = 3
+        self.save()
+        with self.assertRaises(check.FrontendCheckError):
+            check.load_config(self.path)
+
     def test_expected_old_deployment_and_exact_images_without_mutation_or_host_key_read(
         self,
     ):
@@ -483,6 +574,8 @@ class VersionTLSFixtureTests(unittest.TestCase):
                             "invalid-contract": True,
                             "unsupported-contract": 1,
                             "old-contract": 2,
+                            "float-contract": 3.0,
+                            "string-contract": "3",
                         }.get(case.mode, 3)
                     body = (
                         b"x" * 16385
@@ -559,6 +652,8 @@ class VersionTLSFixtureTests(unittest.TestCase):
             "unsupported-contract",
             "old-contract",
             "invalid-contract",
+            "float-contract",
+            "string-contract",
         ):
             with self.subTest(mode=mode):
                 self.mode = mode
@@ -571,6 +666,20 @@ class VersionTLSFixtureTests(unittest.TestCase):
         # Existing private operators can still inspect the pinned legacy API.
         self.mode = "legacy-contract"
         self.assertEqual(self.probe().returncode, 0)
+
+    def test_bool_equal_to_expected_integer_is_rejected_and_explicit_v2_is_accepted(
+        self,
+    ):
+        self.mode = "invalid-contract"
+        result = self.probe(contract_version=1)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            json.loads(result.stdout), {"error": "frontend_check_upstream_failed"}
+        )
+        self.mode = "old-contract"
+        result = self.probe(contract_version=2)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(result.stdout), PROOF)
 
     def test_wrong_identity_redirect_and_oversized_body_fail_without_reflection(self):
         for mode in ("revision", "catalog", "redirect", "oversize"):

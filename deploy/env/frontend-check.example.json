@@ -1,5 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "conversation_contract_version": 3,
   "frontend_env_file": "/absolute/private/frontend/search-web.env",
   "frontend_revision": "1111111111111111111111111111111111111111",
   "web_image": "sha256:2222222222222222222222222222222222222222222222222222222222222222",

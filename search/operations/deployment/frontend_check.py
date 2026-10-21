@@ -53,11 +53,20 @@ def _require(condition, code):
 def load_config(path):
     path = profile._path(str(path), ROOT)
     value = strict_json(profile._read_private(path, uid=os.geteuid(), maximum=16384))
-    _require(type(value) is dict and set(value) == FIELDS, "config_invalid")
+    _require(type(value) is dict, "config_invalid")
+    version = value.get("schema_version")
     _require(
-        type(value["schema_version"]) is int and value["schema_version"] == 1,
+        type(version) is int and version in (1, 2),
         "config_invalid",
     )
+    _require(
+        set(value)
+        == FIELDS | ({"conversation_contract_version"} if version == 2 else set()),
+        "config_invalid",
+    )
+    if version == 2:
+        expected = value["conversation_contract_version"]
+        _require(type(expected) is int and 1 <= expected <= 32, "config_invalid")
     for name, pattern in (
         ("frontend_revision", HEX40),
         ("api_revision", HEX40),
@@ -242,6 +251,12 @@ def _runtime(client, expected, config):
             == config["frontend_revision"],
             "image_changed",
         )
+        if role == "web" and config["schema_version"] == 2:
+            _require(
+                image["Config"]["Labels"].get("io.depositar.ai.conversation.version")
+                == str(config["conversation_contract_version"]),
+                "contract_changed",
+            )
         wanted_env = _environment(image["Config"].get("Env") or [])
         wanted_env.update(
             {k: str(v) for k, v in service.get("environment", {}).items()}
@@ -503,7 +518,9 @@ def check(config_path, *, runner=None):
                 "-s",
                 "-B",
                 "-c",
-                _probe_source(),
+                _probe_source(
+                    contract_version=config.get("conversation_contract_version")
+                ),
                 config["api_revision"],
                 config["catalog_manifest_sha256"],
             ],
@@ -522,7 +539,12 @@ def check(config_path, *, runner=None):
         )
         _require(_runtime(client, composition, config) == runtime, "runtime_changed")
     return {
-        "schema_version": 1,
+        "schema_version": config["schema_version"],
+        **(
+            {"conversation_contract_version": config["conversation_contract_version"]}
+            if config["schema_version"] == 2
+            else {}
+        ),
         "status": "frontend_checked",
         "frontend_revision": config["frontend_revision"],
         "api_revision": config["api_revision"],
