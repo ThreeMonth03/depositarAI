@@ -27,6 +27,7 @@ IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 RELEASE = re.compile(r"depositar-ai-release-[0-9a-f]{12}-[0-9a-f]{12}\Z")
 CAPABILITY = "io.depositar.ai.public-entry.version"
 FRONTEND_CAPABILITY = "io.depositar.ai.frontend.version"
+CONVERSATION_CAPABILITY = "io.depositar.ai.conversation.version"
 
 
 def _read(path, limit=2 * 1024**2):
@@ -78,6 +79,7 @@ def _web_revision(image, image_proof, frontend_image, frontend_proof):
         or image_proof.get("Id") != image
         or type(labels) is not dict
         or labels.get(CAPABILITY) != "2"
+        or labels.get(CONVERSATION_CAPABILITY) != "3"
         or type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
@@ -203,8 +205,6 @@ def bind_remote_web(
 ):
     """Bind only the CPU BFF to a fixed authenticated HTTPS origin."""
     revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
-    if image_proof["Labels"].get("io.depositar.ai.conversation.version") != "3":
-        raise ValueError("public_entry_remote_contract_invalid")
     result = _bind_website(
         config, rendered, image, frontend_image, revision, backend.api_key_file
     )

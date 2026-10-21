@@ -43,6 +43,7 @@ class PublicEntryBindingTests(unittest.TestCase):
             "Id": IMAGE,
             "Labels": {
                 host.CAPABILITY: "2",
+                host.CONVERSATION_CAPABILITY: "3",
                 "org.opencontainers.image.revision": REVISION,
             },
         }
@@ -173,6 +174,20 @@ class PublicEntryBindingTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "web_image_invalid"),
             ):
                 self.bind(proof=proof)
+
+    def test_local_bff_requires_current_wire_contract_before_binding(self):
+        for version in (None, "1", "2", 3, True):
+            proof = copy.deepcopy(self.proof)
+            if version is None:
+                proof["Labels"].pop(host.CONVERSATION_CAPABILITY)
+            else:
+                proof["Labels"][host.CONVERSATION_CAPABILITY] = version
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(ValueError, "^public_entry_web_image_invalid$"),
+            ):
+                self.bind(proof=proof)
+        self.assertNotIn("public-web", self.rendered["compose"]["services"])
 
     def test_frontend_requires_capability_and_same_revision(self):
         for proof in (

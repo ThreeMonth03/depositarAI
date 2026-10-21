@@ -194,7 +194,7 @@ class RemoteLifecycleTests(unittest.TestCase):
                 proof["Labels"]["io.depositar.ai.conversation.version"] = version
             with (
                 self.subTest(version=version),
-                self.assertRaisesRegex(ValueError, "remote_contract_invalid"),
+                self.assertRaisesRegex(ValueError, "web_image_invalid"),
             ):
                 self.bind(proof)
         self.assertEqual(self.runner.commands, [])

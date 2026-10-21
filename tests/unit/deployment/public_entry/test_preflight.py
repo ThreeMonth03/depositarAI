@@ -64,6 +64,7 @@ def fixture():
         "Labels": {
             "com.docker.compose.project": PROJECT,
             "com.docker.compose.service": "conversation-api",
+            "io.depositar.ai.conversation.version": "3",
         },
         "State": {
             "Running": True,
@@ -227,6 +228,24 @@ class PrivateBackendPreflightTests(unittest.TestCase):
         self.api["Networks"][NETWORK]["NetworkID"] = "f" * 64
         with self.rejected("network_invalid"):
             self.verify()
+
+    def test_actual_local_api_must_advertise_current_wire_contract(self):
+        original = dict(self.api["Labels"])
+        for version in (None, "1", "2", 3, True):
+            self.api["Labels"] = dict(original)
+            if version is None:
+                self.api["Labels"].pop("io.depositar.ai.conversation.version")
+            else:
+                self.api["Labels"]["io.depositar.ai.conversation.version"] = version
+            with self.subTest(version=version), self.rejected("contract_changed"):
+                self.verify_bound()
+        self.assertTrue(
+            all(
+                argv[:2] == ["docker", "inspect"]
+                or argv[:3] == ["docker", "network", "inspect"]
+                for argv, _options in self.runner.calls
+            )
+        )
 
     def test_published_api_ports_are_rejected_from_both_docker_fields(self):
         binding = {"HostIp": "127.0.0.1", "HostPort": "18000"}

@@ -28,6 +28,7 @@ ERROR_CODES = frozenset(
         "ambiguous",
         "unhealthy",
         "image_changed",
+        "contract_changed",
         "ports_exposed",
         "key_changed",
     )
@@ -200,6 +201,10 @@ def _verify_private_backend(profile, release, runner):
         "unhealthy",
     )
     _require(api.get("Image") == expected_image, "image_changed")
+    _require(
+        api["Labels"].get("io.depositar.ai.conversation.version") == "3",
+        "contract_changed",
+    )
     ports = api.get("Ports")
     _require(
         api.get("PortBindings") in (None, {})
