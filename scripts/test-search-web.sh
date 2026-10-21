@@ -142,7 +142,7 @@ for image in (APISIX_IMAGE, REDIS_IMAGE, NGINX_BASE, ANUBIS_IMAGE):
         subprocess.run(["docker", "pull", image], check=True, timeout=180)
 PY
   begin_phase public-entry-runtime
-  DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 DEPOSITAR_TEST_REMOTE_BACKEND_RUNTIME=1 \
+  DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 DEPOSITAR_TEST_REMOTE_BACKEND_RUNTIME=1 DEPOSITAR_TEST_GPU_LOCAL_VOLUME_RUNTIME=1 \
     python3 -m unittest tests.integration.public_entry.test_identity_adapter \
       tests.integration.public_entry.test_antibot_runtime \
       tests.integration.public_entry.test_antibot_gateway \
@@ -150,7 +150,8 @@ PY
       tests.integration.public_entry.test_identity_gateway \
       tests.integration.public_entry.test_updates \
       tests.integration.public_entry.test_remote_backend \
-      tests.integration.test_private_api_tls_runtime -v
+      tests.integration.test_private_api_tls_runtime \
+      tests.integration.test_gpu_local_volume -v
 fi
 if [[ "$suite" != oss ]]; then
   begin_phase gateway-bootstrap

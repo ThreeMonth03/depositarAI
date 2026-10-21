@@ -41,6 +41,7 @@ _RUNTIME_DOCKER_CODES = frozenset(
         "inference_output_limit",
         "inference_command_timeout",
         "inference_command_failed",
+        "inference_gpu_ownership_blocked",
         "inference_image_inspection_invalid",
         "inference_container_inventory_invalid",
         "inference_network_inventory_invalid",

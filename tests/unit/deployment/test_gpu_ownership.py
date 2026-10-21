@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import sys
@@ -848,6 +849,241 @@ class GPUHostGatherTests(unittest.TestCase):
                 timeout=0.02,
                 max_bytes=128,
             )
+
+
+def local_volume_proof(name="catalog-index", root="/var/lib/docker"):
+    return ownership.LocalVolumeProof(
+        name=name,
+        driver="local",
+        scope="local",
+        options_empty=True,
+        mountpoint=root + "/volumes/" + name + "/_data",
+        created_at="2026-10-21T00:00:00Z",
+        docker_root_dir=root,
+    )
+
+
+def volume_container(proof=None):
+    proof = local_volume_proof() if proof is None else proof
+    row = container()
+    row["HostConfig"]["MountSpecsCount"] = 1
+    row["Mounts"] = [
+        {
+            "Type": "volume",
+            "Name": proof.name,
+            "Driver": "local",
+            "Source": proof.mountpoint,
+            "Destination": "/usr/share/opensearch/data",
+            "RW": True,
+            "Propagation": "",
+        }
+    ]
+    return row
+
+
+class LocalVolumeRunner(FakeRunner):
+    def __init__(self, containers=()):
+        super().__init__(containers)
+        self.root = "/var/lib/docker"
+        self.volume_calls = 0
+        self.info_calls = 0
+        self.changed_metadata = None
+        self.changed_root = None
+
+    def __call__(self, argv, **limits):
+        if argv[0] == "docker" and argv[len(ownership.DOCKER_PREFIX)] == "volume":
+            self.calls.append((argv, limits["timeout"], limits["max_bytes"]))
+            self.volume_calls += 1
+            metadata = asdict(local_volume_proof(argv[-1], self.root))
+            del metadata["docker_root_dir"]
+            if self.changed_metadata is not None:
+                self.changed_metadata(metadata, self.volume_calls)
+            return ownership.CommandResult(0, json.dumps(metadata))
+        result = super().__call__(argv, **limits)
+        if argv[0] == "docker" and argv[len(ownership.DOCKER_PREFIX)] == "info":
+            self.info_calls += 1
+            info = json.loads(result.stdout)
+            info["DockerRootDir"] = (
+                self.changed_root
+                if self.info_calls > 1 and self.changed_root is not None
+                else self.root
+            )
+            return ownership.CommandResult(0, json.dumps(info))
+        return result
+
+
+class LocalVolumeOwnershipTests(unittest.TestCase):
+    """Fixture hardware only; these tests never establish host GPU ownership."""
+
+    def validate(self, rows, proofs=()):
+        return ownership.validate_gpu_ownership(
+            GPUS,
+            inventory=INVENTORY,
+            containers=rows,
+            compute_apps="",
+            container_pids={},
+            verified_local_volumes=proofs,
+        )
+
+    def test_volume_requires_separate_daemon_evidence(self):
+        row = volume_container()
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "volume_evidence_invalid"
+        ):
+            self.validate([row])
+        self.assertEqual(self.validate([row], (local_volume_proof(),))["status"], "ok")
+        self.assertEqual(ownership._container(row)[3], ())
+
+    def test_shared_local_volume_is_deduplicated_and_host_binds_match_name(self):
+        proof = local_volume_proof()
+        row = volume_container()
+        row["HostConfig"]["Binds"] = [
+            proof.name + ":/usr/share/opensearch/data:rw,nocopy"
+        ]
+        other = copy.deepcopy(row)
+        other["Id"] = "5" * 64
+        self.assertEqual(self.validate([row, other], (proof,))["status"], "ok")
+        row["HostConfig"]["Binds"] = ["other:/usr/share/opensearch/data:rw"]
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "mount_inventory_mismatch"
+        ):
+            self.validate([row], (proof,))
+        row["HostConfig"]["Binds"] = [
+            proof.mountpoint + ":/usr/share/opensearch/data:rw"
+        ]
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "mount_inventory_mismatch"
+        ):
+            self.validate([row], (proof,))
+
+    def test_invalid_volume_metadata_and_aliases_are_rejected(self):
+        class Nonliteral(str):
+            pass
+
+        proof = local_volume_proof()
+        for field, value in (
+            ("driver", "plugin"),
+            ("driver", Nonliteral("local")),
+            ("scope", "global"),
+            ("scope", Nonliteral("local")),
+            ("options_empty", False),
+            ("options_empty", 1),
+            ("created_at", "private-path"),
+            ("name", "../dev"),
+            ("name", "-option"),
+            ("name", "x" * 256),
+            ("mountpoint", proof.mountpoint + "/"),
+            ("mountpoint", "/var/lib/docker/volumes/other/_data"),
+            ("mountpoint", "/var/lib/docker-other/volumes/catalog-index/_data"),
+            ("docker_root_dir", "/var/lib/docker/../dev"),
+        ):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(ownership.GPUOwnershipError):
+                    self.validate(
+                        [volume_container()], (replace(proof, **{field: value}),)
+                    )
+        for proofs in ((proof, proof), (proof, local_volume_proof("extra")), [proof]):
+            with self.assertRaisesRegex(
+                ownership.GPUOwnershipError, "volume_evidence_invalid"
+            ):
+                self.validate([volume_container()], proofs)
+
+    def test_volume_mount_cannot_escape_proof_or_host_target_rules(self):
+        proof = local_volume_proof()
+        for field, value in (
+            ("Source", proof.mountpoint + "-alias"),
+            ("Source", "/dev/nvidia0"),
+            ("Driver", "plugin"),
+            ("Driver", 1),
+            ("Name", "other"),
+            ("Destination", "/run/tls/key"),
+            ("Destination", "/run/secrets/api_key"),
+            ("Destination", "/run/index/binding.json"),
+            ("Destination", "/proc"),
+            ("Destination", "/sys"),
+            ("Destination", "/dev"),
+            ("Destination", "/private/docker.sock"),
+            ("Propagation", "rshared"),
+            ("RW", None),
+        ):
+            with self.subTest(field=field, value=value):
+                row = volume_container()
+                row["Mounts"][0][field] = value
+                with self.assertRaises(ownership.GPUOwnershipError):
+                    self.validate([row], (proof,))
+
+    def test_collector_checks_root_and_each_volume_twice_with_bounded_projection(self):
+        runner = LocalVolumeRunner([volume_container()])
+        result = ownership.run_gpu_ownership(CONFIG, runner=runner)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(runner.volume_calls, 2)
+        self.assertEqual(runner.info_calls, 2)
+        probes = [a for a, _t, _m in runner.calls if a[0] == "python3"]
+        self.assertEqual([a[-1] for a in probes], [runner.root, runner.root])
+        self.assertNotIn("json .Options", ownership.VOLUME_INSPECT_FORMAT)
+        self.assertNotIn("Labels", ownership.VOLUME_INSPECT_FORMAT)
+        self.assertIn("if .Options", ownership.VOLUME_INSPECT_FORMAT)
+        self.assertTrue(
+            all(
+                0 < t <= 15 and 0 < m <= ownership.MAX_OUTPUT_BYTES
+                for _a, t, m in runner.calls
+            )
+        )
+
+    def test_metadata_and_root_drift_are_blocked(self):
+        for key, value in (
+            ("created_at", "2026-10-22T00:00:00Z"),
+            ("driver", "plugin"),
+            ("scope", "global"),
+            ("options_empty", False),
+            ("name", "other"),
+            ("mountpoint", "/dev/private"),
+        ):
+            with self.subTest(field=key):
+                runner = LocalVolumeRunner([volume_container()])
+                runner.changed_metadata = (
+                    lambda row, count: row.update({key: value}) if count > 1 else None
+                )
+                report = ownership.run_gpu_ownership(CONFIG, runner=runner)
+                self.assertEqual(report["status"], "blocked")
+                self.assertIn(report["code"], ownership.ERROR_CODES)
+                self.assertNotIn("/dev/private", json.dumps(report))
+        runner = LocalVolumeRunner([volume_container()])
+        runner.changed_root = "/other/docker"
+        self.assertEqual(
+            ownership.run_gpu_ownership(CONFIG, runner=runner)["code"],
+            "gpu_ownership_snapshot_changed",
+        )
+        runner = LocalVolumeRunner([volume_container()])
+        runner.changed_inspect = lambda row: row["Mounts"][0].update(RW=False)
+        self.assertEqual(
+            ownership.run_gpu_ownership(CONFIG, runner=runner)["code"],
+            "gpu_ownership_snapshot_changed",
+        )
+
+    def test_driver_options_missing_metadata_and_volume_bounds_fail_closed(self):
+        for options in (False, None, 1):
+            runner = LocalVolumeRunner([volume_container()])
+            runner.changed_metadata = lambda row, _count: row.update(
+                options_empty=options
+            )
+            report = ownership.run_gpu_ownership(CONFIG, runner=runner)
+            self.assertEqual(report["code"], "gpu_ownership_volume_metadata_invalid")
+        runner = LocalVolumeRunner([volume_container()])
+        runner.changed_metadata = lambda row, _count: row.pop("scope")
+        self.assertEqual(
+            ownership.run_gpu_ownership(CONFIG, runner=runner)["code"],
+            "gpu_ownership_volume_metadata_invalid",
+        )
+        other = volume_container(local_volume_proof("other"))
+        other["Id"] = "5" * 64
+        with mock.patch.object(ownership, "MAX_LOCAL_VOLUMES", 1):
+            runner = LocalVolumeRunner([volume_container(), other])
+            self.assertEqual(
+                ownership.run_gpu_ownership(CONFIG, runner=runner)["code"],
+                "gpu_ownership_volume_limit",
+            )
+            self.assertEqual(runner.volume_calls, 0)
 
 
 class GPUCompositionContractTests(unittest.TestCase):
