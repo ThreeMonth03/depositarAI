@@ -1,6 +1,7 @@
 """Exercise the shared runtime client without starting a Docker process."""
 
 from pathlib import Path
+import json
 import subprocess
 import sys
 import unittest
@@ -27,6 +28,11 @@ def forbidden_process(*args, **kwargs):
     raise AssertionError("runtime client import started a process")
 subprocess.Popen = forbidden_process
 from search.operations.deployment import runtime_docker
+client = runtime_docker.Docker(
+    "/private-client",
+    lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, b"", b""),
+)
+assert runtime_docker.project_inventory(client, "private-project") == ([], set())
 for name in (
     "search.operations.deployment.inference",
     "search.operations.deployment.release",
@@ -51,13 +57,13 @@ assert runtime_docker.MAX_COMMANDS == 64
         )
         self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_default_runner_and_clock_keep_legacy_module_patch_lookup(self):
+    def test_default_runner_and_clock_use_the_shared_client_owners(self):
         result = subprocess.CompletedProcess([], 0, "ok", "")
         with (
-            mock.patch.object(inference.time, "monotonic", side_effect=[10, 20, 30]),
             mock.patch.object(
-                inference.image_build, "_run", return_value=result
-            ) as run,
+                runtime_docker.time, "monotonic", side_effect=[10, 20, 30]
+            ),
+            mock.patch.object(image_build, "_run", return_value=result) as run,
         ):
             client = runtime_docker.Docker(Path("/private-client"), None)
             self.assertEqual(1810, client.deadline)
@@ -119,3 +125,108 @@ assert runtime_docker.MAX_COMMANDS == 64
                     ["image", "inspect", "--format", "{{json .}}", "private-reference"],
                     runner.call_args.args[0][5:],
                 )
+
+
+class ProjectInventoryTests(unittest.TestCase):
+    def client(self, containers, networks, *, max_commands=64):
+        runner = mock.Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, output, b"")
+                for output in (containers, networks)
+            ]
+        )
+        return (
+            runtime_docker.Docker("/private-client", runner, max_commands=max_commands),
+            runner,
+        )
+
+    def test_inventory_uses_only_filtered_read_commands_and_shared_budget(self):
+        ids = [letter * 64 for letter in "abc"]
+        names = ["private-project_first", "private-project_second"]
+        networks = b"\n".join(json.dumps({"Name": name}).encode() for name in names)
+        client, runner = self.client(("\n".join(ids) + "\n").encode(), networks)
+        self.assertEqual(
+            runtime_docker.project_inventory(client, "private-project"),
+            (ids, set(names)),
+        )
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(
+            [call.args[0][5:] for call in runner.call_args_list],
+            [
+                [
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "--no-trunc",
+                    "--filter",
+                    "label=com.docker.compose.project=private-project",
+                ],
+                [
+                    "network",
+                    "ls",
+                    "--no-trunc",
+                    "--format",
+                    "{{json .}}",
+                    "--filter",
+                    "name=private-project_",
+                ],
+            ],
+        )
+
+    def test_invalid_container_inventory_stops_before_network_query(self):
+        cases = [
+            b"\xff",
+            b"short\n",
+            b"A" * 64,
+            b" " + b"a" * 64,
+            (b"a" * 64 + b"\n") * 2,
+            "\n".join(letter * 64 for letter in "abcd").encode(),
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw):
+                client, runner = self.client(raw, b"")
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_container_inventory_invalid$",
+                ):
+                    runtime_docker.project_inventory(client, "private-project")
+                self.assertEqual(runner.call_count, 1)
+
+    def test_invalid_network_inventory_has_a_closed_diagnostic(self):
+        cases = [
+            [None],
+            [[]],
+            [{}],
+            [{"Name": 1}],
+            [{"Name": []}],
+            [{"Name": {}}],
+            [{"Name": "same"}, {"Name": "same"}],
+            [{"Name": name} for name in ("first", "second", "third")],
+        ]
+        for values in cases:
+            with self.subTest(values=values):
+                raw = b"\n".join(json.dumps(value).encode() for value in values)
+                client, runner = self.client(b"", raw)
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_network_inventory_invalid$",
+                ):
+                    runtime_docker.project_inventory(client, "private-project")
+                self.assertEqual(runner.call_count, 2)
+
+    def test_duplicate_json_keys_still_use_the_strict_shared_parser(self):
+        client, _ = self.client(b"", b'{"Name":"first","Name":"second"}')
+        with self.assertRaisesRegex(
+            image_build.ImageBuildError, "^image_build_json_invalid$"
+        ):
+            runtime_docker.project_inventory(client, "private-project")
+
+    def test_exhausted_budget_prevents_network_process_creation(self):
+        client, runner = self.client(b"", b"", max_commands=1)
+        with self.assertRaisesRegex(
+            runtime_docker.InferenceError, "^inference_command_budget$"
+        ):
+            runtime_docker.project_inventory(client, "private-project")
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(runner.call_count, 1)

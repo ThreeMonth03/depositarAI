@@ -158,8 +158,14 @@ authority，不建立 release 服務或重跑模型驗收。Gateway activation �
 network 與 exact peers、實際 loopback 搜尋及 reset，最後才發布 active authority。
 單改路由檔或取得一項健康結果不足以完成切換。
 
-目前提供這些分階段準備與啟動入口，尚未提供完整產品的 `install`／`update`／
-`rollback` CLI。`package-product` 匯出交付素材；`restore-product` 核對素材及還原來源，
+已備妥主機、GPU、模型及產品設定時，`up-private` 串接 catalog 準備與首次私有啟用，
+正常入口為上述 `127.0.0.1:18083`；分段命令保留作診斷及明確的分段操作。
+它不接管既有啟用或已開始的應用準備流程，也不安裝主機軟體或下載模型。
+獨立 CPU 前端則使用 `scripts/search-web.sh`，連接既有 HTTPS Conversation API，
+入口為 `127.0.0.1:18081`；兩者的用途與設定見[網站服務設定](../SEARCH_WEBSITE.md#選擇執行入口)。
+
+完整產品的 `install`／`update`／`rollback` CLI 尚未提供。
+`package-product` 匯出交付素材；`restore-product` 核對素材及還原來源，
 新主機安裝、registry identity restore 與完整更新回退仍須另行完成，詳見
 [產品包還原](PRODUCT_RESTORE.md)。選用的[公眾入口](PUBLIC_ACCESS.md)有獨立的
 CPU 入口維護流程，其 update／rollback 不代表整套產品更新。

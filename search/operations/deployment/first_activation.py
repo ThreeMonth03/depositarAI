@@ -16,7 +16,6 @@ from search.operations import state
 from search.operations.deployment import (
     composition,
     credentials,
-    inference,
     runtime_docker,
 )
 from search.operations.shared import private_io
@@ -112,7 +111,7 @@ def require_first_activation(store, *, docker_runner=None):
                     max_commands=2,
                     verify_client=verify_client,
                 )
-                containers, networks = inference._project_inventory(
+                containers, networks = runtime_docker.project_inventory(
                     docker, composition.GATEWAY_PROJECT
                 )
                 if containers or networks:

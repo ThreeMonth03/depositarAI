@@ -120,7 +120,7 @@ class _RoutedHost(release._Host):
         _require(clients is True and self.lease is not None, "private_lease_required")
         groups, networks = super().collect(clients=True)
         ingress = composition.GATEWAY_PROJECT + "_ingress"
-        ids, names = inference._project_inventory(
+        ids, names = runtime_docker.project_inventory(
             self.docker, composition.GATEWAY_PROJECT
         )
         _require(
@@ -666,7 +666,9 @@ def _activate(
             )
             _require(
                 not any(
-                    inference._project_inventory(docker, composition.GATEWAY_PROJECT)
+                    runtime_docker.project_inventory(
+                        docker, composition.GATEWAY_PROJECT
+                    )
                 ),
                 "existing_gateway_not_adopted",
             )
@@ -716,7 +718,9 @@ def _activate(
             state_check()
             _require(
                 not any(
-                    inference._project_inventory(docker, composition.GATEWAY_PROJECT)
+                    runtime_docker.project_inventory(
+                        docker, composition.GATEWAY_PROJECT
+                    )
                 ),
                 "existing_gateway_not_adopted",
             )
@@ -735,7 +739,7 @@ def _activate(
                 ],
                 timeout=150,
             )
-            ids, names = inference._project_inventory(
+            ids, names = runtime_docker.project_inventory(
                 docker, composition.GATEWAY_PROJECT
             )
             ingress = composition.GATEWAY_PROJECT + "_ingress"

@@ -158,7 +158,7 @@ class _Host:
         }
         inventories = {}
         for project in projects:
-            ids, names = inference._project_inventory(self.docker, project)
+            ids, names = runtime_docker.project_inventory(self.docker, project)
             if len(ids) != 3 or names != expected_networks[project]:
                 raise ReleaseError("release_runtime_inventory_changed")
             inventories[project] = set(ids)
@@ -755,7 +755,7 @@ def _start(
                     prior = None
                 if type(prior) is dict and prior.get("project") == compose["name"]:
                     raise ReleaseError("release_partial_state_recovery_required")
-                if any(inference._project_inventory(docker, compose["name"])):
+                if any(runtime_docker.project_inventory(docker, compose["name"])):
                     raise ReleaseError("release_existing_runtime_not_adopted")
             _verify_runtime(config, context, inputs, gpu_runner)
 
@@ -792,7 +792,7 @@ def _start(
                     ),
                     gpu_runner,
                 )
-                if any(inference._project_inventory(docker, compose["name"])):
+                if any(runtime_docker.project_inventory(docker, compose["name"])):
                     raise ReleaseError("release_existing_runtime_not_adopted")
                 private_io.verify_directory(parent_fd, parent)
                 private_io.verify_directory(slot_fd, parent / name)

@@ -34,7 +34,7 @@ REAL_HOST = activation.release._Host
 REAL_ROUTED_HOST = activation._RoutedHost
 REAL_GPU_IMAGES = activation.inference._images
 REAL_RELEASE_IMAGES = activation.release._images
-REAL_INVENTORY = activation.inference._project_inventory
+REAL_INVENTORY = activation.runtime_docker.project_inventory
 REAL_VALIDATE_IMAGE = activation.source_bundle.validate_built_image
 
 
@@ -355,8 +355,8 @@ class GatewayActivationTests(unittest.TestCase):
             activation.inference, "_verified_models", side_effect=self.models
         ).start()
         mock.patch.object(
-            activation.inference,
-            "_project_inventory",
+            activation.runtime_docker,
+            "project_inventory",
             side_effect=self.runtime_inventory,
         ).start()
         mock.patch.object(
@@ -795,7 +795,9 @@ class GatewayActivationTests(unittest.TestCase):
                 activation.release, "_images", side_effect=REAL_RELEASE_IMAGES
             ),
             mock.patch.object(
-                activation.inference, "_project_inventory", side_effect=REAL_INVENTORY
+                activation.runtime_docker,
+                "project_inventory",
+                side_effect=REAL_INVENTORY,
             ),
             mock.patch.object(
                 activation.source_bundle, "validate_built_image", side_effect=validate

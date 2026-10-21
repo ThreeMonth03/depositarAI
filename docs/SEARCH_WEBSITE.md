@@ -11,9 +11,11 @@ catalog、模型及服務平面的分工見[私有 runtime](development/PRIVATE_
 
 | 用途 | 入口與前提 |
 |---|---|
-| 完整產品私有試用 | 依[部署指南](guide/operations.md)與[產品生命週期](development/PRODUCT_LIFECYCLE.md)準備 catalog、映像及模型，再執行 `start-release`、`prepare-gateway`、`activate-gateway`；入口是 `127.0.0.1:18083`。 |
+| 完整產品私有試用 | 主機、GPU、模型及產品設定備妥後，依[部署指南](guide/operations.md)執行 `up-private`，串接 catalog 準備與首次啟用；入口是 `127.0.0.1:18083`。 |
 | 獨立 CPU 前端 | `bash scripts/search-web.sh up` 只建立網站與 Nginx，連到操作者核准的 HTTPS Conversation API；入口是 `127.0.0.1:18081`。 |
 
+分段命令保留作診斷及明確的分段操作，前置條件見
+[產品 CLI 參考](development/PRODUCT_LIFECYCLE.md)。
 公開登入與額度管理由選用的[公眾入口](development/PUBLIC_ACCESS.md)負責。
 獨立前端的 loopback 綁定不提供公眾登入；下列命令不表示任何主機已部署。
 

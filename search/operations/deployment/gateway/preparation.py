@@ -204,7 +204,7 @@ def _prepare(
             def no_gateway_runtime():
                 _require(
                     not any(
-                        inference._project_inventory(
+                        runtime_docker.project_inventory(
                             docker, composition.GATEWAY_PROJECT
                         )
                     ),

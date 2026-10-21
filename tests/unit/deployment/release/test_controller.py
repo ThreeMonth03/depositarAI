@@ -202,7 +202,7 @@ class PrivateReleaseTests(unittest.TestCase):
             release.inference, "_verified_models", side_effect=self.models
         ).start()
         mock.patch.object(
-            release.inference, "_project_inventory", side_effect=self.inventory
+            release.runtime_docker, "project_inventory", side_effect=self.inventory
         ).start()
         mock.patch.object(
             release.query, "verify_authority", side_effect=self.query

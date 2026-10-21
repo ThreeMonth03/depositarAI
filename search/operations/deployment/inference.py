@@ -273,49 +273,8 @@ def _verified_models(config, *, deadline=None, include_embedding=False):
         verify()
 
 
-def _project_inventory(docker, project):
-    raw = docker.call(
-        [
-            "ps",
-            "--all",
-            "--quiet",
-            "--no-trunc",
-            "--filter",
-            "label=com.docker.compose.project=" + project,
-        ]
-    )
-    try:
-        ids = raw.decode("ascii").splitlines()
-    except UnicodeError:
-        raise InferenceError("inference_container_inventory_invalid") from None
-    if (
-        len(ids) > 3
-        or len(set(ids)) != len(ids)
-        or any(gpu_ownership.CONTAINER_ID.fullmatch(value) is None for value in ids)
-    ):
-        raise InferenceError("inference_container_inventory_invalid")
-    raw = docker.call(
-        [
-            "network",
-            "ls",
-            "--no-trunc",
-            "--format",
-            "{{json .}}",
-            "--filter",
-            "name=" + project + "_",
-        ]
-    )
-    networks = [image_build._json(line) for line in raw.splitlines()]
-    if len(networks) > 2 or any(type(value) is not dict for value in networks):
-        raise InferenceError("inference_network_inventory_invalid")
-    names = [value.get("Name") for value in networks]
-    if len(set(names)) != len(names) or any(type(name) is not str for name in names):
-        raise InferenceError("inference_network_inventory_invalid")
-    return ids, set(names)
-
-
 def _inspect_runtime(docker, compose, images):
-    ids, names = _project_inventory(docker, compose["name"])
+    ids, names = runtime_docker.project_inventory(docker, compose["name"])
     expected = {entry["name"] for entry in compose["networks"].values()}
     if len(ids) != 3 or names != expected:
         raise InferenceError("inference_runtime_inventory_changed")
@@ -476,11 +435,13 @@ def start_private_inference(
                     )
                     complete = image_build._record(slot_fd, "complete.json")
                 else:
-                    ids, network_names = _project_inventory(docker, compose["name"])
+                    ids, network_names = runtime_docker.project_inventory(
+                        docker, compose["name"]
+                    )
                     if ids or network_names:
                         raise InferenceError("inference_legacy_runtime_not_adopted")
                     _gpu(config, (), gpu_runner)
-                    if any(_project_inventory(docker, compose["name"])):
+                    if any(runtime_docker.project_inventory(docker, compose["name"])):
                         raise InferenceError("inference_legacy_runtime_not_adopted")
                     private_io.verify_directory(parent_fd, parent)
                     slot_fd = private_io.open_child_directory(
@@ -536,7 +497,7 @@ def start_private_inference(
                         "inference_start_identity_changed",
                     )
                     _gpu(config, (), gpu_runner)
-                    if any(_project_inventory(docker, compose["name"])):
+                    if any(runtime_docker.project_inventory(docker, compose["name"])):
                         raise InferenceError("inference_legacy_runtime_not_adopted")
                     private_io.verify_directory(parent_fd, parent)
                     private_io.verify_directory(slot_fd, slot)

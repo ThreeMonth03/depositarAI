@@ -3,14 +3,18 @@
 `scripts/depositarai.py` launches the product CLI owned by [cli.py](cli.py).
 Operations code prepares and verifies
 metadata, catalogs, model services, releases and entry points with source-bound
-receipts. [PRODUCT_LIFECYCLE.md](../../docs/development/PRODUCT_LIFECYCLE.md) owns
-the command order, prerequisites and incomplete installer boundaries.
+receipts. For first private activation on a host with Docker, GPUs and models
+already prepared, use `up-private` as described in the
+[operations guide](../../docs/guide/operations.md). Granular commands remain for
+diagnosis and explicit staged operations;
+[PRODUCT_LIFECYCLE.md](../../docs/development/PRODUCT_LIFECYCLE.md) owns their
+prerequisites, side effects and incomplete installer boundaries.
 
 | Source | Responsibility |
 |---|---|
 | [cli.py](cli.py) | Argument parsing, command dispatch, safe diagnostics and exit codes |
 | [config.py](config.py), [doctor.py](doctor.py) | Validate operator configuration and perform read-only preflight |
-| [state.py](state.py), [lifecycle.py](lifecycle.py) | Private state, operation locks/receipts and metadata lifecycle |
+| [state.py](state.py), [lifecycle.py](lifecycle.py) | Private state, operation locks/receipts, metadata lifecycle and first private activation orchestration |
 | [local_status.py](local_status.py) | Local preparation/activation records and recovery reasons; never live service health |
 | [metadata/](metadata/sync.py) | Public source acquisition, bounded sync and metadata cache |
 | [metadata/storage.py](metadata/storage.py) | Metadata/catalog private receipt IO, with the existing 4 MiB record limit and `SyncError` contract |
@@ -20,7 +24,7 @@ the command order, prerequisites and incomplete installer boundaries.
 | [release/controller.py](deployment/release/controller.py), [runtime.py](deployment/release/runtime.py), [probe.py](deployment/release/probe.py) | Private CPU release startup and completed-release verification; startup owns model and HTTP acceptance |
 | [gateway/preparation.py](deployment/gateway/preparation.py), [activation.py](deployment/gateway/activation.py) | Verify completed release authority without restarting services or repeating model acceptance; prepare routes and verify the routed website at first activation |
 | [gateway/runtime.py](deployment/gateway/runtime.py), [probe.py](deployment/gateway/probe.py), [probe_runtime.py](deployment/gateway/probe_runtime.py) | Routing profile and bounded loopback HTTP acceptance; probes do not grant routing authority |
-| [deployment/runtime_docker.py](deployment/runtime_docker.py) | Shared local Docker client with fixed CLI environment, command/output accounting and client guards; controllers retain runtime authority |
+| [deployment/runtime_docker.py](deployment/runtime_docker.py) | Shared local Docker client with fixed CLI environment, command/output accounting, client guards and bounded project container/network inventories; controllers retain runtime authority |
 | [deployment/image_authority.py](deployment/image_authority.py) | Read and authenticate completed source/image evidence against the caller's source plan; no runtime mutation or GPU/model policy |
 | [public_entry/profile.py](deployment/public_entry/profile.py), [host.py](deployment/public_entry/host.py) | Optional APISIX/OIDC entrance configuration and atomic private-material preparation |
 | [public_entry/preflight.py](deployment/public_entry/preflight.py), [updates.py](deployment/public_entry/updates.py) | Private-backend admission and paired CPU website startup, update and manual rollback, retaining Redis quotas |

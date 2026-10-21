@@ -7,6 +7,7 @@ The default command runner and image JSON parsing remain owned by image_build.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 
@@ -15,6 +16,7 @@ from search.operations.deployment import image_build
 
 MAX_COMMANDS = 64
 TOTAL_SECONDS = 1800
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class InferenceError(ValueError):
@@ -105,3 +107,45 @@ class Docker:
         if type(value) is not dict:
             raise InferenceError("inference_image_inspection_invalid")
         return value
+
+
+def project_inventory(docker, project):
+    """Read bounded container IDs and network names for one Compose project."""
+    raw = docker.call(
+        [
+            "ps",
+            "--all",
+            "--quiet",
+            "--no-trunc",
+            "--filter",
+            "label=com.docker.compose.project=" + project,
+        ]
+    )
+    try:
+        ids = raw.decode("ascii").splitlines()
+    except UnicodeError:
+        raise InferenceError("inference_container_inventory_invalid") from None
+    if (
+        len(ids) > 3
+        or len(set(ids)) != len(ids)
+        or any(_CONTAINER_ID.fullmatch(value) is None for value in ids)
+    ):
+        raise InferenceError("inference_container_inventory_invalid")
+    raw = docker.call(
+        [
+            "network",
+            "ls",
+            "--no-trunc",
+            "--format",
+            "{{json .}}",
+            "--filter",
+            "name=" + project + "_",
+        ]
+    )
+    networks = [image_build._json(line) for line in raw.splitlines()]
+    if len(networks) > 2 or any(type(value) is not dict for value in networks):
+        raise InferenceError("inference_network_inventory_invalid")
+    names = [value.get("Name") for value in networks]
+    if any(type(name) is not str for name in names) or len(set(names)) != len(names):
+        raise InferenceError("inference_network_inventory_invalid")
+    return ids, set(names)

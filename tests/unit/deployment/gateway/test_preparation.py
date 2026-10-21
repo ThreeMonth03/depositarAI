@@ -99,9 +99,9 @@ class GatewayPreparationTests(unittest.TestCase):
         mock.patch.object(
             gateway.runtime_docker, "Docker", return_value=self.docker
         ).start()
-        self.real_inventory = gateway.inference._project_inventory
+        self.real_inventory = gateway.runtime_docker.project_inventory
         self.inventory = mock.patch.object(
-            gateway.inference, "_project_inventory", return_value=([], set())
+            gateway.runtime_docker, "project_inventory", return_value=([], set())
         ).start()
         self.image_check = mock.patch.object(
             gateway.source_bundle, "validate_built_image", return_value=self.proof
@@ -214,13 +214,13 @@ class GatewayPreparationTests(unittest.TestCase):
         host.docker = SnapshotDocker(leased)
         host.lease = lease
         with mock.patch.object(
-            gateway.inference, "_project_inventory", self.real_inventory
+            gateway.runtime_docker, "project_inventory", self.real_inventory
         ):
             before = host.observe()
             private_proof = copy.deepcopy(host.last)
         self.prepare()
         with mock.patch.object(
-            gateway.inference, "_project_inventory", self.real_inventory
+            gateway.runtime_docker, "project_inventory", self.real_inventory
         ):
             self.assertEqual(before, host.observe())
             self.assertEqual(private_proof, host.last)
