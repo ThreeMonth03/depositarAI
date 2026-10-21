@@ -736,6 +736,134 @@ class CatalogRuntimeTests(unittest.TestCase):
         )
         self.assertTrue((self.root / "volume.json").is_file())
 
+    def test_completed_runtime_health_failure_only_observes_existing_services(self):
+        self.start()
+        original = copy.deepcopy(self.containers)
+        before = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in self.root.rglob("*.json")
+        }
+        self.calls.clear()
+        for index in range(3):
+            for state in (
+                {"Running": False},
+                {"Health": {"Status": "unhealthy"}},
+                {"Health": {"Status": "starting"}},
+                {"Paused": True},
+                {"OOMKilled": True},
+            ):
+                self.containers = copy.deepcopy(original)
+                self.containers[index]["State"].update(state)
+                with self.subTest(service=index, state=state):
+                    with self.assertRaises(runtime.RuntimeError) as caught:
+                        self.start()
+                    self.assertEqual(
+                        ("catalog_runtime_not_healthy",), caught.exception.args
+                    )
+                    self.assertEqual(
+                        before,
+                        {
+                            path: (path.read_bytes(), path.stat().st_mtime_ns)
+                            for path in self.root.rglob("*.json")
+                        },
+                    )
+        self.assertFalse((self.root / "start-failure.json").exists())
+        self.assertFalse(
+            any(
+                argv[0] == "docker"
+                and (
+                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    or "up" in argv
+                )
+                for argv, _ in self.calls
+            )
+        )
+
+    def test_completed_catalog_runtime_does_not_seal_process_start_identity(self):
+        def initial_processes():
+            for index, row in enumerate(self.containers):
+                row["State"].update(Pid=100 + index, StartedAt="2026-01-01T00:00:00Z")
+                row["RestartCount"] = 0
+
+        self.startup_mutation = initial_processes
+        receipt = self.start()
+        before = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in self.root.rglob("*.json")
+        }
+        for row in self.containers:
+            row["State"].update(
+                Pid=row["State"]["Pid"] + 1000,
+                StartedAt="2026-01-02T00:00:00Z",
+            )
+            row["RestartCount"] = 1
+        self.calls.clear()
+        self.assertEqual(receipt, self.start())
+        self.assertEqual(
+            before,
+            {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in self.root.rglob("*.json")
+            },
+        )
+        self.assertFalse((self.root / "start-failure.json").exists())
+        self.assertFalse(
+            any(
+                argv[0] == "docker"
+                and (
+                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    or "up" in argv
+                )
+                for argv, _ in self.calls
+            )
+        )
+
+    def test_completed_runtime_rejects_replaced_container_or_network_identity(self):
+        self.start()
+        original = copy.deepcopy((self.containers, self.network))
+        before = {path: path.read_bytes() for path in self.root.rglob("*.json")}
+        self.calls.clear()
+        for identity in ("container", "network"):
+            self.containers, self.network = copy.deepcopy(original)
+            if identity == "container":
+                fess = next(
+                    row
+                    for row in self.containers
+                    if row["Config"]["Labels"]["com.docker.compose.service"]
+                    == "fess-search"
+                )
+                previous = fess["Id"]
+                fess["Id"] = "f" * 64
+                self.network["Containers"][fess["Id"]] = self.network["Containers"].pop(
+                    previous
+                )
+                for row in self.containers:
+                    if row["HostConfig"]["NetworkMode"] == "container:" + previous:
+                        row["HostConfig"]["NetworkMode"] = "container:" + fess["Id"]
+            else:
+                self.network["Id"] = "f" * 64
+            with self.subTest(identity=identity):
+                with self.assertRaises(runtime.RuntimeError) as caught:
+                    self.start()
+                self.assertEqual(
+                    ("catalog_runtime_receipt_changed",), caught.exception.args
+                )
+                self.assertEqual(
+                    before,
+                    {path: path.read_bytes() for path in self.root.rglob("*.json")},
+                )
+        self.assertFalse((self.root / "start-failure.json").exists())
+        self.assertFalse(
+            any(
+                argv[0] == "docker"
+                and (
+                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    or "up" in argv
+                )
+                for argv, _ in self.calls
+            )
+        )
+
     def test_existing_unowned_volume_blocks_start_without_adoption(self):
         self.volume.metadata = {"name": self.plan["project"] + "-index"}
         with self.assertRaisesRegex(ValueError, "existing_without_receipt"):

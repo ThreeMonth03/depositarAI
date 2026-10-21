@@ -83,6 +83,7 @@ python3 -m unittest -v \
   tests.unit.operations.test_activation_outcome \
   tests.unit.operations.test_status \
   tests.unit.operations.test_runtime_docker_diagnostics \
+  tests.unit.operations.test_runtime_policy_diagnostics \
   tests.unit.deployment.test_first_activation \
   tests.unit.operations.test_product_restore_cli \
   tests.unit.operations.test_public_entry_cli \
@@ -120,6 +121,7 @@ python3 -m unittest -v \
   tests.unit.deployment.test_image_authority \
   tests.unit.deployment.test_runtime_docker \
   tests.unit.deployment.test_inference_runtime \
+  tests.unit.deployment.test_process_identity \
   tests.unit.deployment.release.test_runtime \
   tests.unit.deployment.gateway.test_runtime \
   tests.unit.deployment.gateway.test_preparation \

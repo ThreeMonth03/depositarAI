@@ -7,10 +7,10 @@ requires the catalog's sealed API/image contract and exact unfiltered peers.
 
 from __future__ import annotations
 
-import hashlib
 import re
 
 from search.operations.catalog import client_lease, policy
+from search.operations.deployment import process_identity
 from search.operations.deployment.gpu_ownership import GPUContainerProof
 from search.operations.shared import private_io
 
@@ -337,17 +337,7 @@ def _validate_runtime(compose, images, containers, networks, *, client=None):
                 name: row["Id"] for name, row in sorted(by_service.items())
             },
             "network_ids": network_ids,
-            "start_identity_sha256": hashlib.sha256(
-                private_io.canonical(
-                    {
-                        name: {
-                            "started_at": row["State"]["StartedAt"],
-                            "pid": row["State"]["Pid"],
-                        }
-                        for name, row in sorted(by_service.items())
-                    }
-                )
-            ).hexdigest(),
+            "start_identity_sha256": process_identity.start_identity_sha256(by_service),
         }
     except InferenceRuntimeError:
         raise

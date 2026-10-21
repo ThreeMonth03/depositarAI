@@ -9,12 +9,11 @@ Catalog, inference and ranking proofs remain separate, unchanged obligations.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 import re
 
 from search.operations.catalog import client_lease, policy
-from search.operations.deployment import composition
+from search.operations.deployment import composition, process_identity
 from search.operations.deployment.release import runtime as release_runtime
 from search.operations.deployment import source_bundle
 from search.operations.shared import private_io
@@ -381,17 +380,7 @@ def validate_runtime(
                 role: row["Id"] for role, row in sorted(all_roles.items())
             },
             "network_ids": dict(client["network_ids"]) | {ingress: ingress_network_id},
-            "start_identity_sha256": hashlib.sha256(
-                private_io.canonical(
-                    {
-                        role: {
-                            "pid": row["State"]["Pid"],
-                            "started_at": row["State"]["StartedAt"],
-                        }
-                        for role, row in sorted(all_roles.items())
-                    }
-                )
-            ).hexdigest(),
+            "start_identity_sha256": process_identity.start_identity_sha256(all_roles),
             "release_proof_sha256": client_lease.lease_digest(release_proof),
             "gateway_compose_sha256": client_lease.lease_digest(gateway_compose),
             "gateway_image_proof_sha256": client_lease.lease_digest(

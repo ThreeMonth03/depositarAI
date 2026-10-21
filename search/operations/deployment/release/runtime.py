@@ -10,11 +10,10 @@ gateway is a different future phase and deliberately fails this profile.
 
 from __future__ import annotations
 
-import hashlib
 import re
 
 from search.operations.catalog import client_lease, policy
-from search.operations.deployment import source_bundle
+from search.operations.deployment import process_identity, source_bundle
 from search.operations.shared import private_io
 
 
@@ -443,17 +442,7 @@ def _proof(by_role, client):
     return {
         "container_ids": {role: row["Id"] for role, row in sorted(by_role.items())},
         "network_ids": dict(client["network_ids"]),
-        "start_identity_sha256": hashlib.sha256(
-            private_io.canonical(
-                {
-                    role: {
-                        "started_at": row["State"]["StartedAt"],
-                        "pid": row["State"]["Pid"],
-                    }
-                    for role, row in sorted(by_role.items())
-                }
-            )
-        ).hexdigest(),
+        "start_identity_sha256": process_identity.start_identity_sha256(by_role),
         "lease_sha256": client["lease_sha256"],
     }
 

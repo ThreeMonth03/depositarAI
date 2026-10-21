@@ -438,10 +438,16 @@ inventory 才接受為 `status=completed`、`result.status=reconciled-active`。
 依 gateway、CPU release、inference 的順序停用，可保留 catalog、容器、網路及資料。
 獨立前端的 `scripts/search-web.sh down` 不管理這些產品 project。
 
-這是隔離故障的維護動作，尚不是可逆的產品停啟流程。完成證據綁定 process 的
-PID／StartedAt；手動重新啟動，即使保留相同容器 ID，也不會恢復原本的 runtime
-證據。恢復服務需另外安排重新驗收與 authority 交接，不能刪除 intent、改寫收據
+這是隔離故障的維護動作，尚不是可逆的產品停啟流程。推論、CPU release 與 gateway
+的完成證據綁定 process 的 PID／StartedAt；手動重新啟動，即使保留相同容器 ID，
+也不會恢復原本的 runtime 證據。恢復服務需另外安排重新驗收與 authority 交接，
+不能刪除 intent、改寫收據
 或直接執行 Compose up／start 來繞過檢查。
+
+Catalog 核對容器、網路、映像與儲存身分，沒有相同的 process-start 封存規則。
+同 ID 的 catalog 容器恢復健康可能通過原驗證；這不會重新驗收下游的推論、release
+或 gateway。已有 API lease 時，也不能用 baseline `start-index`／`start-inference`
+取代包含 client 的 release 驗證，更不能過濾額外 peers 來通過檢查。
 
 產品操作採 nonblocking lock；同一 state 正在操作時，不另開另一個命令競爭。
 product 操作收據最多 128 筆、catalog slots 最多 16 個、向量歷史最多 128 輪，
@@ -451,6 +457,26 @@ SIGKILL 可留下 started intent；失敗收據不會改寫成成功，也不會
 
 模型／來源／mount／network identity 不符時回到對應準備步驟調查，不能改 digest 或
 放寬 peer 檢查；部分 start、build、query 或 activation 狀態不應直接重試。
+
+### 私有 runtime 驗證錯誤碼
+
+CLI 可回報以下固定 `error_code`，協助定位原 owner 拒絕的原因。
+推論類錯誤碼僅適用於 `up-private`、`start-inference`、`start-release`、
+`prepare-gateway` 與 `activate-gateway`。上層控制器若已轉成自己的摘要，CLI 不再
+拆解 exception chain；沒有細項碼時仍依失敗步驟與私有紀錄調查。
+這些診斷不授權重啟、認領或改寫完成證據。
+
+| `error_code` | 含義與下一步 |
+|---|---|
+| `catalog_runtime_not_healthy` | Catalog 容器未執行、暫停、OOM 或健康狀態不符；核對實際服務狀態與資源。 |
+| `catalog_requires_exactly_three_services` | Catalog 容器數量不等於三個；核對 project 與三個預期服務，不刪容器來補齊條件。 |
+| `catalog_runtime_receipt_changed` | 即時容器、網路、映像或完成紀錄不一致；保留原收據，核對部署來源與 ownership。 |
+| `inference_runtime_resource_or_health_changed` | 推論的資源或程序健康條件不符；此碼未細分停止、OOM、重啟或資源漂移，須核對私有 runtime。 |
+| `inference_runtime_network_peers_changed` | 推論網路的身分、屬性或完整 peer 集合不符；先確認 baseline 或 lease-aware 流程，不隱藏 peer。 |
+| `inference_runtime_snapshot_invalid` | Runtime snapshot 結構不符；核對檢查來源與 Docker 格式，不以空集合代替失敗查詢。 |
+| `inference_partial_state_recovery_required` | 啟動紀錄不完整；保留 slot，不重送啟動或刪除 intent。 |
+| `inference_completed_runtime_changed` | 現行 runtime proof 不再等於完成證據；核對容器、網路與 process start，不補寫新的 digest。 |
+| `inference_start_identity_changed` | 原啟動身分與目前來源、映像或模型契約不一致；回到原 slot 與來源查明差異。 |
 
 ### 共用 Docker client 錯誤碼
 

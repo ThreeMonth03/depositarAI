@@ -22,6 +22,16 @@ PUBLIC_COMMANDS = frozenset(
 # Only exact operator-owned exception classes and fixed literals may add a
 # diagnostic. Error owners are loaded only when their failure is encountered.
 
+_PRIVATE_RUNTIME_COMMANDS = frozenset(
+    {
+        "up-private",
+        "start-inference",
+        "start-release",
+        "prepare-gateway",
+        "activate-gateway",
+    }
+)
+
 _RUNTIME_DOCKER_CODES = frozenset(
     {
         "inference_command_budget_invalid",
@@ -34,6 +44,17 @@ _RUNTIME_DOCKER_CODES = frozenset(
         "inference_image_inspection_invalid",
         "inference_container_inventory_invalid",
         "inference_network_inventory_invalid",
+        "inference_partial_state_recovery_required",
+        "inference_completed_runtime_changed",
+        "inference_start_identity_changed",
+    }
+)
+
+_INFERENCE_RUNTIME_CODES = frozenset(
+    {
+        "inference_runtime_resource_or_health_changed",
+        "inference_runtime_network_peers_changed",
+        "inference_runtime_snapshot_invalid",
     }
 )
 
@@ -44,6 +65,9 @@ _CATALOG_RUNTIME_CODES = frozenset(
         "catalog_admin_authentication_failed",
         "catalog_admin_transport_failed",
         "catalog_admin_diagnostic_failed",
+        "catalog_runtime_not_healthy",
+        "catalog_requires_exactly_three_services",
+        "catalog_runtime_receipt_changed",
     }
 )
 
@@ -116,18 +140,24 @@ def _operator_error_code(error, command):
         if error_type is not ProjectionError:
             return None
         codes = _CATALOG_PROJECTION_CODES
-    elif owner == "search.operations.deployment.runtime_docker" and command in {
-        "up-private",
-        "start-inference",
-        "start-release",
-        "prepare-gateway",
-        "activate-gateway",
-    }:
+    elif (
+        owner == "search.operations.deployment.runtime_docker"
+        and command in _PRIVATE_RUNTIME_COMMANDS
+    ):
         from search.operations.deployment.runtime_docker import InferenceError
 
         if error_type is not InferenceError:
             return None
         codes = _RUNTIME_DOCKER_CODES
+    elif (
+        owner == "search.operations.deployment.inference_runtime"
+        and command in _PRIVATE_RUNTIME_COMMANDS
+    ):
+        from search.operations.deployment.inference_runtime import InferenceRuntimeError
+
+        if error_type is not InferenceRuntimeError:
+            return None
+        codes = _INFERENCE_RUNTIME_CODES
     elif command == "up-private" and owner == "search.operations.lifecycle":
         from search.operations import lifecycle
 
