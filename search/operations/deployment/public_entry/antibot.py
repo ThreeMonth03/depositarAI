@@ -156,7 +156,7 @@ def render_antibot(config, *, uid=None, gid=None):
                     "JWT_RESTRICTION_HEADER": "X-Real-IP",
                     "REDIRECT_DOMAINS": origin.netloc,
                     "SLOG_LEVEL": "ERROR",
-                    "METRICS_BIND": "127.0.0.1:9090",
+                    "METRICS_BIND": ":9090",
                     "GOMAXPROCS": "1",
                 },
                 "volumes": [

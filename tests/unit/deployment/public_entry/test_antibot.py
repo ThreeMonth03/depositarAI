@@ -70,6 +70,9 @@ class AntibotTests(unittest.TestCase):
         self.assertEqual(env["COOKIE_SECURE"], "true")
         self.assertEqual(env["COOKIE_HTTP_ONLY"], "true")
         self.assertEqual(env["COOKIE_EXPIRATION_TIME"], "24h")
+        # v1.28.1's health CLI prepends http://localhost to this flag. The
+        # actual loopback listener is configured independently in the policy.
+        self.assertEqual(env["METRICS_BIND"], ":9090")
         mounts = plan["services"]["antibot"]["volumes"]
         self.assertEqual([v["target"] for v in mounts if not v["read_only"]], ["/data"])
         self.assertEqual(plan["state_directories"], ["antibot-data"])

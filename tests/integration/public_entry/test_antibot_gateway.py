@@ -1,6 +1,8 @@
 """Real optional Anubis -> APISIX -> Redis -> BFF acceptance, without a GPU."""
 
+import json
 import os
+import subprocess
 import time
 import unittest
 
@@ -15,7 +17,85 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
     mixed = True
     antibot = True
 
+    @classmethod
+    def compose(cls, *arguments, timeout=30):
+        try:
+            return super().compose(*arguments, timeout=timeout)
+        except (AssertionError, subprocess.TimeoutExpired) as error:
+            if not arguments or arguments[0] != "up":
+                raise
+            # Only this disposable fixture's health state/logs are inspected.
+            # Never include full inspect output, environment or mounted files.
+            prefix = [
+                "docker",
+                "compose",
+                "--project-name",
+                cls.project,
+                "--file",
+                str(cls.compose_file),
+            ]
+            logs = cls.command(
+                [
+                    *prefix,
+                    "logs",
+                    "--no-color",
+                    "--tail",
+                    "15",
+                    "antibot",
+                    "public-edge",
+                ],
+                timeout=10,
+                check=False,
+            ).stdout[-4000:]
+            identifiers = cls.command(
+                [
+                    *prefix,
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "antibot",
+                    "public-edge",
+                    "public-entry",
+                ],
+                timeout=10,
+                check=False,
+            ).stdout.split()
+            health = []
+            if identifiers:
+                inspected = cls.command(
+                    ["docker", "inspect", *identifiers],
+                    timeout=10,
+                    check=False,
+                )
+                try:
+                    records = json.loads(inspected.stdout)
+                except ValueError:
+                    records = []
+                for record in records:
+                    state = record.get("State", {})
+                    checks = state.get("Health", {})
+                    health.append(
+                        {
+                            "name": record.get("Name"),
+                            "status": state.get("Status"),
+                            "exit_code": state.get("ExitCode"),
+                            "health": checks.get("Status"),
+                            "checks": [
+                                {
+                                    "exit_code": check.get("ExitCode"),
+                                    "output": check.get("Output", "")[-1000:],
+                                }
+                                for check in checks.get("Log", [])[-3:]
+                            ],
+                        }
+                    )
+            diagnostic = str(error) + "\n" + logs + "\n" + json.dumps(health)
+            for secret in ("fixture-oidc-client-secret", *(c * 64 for c in "abcdef")):
+                diagnostic = diagnostic.replace(secret, "[fixture-secret-redacted]")
+            raise AssertionError(diagnostic) from None
+
     def test_anonymous_and_oidc_admission_use_challenge_gate_and_durable_quotas(self):
+        self.compose("up", "--detach", "--wait", "antibot", timeout=45)
         self.assertEqual(self.probe("access", "guest")["status"], 200)
         denied = self.probe("session", "guest")
         self.assertEqual(denied["status"], 403)
