@@ -48,6 +48,8 @@ HTTPServer(('0.0.0.0',8000),Handler).serve_forever()
     "explicit isolated Docker opt-in required",
 )
 class PrivateApiTlsRuntimeTests(unittest.TestCase):
+    isolated = False
+
     def endpoint_runner(self, argv, **kwargs):
         kwargs["check"] = False
         result = subprocess.run(argv, **kwargs)
@@ -98,7 +100,9 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             ).stdout
         )
 
-    def start(self, role, *, extra=(), command=None, name=None, project=None):
+    def start(
+        self, role, *, extra=(), command=None, name=None, project=None, network=None
+    ):
         name = name or self.project + "-" + role
         labels = [
             "--label",
@@ -106,6 +110,8 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             "--label",
             "com.docker.compose.service=" + role,
         ]
+        if role == "conversation-api":
+            labels += ["--label", "io.depositar.ai.conversation.version=3"]
         argv = [
             "docker",
             "run",
@@ -117,7 +123,7 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             "--user",
             f"{os.geteuid()}:{os.getegid()}",
             "--network",
-            self.network,
+            network or self.network,
             "--memory",
             "64m",
             "--cpus",
@@ -190,6 +196,7 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.created = []
+        self.extra_networks = []
         self.project = (
             "depositar-ai-release-"
             + uuid.uuid4().hex[:12]
@@ -208,9 +215,8 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
         nginx_image = PublicEntryRuntimeFixture.image(
             "DEPOSITAR_TEST_PUBLIC_TLS_IMAGE", endpoint.NGINX_IMAGE
         )
-        subnet = PublicEntryRuntimeFixture.networks()["website"]["ipam"]["config"][0][
-            "subnet"
-        ]
+        network_specs = PublicEntryRuntimeFixture.networks()
+        subnet = network_specs["website"]["ipam"]["config"][0]["subnet"]
         self.run_command(
             [
                 "docker",
@@ -238,7 +244,10 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
                 self.run_command(
                     ["docker", "rm", "--force", *reversed(self.created)], check=False
                 )
-            self.run_command(["docker", "network", "rm", self.network], check=False)
+            self.run_command(
+                ["docker", "network", "rm", self.network, *self.extra_networks],
+                check=False,
+            )
 
         self.addCleanup(cleanup)
         self.server_names = {
@@ -271,22 +280,47 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
         )
         self.start("web")
         self.start("filtered-embedding")
+        self.release_ids = list(self.created)
         routes = self.root / "routes"
         routes.mkdir(mode=0o700)
         active = routes / "active.conf"
         active.write_text("unchanged test native gateway")
         active.chmod(0o600)
-        self.start(
+        gateway_network = self.network
+        if self.isolated:
+            gateway_network = self.gateway_project + "_website"
+            self.run_command(
+                [
+                    "docker",
+                    "network",
+                    "create",
+                    "--internal",
+                    "--subnet",
+                    network_specs["quota"]["ipam"]["config"][0]["subnet"],
+                    gateway_network,
+                ]
+            )
+            self.extra_networks.append(gateway_network)
+        self.gateway = self.start(
             "web-nginx",
             project=self.gateway_project,
+            network=gateway_network,
             extra=["--mount", f"type=bind,src={routes},dst=/etc/nginx/routes,readonly"],
         )
+        self.gateway_before = self.inspect(self.gateway)
         release = {
             "name": self.project,
-            "networks": {"website": {"name": self.network}},
+            "networks": {
+                "website": {
+                    "name": self.network,
+                    "internal": True,
+                    "attachable": False,
+                }
+            },
             "services": {
                 "conversation-api": {
                     "image": self.python_image,
+                    "networks": ["website"],
                     "volumes": [
                         {
                             "type": "bind",
@@ -295,7 +329,12 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
                             "read_only": True,
                         }
                     ],
-                }
+                },
+                "web": {"image": self.python_image, "networks": ["website"]},
+                "filtered-embedding": {
+                    "image": self.python_image,
+                    "networks": ["website"],
+                },
             },
         }
         release_path = self.root / "release.json"
@@ -316,6 +355,8 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             "inner_certificate_file": str(self.root / "inner.crt"),
             "inner_key_file": str(self.root / "inner.key"),
         }
+        if self.isolated:
+            self.config.update(schema_version=2, backend_mode="isolated-release")
         config_path = self.root / "endpoint.json"
         config_path.write_text(json.dumps(self.config))
         config_path.chmod(0o600)
@@ -326,9 +367,15 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
         self.addCleanup(self.policy.stop)
         for _ in range(20):
             health = self.run_command(
-                ["docker", "inspect", "--format", "{{.State.Health.Status}}", self.api]
-            ).stdout.strip()
-            if health == "healthy":
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.State.Health.Status}}",
+                    *self.release_ids,
+                ]
+            ).stdout.splitlines()
+            if health == ["healthy"] * 3:
                 break
             time.sleep(0.25)
         endpoint.prepare(config_path, self.output, project=self.endpoint_project)
@@ -400,8 +447,15 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             self.request("GET", "/v1/version", context=ssl.create_default_context())
         self.assertEqual(self.before, self.inspect(self.api))
         self.assertEqual(
-            endpoint.check(self.plan_path)["backend"]["peer_ids"], sorted(self.created)
+            endpoint.check(self.plan_path)["backend"]["peer_ids"],
+            sorted(self.release_ids if self.isolated else self.created),
         )
+        if self.isolated:
+            binding = endpoint.check(self.plan_path)
+            self.assertEqual(binding["schema_version"], 2)
+            self.assertEqual(binding["backend"]["backend_mode"], "isolated-release")
+            self.assertNotIn("active_route", binding["backend"])
+            self.assertEqual(self.gateway_before, self.inspect(self.gateway))
         calls = json.loads(self.request("GET", "/v1/version")[1])["calls"]
         self.assertEqual(calls, 1)
         endpoint.operate("stop", self.plan_path, runner=self.endpoint_runner)
@@ -461,3 +515,10 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             endpoint.check(self.plan_path)
         endpoint.operate("stop", self.plan_path)
+        self.assertEqual(self.gateway_before, self.inspect(self.gateway))
+
+
+class IsolatedReleaseTlsRuntimeTests(PrivateApiTlsRuntimeTests):
+    """A second, unchanged gateway stays on its own bridge throughout the test."""
+
+    isolated = True

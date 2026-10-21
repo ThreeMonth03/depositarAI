@@ -39,10 +39,17 @@ CONFIG_FIELDS = frozenset(TLS_FIELDS) | {
     "outer_server_name",
     "inner_server_name",
 }
+ISOLATED_ROLES = frozenset(("web", "conversation-api", "filtered-embedding"))
 DETAIL_FORMAT = (
-    '{"Id":{{json .Id}},"Pid":{{json .State.Pid}},"StartedAt":{{json .State.StartedAt}},'
+    '{"Id":{{json .Id}},"Image":{{json .Image}},'
+    '"Pid":{{json .State.Pid}},"StartedAt":{{json .State.StartedAt}},'
     '"SandboxID":{{json .NetworkSettings.SandboxID}},"Labels":{{json .Config.Labels}},'
-    '"Networks":{{json .NetworkSettings.Networks}},"Mounts":{{json .Mounts}}}'
+    '"Networks":{{json .NetworkSettings.Networks}},"Mounts":{{json .Mounts}},'
+    '"State":{"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},'
+    '"Restarting":{{json .State.Restarting}},"Dead":{{json .State.Dead}},'
+    '"Health":{{if .State.Health}}{"Status":{{json .State.Health.Status}}}{{else}}null{{end}}},'
+    '"Ports":{{json .NetworkSettings.Ports}},'
+    '"PortBindings":{{json .HostConfig.PortBindings}}}'
 )
 
 
@@ -80,8 +87,14 @@ def _server_name(value):
 
 
 def validate_config(value):
-    _require(type(value) is dict and set(value) == CONFIG_FIELDS)
-    _require(type(value["schema_version"]) is int and value["schema_version"] == 1)
+    _require(type(value) is dict)
+    version = value.get("schema_version")
+    _require(type(version) is int and version in (1, 2))
+    _require(
+        set(value) == CONFIG_FIELDS | ({"backend_mode"} if version == 2 else set())
+    )
+    if version == 2:
+        _require(value["backend_mode"] == "isolated-release")
     _require(
         type(value["api_container_id"]) is str
         and preflight.IDENTIFIER.fullmatch(value["api_container_id"])
@@ -140,6 +153,8 @@ def _one(argv, runner):
 
 
 def _backend(config, runner):
+    if config["schema_version"] == 2:
+        return _isolated_backend(config, runner)
     release = strict_json(_read(config["release_compose"]))
     network_name = release["networks"]["website"]["name"]
     key_mount = next(
@@ -221,6 +236,150 @@ def _backend(config, runner):
         "peer_ids": sorted(members),
         "active_route": route,
         "active_route_sha256": hashlib.sha256(_read(route)).hexdigest(),
+    }
+
+
+def _isolated_peer(row, role, release, network):
+    """Seal a healthy, unpublished CPU peer without granting gateway authority."""
+    service = release["services"][role]
+    planned = service.get("networks")
+    _require(type(planned) in (list, dict) and planned, "backend_changed")
+    expected_networks = {release["networks"][name]["name"] for name in planned}
+    state = row.get("State") or {}
+    ports = row.get("Ports")
+    _require(
+        row.get("Image") == service["image"]
+        and type(service["image"]) is str
+        and preflight.IMAGE.fullmatch(service["image"])
+        and not service.get("ports")
+        and state.get("Running") is True
+        and all(state.get(name) is False for name in ("Paused", "Restarting", "Dead"))
+        and (state.get("Health") or {}).get("Status") == "healthy"
+        and row.get("PortBindings") in (None, {})
+        and (
+            ports is None
+            or type(ports) is dict
+            and all(value in (None, []) for value in ports.values())
+        )
+        and type(row.get("Pid")) is int
+        and row["Pid"] > 0
+        and type(row.get("StartedAt")) is str
+        and re.fullmatch(r"[0-9T:.Z+-]{1,64}", row["StartedAt"])
+        and type(row.get("SandboxID")) is str
+        and preflight.IDENTIFIER.fullmatch(row["SandboxID"])
+        and type(row.get("Networks")) is dict
+        and set(row["Networks"]) == expected_networks
+        and row["Networks"][network["Name"]]["NetworkID"] == network["Id"],
+        "backend_changed",
+    )
+    return {
+        "container_id": row["Id"],
+        "image_id": row["Image"],
+        "pid": row["Pid"],
+        "started_at": row["StartedAt"],
+        "sandbox_id": row["SandboxID"],
+        "networks": row["Networks"],
+    }
+
+
+def _isolated_backend(config, runner):
+    """Explicit schema 2: exactly the three native release services, no gateway."""
+    raw = _read(config["release_compose"])
+    release = strict_json(raw)
+    _require(
+        type(release) is dict
+        and type(release.get("services")) is dict
+        and set(release["services"]) == ISOLATED_ROLES,
+        "peers_changed",
+    )
+    network_name = release["networks"]["website"]["name"]
+    _require(
+        release["networks"]["website"].get("internal") is True
+        and release["networks"]["website"].get("attachable") is False,
+        "backend_changed",
+    )
+    key_mount = next(
+        mount
+        for mount in release["services"]["conversation-api"]["volumes"]
+        if mount["target"] == "/run/secrets/api_key"
+    )
+    bound = {
+        "services": {"public-web": {"volumes": [key_mount]}},
+        "networks": {"existing-release": {"external": True, "name": network_name}},
+    }
+    preflight.verify_private_backend(bound, release, runner=runner)
+    network = _one(
+        [
+            "docker",
+            "network",
+            "inspect",
+            "--format",
+            preflight.NETWORK_FORMAT,
+            network_name,
+        ],
+        runner,
+    )
+    members = network.get("Containers")
+    labels = network.get("Labels") or {}
+    _require(
+        network.get("Name") == network_name
+        and network.get("Driver") == "bridge"
+        and network.get("Scope") == "local"
+        and network.get("Internal") is True
+        and type(network.get("Id")) is str
+        and preflight.IDENTIFIER.fullmatch(network["Id"])
+        and labels.get("com.docker.compose.project") == release["name"]
+        and labels.get("com.docker.compose.network") == "website"
+        and type(members) is dict
+        and len(members) == 3,
+        "peers_changed",
+    )
+    rows = preflight._objects(
+        _output(
+            ["docker", "inspect", "--format", DETAIL_FORMAT, *sorted(members)], runner
+        )
+    )
+    _require(
+        len(rows) == 3
+        and {row["Id"] for row in rows} == set(members)
+        and {
+            (
+                row["Labels"].get("com.docker.compose.project"),
+                row["Labels"].get("com.docker.compose.service"),
+            )
+            for row in rows
+        }
+        == {(release["name"], role) for role in ISOLATED_ROLES},
+        "peers_changed",
+    )
+    peers = {row["Labels"]["com.docker.compose.service"]: row for row in rows}
+    proof = {
+        role: _isolated_peer(row, role, release, network) for role, row in peers.items()
+    }
+    _require(
+        len({row["sandbox_id"] for row in proof.values()}) == 3
+        and len({row["pid"] for row in proof.values()}) == 3,
+        "backend_changed",
+    )
+    api = peers["conversation-api"]
+    _require(api["Id"] == config["api_container_id"], "backend_changed")
+    _require(_read(config["release_compose"]) == raw, "backend_changed")
+    return {
+        "backend_mode": "isolated-release",
+        "release_project": release["name"],
+        "release_compose_sha256": hashlib.sha256(raw).hexdigest(),
+        "api_container_id": api["Id"],
+        "api_image": api["Image"],
+        "api_pid": api["Pid"],
+        "api_started_at": api["StartedAt"],
+        "api_sandbox_id": api["SandboxID"],
+        "website_network": network_name,
+        "website_network_id": network["Id"],
+        "api_address": str(
+            ipaddress.IPv4Address(api["Networks"][network_name]["IPAddress"])
+        ),
+        "peer_ids": sorted(members),
+        "peer_proofs": proof,
     }
 
 
@@ -390,7 +549,7 @@ def prepare(
     compose, assets = render(config, backend, output, project=project)
     assets["compose.json"] = private_io.canonical(compose).decode()
     plan = {
-        "schema_version": 1,
+        "schema_version": config["schema_version"],
         "config": config,
         "backend": backend,
         "material_sha256": material,
@@ -420,11 +579,14 @@ def _read_plan(path):
         and set(plan)
         == {"schema_version", "config", "backend", "material_sha256", "files"}
         and type(plan["schema_version"]) is int
-        and plan["schema_version"] == 1
+        and plan["schema_version"] in (1, 2)
         and type(plan["files"]) is dict
         and set(plan["files"]) == {"inner.conf", "outer.conf", "compose.json"}
     )
     validate_config(plan["config"])
+    _require(plan["schema_version"] == plan["config"]["schema_version"])
+    if plan["schema_version"] == 2:
+        _validate_isolated_binding(plan["backend"])
     _require(plan["backend"]["api_container_id"] == plan["config"]["api_container_id"])
     _require(type(plan["backend"]["api_address"]) is str)
     _require(
@@ -438,6 +600,77 @@ def _read_plan(path):
         )
     )
     return plan
+
+
+def _validate_isolated_binding(backend):
+    """Authenticate schema shape even for stop, which cannot require a live API."""
+    _require(
+        type(backend) is dict
+        and set(backend)
+        == {
+            "backend_mode",
+            "release_project",
+            "release_compose_sha256",
+            "api_container_id",
+            "api_image",
+            "api_pid",
+            "api_started_at",
+            "api_sandbox_id",
+            "website_network",
+            "website_network_id",
+            "api_address",
+            "peer_ids",
+            "peer_proofs",
+        }
+        and backend["backend_mode"] == "isolated-release"
+        and type(backend["release_project"]) is str
+        and preflight.PROJECT.fullmatch(backend["release_project"])
+        and backend["website_network"] == backend["release_project"] + "_website"
+        and type(backend["release_compose_sha256"]) is str
+        and preflight.IDENTIFIER.fullmatch(backend["release_compose_sha256"])
+        and type(backend["website_network_id"]) is str
+        and preflight.IDENTIFIER.fullmatch(backend["website_network_id"])
+        and type(backend["peer_proofs"]) is dict
+        and set(backend["peer_proofs"]) == ISOLATED_ROLES,
+    )
+    for peer in backend["peer_proofs"].values():
+        _require(
+            type(peer) is dict
+            and set(peer)
+            == {
+                "container_id",
+                "image_id",
+                "pid",
+                "started_at",
+                "sandbox_id",
+                "networks",
+            }
+            and type(peer["container_id"]) is str
+            and preflight.IDENTIFIER.fullmatch(peer["container_id"])
+            and type(peer["image_id"]) is str
+            and preflight.IMAGE.fullmatch(peer["image_id"])
+            and type(peer["pid"]) is int
+            and peer["pid"] > 0
+            and type(peer["started_at"]) is str
+            and re.fullmatch(r"[0-9T:.Z+-]{1,64}", peer["started_at"])
+            and type(peer["sandbox_id"]) is str
+            and preflight.IDENTIFIER.fullmatch(peer["sandbox_id"])
+            and type(peer["networks"]) is dict
+            and backend["website_network"] in peer["networks"]
+            and peer["networks"][backend["website_network"]].get("NetworkID")
+            == backend["website_network_id"],
+        )
+    api = backend["peer_proofs"]["conversation-api"]
+    _require(
+        backend["api_container_id"] == api["container_id"]
+        and backend["api_image"] == api["image_id"]
+        and backend["api_pid"] == api["pid"]
+        and backend["api_started_at"] == api["started_at"]
+        and backend["api_sandbox_id"] == api["sandbox_id"]
+        and backend["peer_ids"]
+        == sorted(peer["container_id"] for peer in backend["peer_proofs"].values())
+        and len(set(backend["peer_ids"])) == 3,
+    )
 
 
 def check(plan_path, *, runner=subprocess.run):
