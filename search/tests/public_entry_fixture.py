@@ -4,6 +4,7 @@ import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
+import gzip
 import hashlib
 from html import unescape
 from http.cookies import SimpleCookie
@@ -331,19 +332,32 @@ def probe(action, account, directory, payload=None):
 
         def fetch(url):
             try:
-                return opener.open(url, timeout=10)
+                return opener.open(
+                    Request(url, headers={"Accept-Encoding": "gzip"}), timeout=10
+                )
             except HTTPError as error:
                 return error
 
         with fetch(ORIGIN + "/verify") as response:
-            text = response.read(128 * 1024).decode("utf-8")
+            if response.status != 403:
+                raise ValueError("fixture expected fresh Anubis challenge")
+            raw = response.read(128 * 1024)
+            if response.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+            text = raw.decode("utf-8")
         match = re.search(
             r'<script[^>]*id="anubis_challenge"[^>]*>(.*?)</script>', text, re.S
         )
         if not match:
             raise ValueError("fixture expected bounded Anubis challenge")
         challenge = json.loads(unescape(match[1]))
-        data, difficulty = challenge["challenge"], challenge["rules"]["difficulty"]
+        if (
+            type(challenge) is not dict
+            or type(challenge.get("challenge")) is not dict
+            or type(challenge.get("rules")) is not dict
+        ):
+            raise ValueError("fixture expected bounded Anubis challenge")
+        data, difficulty = challenge["challenge"], challenge["rules"].get("difficulty")
         if type(difficulty) is not int or not 1 <= difficulty <= 4:
             raise ValueError("fixture challenge difficulty exceeded")
         for nonce in range(1000000):

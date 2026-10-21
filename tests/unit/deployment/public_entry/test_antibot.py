@@ -1,17 +1,23 @@
 """Policy and runtime boundary checks for the optional anonymous browser gate."""
 
+from contextlib import redirect_stdout
+import gzip
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
+from urllib.error import HTTPError
 
 from search.operations.deployment.public_entry.antibot import (
     ANUBIS_IMAGE,
     NETWORK,
     render_antibot,
 )
+from search.tests import public_entry_fixture
 
 
 class AntibotTests(unittest.TestCase):
@@ -137,6 +143,103 @@ class AntibotTests(unittest.TestCase):
         self.config.antibot_signing_key_file = self.config.state_root / "signing-key"
         with self.assertRaisesRegex(ValueError, "operator_invalid"):
             render_antibot(self.config, uid=0, gid=os.getegid())
+
+
+class AntibotProbeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="depositar-antibot-probe-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.jar = mock.Mock(filename=str(self.root / "browser.cookies"))
+        self.opener = mock.Mock()
+        self.output = io.StringIO()
+        self.challenge = {
+            "challenge": {"id": "fixture-challenge", "randomData": "fixture"},
+            "rules": {"difficulty": 1},
+        }
+
+    def verify(self, challenge, *, status=403, compressed=False):
+        raw = (
+            '<html><script id="anubis_challenge">'
+            + json.dumps(challenge)
+            + "</script></html>"
+        ).encode()
+        headers = {"Content-Encoding": "gzip"} if compressed else {}
+        initial = HTTPError(
+            public_entry_fixture.ORIGIN + "/verify",
+            status,
+            "fixture",
+            headers,
+            io.BytesIO(gzip.compress(raw) if compressed else raw),
+        )
+        completed = io.BytesIO(b"fixture home")
+        completed.status = 200
+        self.opener.open.side_effect = [initial, completed]
+        with (
+            mock.patch.object(
+                public_entry_fixture, "MozillaCookieJar", return_value=self.jar
+            ),
+            mock.patch.object(public_entry_fixture.ssl, "create_default_context"),
+            mock.patch.object(
+                public_entry_fixture, "build_opener", return_value=self.opener
+            ),
+            redirect_stdout(self.output),
+        ):
+            public_entry_fixture.probe("verify", "fixture", self.root)
+
+    def test_gzip_challenge_is_requested_decoded_and_solved(self):
+        self.verify(self.challenge, compressed=True)
+        self.assertEqual(json.loads(self.output.getvalue()), {"status": 200})
+        requests = [call.args[0] for call in self.opener.open.call_args_list]
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertEqual(request.get_header("Accept-encoding"), "gzip")
+        self.assertEqual(requests[0].full_url, public_entry_fixture.ORIGIN + "/verify")
+        self.assertIn("/pass-challenge?", requests[1].full_url)
+        self.jar.save.assert_called_once_with(ignore_discard=True, ignore_expires=True)
+
+    def test_nonchallenge_status_never_becomes_verified_success(self):
+        for status in (200, 429, 500, 503):
+            with (
+                self.subTest(status=status),
+                self.assertRaisesRegex(
+                    ValueError, "fixture expected fresh Anubis challenge"
+                ),
+            ):
+                self.verify(self.challenge, status=status)
+        self.jar.save.assert_not_called()
+        self.assertEqual(self.output.getvalue(), "")
+
+    def test_null_or_malformed_challenge_html_is_rejected(self):
+        for challenge in (
+            None,
+            [],
+            {},
+            {**self.challenge, "challenge": None},
+            {**self.challenge, "rules": None},
+            {**self.challenge, "rules": []},
+        ):
+            with (
+                self.subTest(challenge=challenge),
+                self.assertRaisesRegex(
+                    ValueError, "fixture expected bounded Anubis challenge"
+                ),
+            ):
+                self.verify(challenge, compressed=True)
+        self.jar.save.assert_not_called()
+        self.assertEqual(self.output.getvalue(), "")
+
+    def test_invalid_difficulty_is_rejected_before_solving(self):
+        for difficulty in (None, True, "2", 0, 5):
+            with (
+                self.subTest(difficulty=difficulty),
+                self.assertRaisesRegex(
+                    ValueError, "fixture challenge difficulty exceeded"
+                ),
+            ):
+                self.verify({**self.challenge, "rules": {"difficulty": difficulty}})
+        self.jar.save.assert_not_called()
+        self.assertEqual(self.output.getvalue(), "")
 
 
 if __name__ == "__main__":

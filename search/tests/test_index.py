@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from search.api.retrieval import index
 from search.api.retrieval.results import ValidatedSearch
+from search.catalog.build import builder
 from search.planning import index_filters
-from search.tests import catalog_fixtures
 from search.tests.fixtures import IDS, CONDITIONS, report
 from search.tests.fixtures import condition_document
 
@@ -212,7 +212,6 @@ class IndexBoundaryTests(unittest.TestCase):
             self.assertEqual(send.call_count, 1)
 
     def test_cards_use_sealed_coverage_without_index_or_query_date_inference(self):
-        original_record = catalog_fixtures._record
         coverage = (
             ("2020", "2025", "complete"),
             ("2024-2", "2024-02-29", "complete"),
@@ -221,20 +220,38 @@ class IndexBoundaryTests(unittest.TestCase):
             ("2024-02-30", "2024", "invalid"),
         )
 
-        def record(number, name):
-            start, end, _ = coverage[number - 1]
-            return {
-                **original_record(number, name),
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        source = base / "datasets.jsonl"
+        records = [
+            {
+                "id": IDS[number],
+                "name": f"coverage-{number}",
+                "private": False,
+                "state": "active",
+                "type": "dataset",
                 "title": "2030 年氣候資料",
                 "start_time": start,
                 "end_time": end,
                 "created_time": "2010",
+                "metadata_created": "2026-01-01T00:00:00",
+                "metadata_modified": "2026-01-02T00:00:00",
             }
-
-        with patch.object(catalog_fixtures, "_record", side_effect=record):
-            built = catalog_fixtures.BuiltBundle(count=len(coverage))
-        self.addCleanup(built.close)
-        bundle = built.bundle
+            for number, (start, end, _status) in enumerate(coverage)
+        ]
+        source.write_text("".join(json.dumps(record) + "\n" for record in records))
+        source.chmod(0o600)
+        output = base / "bundles"
+        output.mkdir(mode=0o700)
+        built = builder.build_bundle(source, output)
+        bundle_path = Path(built["bundle_path"])
+        for artifact in bundle_path.iterdir():
+            self.addCleanup(artifact.chmod, 0o600)
+        self.addCleanup(bundle_path.chmod, 0o700)
+        bundle = index.CatalogBundle.load(
+            bundle_path, expected_manifest_sha256=built["manifest_sha256"]
+        )
         by_id = {row["dataset_id"]: row for row in bundle.documents}
         self.assertTrue(all("temporal_coverage" not in row for row in by_id.values()))
         fused = [
@@ -251,15 +268,15 @@ class IndexBoundaryTests(unittest.TestCase):
             result = index.search(
                 {"query": "找 2040 年氣候", "top_k": len(coverage), "conditions": {}},
                 SimpleNamespace(
-                    bundle_path=built.path,
-                    manifest_sha256=built.manifest_sha256,
+                    bundle_path=bundle_path,
+                    manifest_sha256=built["manifest_sha256"],
                 ),
             )
         cards = ValidatedSearch.from_report(
             "找 2040 年氣候",
             result,
             conditions={},
-            manifest_sha256=built.manifest_sha256,
+            manifest_sha256=built["manifest_sha256"],
         ).cards()
         for card, (start, end, status) in zip(cards, coverage):
             self.assertEqual(
