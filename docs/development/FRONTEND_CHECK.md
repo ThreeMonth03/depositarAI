@@ -16,6 +16,17 @@ python3 scripts/check_search_web.py --config /absolute/private/frontend/check.js
 `.Image` 與 image `.Id`，不是另取 config digest。`api_revision` 與
 `catalog_manifest_sha256` 則來自已驗證的私有 backend／catalog receipt。
 
+新版配對部署使用範例中的 `schema_version: 2`，另以
+`conversation_contract_version` 明確指定預定受檢的 wire 契約版本，範例使用第 `3` 版。
+此值只接受 1–32 的整數，拒絕布林值、字串與缺少欄位。工具會同時核對實際
+immutable BFF image 的 `io.depositar.ai.conversation.version` label，以及通過服務 key
+驗證的 API `/v1/version` 回應；API 欄位也必須是完全相同的整數。
+只核對 revision、manifest 或 `/healthz` 不能代替這項配對檢查。
+
+schema 1 保留原本的欄位、legacy profile 檢查與成功收據格式，不推斷 wire 版本，
+也不宣稱已驗證 API／BFF 契約相容。舊的固定部署與監控設定可以繼續使用原檔；
+升級時應依配對部署證據另建 schema 2 設定，不改寫舊收據來接受新版。
+
 工具的 checkout 可以比現役前端更新。Compose 插值明確使用指定的
 `frontend_revision`，不要求重建或搬動原部署目錄，也不把舊容器的 Compose 檔案路徑
 要求為工具 checkout 的位置。既有 env file、API key 與 CA mount 路徑須與現役配置相符。
@@ -26,6 +37,8 @@ container ID、指定 image ID／revision、非 root 唯讀 runtime、環境、m
 資源，再在現役 BFF 內使用 Python stdlib 與既有 `search.secrets.read_secret` 驗證
 `WEB_UPSTREAM` 的 CA／hostname：匿名 `GET /v1/version` 須回 401，服務 key 驗證後
 同一路徑須回 200，且 API revision／catalog manifest 必須吻合。最後重查 runtime。
+schema 2 也會在前後兩次 runtime 檢查核對 BFF 的契約 label；成功收據使用
+`schema_version: 2` 並包含已驗證的 `conversation_contract_version`。
 
 不接受重新導向、不採 proxy 或 `SSL_CERT_*` 環境覆寫，HTTP 回應與執行時間均有限制。
 API key 只在 BFF 內讀取，沒有 host key read、secret CLI argument、header／body 輸出。
