@@ -146,6 +146,12 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         root = Path(cls.temporary.name)
         root.chmod(0o700)
+        # Persistence scenarios must stay inside one epoch-aligned window.
+        # Boundary resets are covered separately by the deterministic Lua test.
+        now = int(time.time())
+        cls.quota_window_seconds = next(
+            seconds for seconds in range(3600, 86401) if seconds - now % seconds >= 900
+        )
         cls.project = "depositar-public-test-" + uuid.uuid4().hex[:12]
         cls.compose_file = root / "runtime-compose.json"
         uid, gid = os.geteuid(), os.getegid()
@@ -239,7 +245,8 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                     if cls.mixed
                     else {}
                 ),
-                "quota_window_seconds": 3600,
+                "quota_window_seconds": cls.quota_window_seconds,
+                "session_window_seconds": cls.quota_window_seconds,
                 **(
                     {
                         "antibot_enabled": True,
@@ -509,7 +516,10 @@ class PublicEntryRuntimeTests(PublicEntryRuntimeFixture):
             access = self.probe("access", account)["value"]
             self.assertEqual(access["mode"], "login_required")
             self.assertEqual(access["principal"]["kind"], "user")
-            self.assertEqual(access["limits"], {"turns": 2, "window_seconds": 3600})
+            self.assertEqual(
+                access["limits"],
+                {"turns": 2, "window_seconds": self.quota_window_seconds},
+            )
             self.assertEqual(self.probe("session", account)["status"], 200)
         # Even a stolen search token and correct internal headers cannot turn
         # an anonymous alternate/encoded route into an authenticated request.
@@ -764,7 +774,9 @@ class PublicEntryMixedAccessTests(PublicEntryRuntimeFixture):
         access = first["value"]
         self.assertEqual(access["mode"], "mixed")
         self.assertEqual(access["principal"]["kind"], "guest")
-        self.assertEqual(access["limits"], {"turns": 1, "window_seconds": 3600})
+        self.assertEqual(
+            access["limits"], {"turns": 1, "window_seconds": self.quota_window_seconds}
+        )
         self.assertEqual(self.probe("access", "visitor-one")["value"], access)
         flags = next(
             c for c in first["cookies"] if c["name"] == "__Host-depositar-guest"

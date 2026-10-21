@@ -45,6 +45,19 @@ assert(headers["x-id-token"] == nil and headers["cookie"] == nil)
 assert(tonumber(headers["x-depositar-quota-ttl"]) >= 1)
 assert(tonumber(headers["x-depositar-quota-ttl"]) <= 86400)
 local alice = headers["x-depositar-subject"]
+-- Every tier uses the same epoch and expires at the next aligned boundary.
+for _, case in ipairs({
+    {86399, "0", "1", "23", "1"},
+    {86400, "1", "86400", "24", "3600"},
+}) do
+    ngx.time = function() return case[1] end
+    assert(call(claims({iss = options.issuer, aud = options.client_id, sub = "alice"})) == nil)
+    assert(headers["x-depositar-quota-period"] == case[2])
+    assert(headers["x-depositar-quota-ttl"] == case[3])
+    assert(headers["x-depositar-session-period"] == case[4])
+    assert(headers["x-depositar-session-ttl"] == case[5])
+end
+ngx.time = real_ngx.time
 assert(call(claims({iss = options.issuer, aud = {options.client_id, "other"},
     azp = options.client_id, sub = "alice"})) == nil)
 assert(headers["x-depositar-subject"] == alice)
