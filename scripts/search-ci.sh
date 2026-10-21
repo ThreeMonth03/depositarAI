@@ -78,6 +78,7 @@ python3 -m unittest -v \
   tests.unit.operations.test_doctor \
   tests.unit.operations.test_cli \
   tests.unit.operations.test_lifecycle \
+  tests.unit.operations.test_recovery_boundaries \
   tests.unit.operations.test_private_up \
   tests.unit.operations.test_activation_outcome \
   tests.unit.operations.test_status \

@@ -862,10 +862,10 @@ def _validate_vector_outcome(result, candidate, source_revision):
         raise ValueError("product_stage_vector_outcome_unverified")
 
 
-def _import_staged(store, candidate, source_revision, *, catalog_revision=None):
+def _inventory_staged(store, candidate, source_revision, *, catalog_revision=None):
     """A local skip hint, never a substitute for actual vector/runtime proofs."""
     return any(
-        receipt["operation"] == "import-index"
+        receipt["operation"] in {"import-index", "reconcile-index"}
         and receipt["status"] == "staged"
         and receipt["source_revision"] in {source_revision, catalog_revision}
         and all(receipt.get(key) == value for key, value in _outcome(candidate).items())
@@ -905,7 +905,7 @@ def stage_catalog(
     images before startup; completed image stages are freshly reverified. An
     older granular runtime without image-stage records only skips prestaging:
     start still proves its actual runtime, without fabricating image receipts.
-    Matching import receipts skip another import; vectors still revalidate
+    Matching inventory receipts skip another import; vectors still revalidate
     private runtime, helper/admin evidence, full inventory and the journal.
     """
     _validate_stage_budget(max_passes, wall_seconds)
@@ -998,7 +998,7 @@ def _stage_catalog_locked(
         runner=runner,
     )
     candidate = _candidate(store)
-    import_skipped = _import_staged(
+    import_skipped = _inventory_staged(
         store, candidate, source_revision, catalog_revision=plan["revision"]
     )
     if not import_skipped:

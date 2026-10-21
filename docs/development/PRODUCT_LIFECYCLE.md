@@ -111,7 +111,9 @@ python3 scripts/depositarai.py --config "$product_config" up-private
 它可重用乾淨的 catalog staging／checkpoint，但不接管細項 CLI 已準備的應用映像、
 API key、推論、query 或 release；這些中途流程須以原細項命令診斷及完成。
 向量回傳 checkpoint 時，以退出碼2及 `staging_only=true` 結束，不進入應用映像
-建置、GPU 或網站階段；保持同一來源、設定及資料後可重跑。
+建置、GPU 或網站階段；以相同來源、設定與 candidate 執行 `build-vectors` 可直接續跑。
+重新執行 `up-private` 或 `stage-catalog` 會先同步 metadata；如何固定輸入與繼續後續
+步驟，見[故障診斷與人工停用](#故障診斷與人工停用)。
 這不是從零安裝主機軟體／模型、完整產品 update／rollback 或公眾 OIDC 入口工具。
 
 參數與 `stage-catalog` 相同：`--snapshot`、`--force`、`--max-passes`、
@@ -191,6 +193,8 @@ metadata bundle、manifest、document count 與資料產生來源相容時，`st
 `source_revision`。詳細相容範圍見 [catalog cache](CATALOG_CACHE.md)。
 映像、security material、Compose、runtime、import 與 vector journals 仍會重新核對；
 完成收據不是跳過實際 authority 檢查的理由。
+相同來源與 bundle 的成功 import 或 reconcile 收據可避免重送 import；
+後續向量步驟仍會核對 runtime、完整 inventory 與 journal。
 只有相符的成功 import 收據才能跳過重送；已完成 vectors 也須核對 runtime、
 inventory、helper cleanup 與完整 journal，才回報本次沒有新增 pass。
 
@@ -368,15 +372,83 @@ CLI 成功結果以 JSON 寫入 stdout；被捕捉的操作錯誤以安全摘要
 | `1`、`failed`／`recovery_required` | 停止後續操作，保留 stderr、state、intent 與 helper/runtime 證據，先查明原因 |
 | `1`、`deployment_failed` | 公眾入口部署失敗，未自動回退；確認入口已停止，保留 pending，依[公眾入口指南](PUBLIC_ACCESS.md#更新與人工回退)人工回退或重試首次啟動 |
 
+### 故障診斷與人工停用
+
+先停止提交後續操作，以原設定查詢本地證據：
+
+```sh
+python3 scripts/depositarai.py --config "$product_config" status
+```
+
+此命令不呼叫 Docker、GPU 或線上服務。保留失敗命令的 stderr、Git revision、
+設定與 state 目錄；核對 `operations` 的命令、來源及 `status`，再比對該步驟的
+native intent、完成紀錄、容器與網路身分。設定、憑證及原始 Docker 輸出留在私有
+位置，不貼入公開 issue。`doctor` 會接觸 Docker、GPU 與模型，不是這個本地檢查的替代。
+
+| 本地證據 | 可以做的下一步 |
+|---|---|
+| 在建立操作收據與 native intent 前失敗 | 修正參數或前置條件後，再執行原命令。 |
+| 已捕捉的 `failed` 操作，沒有 `started` 收據 | 依該命令的 native 證據判斷；只有符合原控制器前置條件的分段命令能繼續，不能直接重跑整套啟用。 |
+| 任何 `started` 操作收據 | 同一 state 的產品變更命令都會拒絕，包含 `reconcile-index`；目前沒有解決這類收據的 CLI。保留原狀，安排人工診斷。 |
+| inference、release 或 gateway 有不完整的 native intent／完成紀錄 | 原控制器不接管或重建；目前沒有 partial start／activation 的修復入口。 |
+| 完成紀錄仍在，但容器已停止或 process 已重新啟動 | `start-inference`、`start-release` 的重用只核對原本仍在執行的 process，不會重啟或重新封存。 |
+| activation 失敗或 pointer 寫入結果不確定 | 一起核對 gateway intent、路由與實際容器；missing pointer 或 `active_changed=false` 仍可能已有路由流量。 |
+
+`failed` 是已捕捉的失敗，`started` 則可能是中斷或持久化結果不確定。成功執行後續
+命令不會刪除歷史失敗；`status` 仍可能回報 `operation_failed`，`up-private` 也仍會
+因歷史 `failed`／`started` 拒絕。改用新的 `state_root` 不是服務隔離方式：相同
+bundle／來源仍可能產生相同 Docker project，不能藉此繞過既有 runtime。
+
+#### 向量 checkpoint
+
+正常 checkpoint 的 journal 與 helper cleanup 完整時，保持相同設定、來源與
+candidate，直接續跑向量，不重新同步資料：
+
+```sh
+python3 scripts/depositarai.py --config "$product_config" build-vectors
+```
+
+完成後依原分段流程繼續應用準備與啟用。若仍是乾淨的 catalog-only state，也可
+再使用 `up-private`，但它與 `stage-catalog` 都會先執行 sync。範本的
+`cache_ttl_seconds=0` 不重用 TTL cache；重新下載可能改變 candidate，因此若要
+重新 staging 同一輸入，須使用同一份已保留且身分相符的 `--snapshot`，並核對結果。
+Snapshot 仍會重新建置 metadata，不能替代 sealed bundle 或跳過 journal 檢查。
+
+#### 已捕捉的匯入失敗
+
+只有原匯入已被捕捉為 `failed`、沒有任何 product `started` 收據，且原設定、來源、
+candidate、catalog runtime 與 native journal 可正常核對時，才使用明確的 inventory
+核對入口。先確認沒有殘留的執行中 helper，再執行：
+
+```sh
+python3 scripts/depositarai.py --config "$product_config" reconcile-index
+```
+
+它可能建立有界的唯讀 helper 與本地收據，不重新匯入 metadata；只有完整且一致的
+inventory 才接受為 `status=completed`、`result.status=reconciled-active`。
+確認此結果後，才執行前述 `build-vectors`。若 inventory 不完整、helper 未清理或
+紀錄不符，維持停止狀態；這個命令不修復部分匯入，也不解決 product `started`
+收據。成功 reconcile 保留歷史失敗，不能據此改用 `up-private`。
+
+#### 人工維護停用
+
+目前沒有整套產品 stop／restart／reseal 命令。確實需要先停服務時，由維護者先
+確認沒有進行中的產品或 catalog 變更，再核對 persisted Compose、exact project、
+容器 ID、映像與 mounts 都屬於這次部署，才使用該 project 的原生 Compose `stop`。
+依 gateway、CPU release、inference 的順序停用，可保留 catalog、容器、網路及資料。
+獨立前端的 `scripts/search-web.sh down` 不管理這些產品 project。
+
+這是隔離故障的維護動作，尚不是可逆的產品停啟流程。完成證據綁定 process 的
+PID／StartedAt；手動重新啟動，即使保留相同容器 ID，也不會恢復原本的 runtime
+證據。恢復服務需另外安排重新驗收與 authority 交接，不能刪除 intent、改寫收據
+或直接執行 Compose up／start 來繞過檢查。
+
 產品操作採 nonblocking lock；同一 state 正在操作時，不另開另一個命令競爭。
 product 操作收據最多 128 筆、catalog slots 最多 16 個、向量歷史最多 128 輪，
 沒有自動 prune；達上限時先規劃封存與明確退役，不能手動刪 lock／receipt 或
 `docker rm -f` 來跳過狀態檢查。
 SIGKILL 可留下 started intent；失敗收據不會改寫成成功，也不會套用其他 commit 的完成紀錄。
 
-import 超時或結果不確定時先確認 helper ownership；適用時顯式執行 `reconcile-index`
-檢查完整 inventory，不盲目重送 import。`reconcile-index` 不是自動 recovery，
-也不代表 vectors、query 權限或 active release 已完成。
 模型／來源／mount／network identity 不符時回到對應準備步驟調查，不能改 digest 或
 放寬 peer 檢查；部分 start、build、query 或 activation 狀態不應直接重試。
 

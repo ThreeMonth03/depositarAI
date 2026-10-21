@@ -36,8 +36,15 @@ secret、GPU 或 published port。容器的 profile、退出、移除及完成�
 舊 schema 1 須先安排明確交接，見[GPU 身分](PRIVATE_RUNTIME.md#gpu-資源與-runtime-身分)。
 
 Wrapper 的 started／failed 收據不能證明 pointer 尚未寫入。中斷時須一起檢查
-sealed pointer、activation intent 及 checkpoints；不要刪掉 state 後直接重跑。
-只有正常返回的成功操作才回報 `active_changed=True`。
+sealed pointer、activation intent 及 checkpoints。指標已寫入後才發生持久化錯誤時，
+CLI 仍保留 `active_changed=true`；已嘗試寫入但無法確定結果時則為 `null`，
+兩者都回報需要診斷，不自動重跑啟用。
+
+路由 reload 早於 HTTP 驗收及 pointer 發布；missing pointer 或
+`active_changed=false` 仍可能已有網站流量。須核對 `gateway/activation` 的
+intent、created／routed／complete 紀錄、路由及實際容器，不能只靠本地 pointer
+判斷是否停服。任何 activation partial 狀態或既有 pointer 都會拒絕再次啟用；
+人工停用與目前支援的恢復邊界見[故障診斷與人工停用](PRODUCT_LIFECYCLE.md#故障診斷與人工停用)。
 
 這個命令只處理首次同主機私有 gateway 啟用，不提供完整產品 update、rollback、
 deactivation 或零停機保證。拆機 CPU 前端見[網站設定](../SEARCH_WEBSITE.md)，

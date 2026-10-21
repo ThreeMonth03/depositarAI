@@ -47,7 +47,10 @@ python3 scripts/depositarai.py --config "$product_config" up-private
 既有網站的更新、回退與公眾 OIDC 入口須另行管理。
 
 若輸出 `status=checkpoint` 且退出碼為2，表示向量預算用完；本輪不繼續建置應用
-映像、啟動 GPU 或啟用網站。保持同一來源、設定與資料，重新執行同一命令續跑。
+映像、啟動 GPU 或啟用網站。保持同一來源、設定與 candidate，以 `build-vectors`
+直接續跑，完成後依分段流程繼續。重新執行 `up-private` 會先同步 metadata，
+範本的 TTL 為0，可能下載新的資料；要重新 staging 同一輸入，使用原本已保留且
+身分相符的 `--snapshot`。詳見下方的故障處理。
 先前只完成資料準備而尚未啟用網站時，相容且完整的 catalog 可核對後重用，
 不必重建向量。
 
@@ -128,13 +131,17 @@ python3 scripts/depositarai.py restore-product \
 
 ## 失敗時先看什麼
 
-| 情況 | 處理方式 |
-|---|---|
-| `doctor` 回報 `blocked` | 依檢查項修正 Docker、GPU、模型或儲存條件，再檢查一次 |
-| `up-private`／`stage-catalog` 回報 `checkpoint` | 保持同一來源、設定與資料續跑；此時尚未啟用網站 |
-| `failed`、`recovery_required` 或不確定的中斷 | 停止後續步驟，保留錯誤與 state 目錄，先查明失敗原因；不要刪除狀態後重試 |
-| 來源變更或目錄／映像不符 | 回到準備流程核對版本；不要手動改寫完成紀錄或套用其他版本的結果 |
-| 網頁無法連線 | 確認 activation 已完成、SSH tunnel 仍連線，以及本機18083未被占用 |
+1. 停止提交後續變更，保留 stderr、使用的 Git revision、私有設定與 state。
+2. 先執行下列本地查詢；它不呼叫 Docker、GPU 或線上服務。
+
+   ```sh
+   python3 scripts/depositarai.py --config "$product_config" status
+   ```
+
+3. 核對 `operations` 與 `recovery_reasons`。有 `started` 收據時，同一 state 的產品
+   變更命令都會拒絕，包含 `reconcile-index`；已捕捉的 `failed` 則須依各步驟的
+   native 證據判斷。先依[故障診斷與人工停用](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/PRODUCT_LIFECYCLE.md#故障診斷與人工停用)
+   選擇 checkpoint 續跑、匯入 inventory 核對或人工診斷，不刪狀態後重試。
 
 `status` 區分 catalog 準備（`staged`）、部分應用準備（`partially_prepared`）、
 本地啟用已記錄（`active_recorded`）及需要診斷的失敗或中斷（`recovery_required`）。
@@ -143,7 +150,12 @@ python3 scripts/depositarai.py restore-product \
 
 若啟用已發布指標，之後卻無法補寫完成收據，錯誤會保留 `active_changed=true`
 並要求恢復診斷；若無法確定指標是否發布，則為 `active_changed=null`。兩種情況都
-先保留 state、檢查 `status` 與原始錯誤，不要把錯誤當成「未變更」而直接重跑。
+須核對實際路由；missing pointer 或 `active_changed=false` 也不表示沒有流量。
+
+已停止或重新啟動的容器沒有受支援的產品 restart／reseal 流程。需要隔離故障時，
+先核對 ownership、原 Compose 與沒有並行變更，再依上述參考人工停用；
+`start-inference`、`start-release` 不能當作 restart 命令。成功的後續操作也不會
+清除歷史失敗，`status` 與 `up-private` 仍可能要求診斷。
 
 若 CLI 回報 Docker client 錯誤碼，依
 [錯誤碼說明](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/PRODUCT_LIFECYCLE.md#共用-docker-client-錯誤碼)
