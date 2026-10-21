@@ -428,6 +428,13 @@ class PrivateApiTlsTests(unittest.TestCase):
             endpoint.check(self.output / "plan.json", runner=self.runner)
         self.assertFalse(any("up" in call for call in self.runner.calls))
 
+    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(self):
+        gateway = self.rows.pop()
+        del self.runner.network["Containers"][gateway["Id"]]
+        with self.assertRaises(endpoint.EndpointError):
+            self.prepare()
+        self.assertFalse(self.output.exists())
+
     def test_unknown_existing_runtime_is_not_replaced_or_stopped(self):
         self.prepare()
         self.runner.runtime = [{"Service": "outer", "ID": "9" * 64}]
@@ -467,6 +474,193 @@ class PrivateApiTlsTests(unittest.TestCase):
         ):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 endpoint.validate_config({**self.config, field: bad})
+
+
+class IsolatedReleaseTlsTests(PrivateApiTlsTests):
+    """Run the same TLS safety contract with an explicit, gateway-free backend."""
+
+    def setUp(self):
+        super().setUp()
+        self.config.update(schema_version=2, backend_mode="isolated-release")
+        self.config_path.write_text(json.dumps(self.config))
+        gateway = self.rows.pop()
+        del self.runner.network["Containers"][gateway["Id"]]
+        self.runner.network.update(Attachable=False, Ingress=False)
+        release = json.loads(self.release.read_text())
+        release["networks"]["website"].update(internal=True, attachable=False)
+        for index, row in enumerate(self.rows, 1):
+            role = row["Labels"]["com.docker.compose.service"]
+            row["Pid"] = 1234 + index
+            row["SandboxID"] = str(index + 3) * 64
+            release["services"].setdefault(role, {})["image"] = row["Image"]
+            release["services"][role]["networks"] = ["website"]
+        self.release.write_text(json.dumps(release))
+        original = endpoint._read
+
+        def guarded(path):
+            self.assertNotEqual(Path(path).name, "active.conf")
+            return original(path)
+
+        guard = patch.object(endpoint, "_read", side_effect=guarded)
+        guard.start()
+        self.addCleanup(guard.stop)
+
+    def test_material_and_active_route_changes_refuse(self):
+        # Gateway state is outside this mode's authority, including when present
+        # elsewhere on the host. Certificate material remains authenticated.
+        self.prepare()
+        (self.root / "routes" / "active.conf").write_text("unrelated gateway changed")
+        plan = endpoint.check(self.output / "plan.json", runner=self.runner)
+        self.assertEqual(plan["schema_version"], 2)
+        self.assertEqual(plan["backend"]["backend_mode"], "isolated-release")
+        self.assertNotIn("active_route", plan["backend"])
+        self.assertNotIn("active_route_sha256", plan["backend"])
+        (self.root / "outer.crt").write_bytes(b"changed certificate")
+        with self.assertRaises(ValueError):
+            endpoint.check(self.output / "plan.json", runner=self.runner)
+
+    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(self):
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    key: value
+                    for key, value in self.config.items()
+                    if key != "backend_mode"
+                }
+                | {"schema_version": 1}
+            )
+        )
+        with self.assertRaises(endpoint.EndpointError):
+            self.prepare()
+        self.assertFalse(self.output.exists())
+
+    def test_schema_and_mode_are_explicit_and_cannot_be_mixed(self):
+        for change in (
+            {"schema_version": 1},
+            {"schema_version": True},
+            {"schema_version": 3},
+            {"backend_mode": None},
+            {"backend_mode": "gateway"},
+        ):
+            with self.subTest(change=change), self.assertRaises(endpoint.EndpointError):
+                endpoint.validate_config({**self.config, **change})
+        missing = dict(self.config)
+        del missing["backend_mode"]
+        with self.assertRaises(endpoint.EndpointError):
+            endpoint.validate_config(missing)
+
+    def test_complete_release_bytes_are_bound_even_for_unrelated_fields(self):
+        self.prepare()
+        original = self.release.read_bytes()
+        for changed in (
+            original + b"\n",
+            json.dumps(json.loads(original) | {"unrelated": "changed"}).encode(),
+        ):
+            self.release.write_bytes(changed)
+            with self.subTest(changed=changed[-30:]), self.assertRaises(ValueError):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+        self.release.write_bytes(original)
+        endpoint.check(self.output / "plan.json", runner=self.runner)
+
+    def test_all_three_peers_bind_images_processes_namespaces_and_networks(self):
+        self.prepare()
+        network = self.runner.network["Name"]
+        for row in self.rows:
+            for field, changed in (
+                ("Image", "sha256:" + "9" * 64),
+                ("Pid", 999),
+                ("StartedAt", "2026-10-20T00:00:00Z"),
+                ("SandboxID", "f" * 64),
+            ):
+                old = row[field]
+                row[field] = changed
+                with self.subTest(
+                    role=row["Labels"]["com.docker.compose.service"], field=field
+                ):
+                    with self.assertRaises(ValueError):
+                        endpoint.check(self.output / "plan.json", runner=self.runner)
+                row[field] = old
+            old = row["Networks"][network]["NetworkID"]
+            row["Networks"][network]["NetworkID"] = "f" * 64
+            with self.assertRaises(ValueError):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+            row["Networks"][network]["NetworkID"] = old
+            row["PortBindings"] = {
+                "8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "1"}]
+            }
+            with self.assertRaises(ValueError):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+            row["PortBindings"] = {}
+
+    def test_unknown_or_duplicate_role_and_extra_gateway_are_not_accepted(self):
+        self.prepare()
+        web = self.rows[1]
+        for field, changed in (
+            ("com.docker.compose.service", "foreign"),
+            ("com.docker.compose.service", "conversation-api"),
+            ("com.docker.compose.project", endpoint.composition.GATEWAY_PROJECT),
+        ):
+            previous = web["Labels"][field]
+            web["Labels"][field] = changed
+            with (
+                self.subTest(field=field, value=changed),
+                self.assertRaises(ValueError),
+            ):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+            web["Labels"][field] = previous
+        self.runner.network["Containers"]["9" * 64] = {"Name": "web-nginx"}
+        with self.assertRaises(ValueError):
+            endpoint.operate("up", self.output / "plan.json", runner=self.runner)
+        self.assertFalse(any("up" in call for call in self.runner.calls))
+
+    def test_actual_attachable_or_ingress_network_refuses_prepare_and_check(self):
+        for flag in ("Attachable", "Ingress"):
+            self.runner.network[flag] = True
+            with (
+                self.subTest(stage="prepare", flag=flag),
+                self.assertRaises(ValueError),
+            ):
+                self.prepare()
+            self.assertFalse(self.output.exists())
+            self.runner.network[flag] = False
+        self.prepare()
+        for flag in ("Attachable", "Ingress"):
+            self.runner.network[flag] = True
+            with self.subTest(stage="check", flag=flag), self.assertRaises(ValueError):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+            self.runner.network[flag] = False
+        self.assertFalse(any("up" in call for call in self.runner.calls))
+
+    def test_up_rechecks_backend_after_start_and_quarantines_changed_peer(self):
+        self.prepare()
+
+        def changed(_argv, _runner):
+            self.rows[1]["Pid"] = 999
+            return b""
+
+        with (
+            patch.object(endpoint, "_owned", return_value=[]),
+            patch.object(endpoint, "_compose_output", side_effect=changed) as started,
+            patch.object(endpoint, "_stop_owned") as stopped,
+            self.assertRaises(ValueError),
+        ):
+            endpoint.operate("up", self.output / "plan.json", runner=self.runner)
+        self.assertEqual(started.call_count, 1)
+        stopped.assert_called_once()
+
+    def test_plan_schema_or_gateway_binding_tamper_refuses_even_stop(self):
+        self.prepare()
+        path = self.output / "plan.json"
+        original = json.loads(path.read_text())
+        for kind in ("schema", "gateway"):
+            value = copy.deepcopy(original)
+            if kind == "schema":
+                value["schema_version"] = 1
+            else:
+                value["backend"]["active_route"] = str(self.root / "routes/active.conf")
+            path.write_text(json.dumps(value))
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                endpoint.operate("stop", path, runner=self.runner)
 
 
 if __name__ == "__main__":

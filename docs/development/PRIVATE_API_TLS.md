@@ -43,7 +43,7 @@ python3 scripts/private_api_tls.py up --plan /absolute/private/endpoint-v1/plan.
 python3 scripts/private_api_tls.py stop --plan /absolute/private/endpoint-v1/plan.json
 ```
 
-`prepare` 要求新的輸出目錄，封存設定（包含兩個 server name）、TLS 材料 hash、原四個 peer、
+schema 1 設定使用已接入 native gateway 的 release。`prepare` 要求新的輸出目錄，封存設定（包含兩個 server name）、TLS 材料 hash、原四個 peer、
 API process／namespace 與 route hash，不讀 API key bytes。`check` 重新核對這些條件與憑證鏈、hostname、key 配對，
 且 leaf 至少還有 24 小時有效期。`up` 僅啟動本工具兩個服務，前後核對相同 backend，
 失敗清理與 `stop` 只停止／移除此 plan 已證明擁有的完整 container IDs。
@@ -58,6 +58,44 @@ Bearer key 只由 VM BFF 送出，仍由原 API 驗證。VM 必須明確信任 C
 `nginx -t` healthcheck 只證明配置與材料可載入，`up` 回覆不宣稱 HTTP、模型或公眾驗收。
 需從核准 VM 以 CA 驗證 TLS，先測無 key 回 401、錯路徑拒絕，再依授權做服務驗收。
 請不要對同一 endpoint 同時操作多個 plan。
+
+## 不接入 native gateway 的候選 release
+
+使用 [schema 2 範例](../../deploy/env/private-api-tls-isolated.example.json)，明確指定
+`backend_mode: "isolated-release"`。它只接受 `start-release` 已準備的三個 CPU
+服務：`web`、`conversation-api`、`filtered-embedding`，website network 必須恰好只有
+這三個角色。未知 peer、重複角色、gateway peer、映像不符、服務不健康或發布 host
+port 都拒絕，不會從 peer 數量猜測或自動切換模式。
+
+這個模式封存 release Compose 的完整 bytes SHA256、三個 immutable image／container
+IDs、process PID／StartedAt、network namespace、網路名稱／ID／位址，以及 API
+身分。`check` 重新核對，`up` 啟動前後各重新核對；release 內容或 peer 重啟後須
+安排新 plan。它不讀寫 native gateway 的 `active.conf`，也不連接、重建或停止
+native gateway。schema 1 仍要求原來的四個 exact peers 與 route hash；不接受
+將 schema 2 欄位塞進舊設定或改寫舊 plan。
+
+prepare／check／up／stop 的命令相同。候選 release 可與舊 release／gateway 的容器
+及網路並存；它們的 project 與網路必須不同。TLS CLI 仍使用獨立但固定的
+`depositar-private-api-tls` project，兩套 outer 也不能同時佔用同一個 host address／port。
+先使用原 operator 與舊 plan 執行 `stop`，保留舊 plan、來源及材料，再為新 release
+建立新 plan 並啟動。`stop` 只移除已證明屬於該 plan 的 stateless TLS 容器；回退時
+先停新 plan，再以舊 operator／舊 plan 重建舊代理。若舊 API process 或 network
+namespace 也變了，舊 plan 已不相符，須明確重新 prepare，不能直接重用。
+
+### 與 GPU lifecycle 的維護順序
+
+TLS outer 的低埠／worker 權限會被 native GPU ownership preflight 視為不支援的
+container device access。因此先暫停網站入口、停止 TLS，再完成
+`start-inference`／`start-release` 的所有原生 GPU ownership、暖機、兩輪搜尋與
+reset 驗收，最後才啟動 TLS 與對應版本的 VM 前端。以後重跑這些 lifecycle
+檢查（包含 gateway preparation／activation）前，也必須先停止 TLS；TLS 開啟後的
+一般 API 搜尋不會執行該 host preflight。
+
+這不是整套產品的自動 update／rollback。停止模型容器可保留 exact container IDs，
+但重啟後 PID／StartedAt 改變，原 native 完成收據不會恢復；新候選停止後也沒有
+自動 resume／reseal。維護者須另外保存相容的 API／BFF／前端、修復後的模型容器
+身分與驗收證據，安排人工回退，不刪除或改寫原收據。API 契約改動時，VM 前端
+與 API 必須配對切換／回退，維持暫停入口至驗收完成。
 
 server name、憑證或 backend container／process／namespace／位址改變時，不會自動 renew 或 rebind。
 先 `stop --plan OLD/plan.json`，準備新憑證或核定新的 backend，再用新的私有目錄

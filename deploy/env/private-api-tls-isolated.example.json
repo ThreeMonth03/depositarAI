@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "backend_mode": "isolated-release",
+  "release_compose": "/absolute/private/candidate-release/compose.json",
+  "api_container_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "nginx_image": "nginx:1.30.4-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c",
+  "bind_address": "198.51.100.10",
+  "listen_port": 443,
+  "allowed_source": "192.0.2.20/32",
+  "outer_server_name": "api.example.test",
+  "inner_server_name": "api-inner.example.test",
+  "ca_file": "/absolute/private/tls/ca.pem",
+  "outer_certificate_file": "/absolute/private/tls/outer.crt",
+  "outer_key_file": "/absolute/private/tls/outer.key",
+  "inner_certificate_file": "/absolute/private/tls/inner.crt",
+  "inner_key_file": "/absolute/private/tls/inner.key"
+}
