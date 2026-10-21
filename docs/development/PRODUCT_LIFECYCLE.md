@@ -380,6 +380,27 @@ import 超時或結果不確定時先確認 helper ownership；適用時顯式�
 模型／來源／mount／network identity 不符時回到對應準備步驟調查，不能改 digest 或
 放寬 peer 檢查；部分 start、build、query 或 activation 狀態不應直接重試。
 
+### 共用 Docker client 錯誤碼
+
+`up-private`、`start-inference`、`start-release`、`prepare-gateway` 或
+`activate-gateway` 回報下列 `error_code` 時，可依此表調查。這些固定碼來自私有 runtime
+共用的 Docker client；`inference_` 前綴也適用於 CPU release 與 gateway。
+上層控制器可能改用自己的錯誤摘要。錯誤碼描述失敗類別，服務狀態與副作用仍須
+現場核對；先保留 state 與操作收據，定位失敗步驟，再決定恢復方式。
+
+| `error_code` | 含義與下一步 |
+|---|---|
+| `inference_command_budget_invalid` | 呼叫端提供的命令數預算不合法。核對工具版本與呼叫端參數。 |
+| `inference_client_guard_invalid` | 驗證 callback 設定不合法。由維護者檢查呼叫端程式。 |
+| `inference_command_budget` | 本次命令將超過呼叫數上限，或執行前共用 deadline 已耗盡。檢查各步驟的耗時與呼叫累積。 |
+| `inference_command_invalid` | runner 回傳型別不符契約。核對 stdout、stderr、退出碼的型別與 runner 版本。 |
+| `inference_output_limit` | 單次或累積輸出超出限額。於私有環境找出產生大量輸出的步驟。 |
+| `inference_command_timeout` | 命令回傳時已超過共用時限。查明該命令的副作用，再安排後續操作。 |
+| `inference_command_failed` | 非零退出，或 runner 發生 `OSError`、`TimeoutExpired` 等例外。此碼未細分原因；從失敗步驟檢查 Docker 連線、權限與私有執行紀錄。 |
+| `inference_image_inspection_invalid` | 映像查詢回傳結構異常。核對映像身分與 Docker 輸出格式。 |
+| `inference_container_inventory_invalid` | ID 格式、編碼、唯一性或容器數不符合預期。核對該 project 的實際容器與 ownership。 |
+| `inference_network_inventory_invalid` | 網路清單結構、名稱、唯一性或數量不符合預期。核對該 project 的實際網路與 ownership。 |
+
 實作入口是 [CLI parser](../../search/operations/cli.py) 與
 [operations modules](../../search/operations/README.md)。新增或調整命令時，同步維護此頁的
 參數、副作用與退出碼；模組 ownership 與封裝規則見[共用模組與封裝邊界](SOURCE_REFACTOR.md)。

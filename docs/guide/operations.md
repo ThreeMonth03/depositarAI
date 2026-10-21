@@ -144,5 +144,10 @@ python3 scripts/depositarai.py restore-product \
 若啟用已發布指標，之後卻無法補寫完成收據，錯誤會保留 `active_changed=true`
 並要求恢復診斷；若無法確定指標是否發布，則為 `active_changed=null`。兩種情況都
 先保留 state、檢查 `status` 與原始錯誤，不要把錯誤當成「未變更」而直接重跑。
+
+若 CLI 回報 Docker client 錯誤碼，依
+[錯誤碼說明](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/PRODUCT_LIFECYCLE.md#共用-docker-client-錯誤碼)
+定位失敗類別；服務狀態與恢復方式仍須依 state、操作收據及現場檢查判斷。
+
 查詢參數時使用 `python3 scripts/depositarai.py --help` 或子命令的 `--help`。
 使用搜尋介面請看[搜尋使用說明](using-search.md)；調整程式與文件請看[開發與文件](development.md)。

@@ -22,6 +22,21 @@ PUBLIC_COMMANDS = frozenset(
 # Only exact operator-owned exception classes and fixed literals may add a
 # diagnostic. Error owners are loaded only when their failure is encountered.
 
+_RUNTIME_DOCKER_CODES = frozenset(
+    {
+        "inference_command_budget_invalid",
+        "inference_client_guard_invalid",
+        "inference_command_budget",
+        "inference_command_invalid",
+        "inference_output_limit",
+        "inference_command_timeout",
+        "inference_command_failed",
+        "inference_image_inspection_invalid",
+        "inference_container_inventory_invalid",
+        "inference_network_inventory_invalid",
+    }
+)
+
 _CATALOG_RUNTIME_CODES = frozenset(
     {
         "catalog_admin_inventory_conflict",
@@ -101,6 +116,18 @@ def _operator_error_code(error, command):
         if error_type is not ProjectionError:
             return None
         codes = _CATALOG_PROJECTION_CODES
+    elif owner == "search.operations.deployment.runtime_docker" and command in {
+        "up-private",
+        "start-inference",
+        "start-release",
+        "prepare-gateway",
+        "activate-gateway",
+    }:
+        from search.operations.deployment.runtime_docker import InferenceError
+
+        if error_type is not InferenceError:
+            return None
+        codes = _RUNTIME_DOCKER_CODES
     elif command == "up-private" and owner == "search.operations.lifecycle":
         from search.operations import lifecycle
 
