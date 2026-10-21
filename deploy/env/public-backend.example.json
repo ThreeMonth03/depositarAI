@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "origin": "https://api.example.test",
+  "api_revision": "1111111111111111111111111111111111111111",
+  "catalog_manifest_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "api_key_file": "/absolute/private/backend/api-key",
+  "ca_file": "/absolute/private/backend/ca.pem"
+}

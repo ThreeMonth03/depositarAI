@@ -31,6 +31,13 @@ API 不提供公開 Swagger UI；request／response 型別以
 API 與 BFF 共用嚴格的回應型別。變更契約時，兩者須協調切換；回退也須選回
 對應的 API 與 BFF。不要只更新其中一端，再把回應驗證失敗當成暫時網路問題。
 
+`/v1/version` 的整數 `conversation_contract_version` 目前為 `2`，表示使用目前的
+`TurnRequest`／`TurnResponse` 與精簡檢索回應。跨主機入口只接受此版本，同時核對
+固定的 API revision 與 catalog manifest；舊 API 沒有此欄位時拒絕啟用。
+相容的網站更新可以使用不同的 source revision；破壞性 wire 契約變更須同時調整
+此版本、BFF 的 `io.depositar.ai.conversation.version` 映像標記及入口驗證。
+版本檢查只讀取診斷資訊，不執行模型，也不代替實際搜尋與追問驗收。
+
 ## 一輪請求
 
 ```json

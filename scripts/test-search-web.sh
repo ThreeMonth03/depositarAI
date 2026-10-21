@@ -104,8 +104,11 @@ docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm \
 docker run --rm --network none --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=$project_dir/web,dst=/web,readonly" --workdir /web "$node_image" npm run format:check
 begin_phase web-image
-docker build -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
-docker build -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
+ci_source_revision="$(git rev-parse HEAD)"
+docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
+  -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
+docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
+  -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
 if [[ "$suite" != oss ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.
@@ -139,13 +142,14 @@ for image in (APISIX_IMAGE, REDIS_IMAGE, NGINX_BASE, ANUBIS_IMAGE):
         subprocess.run(["docker", "pull", image], check=True, timeout=180)
 PY
   begin_phase public-entry-runtime
-  DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 \
+  DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 DEPOSITAR_TEST_REMOTE_BACKEND_RUNTIME=1 \
     python3 -m unittest tests.integration.public_entry.test_identity_adapter \
       tests.integration.public_entry.test_antibot_runtime \
       tests.integration.public_entry.test_antibot_gateway \
       tests.integration.public_entry.test_runtime \
       tests.integration.public_entry.test_identity_gateway \
       tests.integration.public_entry.test_updates \
+      tests.integration.public_entry.test_remote_backend \
       tests.integration.test_private_api_tls_runtime -v
 fi
 if [[ "$suite" != oss ]]; then

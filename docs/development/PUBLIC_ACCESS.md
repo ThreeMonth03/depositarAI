@@ -57,7 +57,9 @@ conversation API key。它不重啟模型、不重新 embedding，也不修改�
 
 如果前端日後搬到另一台 server，仍應由對外入口把 `/api/*`、`/auth/*` 代理至受保護的
 服務，維持同一個網站 origin。單純把畫面移走，不會替 API 增加存取控制。
-目前準備工具以同主機的既有 release 為前提，尚未驗收跨機部署。
+同主機使用 `--release-compose`；前端與後端分機時，使用下方的
+[`--backend-config` 流程](#跨主機準備與啟動)。兩個選項互斥，不會因遠端驗證失敗
+而切回本機 Docker network。兩種流程仍須各自完成真實部署環境驗收。
 
 ## 控制範圍與配額語意
 
@@ -255,11 +257,63 @@ Compose 負責建立 APISIX、Redis、Nginx 與 BFF。Nginx 只連入口的 `web
 alias，另經指定的私有 release network 呼叫 conversation API。
 APISIX 仍處理所有公開路由的登入、配額、身分清理與限速，再送往 Nginx。
 
+## 跨主機準備與啟動
+
+在前端 VM 執行相同的入口命令，以私有設定取代 GPU 主機上的 release Compose。
+網頁、BFF、APISIX、Anubis 與 Redis 留在前端 VM；只有 BFF 經固定 HTTPS origin
+連往核准的後端。瀏覽器仍只使用網站自己的 `/api/*`、`/auth/*`，不持有服務 API key。
+不將 GPU Docker network 跨主機延伸，也不修改 GPU 主機的防火牆或服務。
+
+前置條件：
+
+- 前端 VM 的 host 與 BFF 容器都能解析並連到核准的 HTTPS 後端；來源須符合既有白名單。
+- 已獨立取得後端的可信 API revision、catalog manifest、API key 與 CA 公開憑證。
+  CA 私鑰留在後端，前端不需要它。API key 與 CA 複本皆放入操作帳號擁有的
+  `0700` 私有目錄，檔案使用 `0400`／`0600`，不放進 Git。
+- 後端 `/v1/version` 回傳整數 `conversation_contract_version: 2`。
+  舊版 API 不符合時，先協調 API／BFF 遷移，不停用這項檢查。
+- BFF 映像另有 `io.depositar.ai.conversation.version=2`，其餘網站 image pair
+  規則與上方相同。保留真實 HTTPS／OIDC 的前置設定與驗收。
+
+將 [遠端 backend 範例](../../deploy/env/public-backend.example.json) 複製到
+Git 外的私有目錄，填入核准的 HTTPS origin、預期身分及檔案路徑。origin 不含 path、
+query、userinfo 或 fragment。設定檔本身使用 `0600`，直接父目錄使用 `0700`。
+
+```bash
+python3 scripts/depositarai.py prepare-public-entry \
+  --entry-config /absolute/private/public.json \
+  --backend-config /absolute/private/backend.json \
+  --web-image sha256:YOUR_BFF_IMAGE_ID \
+  --web-nginx-image sha256:YOUR_FRONTEND_IMAGE_ID
+
+python3 scripts/depositarai.py up-public-entry \
+  --entry-config /absolute/private/public.json \
+  --backend-config /absolute/private/backend.json \
+  --web-image sha256:YOUR_BFF_IMAGE_ID \
+  --web-nginx-image sha256:YOUR_FRONTEND_IMAGE_ID
+```
+
+準備命令不連後端、不啟動服務。啟用及切版前，受限的主機端 probe 先核對 TLS、
+匿名 version 回 401、帶 key 回 200，以及 API revision／manifest／契約版本。
+BFF 啟動後再從實際容器內做同一檢查，通過才放行入口；probe 只 GET `/v1/version`，
+不呼叫 `/readyz` 或 `/v1/turn`，不重新下載模型或建立索引。
+HTTP redirect、錯誤 CA／hostname、逾時、回應過大或身分不符都會拒絕。
+
+跨機 `public-web` 只連 `website` 與可出站的 `outbound` network，不加入
+`existing-release`；靜態前端不取得 key、CA 或後端 network。
+遠端 origin、預期 API／catalog 身分及 key／CA 內容一併封存，網站更新／回退不允許
+順便改這些資料。後端遷移需另建候選設定與 state，再驗收切換，不改寫舊部署證據。
+
+隔離 CPU 測試使用假的 HTTPS API／OIDC，不代表已完成前端 VM 到真實 GPU API 的
+搜尋驗收。正式切換前仍須驗證真實搜尋、追問、配額、防爬、登入及人工回退。
+
 ## 更新與人工回退
 
 第一版接受短暫維護中斷。更新會先關閉外層 Nginx（若啟用）與 APISIX 入口，再以 Compose 更新 Nginx/BFF
 這兩個服務，等待 BFF 與前端首頁健康後重開入口，再檢查 loopback 首頁、health 與 JS／CSS 素材。
 更新保留 Redis 與 Anubis 持久化資料，也不更新私有 API、catalog 或 GPU 服務。
+跨機更新使用同一個 `--backend-config` 取代 `--release-compose`；回退直接使用
+已封存的 remote binding，不重新選擇後端。
 APISIX 在啟動時解析 `public-edge` 的可信來源 IP；若自行重建外層容器，需隨後重啟
 APISIX。正常部署工具會先啟動外層、再啟動 APISIX，維護時使用同一組工具。
 搜尋 session 留在 BFF 記憶體，網站更新或回退後需要重新搜尋；OIDC 與配額另由入口保存。

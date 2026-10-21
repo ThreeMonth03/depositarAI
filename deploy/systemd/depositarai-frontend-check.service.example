@@ -1,0 +1,16 @@
+[Unit]
+Description=Read-only depositar AI private frontend check
+
+[Service]
+Type=oneshot
+WorkingDirectory=/absolute/pinned/operator-source
+ExecStart=/usr/bin/python3 -I -B /absolute/pinned/operator-source/scripts/check_search_web.py --config /absolute/private/frontend/check.json
+TimeoutStartSec=120
+TimeoutStopSec=10
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+Restart=no
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=depositarai-frontend-check

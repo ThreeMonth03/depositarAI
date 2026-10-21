@@ -184,6 +184,15 @@ def _operator_error_code(error, command):
         codes = preflight.ERROR_CODES
     elif (
         command in PUBLIC_COMMANDS
+        and owner == "search.operations.deployment.public_entry.remote"
+    ):
+        from search.operations.deployment.public_entry import remote
+
+        if error_type is not remote.PublicEntryRemoteError:
+            return None
+        codes = remote.ERROR_CODES
+    elif (
+        command in PUBLIC_COMMANDS
         and owner == "search.operations.deployment.public_entry.updates"
     ):
         from search.operations.deployment.public_entry import updates
@@ -258,7 +267,9 @@ def parser():
             help="prepare/start a separate loopback authenticated CPU website; no GPU changes",
         )
         entry.add_argument("--entry-config", type=Path, required=True)
-        entry.add_argument("--release-compose", type=Path, required=True)
+        backend = entry.add_mutually_exclusive_group(required=True)
+        backend.add_argument("--release-compose", type=Path)
+        backend.add_argument("--backend-config", type=Path)
         entry.add_argument("--web-image", required=True)
         entry.add_argument("--web-nginx-image", required=True)
     rollback = commands.add_parser(
@@ -544,7 +555,12 @@ def main(argv=None):
                     "update-public-entry": updates.update_public_entry,
                     "rollback-public-entry": updates.rollback_public_entry,
                 }[options.command]
-            report = action(options.entry_config, *extra)
+            backend = (
+                {"backend_config": options.backend_config}
+                if extra and options.backend_config is not None
+                else {}
+            )
+            report = action(options.entry_config, *extra, **backend)
             print(
                 json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
             )

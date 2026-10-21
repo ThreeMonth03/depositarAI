@@ -305,6 +305,14 @@ def _verify(config, root, snapshot, inspector):
             and labels.get("org.opencontainers.image.revision") == snapshot["revision"],
             "profile_changed",
         )
+        if (
+            role == "public-web"
+            and profile["x-depositar-plan"]["private_backend"].get("kind") == "https"
+        ):
+            _require(
+                labels.get("io.depositar.ai.conversation.version") == "2",
+                "profile_changed",
+            )
     _require(
         profile["x-depositar-plan"]["revision"] == snapshot["revision"],
         "profile_changed",
@@ -386,15 +394,24 @@ def _smoke(config):
         connection.close()
 
 
-def _candidate(config, release_compose, web_image, web_nginx_image, inspector):
-    return host.bind_public_web(
+def _candidate(
+    config,
+    release_compose,
+    web_image,
+    web_nginx_image,
+    inspector,
+    *,
+    backend_config=None,
+):
+    return host.bind_configured_web(
         config,
         public_entry.render_public_entry(config),
-        strict_json(host._read(release_compose)),
+        release_compose,
         web_image,
         inspector(web_image),
         web_nginx_image,
         inspector(web_nginx_image),
+        backend_config=backend_config,
     )["compose"]
 
 
@@ -462,7 +479,9 @@ def _deploy(config, root, target, old, runner, inspector, smoke, *, bootstrap=Fa
             "public-frontend",
             timeout=180,
         )
-        preflight.verify_bound_backend(target["compose"], runner=runner)
+        preflight.verify_bound_backend(
+            target["compose"], runner=runner, compose_file=target["compose_file"]
+        )
         if "public-edge" in target["compose"]["services"]:
             _compose(
                 target,
@@ -541,6 +560,7 @@ def bootstrap_public_entry(
     runner=subprocess.run,
     image_inspector=host.inspect_web_image,
     smoke_probe=_smoke,
+    backend_config=None,
 ):
     config = public_entry.load_public_entry_config(Path(config_path))
     with _lock(config.state_root) as root:
@@ -561,7 +581,12 @@ def bootstrap_public_entry(
                 )
             target = _read_snapshot(root, pending["candidate"])
             requested = _candidate(
-                config, release_compose, web_image, web_nginx_image, image_inspector
+                config,
+                release_compose,
+                web_image,
+                web_nginx_image,
+                image_inspector,
+                backend_config=backend_config,
             )
             _require(requested == target["compose"], "profile_changed")
             return _deploy(
@@ -577,11 +602,15 @@ def bootstrap_public_entry(
         if (root / "active.json").exists():
             state, current = _active(root)
             requested = _candidate(
-                config, release_compose, web_image, web_nginx_image, image_inspector
+                config,
+                release_compose,
+                web_image,
+                web_nginx_image,
+                image_inspector,
+                backend_config=backend_config,
             )
             _require(requested == current["compose"], "profile_changed")
             _verify(config, root, current, image_inspector)
-            preflight.verify_bound_backend(current["compose"], runner=runner)
             if state.get("previous_generation") is None:
                 # Explicit up also handles first-boot cleanup failing after the
                 # pending unlink. Compose preserves the existing Redis rather
@@ -596,6 +625,9 @@ def bootstrap_public_entry(
                     smoke_probe,
                     bootstrap=True,
                 )
+            preflight.verify_bound_backend(
+                current["compose"], runner=runner, compose_file=current["compose_file"]
+            )
             smoke_probe(config)
             return _report("public_entry_unchanged", state)
         host.prepare_public_entry(
@@ -604,6 +636,7 @@ def bootstrap_public_entry(
             web_image,
             web_nginx_image,
             image_inspector=image_inspector,
+            backend_config=backend_config,
         )
         profile, files = _base(root)
         rows = _compose(
@@ -640,6 +673,7 @@ def update_public_entry(
     runner=subprocess.run,
     image_inspector=host.inspect_web_image,
     smoke_probe=_smoke,
+    backend_config=None,
 ):
     config = public_entry.load_public_entry_config(Path(config_path))
     with _lock(config.state_root) as root:
@@ -648,12 +682,19 @@ def update_public_entry(
         _verify(config, root, old, image_inspector)
         profile, files = _base(root)
         candidate = _candidate(
-            config, release_compose, web_image, web_nginx_image, image_inspector
+            config,
+            release_compose,
+            web_image,
+            web_nginx_image,
+            image_inspector,
+            backend_config=backend_config,
         )
         _require(_same_profile_except_images(candidate, profile), "profile_changed")
         target = _snapshot(root, candidate, files, _material(config, profile))
         if target["generation"] == old["generation"]:
-            preflight.verify_bound_backend(old["compose"], runner=runner)
+            preflight.verify_bound_backend(
+                old["compose"], runner=runner, compose_file=old["compose_file"]
+            )
             smoke_probe(config)
             return _report("public_entry_unchanged", state)
         return _deploy(config, root, target, old, runner, image_inspector, smoke_probe)
