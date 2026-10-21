@@ -72,6 +72,20 @@ image ID、role 與 GPU UUID；容器名稱或 image tag 不能代替這份證�
 reservation。它不能阻止其他管理員在檢查後啟動工作或修改 runtime；模型已存在、
 容器 healthy 與 ownership 通過，也不能各自證明 GPU residency 或推論效能。
 
+CPU catalog 的普通 Docker local volume 使用獨立的 daemon metadata 證據，不當作
+已核對的 bind source。collector 只接受 `Driver=local`、`Scope=local`、沒有 driver
+options，且 volume name、實際 mount source 與 daemon mountpoint 完全符合本機
+`DockerRootDir/volumes/<name>/_data` 的配置。具名與自動產生名稱的普通 local volume
+適用相同規則；不靠名稱或 label 授予信任。daemon root 的路徑 metadata 須可核對，
+前後兩次 volume metadata、建立時間與 DockerRootDir 也必須一致。
+
+這項檢查不進入 `_data`、不讀 volume 內容，也不聲稱遞迴檢查其中的 symlink 或裝置。
+它依賴可信的本機 Docker daemon；plugin、driver bind／device options、缺少或漂移的
+證據都會拒絕。Docker socket、host namespaces、額外 capabilities 與未允許的 `/run`
+mount 規則仍維持原限制。共用主機上有這類服務時，須由維護者另外安排交接，工具不會
+自行停止它們。CPU Docker fixture 只驗證 volume metadata 路徑，不能當作真實主機
+GPU ownership、推論或首次啟用的驗收。
+
 ## Catalog 平台配置
 
 產品 CLI 封存並驗證 Fess／OpenSearch Compose、bootstrap、security templates 與
