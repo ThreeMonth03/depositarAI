@@ -474,6 +474,7 @@ CLI 可回報以下固定 `error_code`，協助定位原 owner 拒絕的原因�
 | `inference_runtime_resource_or_health_changed` | 推論的資源或程序健康條件不符；此碼未細分停止、OOM、重啟或資源漂移，須核對私有 runtime。 |
 | `inference_runtime_network_peers_changed` | 推論網路的身分、屬性或完整 peer 集合不符；先確認 baseline 或 lease-aware 流程，不隱藏 peer。 |
 | `inference_runtime_snapshot_invalid` | Runtime snapshot 結構不符；核對檢查來源與 Docker 格式，不以空集合代替失敗查詢。 |
+| `inference_gpu_ownership_blocked` | GPU ownership 檢查拒絕目前主機狀態；核對完整容器、掛載及 GPU 程序快照。此碼不細分拒絕原因，不透傳私有 inspect 輸出；不可過濾容器或放寬檢查來通過。 |
 | `inference_partial_state_recovery_required` | 啟動紀錄不完整；保留 slot，不重送啟動或刪除 intent。 |
 | `inference_completed_runtime_changed` | 現行 runtime proof 不再等於完成證據；核對容器、網路與 process start，不補寫新的 digest。 |
 | `inference_start_identity_changed` | 原啟動身分與目前來源、映像或模型契約不一致；回到原 slot 與來源查明差異。 |

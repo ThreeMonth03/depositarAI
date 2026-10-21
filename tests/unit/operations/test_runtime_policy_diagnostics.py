@@ -47,6 +47,7 @@ OWNERS = (
     (
         InferenceError,
         (
+            "inference_gpu_ownership_blocked",
             "inference_partial_state_recovery_required",
             "inference_completed_runtime_changed",
             "inference_start_identity_changed",
@@ -89,6 +90,25 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
                 for command in COMMANDS:
                     with self.subTest(owner=owner.__name__, code=code, command=command):
                         self.failure(owner(code), command, expected=code)
+
+    def test_native_gpu_rejection_exposes_only_the_fixed_owner_diagnostic(self):
+        with patch.object(
+            inference.gpu_ownership,
+            "run_gpu_ownership",
+            return_value={
+                "schema_version": 1,
+                "status": "blocked",
+                "code": "gpu_ownership_host_access_mount",
+                "private_snapshot": PRIVATE,
+            },
+        ) as preflight:
+            try:
+                inference._gpu(product(), (), None)
+            except InferenceError as error:
+                self.failure(error, expected="inference_gpu_ownership_blocked")
+            else:
+                self.fail("blocked ownership must stop inference")
+        preflight.assert_called_once()
 
     def test_catalog_diagnostics_keep_existing_command_scope(self):
         for code in OWNERS[0][1]:
