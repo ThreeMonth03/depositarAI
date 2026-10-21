@@ -305,12 +305,9 @@ def _verify(config, root, snapshot, inspector):
             and labels.get("org.opencontainers.image.revision") == snapshot["revision"],
             "profile_changed",
         )
-        if (
-            role == "public-web"
-            and profile["x-depositar-plan"]["private_backend"].get("kind") == "https"
-        ):
+        if role == "public-web":
             _require(
-                labels.get("io.depositar.ai.conversation.version") == "3",
+                labels.get(host.CONVERSATION_CAPABILITY) == "3",
                 "profile_changed",
             )
     _require(

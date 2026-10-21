@@ -86,6 +86,22 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
             ]
         )
         backend = copy.deepcopy(initial["services"]["fixture"])
+        backend_labels = json.loads(
+            cls.command(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    backend["image"],
+                    "--format",
+                    "{{json .Config.Labels}}",
+                ]
+            ).stdout
+        )
+        if (backend_labels or {}).get(host.CONVERSATION_CAPABILITY) != "3":
+            raise AssertionError(
+                "rebuild the CPU API fixture image for wire contract 3"
+            )
         backend["networks"] = {
             "website": {"aliases": ["conversation-api"]},
             "outbound": {"aliases": ["conversation-api"]},

@@ -148,7 +148,7 @@ API_PATTERNS = (
 RECIPES = {
     "conversation-api": {
         "dockerfile": "deploy/docker/api/Dockerfile",
-        "dockerfile_sha256": "eb29b30dd2c33010a53a913d022e4f612e4a132a2c95af6cd40e114dff4a64ea",
+        "dockerfile_sha256": "d723a110a6017a035f0753b191b53d1050bfb1113aa1f251edfb941aaf4b2c46",
         "dockerignore_sha256": "5f4d8c2e23458948efff1404b345a595c8ddb72bf6e9721808ac7a1b27ccf3eb",
         "bases": (PYTHON_BASE,),
         "inputs": COMMON

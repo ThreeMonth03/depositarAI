@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.deployment.public_entry import host, updates
+from tests.unit.deployment.public_entry import test_preflight as preflight_fixture
 
 OLD, NEW, FRONT, NEW_FRONT = ("sha256:" + c * 64 for c in "abcf")
 REVISIONS = {OLD: "1" * 40, FRONT: "1" * 40, NEW: "2" * 40, NEW_FRONT: "2" * 40}
@@ -121,6 +122,7 @@ class PublicEntryUpdatesTests(unittest.TestCase):
                 if image in (FRONT, NEW_FRONT)
                 else "2",
                 host.CAPABILITY: "2",
+                host.CONVERSATION_CAPABILITY: "3",
             },
         }
 
@@ -332,6 +334,70 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "backend_unhealthy"):
             self.invoke(updates.bootstrap_public_entry)
         self.assertFalse(any("up" in call for call in self.runner.commands))
+
+    def reject_legacy_api(self):
+        _profile, _release, network, api = preflight_fixture.fixture()
+        api["Image"] = self.release["services"]["conversation-api"]["image"]
+        api["Mounts"][0]["Source"] = str(self.key)
+        api["Labels"][host.CONVERSATION_CAPABILITY] = "2"
+        metadata = preflight_fixture.MetadataRunner(network, [api])
+        self.backend.side_effect = lambda bound, **_options: (
+            updates.preflight.verify_private_backend(
+                bound, self.release, runner=metadata
+            )
+        )
+
+    def test_local_legacy_api_prevents_first_container_mutation(self):
+        self.reject_legacy_api()
+        with self.assertRaisesRegex(
+            updates.preflight.PublicEntryPreflightError, "contract_changed$"
+        ):
+            self.invoke(updates.bootstrap_public_entry)
+        self.assertFalse(
+            any(
+                operation in command
+                for command in self.runner.commands
+                for operation in ("up", "stop", "start", "down", "rm")
+            )
+        )
+        self.assertFalse((self.base / "pending.json").exists())
+
+    def test_local_legacy_api_blocks_update_and_rollback_before_mutation(self):
+        self.invoke(updates.bootstrap_public_entry)
+        self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
+        self.reject_legacy_api()
+        count = len(self.runner.commands)
+        for action in (updates.update_public_entry, updates.rollback_public_entry):
+            with (
+                self.subTest(action=action.__name__),
+                self.assertRaisesRegex(
+                    updates.preflight.PublicEntryPreflightError, "contract_changed$"
+                ),
+            ):
+                self.invoke(action)
+        self.assertEqual(self.runner.commands[count:], [])
+        self.assertTrue(self.runner.entrance)
+
+    def test_local_legacy_bff_snapshot_blocks_update_and_rollback_before_mutation(self):
+        self.invoke(updates.bootstrap_public_entry)
+        self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
+        original = self.inspector
+
+        def old_contract(image):
+            proof = original(image)
+            if image in (OLD, NEW):
+                proof["Labels"][host.CONVERSATION_CAPABILITY] = "2"
+            return proof
+
+        self.inspector = old_contract
+        count = len(self.runner.commands)
+        for action in (updates.update_public_entry, updates.rollback_public_entry):
+            with (
+                self.subTest(action=action.__name__),
+                self.assertRaisesRegex(ValueError, "profile_changed$"),
+            ):
+                self.invoke(action)
+        self.assertEqual(self.runner.commands[count:], [])
 
     def test_unchanged_pair_does_not_recreate_services(self):
         self.invoke(updates.bootstrap_public_entry)
