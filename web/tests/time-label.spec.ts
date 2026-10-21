@@ -1,3 +1,4 @@
+import { privateAccess } from "./access-fixture";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
@@ -10,7 +11,7 @@ async function mockSearch(page: Page, times: Time[]) {
     const path = new URL(request.url()).pathname;
     if (path === "/api/access")
       return route.fulfill({
-        json: { auth_required: false, authenticated: false },
+        json: privateAccess,
       });
     if (path === "/api/session")
       return route.fulfill({

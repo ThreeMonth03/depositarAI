@@ -134,6 +134,9 @@ python3 -m unittest -v \
   tests.unit.deployment.test_product_package \
   tests.unit.deployment.test_product_restore \
   tests.unit.deployment.public_entry.test_profile \
+  tests.unit.deployment.public_entry.test_identity_adapter \
+  tests.unit.deployment.public_entry.test_antibot \
+  tests.unit.deployment.public_entry.test_antibot_updates \
   tests.unit.deployment.public_entry.test_host \
   tests.unit.deployment.public_entry.test_preflight \
   tests.unit.deployment.public_entry.test_updates \

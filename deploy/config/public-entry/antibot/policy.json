@@ -1,0 +1,16 @@
+{
+  "bots": [
+    {
+      "name": "browser-access",
+      "path_regex": ".*",
+      "action": "CHALLENGE",
+      "challenge": {"algorithm": "fast", "difficulty": 2}
+    }
+  ],
+  "dnsbl": false,
+  "honeypot": {"enabled": false},
+  "openGraph": {"enabled": false},
+  "metrics": {"bind": "127.0.0.1:9090", "network": "tcp", "debug": false},
+  "store": {"backend": "bbolt", "parameters": {"path": "/data/anubis.bdb"}},
+  "status_codes": {"CHALLENGE": 403, "DENY": 403}
+}

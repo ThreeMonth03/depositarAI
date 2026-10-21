@@ -589,6 +589,37 @@ main {
   color: var(--green);
   margin-left: 16px;
 }
+.access-summary p {
+  margin: 0;
+}
+.access-summary > a {
+  display: inline-block;
+  margin: 0;
+  padding: 6px 12px;
+}
+.error > p {
+  margin: 0;
+}
+.error-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.error-actions:empty {
+  display: none;
+}
+.error-actions > a,
+.error-actions > button {
+  min-height: 44px;
+  padding: 8px 12px;
+}
+.error-actions > button {
+  color: inherit;
+  background: #fff;
+  border: 1px solid #e7d4b9;
+  border-radius: 20px;
+}
 .access-notice {
   background: #effaf5;
   border: 1px solid #dceee4;

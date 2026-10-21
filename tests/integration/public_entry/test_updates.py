@@ -203,7 +203,8 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                     "oidc_ca_file": str(root / "tls.crt"),
                     "quota_per_account": 2,
                     "quota_global": 4,
-                    "quota_window_seconds": 3600,
+                    "quota_window_seconds": cls.quota_window_seconds,
+                    "session_window_seconds": cls.quota_window_seconds,
                 }
             )
         )

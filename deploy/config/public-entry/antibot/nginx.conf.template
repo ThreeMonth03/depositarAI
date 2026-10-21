@@ -1,0 +1,168 @@
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr crit;
+events { worker_connections 256; }
+http {
+    access_log off;
+    server_tokens off;
+    client_max_body_size 4k;
+    client_header_timeout 5s;
+    client_body_timeout 5s;
+    keepalive_timeout 5s;
+    send_timeout 5s;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 3s;
+
+    # Only explicitly configured upstream proxies may supply a client address.
+    real_ip_header X-Real-IP;
+    real_ip_recursive off;
+@@TRUSTED_PROXIES@@
+    limit_req_zone $binary_remote_addr zone=entry_ip:1m rate=20r/s;
+    limit_req_zone $binary_remote_addr zone=expensive_ip:1m rate=2r/s;
+    limit_req_zone $server_name zone=entry_global:1m rate=100r/s;
+    limit_conn_zone $binary_remote_addr zone=connections_ip:1m;
+    limit_conn_zone $server_name zone=connections_global:1m;
+
+    server {
+        listen 8080;
+        server_name @@HOST@@;
+        if ($http_host != '@@AUTHORITY@@') { return 421; }
+        limit_req zone=entry_ip burst=40 nodelay;
+        limit_req zone=entry_global burst=100 nodelay;
+        limit_req_status 429;
+        limit_conn connections_ip 20;
+        limit_conn connections_global 64;
+        limit_conn_status 429;
+        default_type application/json;
+        add_header Cache-Control no-store always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header X-Frame-Options DENY always;
+        include /etc/nginx/antibot-errors.conf;
+
+        # Runtime DNS avoids a dependency cycle: this entry can start first.
+        set $gateway http://public-entry:9080;
+        set $antibot http://antibot:8923;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host '@@AUTHORITY@@';
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For '';
+        proxy_set_header Forwarded '';
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host '@@AUTHORITY@@';
+        proxy_set_header X-Forwarded-Port '@@PORT@@';
+        proxy_set_header X-Anubis-Rule '';
+        proxy_set_header X-Anubis-Action '';
+        proxy_set_header X-Anubis-Status '';
+        proxy_set_header X-Depositar-Subject '';
+        proxy_set_header X-Depositar-Edge-Key '';
+        proxy_set_header X-Depositar-Quota-Bucket '';
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 130s;
+
+        location = /_edge_healthz {
+            # Health is cheap and proves only this entry process is listening.
+            return 200 '{"status":"ok"}';
+        }
+        location = /_antibot_check {
+            internal;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length '';
+            proxy_set_header Authorization '';
+            proxy_set_header Host '@@AUTHORITY@@';
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For '';
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Host '@@AUTHORITY@@';
+            proxy_set_header X-Forwarded-Uri /verify;
+            proxy_pass $antibot/.within.website/x/cmd/anubis/api/check;
+        }
+        location = /.within.website/x/cmd/anubis/api/check { return 404; }
+        location = /verify {
+            if ($request_method != GET) { return 405; }
+            # The target is fixed. User query parameters never choose a redirect.
+            proxy_set_header Authorization '';
+            proxy_set_header Host '@@AUTHORITY@@';
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For '';
+            proxy_pass $antibot/?redir=/;
+        }
+        location ^~ /.within.website/x/cmd/anubis/ {
+            if ($request_method != GET) { return 405; }
+            proxy_set_header Authorization '';
+            proxy_set_header Host '@@AUTHORITY@@';
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For '';
+            proxy_pass $antibot;
+        }
+        location ^~ /.within.website/x/xess/ {
+            if ($request_method != GET) { return 405; }
+            proxy_set_header Authorization '';
+            proxy_set_header Host '@@AUTHORITY@@';
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For '';
+            proxy_pass $antibot;
+        }
+        location = /api/session {
+            # Deleting one's own session remains possible after challenge expiry.
+            recursive_error_pages on;
+            include /etc/nginx/antibot-errors.conf;
+            error_page 418 = @session_create;
+            if ($request_method = POST) { return 418; }
+            proxy_pass $gateway;
+        }
+        location @session_create {
+            # Allow auth denial handling after the method dispatch above.
+            # Keep this local: the JSON error locations must not recurse.
+            recursive_error_pages on;
+            include /etc/nginx/antibot-errors.conf;
+            limit_req zone=entry_ip burst=40 nodelay;
+            limit_req zone=entry_global burst=100 nodelay;
+            limit_req zone=expensive_ip burst=6 nodelay;
+            auth_request /_antibot_check;
+            error_page 401 403 = @challenge_required;
+            proxy_pass $gateway;
+        }
+        location = /api/turn {
+            if ($request_method != POST) { return 405; }
+            limit_req zone=entry_ip burst=40 nodelay;
+            limit_req zone=entry_global burst=100 nodelay;
+            limit_req zone=expensive_ip burst=6 nodelay;
+            auth_request /_antibot_check;
+            include /etc/nginx/antibot-errors.conf;
+            error_page 401 403 = @challenge_required;
+            proxy_pass $gateway;
+        }
+        location = /auth/login {
+            if ($request_method != GET) { return 405; }
+            limit_req zone=entry_ip burst=40 nodelay;
+            limit_req zone=entry_global burst=100 nodelay;
+            limit_req zone=expensive_ip burst=6 nodelay;
+            auth_request /_antibot_check;
+            include /etc/nginx/antibot-errors.conf;
+            error_page 401 403 = @verify_login;
+            proxy_pass $gateway;
+        }
+        # OIDC callback and logout pass to the existing state/nonce validation.
+        # A callback must never be replaced by HTML or lose its POST body.
+        location / { proxy_pass $gateway; }
+        location @challenge_required {
+            return 403 '{"error":{"code":"challenge_required","verification_path":"/verify"}}';
+        }
+        location @verify_login { return 302 /verify; }
+        location @rate_limited {
+            add_header Retry-After 5 always;
+            add_header Cache-Control no-store always;
+            return 429 '{"error":{"code":"rate_limited"}}';
+        }
+        location @invalid_request { return 400 '{"error":{"code":"invalid_request"}}'; }
+        location @unavailable { return 503 '{"error":{"code":"service_unavailable"}}'; }
+    }
+}

@@ -19,6 +19,14 @@
   "network_subnets": {
     "website": "10.253.250.0/28",
     "quota": "10.253.250.16/28",
-    "outbound": "10.253.250.32/28"
-  }
+    "outbound": "10.253.250.32/28",
+    "antibot-gateway": "10.253.250.48/28"
+  },
+  "access_mode": "mixed",
+  "quota_per_guest": 3,
+  "quota_guest_pool": 20,
+  "quota_user_pool": 80,
+  "guest_session_secret_file": "/absolute/private/secrets/guest-session-secret",
+  "antibot_enabled": true,
+  "antibot_signing_key_file": "/absolute/private/secrets/antibot-signing-key"
 }

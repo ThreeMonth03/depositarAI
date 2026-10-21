@@ -35,13 +35,14 @@ class PublicEntryBindingTests(unittest.TestCase):
             "Id": FRONTEND,
             "Labels": {
                 host.FRONTEND_CAPABILITY: "1",
+                host.CAPABILITY: "2",
                 "org.opencontainers.image.revision": REVISION,
             },
         }
         self.proof = {
             "Id": IMAGE,
             "Labels": {
-                host.CAPABILITY: "1",
+                host.CAPABILITY: "2",
                 "org.opencontainers.image.revision": REVISION,
             },
         }
@@ -65,6 +66,7 @@ class PublicEntryBindingTests(unittest.TestCase):
             "networks": {"website": {"name": name + "_website"}},
         }
         self.rendered = {
+            "state_directories": ["redis-data"],
             "compose": {
                 "name": "depositar-ai-public-entry",
                 "services": {"public-entry": {"depends_on": {}}},
@@ -161,7 +163,7 @@ class PublicEntryBindingTests(unittest.TestCase):
             {
                 **self.proof,
                 "Labels": {
-                    host.CAPABILITY: "1",
+                    host.CAPABILITY: "2",
                     "org.opencontainers.image.revision": "development",
                 },
             },
@@ -182,6 +184,7 @@ class PublicEntryBindingTests(unittest.TestCase):
                 "Id": FRONTEND,
                 "Labels": {
                     host.FRONTEND_CAPABILITY: "1",
+                    host.CAPABILITY: "2",
                     "org.opencontainers.image.revision": "c" * 40,
                 },
             },

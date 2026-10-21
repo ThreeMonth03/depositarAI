@@ -408,7 +408,14 @@ class WebsiteRouteTests(unittest.TestCase):
         self.assertEqual(self.client.get("/healthz").json(), {"status": "ok"})
         self.assertEqual(
             self.client.get("/api/access").json(),
-            {"auth_required": False, "authenticated": False},
+            {
+                "mode": "private",
+                "principal": {"kind": "private", "id": None},
+                "can_search": True,
+                "login_url": None,
+                "logout_url": None,
+                "limits": {"turns": None, "window_seconds": None},
+            },
         )
 
     def test_shutdown_clears_ram_sessions(self):

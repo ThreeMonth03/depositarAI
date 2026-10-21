@@ -15,6 +15,7 @@ class SessionError(Exception):
 @dataclass
 class Session:
     expires: float
+    # Only the private operator mode uses None. Public owners include kind.
     owner: str | None = None
     state: SearchState = field(default_factory=SearchState)
     pending: str | None = None

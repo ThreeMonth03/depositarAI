@@ -12,6 +12,7 @@ COPY --from=assets /web/dist /app/web-dist/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 LABEL io.depositar.ai.frontend.version="1"
+LABEL io.depositar.ai.public-entry.version="2"
 USER 1000:1000
 ENTRYPOINT ["nginx"]
 CMD ["-g", "daemon off;"]

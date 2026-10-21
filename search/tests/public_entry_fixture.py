@@ -5,11 +5,13 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
+from html import unescape
 from http.cookies import SimpleCookie
 from http.cookiejar import Cookie, MozillaCookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import secrets
 import ssl
 import subprocess
@@ -325,6 +327,50 @@ def probe(action, account, directory, payload=None):
     headers = {}
     data = None
     method = "GET"
+    if action == "verify":
+
+        def fetch(url):
+            try:
+                return opener.open(url, timeout=10)
+            except HTTPError as error:
+                return error
+
+        with fetch(ORIGIN + "/verify") as response:
+            text = response.read(128 * 1024).decode("utf-8")
+        match = re.search(
+            r'<script[^>]*id="anubis_challenge"[^>]*>(.*?)</script>', text, re.S
+        )
+        if not match:
+            raise ValueError("fixture expected bounded Anubis challenge")
+        challenge = json.loads(unescape(match[1]))
+        data, difficulty = challenge["challenge"], challenge["rules"]["difficulty"]
+        if type(difficulty) is not int or not 1 <= difficulty <= 4:
+            raise ValueError("fixture challenge difficulty exceeded")
+        for nonce in range(1000000):
+            digest = hashlib.sha256(
+                (data["randomData"] + str(nonce)).encode()
+            ).hexdigest()
+            if digest.startswith("0" * difficulty):
+                break
+        else:
+            raise ValueError("fixture challenge budget exceeded")
+        query = urlencode(
+            {
+                "id": data["id"],
+                "response": digest,
+                "nonce": nonce,
+                "redir": ORIGIN + "/verify",
+                "elapsedTime": 1000,
+            }
+        )
+        with fetch(
+            ORIGIN + "/.within.website/x/cmd/anubis/api/pass-challenge?" + query
+        ) as response:
+            response.read(128 * 1024)
+            status = response.status
+        jar.save(ignore_discard=True, ignore_expires=True)
+        print(json.dumps({"status": status}))
+        return
     if action == "login":
         jar.set_cookie(
             Cookie(
@@ -350,8 +396,8 @@ def probe(action, account, directory, payload=None):
         url = ORIGIN + "/auth/login"
     elif action == "counter":
         url = "http://conversation-api:8000/__calls"
-    elif action == "access":
-        url = ORIGIN + "/api/access"
+    elif action in ("access", "health"):
+        url = ORIGIN + ("/api/access" if action == "access" else "/healthz")
     else:
         url = ORIGIN + (
             payload["path"]
