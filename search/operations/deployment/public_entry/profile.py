@@ -937,7 +937,9 @@ def render_public_entry(config, *, uid=None, gid=None):
         entry["ports"] = overrides["ports"]
         entry["networks"].extend(overrides["add_networks"])
         entry["depends_on"].update(overrides["depends_on"])
-        apisix_config["nginx_config"]["http"]["real_ip_from"] = overrides["real_ip_from"]
+        apisix_config["nginx_config"]["http"]["real_ip_from"] = overrides[
+            "real_ip_from"
+        ]
         assets["config.yaml"] = _json(apisix_config)
     if config.network_subnets is not None:
         for name, subnet in config.network_subnets.items():
