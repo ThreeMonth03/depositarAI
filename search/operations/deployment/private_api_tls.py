@@ -40,6 +40,12 @@ CONFIG_FIELDS = frozenset(TLS_FIELDS) | {
     "inner_server_name",
 }
 ISOLATED_ROLES = frozenset(("web", "conversation-api", "filtered-embedding"))
+ISOLATED_NETWORK_FORMAT = (
+    '{"Id":{{json .Id}},"Name":{{json .Name}},"Driver":{{json .Driver}},'
+    '"Scope":{{json .Scope}},"Internal":{{json .Internal}},'
+    '"Attachable":{{json .Attachable}},"Ingress":{{json .Ingress}},'
+    '"Labels":{{json .Labels}},"Containers":{{json .Containers}}}'
+)
 DETAIL_FORMAT = (
     '{"Id":{{json .Id}},"Image":{{json .Image}},'
     '"Pid":{{json .State.Pid}},"StartedAt":{{json .State.StartedAt}},'
@@ -314,7 +320,7 @@ def _isolated_backend(config, runner):
             "network",
             "inspect",
             "--format",
-            preflight.NETWORK_FORMAT,
+            ISOLATED_NETWORK_FORMAT,
             network_name,
         ],
         runner,
@@ -326,6 +332,8 @@ def _isolated_backend(config, runner):
         and network.get("Driver") == "bridge"
         and network.get("Scope") == "local"
         and network.get("Internal") is True
+        and network.get("Attachable") is False
+        and network.get("Ingress") is False
         and type(network.get("Id")) is str
         and preflight.IDENTIFIER.fullmatch(network["Id"])
         and labels.get("com.docker.compose.project") == release["name"]

@@ -485,6 +485,7 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         self.config_path.write_text(json.dumps(self.config))
         gateway = self.rows.pop()
         del self.runner.network["Containers"][gateway["Id"]]
+        self.runner.network.update(Attachable=False, Ingress=False)
         release = json.loads(self.release.read_text())
         release["networks"]["website"].update(internal=True, attachable=False)
         for index, row in enumerate(self.rows, 1):
@@ -610,6 +611,24 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         self.runner.network["Containers"]["9" * 64] = {"Name": "web-nginx"}
         with self.assertRaises(ValueError):
             endpoint.operate("up", self.output / "plan.json", runner=self.runner)
+        self.assertFalse(any("up" in call for call in self.runner.calls))
+
+    def test_actual_attachable_or_ingress_network_refuses_prepare_and_check(self):
+        for flag in ("Attachable", "Ingress"):
+            self.runner.network[flag] = True
+            with (
+                self.subTest(stage="prepare", flag=flag),
+                self.assertRaises(ValueError),
+            ):
+                self.prepare()
+            self.assertFalse(self.output.exists())
+            self.runner.network[flag] = False
+        self.prepare()
+        for flag in ("Attachable", "Ingress"):
+            self.runner.network[flag] = True
+            with self.subTest(stage="check", flag=flag), self.assertRaises(ValueError):
+                endpoint.check(self.output / "plan.json", runner=self.runner)
+            self.runner.network[flag] = False
         self.assertFalse(any("up" in call for call in self.runner.calls))
 
     def test_up_rechecks_backend_after_start_and_quarantines_changed_peer(self):
