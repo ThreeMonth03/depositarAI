@@ -11,12 +11,72 @@ from search.tests.asgi_client import ASGITestClient
 
 from search.tests.web_support import FakeUpstream, ORIGIN, SETTINGS
 from search.web.app import create_app
+from search.web.identity import EdgeIdentity, Principal
 from search.web.sessions import SessionError, Sessions
 from search.web.upstream import WebSettings
 
 
 KEY = "d" * 64
 ALICE, BOB = "a" * 64, "b" * 64
+
+
+def public_headers(*, kind="user", subject=ALICE, mode="login_required"):
+    return {
+        "Origin": ORIGIN,
+        "X-Depositar-Subject": subject,
+        "X-Depositar-Edge-Key": KEY,
+        "X-Depositar-Principal-Kind": kind,
+        "X-Depositar-Access-Mode": mode,
+        "X-Depositar-Turn-Limit": "10",
+        "X-Depositar-Window-Seconds": "86400",
+    }
+
+
+def access_payload(*, kind="user", subject=ALICE, mode="login_required"):
+    return {
+        "mode": mode,
+        "principal": {"kind": kind, "id": subject},
+        "can_search": True,
+        "login_url": "/auth/login" if kind == "guest" else None,
+        "logout_url": "/auth/logout" if kind == "user" else None,
+        "limits": {"turns": 10, "window_seconds": 86400},
+    }
+
+
+class PrincipalTests(unittest.TestCase):
+    def test_public_kinds_cannot_collide_or_become_private(self):
+        self.assertEqual(Principal("private").owner, None)
+        self.assertEqual(Principal("guest", ALICE).owner, "guest:" + ALICE)
+        self.assertEqual(Principal("user", ALICE).owner, "user:" + ALICE)
+        for kind, subject in (
+            ("private", ALICE),
+            ("guest", None),
+            ("user", "a" * 63),
+            ("user", "A" * 64),
+            ("operator", ALICE),
+        ):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                Principal(kind, subject)
+
+    def test_private_identity_ignores_untrusted_public_headers(self):
+        headers = [
+            (name.lower().encode(), value.encode())
+            for name, value in public_headers().items()
+        ]
+        access = EdgeIdentity().authenticate(headers)
+        self.assertEqual(access.principal, Principal("private"))
+        self.assertEqual(access.mode, "private")
+        self.assertEqual(
+            access.payload(),
+            {
+                "mode": "private",
+                "principal": {"kind": "private", "id": None},
+                "can_search": True,
+                "login_url": None,
+                "logout_url": None,
+                "limits": {"turns": None, "window_seconds": None},
+            },
+        )
 
 
 class OwnerSessionTests(unittest.TestCase):
@@ -109,31 +169,37 @@ class PublicIdentityHTTPTests(unittest.TestCase):
             raise_app_exceptions=False,
         )
         self.addCleanup(self.client.close)
-        self.headers = {
-            "Origin": ORIGIN,
-            "X-Depositar-Subject": ALICE,
-            "X-Depositar-Edge-Key": KEY,
-        }
+        self.headers = public_headers()
 
     def test_missing_bad_and_duplicate_identity_never_allocate_or_infer(self):
-        invalid = (
-            {},
-            {"X-Depositar-Subject": ALICE},
-            {"X-Depositar-Edge-Key": KEY},
-            {"X-Depositar-Subject": "A" * 64, "X-Depositar-Edge-Key": KEY},
-            {"X-Depositar-Subject": "a" * 63, "X-Depositar-Edge-Key": KEY},
-            {"X-Depositar-Subject": ALICE, "X-Depositar-Edge-Key": "e" * 64},
-            [
-                ("X-Depositar-Subject", ALICE),
-                ("X-Depositar-Subject", BOB),
-                ("X-Depositar-Edge-Key", KEY),
-            ],
-            [
-                ("X-Depositar-Subject", ALICE),
-                ("X-Depositar-Edge-Key", KEY),
-                ("X-Depositar-Edge-Key", KEY),
-            ],
-        )
+        identity = {
+            name: value for name, value in self.headers.items() if name != "Origin"
+        }
+        invalid = [{}]
+        for name in identity:
+            invalid.append(
+                {key: value for key, value in identity.items() if key != name}
+            )
+            invalid.append([*identity.items(), (name, identity[name])])
+        for name, value in (
+            ("X-Depositar-Subject", "A" * 64),
+            ("X-Depositar-Subject", "a" * 63),
+            ("X-Depositar-Edge-Key", "e" * 64),
+            ("X-Depositar-Principal-Kind", "private"),
+            ("X-Depositar-Principal-Kind", "guest"),
+            ("X-Depositar-Principal-Kind", "admin"),
+            ("X-Depositar-Access-Mode", "private"),
+            ("X-Depositar-Access-Mode", "invalid"),
+            ("X-Depositar-Turn-Limit", "0"),
+            ("X-Depositar-Turn-Limit", "10001"),
+            ("X-Depositar-Turn-Limit", "01"),
+            ("X-Depositar-Turn-Limit", "1.0"),
+            ("X-Depositar-Turn-Limit", "1" * 1000),
+            ("X-Depositar-Window-Seconds", "59"),
+            ("X-Depositar-Window-Seconds", "604801"),
+            ("X-Depositar-Window-Seconds", "+60"),
+        ):
+            invalid.append({**identity, name: value})
         for identity in invalid:
             headers = [("Origin", ORIGIN), *dict_or_pairs(identity)]
             for path in ("/api/session", "/api/turn"):
@@ -153,9 +219,7 @@ class PublicIdentityHTTPTests(unittest.TestCase):
         ):
             response = self.client.get("/api/access", headers=headers)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response.json(), {"auth_required": True, "authenticated": True}
-            )
+            self.assertEqual(response.json(), access_payload())
         self.assertEqual(self.client.get("/api/access").status_code, 401)
         for origin in ("https://evil.example", "null"):
             response = self.client.get(
@@ -211,7 +275,92 @@ class PublicIdentityHTTPTests(unittest.TestCase):
             headers={**self.headers, "Authorization": "Bearer " + token},
         )
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(self.store.get(token, ALICE).version, 1)
+        self.assertEqual(self.store.get(token, "user:" + ALICE).version, 1)
+
+    def test_mixed_access_reports_guest_or_user_without_allocating_session(self):
+        for kind in ("guest", "user"):
+            headers = public_headers(kind=kind, mode="mixed")
+            response = self.client.get("/api/access", headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), access_payload(kind=kind, mode="mixed"))
+        self.assertEqual(self.store.items, {})
+        self.assertEqual(self.upstream.calls, [])
+
+    def test_public_policy_limits_are_validated_and_remain_descriptive(self):
+        for turns, window in ((1, 60), (10000, 604800)):
+            headers = {
+                **self.headers,
+                "X-Depositar-Turn-Limit": str(turns),
+                "X-Depositar-Window-Seconds": str(window),
+            }
+            response = self.client.get("/api/access", headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["limits"], {"turns": turns, "window_seconds": window}
+            )
+            self.assertTrue(response.json()["can_search"])
+        self.assertEqual(self.store.items, {})
+        self.assertEqual(self.upstream.calls, [])
+
+    def test_login_logout_or_account_switch_cannot_rebind_an_existing_session(self):
+        for kind in ("guest", "user"):
+            original = public_headers(kind=kind, mode="mixed")
+            response = self.client.post("/api/session", json={}, headers=original)
+            self.assertEqual(response.status_code, 200)
+            token = response.json()["token"]
+            for next_kind, subject in (
+                ("guest", BOB),
+                ("user", BOB),
+                ("user" if kind == "guest" else "guest", ALICE),
+            ):
+                headers = {
+                    **public_headers(kind=next_kind, subject=subject, mode="mixed"),
+                    "Authorization": "Bearer " + token,
+                }
+                response = self.client.post(
+                    "/api/turn", json={"query": "氣候", "version": 0}, headers=headers
+                )
+                self.assertEqual(response.status_code, 410)
+                self.assertEqual(
+                    self.client.delete("/api/session", headers=headers).status_code, 200
+                )
+                self.assertIn(token, self.store.items)
+            self.assertEqual(self.store.get(token, f"{kind}:" + ALICE).version, 0)
+        self.assertEqual(self.upstream.calls, [])
+
+    def test_guest_capacity_and_reset_do_not_affect_other_guest(self):
+        alice, bob = (
+            public_headers(kind="guest", subject=subject, mode="mixed")
+            for subject in (ALICE, BOB)
+        )
+        bob_token = self.client.post("/api/session", json={}, headers=bob).json()[
+            "token"
+        ]
+        tokens = [
+            self.client.post("/api/session", json={}, headers=alice).json()["token"]
+            for _ in range(2)
+        ]
+        response = self.client.post("/api/session", json={}, headers=alice)
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], "session_capacity")
+        self.assertEqual(
+            self.client.delete(
+                "/api/session",
+                headers={**alice, "Authorization": "Bearer " + bob_token},
+            ).status_code,
+            200,
+        )
+        self.assertIn(bob_token, self.store.items)
+        self.client.delete(
+            "/api/session", headers={**alice, "Authorization": "Bearer " + tokens[0]}
+        )
+        replacement = self.client.post("/api/session", json={}, headers=alice).json()[
+            "token"
+        ]
+        self.assertNotEqual(replacement, tokens[0])
+        self.assertEqual(self.store.get(replacement, "guest:" + ALICE).state.topic, "")
+        self.assertIsNotNone(self.store.get(bob_token, "guest:" + BOB))
+        self.assertEqual(self.upstream.calls, [])
 
     def test_owner_capacity_is_enforced_before_model_calls(self):
         for _ in range(2):

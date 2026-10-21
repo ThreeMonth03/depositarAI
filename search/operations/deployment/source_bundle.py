@@ -127,7 +127,7 @@ ASSETS = (
     )
     | _paths(
         "web/src/",
-        "api.ts env.d.ts main.tsx search-progress.tsx search-results.tsx styles.css",
+        "api.ts env.d.ts main.tsx search-access.tsx search-progress.tsx search-results.tsx styles.css",
     )
     | _paths("web/src/search/", "session.ts")
     | _paths("web/src/assets/", "search-symbol.svg search-logo.svg")
@@ -168,7 +168,7 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "b772f434ec99f679e6112cc54d0164e722740d65de3befac7273105576c60c44",
+        "dockerfile_sha256": "84961054ed874eeab4f20da17cbd044288b9f561b5a5380a7336e6ce0f21de21",
         "dockerignore_sha256": "623613abd6969d8aa591bc6f4734a98ac73ce016f0d179a36046b0435a417f89",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
@@ -192,7 +192,7 @@ RECIPES = {
     },
     "web-nginx": {
         "dockerfile": "deploy/docker/web-nginx/Dockerfile",
-        "dockerfile_sha256": "4887f86da1997da9fa0c1cc14680ed3dc42e97de09c4767f7d0064b1b2800fa5",
+        "dockerfile_sha256": "dd5d6dafbcf50965a1a6482d210e0f5f27c8b40fbd61e0012abbc81be5379d17",
         "dockerignore_sha256": "bfb266c8815591f71888618bcb240881e623ec775f16584e138bfbeaba6c2f88",
         "bases": (NODE_BASE, NGINX_BASE),
         "inputs": ASSETS

@@ -80,7 +80,7 @@ def bind_public_web(
         or type(image_proof) is not dict
         or image_proof.get("Id") != image
         or type(labels) is not dict
-        or labels.get(CAPABILITY) != "1"
+        or labels.get(CAPABILITY) != "2"
         or type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
@@ -92,6 +92,7 @@ def bind_public_web(
         or frontend_proof.get("Id") != frontend_image
         or type(frontend_labels) is not dict
         or frontend_labels.get(FRONTEND_CAPABILITY) != "1"
+        or frontend_labels.get(CAPABILITY) != "2"
         or frontend_labels.get("org.opencontainers.image.revision") != revision
     ):
         raise ValueError("public_entry_frontend_image_invalid")
@@ -185,7 +186,7 @@ def bind_public_web(
     return result
 
 
-def _publish_prepared(root, assets, report):
+def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
     """Publish a complete preparation; failed staging never replaces live state."""
     parent = private_io.open_directory(root)
     lock = descriptor = None
@@ -210,10 +211,11 @@ def _publish_prepared(root, assets, report):
         except FileNotFoundError:
             name = ".public-entry-staging-" + uuid.uuid4().hex
             descriptor = private_io.open_child_directory(parent, name, create=True)
-            data = private_io.open_child_directory(
-                descriptor, "redis-data", create=True
-            )
-            os.close(data)
+            for directory in state_directories:
+                data = private_io.open_child_directory(
+                    descriptor, directory, create=True
+                )
+                os.close(data)
             for filename, raw in assets.items():
                 private_io.write_file(descriptor, filename, raw, max_bytes=2 * 1024**2)
             private_io.write_json(descriptor, "prepared.json", report, max_bytes=65536)
@@ -284,7 +286,7 @@ def prepare_public_entry(
         "public_readiness_verified": False,
         "active_changed": False,
     }
-    _publish_prepared(config.state_root, assets, report)
+    _publish_prepared(config.state_root, assets, report, rendered["state_directories"])
     return report
 
 

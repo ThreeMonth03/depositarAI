@@ -1,3 +1,4 @@
+import { privateAccess } from "./access-fixture";
 import { expect, test } from "@playwright/test";
 
 function expectSecurityHeaders(headers: Record<string, string>) {
@@ -108,10 +109,7 @@ test("gateway API routes stay distinct from frontend files", async ({
   expect(await health.json()).toEqual({ status: "ok" });
   const access = await request.get("/api/access");
   expect(access.status()).toBe(200);
-  expect(await access.json()).toEqual({
-    auth_required: false,
-    authenticated: false,
-  });
+  expect(await access.json()).toEqual(privateAccess);
   const headers = { Origin: new URL(health.url()).origin };
   const method = await request.get("/api/session", { headers });
   expect(method.status()).toBe(405);

@@ -36,8 +36,12 @@ export type Session = {
   revision: string;
 };
 export type Access = {
-  auth_required: boolean;
-  authenticated: boolean;
+  mode: "private" | "mixed" | "login_required";
+  principal: { kind: "private" | "guest" | "user"; id: string | null };
+  can_search: true;
+  login_url: "/auth/login" | null;
+  logout_url: "/auth/logout" | null;
+  limits: { turns: number | null; window_seconds: number | null };
 };
 export type Reply = {
   version: number;
@@ -151,23 +155,95 @@ export function decodeReply(value: unknown, session: Session): Reply {
   return value as Reply;
 }
 
+export function decodeAccess(value: unknown): Access {
+  if (
+    !record(value) ||
+    !["private", "mixed", "login_required"].includes(value.mode as string) ||
+    !record(value.principal) ||
+    value.can_search !== true ||
+    !record(value.limits)
+  )
+    throw new Error("invalid_access_response");
+
+  const { principal, limits } = value;
+  const valid =
+    value.mode === "private"
+      ? principal.kind === "private" &&
+        principal.id === null &&
+        value.login_url === null &&
+        value.logout_url === null &&
+        limits.turns === null &&
+        limits.window_seconds === null
+      : typeof principal.id === "string" &&
+        /^[a-f0-9]{64}$/.test(principal.id) &&
+        Number.isSafeInteger(limits.turns) &&
+        (limits.turns as number) > 0 &&
+        Number.isSafeInteger(limits.window_seconds) &&
+        (limits.window_seconds as number) >= 60 &&
+        ((principal.kind === "guest" &&
+          value.mode === "mixed" &&
+          value.login_url === "/auth/login" &&
+          value.logout_url === null) ||
+          (principal.kind === "user" &&
+            value.login_url === null &&
+            value.logout_url === "/auth/logout"));
+  if (!valid) throw new Error("invalid_access_response");
+  return value as Access;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     public code: string,
+    public retryAfterSeconds?: number,
   ) {
     super(code);
   }
 }
 
 export type SearchErrorPolicy =
-  { recovery: "login" } | { recovery: "reset" | "retry"; message: string };
+  | { recovery: "login" }
+  | {
+      recovery: "reset" | "retry";
+      message: string;
+      action?: "login" | "verify";
+    };
+
+function retryHint(seconds: number | undefined): string {
+  if (seconds === undefined) return "";
+  if (seconds < 60) return `請約 ${Math.ceil(seconds)} 秒後再試。`;
+  if (seconds < 3600) return `請約 ${Math.ceil(seconds / 60)} 分鐘後再試。`;
+  return `請約 ${Math.ceil(seconds / 3600)} 小時後再試。`;
+}
 
 // Recovery describes the user's next step; requests are never retried here.
 export function classifySearchError(error: unknown): SearchErrorPolicy {
   if (error instanceof ApiError) {
     if (error.status === 401 && error.code === "authentication_required")
       return { recovery: "login" };
+
+    if (error.code === "challenge_required")
+      return {
+        recovery: "retry",
+        message: "請先完成瀏覽器驗證，再回來送出搜尋。原有搜尋條件未修改。",
+        action: "verify",
+      };
+
+    const quotaMessages: Record<string, string> = {
+      guest_quota_exceeded:
+        "訪客搜尋額度已用完。免費登入可取得較多使用額度，或等額度更新後再試。",
+      user_quota_exceeded: "你的 AI 搜尋額度已用完，請等額度更新後再試。",
+      pool_quota_exceeded: "目前共用搜尋額度已用完，請稍後再試。",
+      global_quota_exceeded: "目前全站搜尋額度已用完，請稍後再試。",
+    };
+    if (error.status === 429 && quotaMessages[error.code])
+      return {
+        recovery: "retry",
+        message: quotaMessages[error.code] + retryHint(error.retryAfterSeconds),
+        ...(error.code === "guest_quota_exceeded"
+          ? { action: "login" as const }
+          : {}),
+      };
 
     switch (error.status) {
       case 401:
@@ -178,11 +254,12 @@ export function classifySearchError(error: unknown): SearchErrorPolicy {
           message: "搜尋已到期或狀態不同步，請開始新搜尋。",
         };
       case 429:
-        if (["quota_exceeded", "global_quota_exceeded"].includes(error.code))
+        if (error.code === "quota_exceeded")
           return {
             recovery: "retry",
             message:
-              "目前 AI 搜尋額度已用完，請稍後再試。你仍可探索 depositar 的公開資料。",
+              "目前 AI 搜尋額度已用完，請稍後再試。你仍可探索 depositar 的公開資料。" +
+              retryHint(error.retryAfterSeconds),
           };
         if (error.code === "session_capacity")
           return {
@@ -192,7 +269,9 @@ export function classifySearchError(error: unknown): SearchErrorPolicy {
         if (error.code === "rate_limited")
           return {
             recovery: "retry",
-            message: "送出搜尋的頻率較高，請稍候再試。",
+            message:
+              "送出搜尋的頻率較高，請稍候再試。" +
+              retryHint(error.retryAfterSeconds),
           };
         return {
           recovery: "retry",
@@ -216,6 +295,36 @@ export function classifySearchError(error: unknown): SearchErrorPolicy {
   };
 }
 
+function retryAfter(response: Response, error: unknown): number | undefined {
+  const value = response.headers.get("Retry-After");
+  if (value) {
+    const seconds = /^\d+(?:\.\d+)?$/.test(value)
+      ? Number(value)
+      : (Date.parse(value) - Date.now()) / 1000;
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  }
+  if (
+    record(error) &&
+    typeof error.retry_after_seconds === "number" &&
+    Number.isSafeInteger(error.retry_after_seconds) &&
+    error.retry_after_seconds >= 0
+  )
+    return error.retry_after_seconds;
+  // A response can contain several APISIX rule counters. Wait for all of the
+  // advertised windows rather than assuming the last header is the rejected one.
+  const resets: number[] = [];
+  response.headers.forEach((entry, name) => {
+    if (
+      /^x-(?:[\w-]+-)?ratelimit-reset$/i.test(name) &&
+      /^\d+(?:\.\d+)?$/.test(entry)
+    ) {
+      const seconds = Number(entry);
+      if (Number.isFinite(seconds)) resets.push(seconds);
+    }
+  });
+  return resets.length ? Math.ceil(Math.max(...resets)) : undefined;
+}
+
 export async function request<T>(
   path: string,
   body?: unknown,
@@ -237,7 +346,11 @@ export async function request<T>(
   });
   if (!response.ok) {
     const value = await response.json().catch(() => null);
-    throw new ApiError(response.status, value?.error?.code ?? "unavailable");
+    throw new ApiError(
+      response.status,
+      typeof value?.error?.code === "string" ? value.error.code : "unavailable",
+      retryAfter(response, value?.error),
+    );
   }
   return response.json() as Promise<T>;
 }

@@ -12,6 +12,7 @@ import { useSearchSession } from "./search/session";
 import type { SearchMessage } from "./search/session";
 import { Results } from "./search-results";
 import { SearchProgress } from "./search-progress";
+import { SearchAccess } from "./search-access";
 import searchLogo from "./assets/search-logo.svg?no-inline";
 import "./styles.css";
 
@@ -48,7 +49,10 @@ function SearchApp() {
     clock,
     epoch,
     access,
-    authRequired,
+    accessInfo,
+    errorAction,
+    canRetry,
+    retry,
     reset,
     submit,
     recheckAccess,
@@ -112,48 +116,11 @@ function SearchApp() {
                 </h1>
                 <p>用對話，找到需要的研究資料。</p>
               </section>
-              {access === "checking" && (
-                <p className="access-status" role="status">
-                  正在確認使用狀態…
-                </p>
-              )}
-              {access === "login" && (
-                <section
-                  className="access-notice"
-                  aria-labelledby="access-title"
-                >
-                  <h2 id="access-title">免費登入後開始搜尋</h2>
-                  <p>
-                    AI
-                    搜尋提供有限的使用額度，讓每個人都有探索的機會。你也可以直接瀏覽
-                    depositar 的公開資料。
-                  </p>
-                  <div className="access-actions">
-                    <a className="login-link" href="/auth/login">
-                      免費登入
-                    </a>
-                    <a
-                      href="https://data.depositar.io"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      瀏覽公開資料 ↗
-                    </a>
-                  </div>
-                </section>
-              )}
-              {access === "unavailable" && (
-                <div className="error access-unavailable" role="alert">
-                  <span>暫時無法確認使用狀態，請稍後再試。</span>
-                  <button onClick={recheckAccess}>重新確認</button>
-                </div>
-              )}
-              {access === "ready" && authRequired && (
-                <p className="access-status">
-                  已登入 · AI 搜尋提供有限使用額度
-                  <a href="/auth/logout">登出</a>
-                </p>
-              )}
+              <SearchAccess
+                status={access}
+                info={accessInfo}
+                recheck={recheckAccess}
+              />
               <div className="transcript" aria-label="本次搜尋對話">
                 <ThreadPrimitive.Messages>
                   {({ message }) => {
@@ -194,7 +161,29 @@ function SearchApp() {
               {isRunning && <SearchProgress />}
               {error && (
                 <div className="error" role="alert">
-                  {error}
+                  <p>{error}</p>
+                  <div className="error-actions">
+                    {errorAction === "login" && accessInfo?.login_url && (
+                      <a href={accessInfo.login_url}>免費登入，取得較多額度</a>
+                    )}
+                    {errorAction === "verify" && (
+                      <a
+                        href="/verify"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        完成瀏覽器驗證 ↗
+                      </a>
+                    )}
+                    {canRetry && (
+                      <button
+                        onClick={retry}
+                        disabled={isRunning || access !== "ready"}
+                      >
+                        重試這次搜尋
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               <ThreadPrimitive.ViewportFooter className="composer-area">

@@ -23,6 +23,17 @@ from search.operations.deployment.public_entry import preflight
 from search.operations.shared import private_io
 
 SERVICES = frozenset({"public-entry", "quota-redis", "public-web", "public-frontend"})
+ANTIBOT_SERVICES = frozenset({"public-edge", "antibot"})
+
+
+def _entry_services(snapshot):
+    return (
+        ["public-edge", "public-entry"]
+        if "public-edge" in snapshot["compose"]["services"]
+        else ["public-entry"]
+    )
+
+
 ERROR_CODES = frozenset(
     "public_entry_" + code
     for code in (
@@ -137,6 +148,11 @@ def _base(root):
             "redis.conf",
             "apisix-start.sh",
             "redis-start.sh",
+            "depositar_identity.lua",
+            "depositar-quota-response.lua",
+            "antibot-nginx.conf",
+            "antibot-errors.conf",
+            "antibot-policy.yaml",
         },
         "preparation_changed",
     )
@@ -146,7 +162,12 @@ def _base(root):
             "preparation_changed",
         )
     profile = _json(root / "compose.json")
-    _require(set(profile.get("services", {})) == SERVICES, "profile_changed")
+    expected = SERVICES | (
+        ANTIBOT_SERVICES
+        if profile.get("x-depositar-plan", {}).get("antibot_enabled") is True
+        else frozenset()
+    )
+    _require(set(profile.get("services", {})) == expected, "profile_changed")
     return profile, files
 
 
@@ -158,8 +179,13 @@ def _material(config, profile):
         config.edge_secret_file,
         config.redis_password_file,
     ]
-    if config.oidc_ca_file is not None:
-        paths.append(config.oidc_ca_file)
+    for path in (
+        config.oidc_ca_file,
+        config.guest_session_secret_file,
+        config.antibot_signing_key_file,
+    ):
+        if path is not None:
+            paths.append(path)
     paths.extend(
         Path(mount["source"]) for mount in profile["services"]["public-web"]["volumes"]
     )
@@ -273,7 +299,9 @@ def _verify(config, root, snapshot, inspector):
             and proof.get("Id") == image
             and type(labels) is dict
             and profile["services"][role]["image"] == image
-            and labels.get(capability) == "1"
+            and labels.get(capability)
+            == ("2" if capability == host.CAPABILITY else "1")
+            and labels.get(host.CAPABILITY) == "2"
             and labels.get("org.opencontainers.image.revision") == snapshot["revision"],
             "profile_changed",
         )
@@ -301,7 +329,15 @@ def _report(status, state, *, changed=False):
 
 
 def _stop(snapshot, runner):
-    _compose(snapshot, runner, "stop", "--timeout", "10", "public-entry", timeout=30)
+    _compose(
+        snapshot,
+        runner,
+        "stop",
+        "--timeout",
+        "10",
+        *_entry_services(snapshot),
+        timeout=30,
+    )
 
 
 def _smoke(config):
@@ -427,6 +463,23 @@ def _deploy(config, root, target, old, runner, inspector, smoke, *, bootstrap=Fa
             timeout=180,
         )
         preflight.verify_bound_backend(target["compose"], runner=runner)
+        if "public-edge" in target["compose"]["services"]:
+            _compose(
+                target,
+                runner,
+                "up",
+                "--detach",
+                "--no-deps",
+                "--no-build",
+                "--pull",
+                "missing" if bootstrap else "never",
+                "--wait",
+                "--wait-timeout",
+                "90",
+                "antibot",
+                "public-edge",
+                timeout=180,
+            )
         _compose(
             target,
             runner,
@@ -562,7 +615,9 @@ def bootstrap_public_entry(
             "json",
         ).stdout.strip()
         _require(rows in (b"", b"[]"), "runtime_changed")
-        _require(not os.listdir(root / "redis-data"), "runtime_changed")
+        for name in ("redis-data", "antibot-data"):
+            if (root / name).exists():
+                _require(not os.listdir(root / name), "runtime_changed")
         target = _snapshot(root, profile, files, _material(config, profile))
         return _deploy(
             config,

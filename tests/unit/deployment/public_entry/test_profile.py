@@ -258,16 +258,12 @@ class PublicEntryTests(unittest.TestCase):
             before["functions"][0],
         )
         self.assertIn("if h.origin ~=", before["functions"][0])
-        self.assertIn("claims.iss ~=", after["functions"][0])
-        self.assertIn("sha:update(string.char(0))", after["functions"][0])
-        self.assertIn(
-            "'Authorization', ctx.depositar_authorization", after["functions"][0]
-        )
-        self.assertIn("'X-Refresh-Token','Cookie'", after["functions"][0])
-        self.assertIn("type(claims.aud) == 'string'", after["functions"][0])
-        self.assertIn(
-            "audience_count > 1 and claims.azp ~= client_id", after["functions"][0]
-        )
+        self.assertIn("require('depositar_identity').handler", after["functions"][0])
+        adapter = self.plan()["assets"]["depositar_identity.lua"]
+        self.assertIn("claims.iss ~=", adapter)
+        self.assertIn("'__Host-depositar-login'", before["functions"][0])
+        self.assertIn("X-Depositar-Principal-Kind", before["functions"][0])
+        self.assertIn("X-Depositar-Quota-Pool-Limit", before["functions"][0])
         public_before = self.routes()["public-home"]["plugins"][
             "serverless-pre-function"
         ]["functions"][0]
@@ -282,13 +278,12 @@ class PublicEntryTests(unittest.TestCase):
         self.assertFalse(counter["allow_degradation"])
         self.assertEqual(counter["sync_interval"], -1)
         self.assertNotIn("group", counter)
-        self.assertEqual(
-            [(r["count"], r["key"]) for r in counter["rules"]],
-            [
-                (10, "account:$http_x_depositar_subject"),
-                (100, "global:$http_x_depositar_quota_bucket"),
-            ],
-        )
+        self.assertEqual(len(counter["rules"]), 2)
+        self.assertEqual(counter["rules"][0]["count"], "$http_x_depositar_turn_limit")
+        self.assertEqual(counter["rules"][1]["count"], 100)
+        for rule in counter["rules"]:
+            self.assertIn("$http_x_depositar_quota_period", rule["key"])
+            self.assertEqual(rule["time_window"], "$http_x_depositar_quota_ttl")
         changed = edge.render_public_entry(replace(self.config, quota_global=200))
         other = next(
             route
@@ -344,6 +339,68 @@ class PublicEntryTests(unittest.TestCase):
             plan["apisix_routes"]["routes"][4]["plugins"]["openid-connect"][
                 "ssl_verify"
             ]
+        )
+
+    def mixed_raw(self, **extra):
+        for name in ("guest_session_secret_file", "antibot_signing_key_file"):
+            path = self.root / name
+            path.write_text("a" * 64)
+            path.chmod(0o600)
+        return {
+            **self.raw,
+            "access_mode": "mixed",
+            "guest_session_secret_file": str(self.root / "guest_session_secret_file"),
+            **extra,
+        }
+
+    def test_mixed_policy_rejects_missing_secret_and_unreserved_budgets(self):
+        with self.assertRaisesRegex(edge.PublicEntryError, "guest_secret_required"):
+            edge.validate_public_entry_config({**self.raw, "access_mode": "mixed"})
+        for extra in (
+            {"access_mode": "invalid"},
+            {"quota_per_guest": True},
+            {"quota_per_guest": 10},
+            {"quota_guest_pool": 2},
+            {"quota_user_pool": 9},
+            {"quota_guest_pool": 50},
+            {"antibot_enabled": "true"},
+            {"antibot_enabled": True},
+        ):
+            with self.subTest(extra=extra), self.assertRaises(edge.PublicEntryError):
+                edge.validate_public_entry_config(self.mixed_raw(**extra))
+        edge.validate_public_entry_config(self.mixed_raw())
+
+    def test_mixed_turn_uses_one_route_with_individual_pool_and_global_limits(self):
+        config = edge.validate_public_entry_config(self.mixed_raw())
+        plan = edge.render_public_entry(config)
+        turns = [r for r in plan["apisix_routes"]["routes"] if r["uri"] == "/api/turn"]
+        self.assertEqual(len(turns), 1)
+        plugins = turns[0]["plugins"]
+        self.assertEqual(plugins["openid-connect"]["unauth_action"], "pass")
+        self.assertEqual(
+            [r["header_prefix"] for r in plugins["limit-count"]["rules"]],
+            ["Individual", "Pool", "Global"],
+        )
+        self.assertIn("depositar-quota-response", plugins)
+        self.assertTrue(plan["compose"]["x-depositar-plan"]["anonymous_ai"])
+
+    def test_antibot_has_no_gateway_bypass_and_state_is_staged_privately(self):
+        raw = self.mixed_raw(
+            antibot_enabled=True,
+            antibot_signing_key_file=str(self.root / "antibot_signing_key_file"),
+        )
+        config = edge.validate_public_entry_config(raw)
+        plan = edge.write_public_entry(config)
+        services = plan["compose"]["services"]
+        self.assertEqual(services["public-entry"]["ports"], [])
+        self.assertEqual(services["public-edge"]["ports"][0]["host_ip"], "127.0.0.1")
+        self.assertNotIn("ports", services["antibot"])
+        self.assertEqual(
+            plan["apisix_config"]["nginx_config"]["http"]["real_ip_from"],
+            ["public-edge"],
+        )
+        self.assertEqual(
+            (self.state / "public-entry/antibot-data").stat().st_mode & 0o777, 0o700
         )
 
     def test_staging_is_private_and_refuses_overwrite(self):

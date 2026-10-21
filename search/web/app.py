@@ -82,10 +82,12 @@ class WebBoundary:
             ):
                 return await reject(403, "origin_denied")
             try:
-                owner = self.identity.authenticate(scope["headers"])
+                access = self.identity.authenticate(scope["headers"])
             except SessionError as error:
                 return await reject(error.status, error.code)
-            scope.setdefault("state", {})["owner"] = owner
+            state = scope.setdefault("state", {})
+            state["access"] = access
+            state["owner"] = access.principal.owner
         is_post = scope["method"] == "POST"
         length = headers.get(b"content-length", "")
         if is_post:
@@ -192,9 +194,7 @@ def create_app(settings=None, upstream=None, sessions=None):
         http_method_names = ["get"]
 
         async def get(self, request):
-            return Response(
-                {"auth_required": identity.required, "authenticated": identity.required}
-            )
+            return Response(request.scope["state"]["access"].payload())
 
     class SessionView(WebsiteView):
         http_method_names = ["post", "delete"]

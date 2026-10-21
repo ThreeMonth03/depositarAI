@@ -1,3 +1,4 @@
+import { privateAccess } from "./access-fixture";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { Reply } from "../src/api";
@@ -62,7 +63,7 @@ for (const outcome of ["success", "unavailable", "login_required"] as const)
       calls.push(`${request.method()} ${path}`);
       if (path === "/api/access")
         return route.fulfill({
-          json: { auth_required: false, authenticated: false },
+          json: privateAccess,
         });
       if (path === "/api/session" && request.method() === "POST")
         return route.fulfill({

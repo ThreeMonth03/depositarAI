@@ -1,3 +1,4 @@
+import { privateAccess } from "./access-fixture";
 import { expect, test } from "@playwright/test";
 
 const session = {
@@ -45,7 +46,7 @@ for (const code of ["session_required", "unavailable"])
       return calls.length === 1
         ? route.fulfill({ status: 401, json: { error: { code } } })
         : route.fulfill({
-            json: { auth_required: false, authenticated: false },
+            json: privateAccess,
           });
     });
     await page.goto("/");
@@ -77,7 +78,7 @@ test("invalid successful session replies never allocate a turn or arm an invalid
     return route.fulfill({
       json:
         path === "/api/access"
-          ? { auth_required: false, authenticated: false }
+          ? privateAccess
           : path === "/api/session"
             ? { ...session, ...changed }
             : reply,
@@ -173,7 +174,7 @@ test("malformed successful turns keep prior results and require an explicit new 
     const path = new URL(request.url()).pathname;
     if (path === "/api/access")
       return route.fulfill({
-        json: { auth_required: false, authenticated: false },
+        json: privateAccess,
       });
     if (path === "/api/session") {
       if (request.method() === "POST") sessions++;

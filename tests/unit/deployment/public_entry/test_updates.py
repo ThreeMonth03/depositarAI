@@ -117,7 +117,10 @@ class PublicEntryUpdatesTests(unittest.TestCase):
                 "org.opencontainers.image.revision": REVISIONS[image],
                 host.CAPABILITY
                 if image in (OLD, NEW)
-                else host.FRONTEND_CAPABILITY: "1",
+                else host.FRONTEND_CAPABILITY: "1"
+                if image in (FRONT, NEW_FRONT)
+                else "2",
+                host.CAPABILITY: "2",
             },
         }
 

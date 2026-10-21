@@ -40,6 +40,9 @@ ISSUER = "https://oidc.test:9443"
     "real public-entry runtime requires an explicit isolated test opt-in",
 )
 class PublicEntryRuntimeFixture(unittest.TestCase):
+    mixed = False
+    antibot = False
+
     @classmethod
     def command(cls, argv, *, timeout=30, check=True):
         result = subprocess.run(
@@ -124,15 +127,17 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
             if any(candidate.overlaps(existing) for existing in used):
                 continue
             selected.append(candidate)
-            if len(selected) == 3:
+            if len(selected) == (4 if cls.antibot else 3):
                 break
-        if len(selected) != 3:
+        if len(selected) != (4 if cls.antibot else 3):
             raise AssertionError(
                 "no three nonoverlapping disposable test subnets available"
             )
         return {
             name: {"internal": True, "ipam": {"config": [{"subnet": str(subnet)}]}}
-            for name, subnet in zip(("website", "quota", "outbound"), selected)
+            for name, subnet in zip(
+                ("website", "quota", "outbound", "antibot-gateway"), selected
+            )
         }
 
     @classmethod
@@ -201,6 +206,8 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
             "edge-key": "d" * 64,
             "redis-password": "f" * 64,
             "api-key": "c" * 64,
+            "guest-secret": "b" * 64,
+            "antibot-key": "a" * 64,
         }
         for name, value in secrets.items():
             (root / name).write_text(value + "\n")
@@ -219,9 +226,28 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "edge_secret_file": str(root / "edge-key"),
                 "redis_password_file": str(root / "redis-password"),
                 "oidc_ca_file": str(root / "tls.crt"),
-                "quota_per_account": 2,
-                "quota_global": 4,
+                "quota_per_account": 3 if cls.mixed else 2,
+                "quota_global": 6 if cls.mixed else 4,
+                **(
+                    {
+                        "access_mode": "mixed",
+                        "guest_session_secret_file": str(root / "guest-secret"),
+                        "quota_per_guest": 1,
+                        "quota_guest_pool": 2,
+                        "quota_user_pool": 4,
+                    }
+                    if cls.mixed
+                    else {}
+                ),
                 "quota_window_seconds": 3600,
+                **(
+                    {
+                        "antibot_enabled": True,
+                        "antibot_signing_key_file": str(root / "antibot-key"),
+                    }
+                    if cls.antibot
+                    else {}
+                ),
             }
         )
         plan = write_public_entry(config, uid=uid, gid=gid)
@@ -231,6 +257,8 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         services = composition["services"]
         services["public-entry"]["image"] = images["apisix"]
         services["public-entry"].pop("ports", None)
+        if cls.antibot:
+            services["public-edge"].pop("ports", None)
         services["quota-redis"]["image"] = images["redis"]
         # Check disposable startup promptly while preserving steady-state
         # commands, intervals, retries and the actual HTTPS readiness probe.
@@ -320,10 +348,48 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
             ],
             "networks": {"website": {"aliases": ["web"]}},
         }
+        services["fixture"]["healthcheck"] = {
+            "test": [
+                "CMD",
+                "python",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__calls', timeout=2).read()",
+            ],
+            "interval": "1s",
+            "timeout": "3s",
+            "retries": 15,
+        }
+        services["public-web"]["depends_on"] = {
+            "fixture": {"condition": "service_healthy"}
+        }
+        services["public-web"]["healthcheck"] = {
+            "test": [
+                "CMD",
+                "python",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()",
+            ],
+            "interval": "1s",
+            "timeout": "3s",
+            "retries": 15,
+        }
         services["public-frontend"] = {
             **common,
             "image": images["frontend"],
             "networks": ["website"],
+            "depends_on": {"public-web": {"condition": "service_healthy"}},
+            "healthcheck": {
+                "test": [
+                    "CMD-SHELL",
+                    "wget -q -O /dev/null http://127.0.0.1:8080/healthz",
+                ],
+                "interval": "1s",
+                "timeout": "3s",
+                "retries": 15,
+            },
+        }
+        services["public-entry"]["depends_on"]["public-frontend"] = {
+            "condition": "service_healthy"
         }
         nginx = """worker_processes 1;
 pid /tmp/nginx.pid;
@@ -351,6 +417,8 @@ http {
  }
 }
 """
+        if cls.antibot:
+            nginx = nginx.replace("public-entry:9080", "public-edge:8080")
         (root / "nginx.conf").write_text(nginx)
         (root / "nginx.conf").chmod(0o600)
         services["tls-front"] = {
@@ -359,7 +427,10 @@ http {
             "volumes": [mounts[1]],
             "entrypoint": ["nginx", "-c", "/fixture/nginx.conf", "-g", "daemon off;"],
             "networks": {"outbound": {"aliases": ["public.test"]}},
+            "depends_on": {"public-entry": {"condition": "service_healthy"}},
         }
+        if cls.antibot:
+            services["tls-front"]["networks"]["antibot-gateway"] = {}
         services["probe"] = {
             **common,
             "image": images["python"],
@@ -397,14 +468,18 @@ http {
     @classmethod
     def wait_ready(cls):
         deadline = time.monotonic() + 25
+        last = None
         while time.monotonic() < deadline:
             try:
-                if cls.probe("access")["status"] == 401:
+                last = (cls.probe("access")["status"], cls.probe("health")["status"])
+                if last == (200 if cls.mixed else 401, 200):
                     return
             except (AssertionError, ValueError):
                 pass
             time.sleep(0.5)
-        raise AssertionError("isolated HTTPS entrance did not become ready")
+        raise AssertionError(
+            "isolated HTTPS entrance did not become ready: " + str(last)
+        )
 
     def calls(self):
         return self.probe("counter")["value"]["calls"]
@@ -431,13 +506,10 @@ class PublicEntryRuntimeTests(PublicEntryRuntimeFixture):
                 self.assertFalse(cookie["domain_specified"])
                 self.assertEqual(cookie["path"], "/")
                 self.assertEqual(cookie["same_site"], "Lax")
-            self.assertEqual(
-                self.probe("access", account)["value"],
-                {
-                    "auth_required": True,
-                    "authenticated": True,
-                },
-            )
+            access = self.probe("access", account)["value"]
+            self.assertEqual(access["mode"], "login_required")
+            self.assertEqual(access["principal"]["kind"], "user")
+            self.assertEqual(access["limits"], {"turns": 2, "window_seconds": 3600})
             self.assertEqual(self.probe("session", account)["status"], 200)
         # Even a stolen search token and correct internal headers cannot turn
         # an anonymous alternate/encoded route into an authenticated request.
@@ -611,7 +683,18 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
             }:
                 admitted[result["account"]] += 1
             else:
-                self.assertEqual((status, code), (429, "quota_exceeded"), result)
+                self.assertEqual(status, 429, result)
+                self.assertIn(
+                    code,
+                    {
+                        "quota_exceeded",
+                        "guest_quota_exceeded",
+                        "user_quota_exceeded",
+                        "pool_quota_exceeded",
+                        "global_quota_exceeded",
+                    },
+                    result,
+                )
         return admitted
 
     def test_authenticated_bursts_keep_account_global_and_session_caps(self):
@@ -670,6 +753,104 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
         time.sleep(1)
         self.assertEqual(self.probe("session", "bob")["status"], 200)
         self.assertEqual(self.calls(), calls)
+
+
+class PublicEntryMixedAccessTests(PublicEntryRuntimeFixture):
+    mixed = True
+
+    def test_guest_identity_pool_reservation_login_and_durable_quotas(self):
+        first = self.probe("access", "visitor-one")
+        self.assertEqual(first["status"], 200)
+        access = first["value"]
+        self.assertEqual(access["mode"], "mixed")
+        self.assertEqual(access["principal"]["kind"], "guest")
+        self.assertEqual(access["limits"], {"turns": 1, "window_seconds": 3600})
+        self.assertEqual(self.probe("access", "visitor-one")["value"], access)
+        flags = next(
+            c for c in first["cookies"] if c["name"] == "__Host-depositar-guest"
+        )
+        self.assertTrue(flags["secure"] and flags["http_only"])
+        self.assertFalse(flags["domain_specified"])
+        self.assertEqual((flags["path"], flags["same_site"]), ("/", "Lax"))
+        for account in ("visitor-one", "visitor-two", "visitor-three"):
+            self.assertEqual(self.probe("session", account)["status"], 200)
+        self.assertEqual(
+            self.probe("turn", "visitor-one", {"query": "氣候", "version": 0})[
+                "status"
+            ],
+            200,
+        )
+        # A new search session retains the visitor's budget.
+        self.assertEqual(self.probe("session", "visitor-one")["status"], 200)
+        rejected = self.probe("turn", "visitor-one", {"query": "氣候", "version": 0})
+        self.assertEqual(rejected["status"], 429)
+        self.assertEqual(rejected["value"]["error"]["code"], "guest_quota_exceeded")
+        self.assertEqual(
+            self.probe("turn", "visitor-two", {"query": "氣候", "version": 0})[
+                "status"
+            ],
+            200,
+        )
+        rejected = self.probe("turn", "visitor-three", {"query": "氣候", "version": 0})
+        self.assertEqual(rejected["status"], 429)
+        self.assertEqual(rejected["value"]["error"]["code"], "pool_quota_exceeded")
+        self.assertEqual(self.calls(), 2)
+        # Exhausting the guest pool leaves the configured user reservation.
+        self.assertEqual(self.probe("login", "alice")["status"], 200)
+        user = self.probe("access", "alice")["value"]
+        self.assertEqual(user["principal"]["kind"], "user")
+        self.assertEqual(user["limits"]["turns"], 3)
+        self.assertEqual(self.probe("session", "alice")["status"], 200)
+        for version in range(3):
+            self.assertEqual(
+                self.probe("turn", "alice", {"query": "氣候", "version": version})[
+                    "status"
+                ],
+                200,
+            )
+        rejected = self.probe("turn", "alice", {"query": "氣候", "version": 3})
+        self.assertEqual(rejected["value"]["error"]["code"], "user_quota_exceeded")
+        self.assertEqual(self.calls(), 5)
+        # Caller identity headers and another principal's bearer cannot claim it.
+        denied = self.probe("path", "attacker-guest", {"path": "/api/turn"})
+        self.assertIn(denied["status"], (401, 429))
+        self.assertEqual(self.calls(), 5)
+        self.compose("restart", "public-entry", timeout=30)
+        self.wait_ready()
+        rejected = self.probe("turn", "alice", {"query": "氣候", "version": 3})
+        self.assertEqual(rejected["value"]["error"]["code"], "user_quota_exceeded")
+        self.compose("stop", "--timeout", "2", "quota-redis", timeout=15)
+        rejected = self.probe("turn", "visitor-one", {"query": "氣候", "version": 0})
+        self.assertIn(rejected["status"], (500, 503))
+        self.assertEqual(self.calls(), 5)
+
+
+class PublicEntryMixedConcurrencyTests(PublicEntryRuntimeFixture):
+    mixed = True
+    burst = PublicEntryConcurrencyTests.burst
+    turn_admissions = PublicEntryConcurrencyTests.turn_admissions
+
+    def test_parallel_guests_cannot_consume_reserved_user_pool(self):
+        guests = ["visitor-" + str(i) for i in range(4)]
+        users = ["account-" + str(i) for i in range(3)]
+        for account in guests + users:
+            if account in users:
+                self.assertEqual(self.probe("login", account)["status"], 200)
+            self.assertEqual(self.probe("session", account)["status"], 200)
+        time.sleep(2)
+        admitted_guests = self.turn_admissions(self.burst("turn", guests))
+        self.assertEqual(sum(admitted_guests.values()), 2)
+        self.assertTrue(all(count <= 1 for count in admitted_guests.values()))
+        time.sleep(2)
+        admitted_users = self.turn_admissions(self.burst("turn", users * 4))
+        self.assertEqual(sum(admitted_users.values()), 4)
+        self.assertTrue(all(count <= 3 for count in admitted_users.values()))
+        self.assertEqual(
+            sum(admitted_guests.values()) + sum(admitted_users.values()), 6
+        )
+        # Count admissions, including BFF busy/version errors; GPU calls alone
+        # could hide an overshoot behind the BFF's independent single slot.
+        self.assertLessEqual(self.calls(), 6)
 
 
 if __name__ == "__main__":
