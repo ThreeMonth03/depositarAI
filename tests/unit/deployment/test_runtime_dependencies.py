@@ -192,6 +192,15 @@ class RuntimeDependencyTests(unittest.TestCase):
                     },
                 )
 
+    def test_web_contract_shares_metadata_without_retrieval_implementation(self):
+        metadata = "search/api/retrieval/metadata.py"
+        results = "search/api/retrieval/results.py"
+        for service in ("conversation-api", "web"):
+            with self.subTest(service=service):
+                self.assertIn(metadata, source_bundle.RECIPES[service]["inputs"])
+        self.assertIn(results, source_bundle.RECIPES["conversation-api"]["inputs"])
+        self.assertNotIn(results, source_bundle.RECIPES["web"]["inputs"])
+
     def test_api_test_target_cannot_supply_test_files_to_production(self) -> None:
         source = (ROOT / "deploy/docker/api/Dockerfile").read_text()
         runtime, test_stage = source.split("FROM runtime AS tests\n")

@@ -310,7 +310,7 @@ def _verify(config, root, snapshot, inspector):
             and profile["x-depositar-plan"]["private_backend"].get("kind") == "https"
         ):
             _require(
-                labels.get("io.depositar.ai.conversation.version") == "2",
+                labels.get("io.depositar.ai.conversation.version") == "3",
                 "profile_changed",
             )
     _require(

@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 from search.api.retrieval import index
 from search.api.retrieval.results import ValidatedSearch
+from search.catalog.build import builder
 from search.planning import index_filters
 from search.tests.fixtures import IDS, CONDITIONS, report
 from search.tests.fixtures import condition_document
@@ -209,12 +211,89 @@ class IndexBoundaryTests(unittest.TestCase):
                 client.embed("水質")
             self.assertEqual(send.call_count, 1)
 
+    def test_cards_use_sealed_coverage_without_index_or_query_date_inference(self):
+        coverage = (
+            ("2020", "2025", "complete"),
+            ("2024-2", "2024-02-29", "complete"),
+            ("2024", None, "partial"),
+            (None, None, "absent"),
+            ("2024-02-30", "2024", "invalid"),
+        )
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        source = base / "datasets.jsonl"
+        records = [
+            {
+                "id": IDS[number],
+                "name": f"coverage-{number}",
+                "private": False,
+                "state": "active",
+                "type": "dataset",
+                "title": "2030 年氣候資料",
+                "start_time": start,
+                "end_time": end,
+                "created_time": "2010",
+                "metadata_created": "2026-01-01T00:00:00",
+                "metadata_modified": "2026-01-02T00:00:00",
+            }
+            for number, (start, end, _status) in enumerate(coverage)
+        ]
+        source.write_text("".join(json.dumps(record) + "\n" for record in records))
+        source.chmod(0o600)
+        output = base / "bundles"
+        output.mkdir(mode=0o700)
+        built = builder.build_bundle(source, output)
+        bundle_path = Path(built["bundle_path"])
+        for artifact in bundle_path.iterdir():
+            self.addCleanup(artifact.chmod, 0o600)
+        self.addCleanup(bundle_path.chmod, 0o700)
+        bundle = index.CatalogBundle.load(
+            bundle_path, expected_manifest_sha256=built["manifest_sha256"]
+        )
+        by_id = {row["dataset_id"]: row for row in bundle.documents}
+        self.assertTrue(all("temporal_coverage" not in row for row in by_id.values()))
+        fused = [
+            SimpleNamespace(id=identifier, score=1 / rank)
+            for rank, identifier in enumerate(by_id, 1)
+        ]
+        branches = {name: set(by_id) for name in ("lexical", "vector")}
+        pipeline = SimpleNamespace(retrieve=lambda *_args: (fused, branches))
+        client = SimpleNamespace(by_id=by_id, embed=lambda _query: [0.0] * 768)
+        with (
+            patch.object(index, "IndexClient", return_value=client),
+            patch.dict(sys.modules, {"search.api.retrieval.pipeline": pipeline}),
+        ):
+            result = index.search(
+                {"query": "找 2040 年氣候", "top_k": len(coverage), "conditions": {}},
+                SimpleNamespace(
+                    bundle_path=bundle_path,
+                    manifest_sha256=built["manifest_sha256"],
+                ),
+            )
+        cards = ValidatedSearch.from_report(
+            "找 2040 年氣候",
+            result,
+            conditions={},
+            manifest_sha256=built["manifest_sha256"],
+        ).cards()
+        for card, (start, end, status) in zip(cards, coverage):
+            self.assertEqual(
+                card["temporal_coverage"],
+                {"start": start, "end": end, "status": status},
+            )
+            self.assertEqual(card["metadata_modified"], "2026-01-02T00:00:00")
+
 
 @unittest.skipUnless(importlib.util.find_spec("haystack"), "Pinned pipeline dependency")
 class IndexPipelineTests(unittest.TestCase):
     def test_empty_time_format_and_combined_searches_use_the_same_pipeline(self):
         row = report("氣候", count=1)["results"][0]
-        bundle = SimpleNamespace(manifest_sha256="b" * 64)
+        bundle = SimpleNamespace(
+            manifest_sha256="b" * 64,
+            condition_metadata={row["dataset_id"]: condition_document("2020", "2025")},
+        )
         for conditions in (
             {},
             CONDITIONS,

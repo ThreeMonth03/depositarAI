@@ -88,6 +88,22 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         await self.search(top_k=20)
         self.assertEqual(self.backend.calls[0][1]["top_k"], 20)
 
+    async def test_card_coverage_is_required_and_preserved_after_reranking(self):
+        self.backend.retrieval = report("氣候", count=5)
+        coverage = {"start": "2024-2", "end": None, "status": "partial"}
+        self.backend.retrieval["results"][4]["temporal_coverage"] = coverage
+        result = await self.search(top_k=1)
+        self.assertEqual(result["cards"][0]["dataset_id"], IDS[4])
+        self.assertEqual(result["cards"][0]["temporal_coverage"], coverage)
+        for mutation in (None, "missing", {**coverage, "status": "complete"}):
+            malformed = copy.deepcopy(result)
+            if mutation == "missing":
+                del malformed["cards"][0]["temporal_coverage"]
+            else:
+                malformed["cards"][0]["temporal_coverage"] = mutation
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                RetrievalResponse.model_validate(malformed)
+
     async def test_disabled_reranking_uses_requested_bound_and_no_llm(self):
         self.engine = RetrievalEngine(
             self.backend, dataclasses.replace(self.settings, rerank_enabled=False)

@@ -42,7 +42,7 @@ PLAN_FIELDS = frozenset(
 )
 API_KEY_TARGET = "/run/secrets/api_key"
 CA_TARGET = "/run/certs/upstream-ca.pem"
-CONVERSATION_CONTRACT_VERSION = 2
+CONVERSATION_CONTRACT_VERSION = 3
 PROOF = {
     "authenticated_version_status": 200,
     "backend_identity_verified": True,

@@ -21,7 +21,7 @@ BACKEND_ORIGIN = "https://backend.test:9443"
 EXPECTED_VERSION = {
     "revision": "a" * 40,
     "catalog_manifest_sha256": "b" * 64,
-    "conversation_contract_version": 2,
+    "conversation_contract_version": 3,
 }
 
 
@@ -334,17 +334,23 @@ http {
         finally:
             self.ca.write_bytes(good_ca)
         wrong_wire = self.directory / "backend-version.json"
-        wrong_wire.write_text(
-            json.dumps({**EXPECTED_VERSION, "conversation_contract_version": 1})
-        )
-        wrong_wire.chmod(0o600)
-        try:
-            with self.assertRaisesRegex(ValueError, "remote_probe_failed"):
-                remote.verify_remote_backend(
-                    self.profile, compose_file=self.compose_file
+        for version in (1, 2):
+            wrong_wire.write_text(
+                json.dumps(
+                    {**EXPECTED_VERSION, "conversation_contract_version": version}
                 )
-        finally:
-            wrong_wire.unlink()
+            )
+            wrong_wire.chmod(0o600)
+            try:
+                with (
+                    self.subTest(version=version),
+                    self.assertRaisesRegex(ValueError, "remote_probe_failed"),
+                ):
+                    remote.verify_remote_backend(
+                        self.profile, compose_file=self.compose_file
+                    )
+            finally:
+                wrong_wire.unlink()
         self.assertEqual(self.calls(), 0)
         self.assertTrue(
             all(

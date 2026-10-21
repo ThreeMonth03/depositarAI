@@ -479,9 +479,11 @@ class VersionTLSFixtureTests(unittest.TestCase):
                         else "f" * 64,
                     }
                     if case.mode != "legacy-contract":
-                        value["conversation_contract_version"] = (
-                            True if case.mode == "invalid-contract" else 2
-                        )
+                        value["conversation_contract_version"] = {
+                            "invalid-contract": True,
+                            "unsupported-contract": 1,
+                            "old-contract": 2,
+                        }.get(case.mode, 3)
                     body = (
                         b"x" * 16385
                         if case.mode == "oversize"
@@ -549,13 +551,18 @@ class VersionTLSFixtureTests(unittest.TestCase):
     def test_remote_contract_is_checked_without_requiring_matching_website_revision(
         self,
     ):
-        result = self.probe(contract_version=2)
+        result = self.probe(contract_version=3)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(json.loads(result.stdout), PROOF)
-        for mode in ("legacy-contract", "invalid-contract"):
+        for mode in (
+            "legacy-contract",
+            "unsupported-contract",
+            "old-contract",
+            "invalid-contract",
+        ):
             with self.subTest(mode=mode):
                 self.mode = mode
-                result = self.probe(contract_version=2)
+                result = self.probe(contract_version=3)
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(
                     json.loads(result.stdout),

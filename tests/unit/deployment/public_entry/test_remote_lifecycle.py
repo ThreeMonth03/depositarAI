@@ -59,7 +59,7 @@ class RemoteLifecycleTests(unittest.TestCase):
     def inspector(self, image):
         proof = update_fixture.PublicEntryUpdatesTests.inspector(self, image)
         if image in (update_fixture.OLD, update_fixture.NEW):
-            proof["Labels"]["io.depositar.ai.conversation.version"] = "2"
+            proof["Labels"]["io.depositar.ai.conversation.version"] = "3"
         return proof
 
     def invoke(self, function, web=update_fixture.OLD, frontend=update_fixture.FRONT):
@@ -181,12 +181,12 @@ class RemoteLifecycleTests(unittest.TestCase):
                 "catalog_manifest_sha256": self.backend_value[
                     "catalog_manifest_sha256"
                 ],
-                "conversation_contract_version": 2,
+                "conversation_contract_version": 3,
             },
         )
 
     def test_missing_or_legacy_bff_wire_capability_is_rejected_before_prepare(self):
-        for version in (None, "1", 2, True):
+        for version in (None, "1", "2", 3, True):
             proof = self.inspector(update_fixture.OLD)
             if version is None:
                 proof["Labels"].pop("io.depositar.ai.conversation.version")
@@ -380,7 +380,7 @@ class RemoteLifecycleTests(unittest.TestCase):
 
     def test_preflight_rejects_wire_version_mismatch_without_querying_or_docker(self):
         bound = self.bind()
-        for version in (None, 1, True, "2"):
+        for version in (None, 1, 2, True, "3", 3.0):
             requests = []
             with (
                 self.subTest(version=version),
@@ -391,13 +391,13 @@ class RemoteLifecycleTests(unittest.TestCase):
                 requests, [("GET", "/v1/version", False), ("GET", "/v1/version", True)]
             )
         self.assertEqual(
-            self.verify_bound(bound, runner=self.wire_runner(2, [])), remote.PROOF
+            self.verify_bound(bound, runner=self.wire_runner(3, [])), remote.PROOF
         )
         self.assertEqual(self.runner.commands, [])
 
     def test_wire_contract_failure_prevents_first_container_start(self):
         self.backend.side_effect = lambda bound, **_options: self.verify_bound(
-            bound, runner=self.wire_runner(1, [])
+            bound, runner=self.wire_runner(2, [])
         )
         with self.assertRaisesRegex(remote.PublicEntryRemoteError, "probe_failed"):
             self.invoke(updates.bootstrap_public_entry)
@@ -411,7 +411,7 @@ class RemoteLifecycleTests(unittest.TestCase):
             updates.update_public_entry, update_fixture.NEW, update_fixture.NEW_FRONT
         )
         self.backend.side_effect = lambda bound, **_options: self.verify_bound(
-            bound, runner=self.wire_runner(1, [])
+            bound, runner=self.wire_runner(2, [])
         )
         for action in (
             lambda: self.invoke(updates.update_public_entry),

@@ -131,7 +131,7 @@ class RemoteConfigurationTests(RemoteFixture):
                 "origin": self.value["origin"],
                 "api_revision": REVISION,
                 "catalog_manifest_sha256": MANIFEST,
-                "conversation_contract_version": 2,
+                "conversation_contract_version": 3,
             },
         )
         self.assertNotIn(API_KEY, repr(backend))
@@ -342,7 +342,10 @@ class RemoteAdmissionTests(RemoteFixture):
             {"catalog_manifest_sha256": "bad"},
             {"unexpected": "value"},
             {"conversation_contract_version": 1},
+            {"conversation_contract_version": 2},
             {"conversation_contract_version": True},
+            {"conversation_contract_version": "3"},
+            {"conversation_contract_version": 3.0},
         ):
             value = copy.deepcopy(original)
             value["x-depositar-plan"]["private_backend"].update(change)
@@ -482,14 +485,16 @@ class RemoteTLSProbeTests(RemoteFixture):
                         "catalog_manifest_sha256": MANIFEST
                         if case.mode != "manifest"
                         else "f" * 64,
-                        "conversation_contract_version": 2
+                        "conversation_contract_version": 3
                         if case.mode != "contract"
                         else 1,
                     }
                     if case.mode == "legacy_contract":
                         value.pop("conversation_contract_version")
+                    elif case.mode == "old_contract":
+                        value["conversation_contract_version"] = 2
                     elif case.mode == "untyped_contract":
-                        value["conversation_contract_version"] = 2.0
+                        value["conversation_contract_version"] = 3.0
                     raw = json.dumps(value).encode()
                     if case.mode == "oversize":
                         raw = b"PRIVATE_RESPONSE" * 2000
@@ -538,6 +543,7 @@ class RemoteTLSProbeTests(RemoteFixture):
             "revision",
             "manifest",
             "contract",
+            "old_contract",
             "legacy_contract",
             "untyped_contract",
             "oversize",

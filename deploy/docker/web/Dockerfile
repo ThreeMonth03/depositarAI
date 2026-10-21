@@ -10,7 +10,8 @@ COPY search/catalog/__init__.py search/catalog/errors.py \
 COPY search/api/__init__.py /app/search/api/
 COPY search/api/conversation/__init__.py search/api/conversation/calendar.py \
     search/api/conversation/contract.py search/api/conversation/time.py /app/search/api/conversation/
-COPY search/api/retrieval/__init__.py search/api/retrieval/schemas.py /app/search/api/retrieval/
+COPY search/api/retrieval/__init__.py search/api/retrieval/metadata.py \
+    search/api/retrieval/schemas.py /app/search/api/retrieval/
 COPY search/api/shared/__init__.py search/api/shared/admission.py \
     search/api/shared/schemas.py /app/search/api/shared/
 COPY search/planning/__init__.py search/planning/clock.py \
@@ -20,7 +21,7 @@ COPY search/web /app/search/web/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 LABEL io.depositar.ai.public-entry.version="2"
-LABEL io.depositar.ai.conversation.version="2"
+LABEL io.depositar.ai.conversation.version="3"
 ENV SOURCE_REVISION=$SOURCE_REVISION
 USER 1000:1000
 CMD ["python", "-m", "uvicorn", "search.web.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "32", "--timeout-keep-alive", "5"]

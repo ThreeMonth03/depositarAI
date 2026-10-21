@@ -10,6 +10,7 @@ from pydantic import Field, field_validator, model_validator
 
 from search.planning.clock import normalize_context
 from search.planning.predicates import validate_conditions
+from .metadata import validate_temporal_coverage
 from ..shared.schemas import StrictModel
 
 
@@ -88,6 +89,17 @@ class ConditionCounts(StrictModel):
     not_checked: int = Field(default=0, ge=0, le=20)
 
 
+class TemporalCoverage(StrictModel):
+    start: str | None = Field(max_length=128)
+    end: str | None = Field(max_length=128)
+    status: Literal["complete", "partial", "absent", "invalid"]
+
+    @model_validator(mode="after")
+    def valid_coverage(self):
+        validate_temporal_coverage(self.model_dump())
+        return self
+
+
 class Card(StrictModel):
     rank: int
     dataset_id: str
@@ -97,6 +109,7 @@ class Card(StrictModel):
     organization_title: str
     resource_formats: list[str]
     metadata_modified: str
+    temporal_coverage: TemporalCoverage
     condition_status: Literal["match", "unknown", "not_checked"]
 
 

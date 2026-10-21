@@ -89,7 +89,7 @@ WEB_CONTRACT = (
     | CATALOG_QUERY
     | _paths("search/api/", "__init__.py")
     | _paths("search/api/conversation/", "__init__.py calendar.py contract.py time.py")
-    | _paths("search/api/retrieval/", "__init__.py schemas.py")
+    | _paths("search/api/retrieval/", "__init__.py metadata.py schemas.py")
     | _paths("search/api/shared/", "__init__.py admission.py schemas.py")
     | _paths("search/planning/", "__init__.py clock.py contract.py predicates.py")
 )
@@ -104,7 +104,7 @@ API = (
     )
     | _paths(
         "search/api/retrieval/",
-        "__init__.py engine.py index.py pipeline.py query.py results.py schemas.py worker.py",
+        "__init__.py engine.py index.py metadata.py pipeline.py query.py results.py schemas.py worker.py",
     )
     | _paths(
         "search/api/shared/",
@@ -168,8 +168,8 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "fae11fbdda0333eafdf1749b3023d38f434dacfac2fce16c91c9d83a8670591f",
-        "dockerignore_sha256": "623613abd6969d8aa591bc6f4734a98ac73ce016f0d179a36046b0435a417f89",
+        "dockerfile_sha256": "de8aa1147d06b648cf18901650ea8b7c0b19640ed3e6dcbc5204833bd288df7b",
+        "dockerignore_sha256": "00ac7b8cc5b65510dfaf5e8b7c2682eff09197a587009033777fd69d615211f8",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (

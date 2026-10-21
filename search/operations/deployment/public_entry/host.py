@@ -203,7 +203,7 @@ def bind_remote_web(
 ):
     """Bind only the CPU BFF to a fixed authenticated HTTPS origin."""
     revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
-    if image_proof["Labels"].get("io.depositar.ai.conversation.version") != "2":
+    if image_proof["Labels"].get("io.depositar.ai.conversation.version") != "3":
         raise ValueError("public_entry_remote_contract_invalid")
     result = _bind_website(
         config, rendered, image, frontend_image, revision, backend.api_key_file

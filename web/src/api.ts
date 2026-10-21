@@ -4,6 +4,11 @@ export type SearchState = {
   formats: string[];
   unapplied_time?: { calendar: "lunar"; text: string } | null;
 };
+export type TemporalCoverage = {
+  start: string | null;
+  end: string | null;
+  status: "complete" | "partial" | "absent" | "invalid";
+};
 export type Card = {
   dataset_id: string;
   title: string;
@@ -11,6 +16,7 @@ export type Card = {
   snippet: string;
   organization_title: string;
   resource_formats: string[];
+  temporal_coverage: TemporalCoverage;
   condition_status: "match" | "unknown" | "not_checked";
 };
 export type TurnResult = {
@@ -82,6 +88,30 @@ function state(value: unknown): boolean {
   );
 }
 
+function temporalCoverage(value: unknown): boolean {
+  if (
+    !record(value) ||
+    ![value.start, value.end].every(
+      (date) =>
+        date === null ||
+        (typeof date === "string" && date.length > 0 && date.length <= 128),
+    )
+  )
+    return false;
+  switch (value.status) {
+    case "complete":
+      return value.start !== null && value.end !== null;
+    case "partial":
+      return (value.start === null) !== (value.end === null);
+    case "absent":
+      return value.start === null && value.end === null;
+    case "invalid":
+      return value.start !== null || value.end !== null;
+    default:
+      return false;
+  }
+}
+
 function card(value: unknown): boolean {
   return (
     record(value) &&
@@ -89,6 +119,7 @@ function card(value: unknown): boolean {
       (field) => typeof value[field] === "string",
     ) &&
     strings(value.resource_formats) &&
+    temporalCoverage(value.temporal_coverage) &&
     ["match", "unknown", "not_checked"].includes(
       value.condition_status as string,
     )
