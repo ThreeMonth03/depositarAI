@@ -180,7 +180,7 @@ class AntibotRuntimeTests(unittest.TestCase):
                 "anubis": ANUBIS_IMAGE,
                 "nginx": NGINX_BASE,
                 "python": os.environ.get(
-                    "DEPOSITAR_TEST_ANTIBOT_PYTHON_IMAGE", "python:3.12-alpine"
+                    "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE", "depositar-search-api:ci"
                 ),
             }
             for name, image in images.items():
