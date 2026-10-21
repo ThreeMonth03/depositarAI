@@ -460,7 +460,10 @@ try:
     status, raw = request(read_secret(Path(KEY_FILE)))
     value = strict_json(raw)
     if (status != 200 or type(value) is not dict or value.get("revision") != sys.argv[1]
-        or value.get("catalog_manifest_sha256") != sys.argv[2]):
+        or value.get("catalog_manifest_sha256") != sys.argv[2]
+        or (EXPECTED_CONTRACT_VERSION is not None and (
+            type(value.get("conversation_contract_version")) is not int
+            or value["conversation_contract_version"] != EXPECTED_CONTRACT_VERSION))):
         raise ValueError()
     print('{"authenticated_version_status":200,"backend_identity_verified":true,"unauthenticated_version_status":401,"upstream_tls_verified":true}')
     watchdog.cancel()
@@ -470,8 +473,15 @@ except Exception:
 """
 
 
-def _probe_source(*, key_file="/run/secrets/api_key"):
-    return "KEY_FILE=" + repr(key_file) + "\n" + PROBE
+def _probe_source(*, key_file="/run/secrets/api_key", contract_version=None):
+    return (
+        "KEY_FILE="
+        + repr(key_file)
+        + "\nEXPECTED_CONTRACT_VERSION="
+        + repr(contract_version)
+        + "\n"
+        + PROBE
+    )
 
 
 def check(config_path, *, runner=None):

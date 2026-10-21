@@ -11,6 +11,7 @@ from unittest.mock import patch
 from search.operations import cli
 from search.operations.deployment.public_entry import host
 from search.operations.deployment.public_entry import preflight
+from search.operations.deployment.public_entry import remote
 from search.operations.deployment.public_entry import updates
 
 
@@ -76,6 +77,49 @@ class PublicEntryCLITests(unittest.TestCase):
         self.assertNotIn("sentinel", output.getvalue())
         self.assertFalse(json.loads(output.getvalue())["active_changed"])
 
+    def test_remote_backend_dispatch_uses_no_product_or_release_configuration(self):
+        for command, module, action in (
+            ("prepare-public-entry", host, "prepare_public_entry"),
+            ("up-public-entry", host, "up_public_entry"),
+            ("update-public-entry", updates, "update_public_entry"),
+        ):
+            arguments = self.arguments(command)
+            arguments[arguments.index("--release-compose")] = "--backend-config"
+            arguments[arguments.index("/private/release/compose.json")] = (
+                "/private/backend.json"
+            )
+            with (
+                self.subTest(command=command),
+                patch("search.operations.config.load_config") as product,
+                patch.object(
+                    module, action, return_value={"status": "prepared"}
+                ) as entry,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(cli.main(arguments), 0)
+            product.assert_not_called()
+            entry.assert_called_once_with(
+                Path("/private/public.json"),
+                None,
+                "sha256:" + "a" * 64,
+                "sha256:" + "b" * 64,
+                backend_config=Path("/private/backend.json"),
+            )
+
+    def test_backend_source_must_be_explicit_and_unambiguous(self):
+        arguments = self.arguments("prepare-public-entry")
+        index = arguments.index("--release-compose")
+        for invalid in (
+            arguments[:index] + arguments[index + 2 :],
+            arguments + ["--backend-config", "/private/backend.json"],
+        ):
+            with (
+                self.subTest(arguments=invalid),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                cli.main(invalid)
+
     def test_product_config_is_rejected_for_public_entry(self):
         for command in (
             "prepare-public-entry",
@@ -133,6 +177,11 @@ class PublicEntryCLITests(unittest.TestCase):
                 "public_entry_backend_network_invalid",
             ),
             (preflight.PublicEntryPreflightError("private-secret-sentinel"), None),
+            (
+                remote.PublicEntryRemoteError("public_entry_remote_probe_failed"),
+                "public_entry_remote_probe_failed",
+            ),
+            (remote.PublicEntryRemoteError("private-secret-sentinel"), None),
             (
                 preflight.PublicEntryPreflightError(
                     "public_entry_backend_network_invalid", "private-secret-sentinel"

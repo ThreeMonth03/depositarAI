@@ -52,6 +52,7 @@ def create_app(settings=None, backend=None):
                 {
                     "revision": settings.revision,
                     "catalog_manifest_sha256": settings.manifest_sha256,
+                    "conversation_contract_version": 2,
                     "geography": False,
                     "persistent_memory": False,
                     "generated_answers": False,

@@ -71,6 +71,7 @@ def serve(directory):
     }
     codes, access_tokens = {}, {}
     counter = {"calls": 0}
+    version_requests = []
     counter_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -89,6 +90,33 @@ def serve(directory):
 
         def do_GET(self):
             path = urlsplit(self.path)
+            if path.path == "/v1/version":
+                authenticated = self.headers.get("Authorization") == "Bearer " + API_KEY
+                with counter_lock:
+                    version_requests.append(
+                        {
+                            "method": "GET",
+                            "path": path.path,
+                            "status": 200 if authenticated else 401,
+                        }
+                    )
+                if not authenticated:
+                    return self.reply(401, {"error": "invalid_api_key"})
+                override = root / "backend-version.json"
+                value = (
+                    json.loads(override.read_text())
+                    if override.exists()
+                    else {
+                        "revision": "a" * 40,
+                        "catalog_manifest_sha256": "b" * 64,
+                        "conversation_contract_version": 2,
+                    }
+                )
+                return self.reply(200, value)
+            if path.path == "/__version_calls":
+                with counter_lock:
+                    snapshot = list(version_requests)
+                return self.reply(200, {"requests": snapshot})
             if path.path == "/.well-known/openid-configuration":
                 return self.reply(
                     200,

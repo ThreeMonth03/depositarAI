@@ -284,6 +284,7 @@ class ConversationHTTPTests(unittest.TestCase):
         )
         self.assertFalse(version["persistent_memory"])
         self.assertFalse(version["generated_answers"])
+        self.assertEqual(version["conversation_contract_version"], 2)
 
     def test_ready_failure_does_not_echo_or_become_cached_success(self):
         self.backend.fail = "ready"
