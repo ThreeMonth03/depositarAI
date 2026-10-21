@@ -236,10 +236,16 @@ def verify_private_backend(profile, release, *, runner=subprocess.run):
         ) from None
 
 
-def verify_bound_backend(profile, *, runner=subprocess.run):
+def verify_bound_backend(profile, *, runner=subprocess.run, compose_file=None):
     """Verify the backend identity sealed in a prepared or versioned profile."""
     try:
         plan = profile["x-depositar-plan"]["private_backend"]
+        if type(plan) is dict and plan.get("kind") == "https":
+            from .remote import verify_remote_backend
+
+            return verify_remote_backend(
+                profile, runner=runner, compose_file=compose_file
+            )
         _require(
             type(plan) is dict
             and set(plan)

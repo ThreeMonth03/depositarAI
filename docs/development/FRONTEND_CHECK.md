@@ -41,3 +41,5 @@ API key 只在 BFF 內讀取，沒有 host key read、secret CLI argument、head
 ```bash
 python3 -m unittest tests.unit.deployment.test_frontend_check -v
 ```
+
+定時執行同一檢查的 systemd user timer 範例，見[前端健康檢查排程](FRONTEND_MONITORING.md)。

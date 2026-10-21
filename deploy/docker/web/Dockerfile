@@ -21,6 +21,7 @@ COPY search/web /app/search/web/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 LABEL io.depositar.ai.public-entry.version="2"
+LABEL io.depositar.ai.conversation.version="3"
 ENV SOURCE_REVISION=$SOURCE_REVISION
 USER 1000:1000
 CMD ["python", "-m", "uvicorn", "search.web.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "32", "--timeout-keep-alive", "5"]

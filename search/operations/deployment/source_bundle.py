@@ -168,7 +168,7 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "02b53b243976f9f1b07117738dc1d552cfa03a268096d88d8e1e85a68b768f8b",
+        "dockerfile_sha256": "de8aa1147d06b648cf18901650ea8b7c0b19640ed3e6dcbc5204833bd288df7b",
         "dockerignore_sha256": "00ac7b8cc5b65510dfaf5e8b7c2682eff09197a587009033777fd69d615211f8",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},

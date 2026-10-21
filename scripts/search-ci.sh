@@ -139,6 +139,8 @@ python3 -m unittest -v \
   tests.unit.deployment.public_entry.test_antibot_updates \
   tests.unit.deployment.public_entry.test_host \
   tests.unit.deployment.public_entry.test_preflight \
+  tests.unit.deployment.public_entry.test_remote \
+  tests.unit.deployment.public_entry.test_remote_lifecycle \
   tests.unit.deployment.public_entry.test_updates \
   tests.unit.deployment.test_packaging \
   tests.unit.operations.test_bounded_http \

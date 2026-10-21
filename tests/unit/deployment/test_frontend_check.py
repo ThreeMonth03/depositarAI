@@ -478,6 +478,12 @@ class VersionTLSFixtureTests(unittest.TestCase):
                         if case.mode != "catalog"
                         else "f" * 64,
                     }
+                    if case.mode != "legacy-contract":
+                        value["conversation_contract_version"] = {
+                            "invalid-contract": True,
+                            "unsupported-contract": 1,
+                            "old-contract": 2,
+                        }.get(case.mode, 3)
                     body = (
                         b"x" * 16385
                         if case.mode == "oversize"
@@ -504,7 +510,7 @@ class VersionTLSFixtureTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def probe(self, *, hostname="localhost", ca=True):
+    def probe(self, *, hostname="localhost", ca=True, contract_version=None):
         environment = dict(
             os.environ,
             WEB_UPSTREAM=f"https://{hostname}:{self.server.server_port}",
@@ -521,7 +527,9 @@ class VersionTLSFixtureTests(unittest.TestCase):
                 "-s",
                 "-B",
                 "-c",
-                check._probe_source(key_file=str(self.key)),
+                check._probe_source(
+                    key_file=str(self.key), contract_version=contract_version
+                ),
                 API,
                 CATALOG,
             ],
@@ -539,6 +547,30 @@ class VersionTLSFixtureTests(unittest.TestCase):
             self.calls, [("GET", "/v1/version", False), ("GET", "/v1/version", True)]
         )
         self.assertNotIn(b"a" * 64, result.stdout + result.stderr)
+
+    def test_remote_contract_is_checked_without_requiring_matching_website_revision(
+        self,
+    ):
+        result = self.probe(contract_version=3)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(result.stdout), PROOF)
+        for mode in (
+            "legacy-contract",
+            "unsupported-contract",
+            "old-contract",
+            "invalid-contract",
+        ):
+            with self.subTest(mode=mode):
+                self.mode = mode
+                result = self.probe(contract_version=3)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    json.loads(result.stdout),
+                    {"error": "frontend_check_upstream_failed"},
+                )
+        # Existing private operators can still inspect the pinned legacy API.
+        self.mode = "legacy-contract"
+        self.assertEqual(self.probe().returncode, 0)
 
     def test_wrong_identity_redirect_and_oversized_body_fail_without_reflection(self):
         for mode in ("revision", "catalog", "redirect", "oversize"):

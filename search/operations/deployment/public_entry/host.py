@@ -61,10 +61,7 @@ def inspect_web_image(image):
     return strict_json(result.stdout)
 
 
-def bind_public_web(
-    config, rendered, release, image, image_proof, frontend_image, frontend_proof
-):
-    """Read-only binding; no GPU requests or changes to the private release."""
+def _web_revision(image, image_proof, frontend_image, frontend_proof):
     labels = image_proof.get("Labels") if type(image_proof) is dict else None
     revision = (
         labels.get("org.opencontainers.image.revision")
@@ -96,6 +93,14 @@ def bind_public_web(
         or frontend_labels.get("org.opencontainers.image.revision") != revision
     ):
         raise ValueError("public_entry_frontend_image_invalid")
+    return revision
+
+
+def bind_public_web(
+    config, rendered, release, image, image_proof, frontend_image, frontend_proof
+):
+    """Read-only same-host binding; never change the private release."""
+    revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
     if (
         type(release) is not dict
         or type(release.get("name")) is not str
@@ -132,16 +137,29 @@ def bind_public_web(
     raw_key = _read(key_path, 65)
     if re.fullmatch(rb"[0-9a-f]{64}\n?", raw_key) is None:
         raise ValueError("public_entry_api_key_invalid")
+    result = _bind_website(config, rendered, image, frontend_image, revision, key_path)
+    compose = result["compose"]
+    compose["networks"]["existing-release"] = {"external": True, "name": network}
+    compose["services"]["public-web"]["networks"]["existing-release"] = {}
+    compose["x-depositar-plan"]["private_backend"] = {
+        "schema_version": 1,
+        "release_project": release["name"],
+        "network_name": network,
+        "api_image": api["image"],
+    }
+    return result
+
+
+def _bind_website(config, rendered, image, frontend_image, revision, key_path):
     uid, gid = os.geteuid(), os.getegid()
     result = copy.deepcopy(rendered)
     compose = result["compose"]
     if "public-web" in compose["services"] or "existing-release" in compose["networks"]:
         raise ValueError("public_entry_binding_exists")
-    compose["networks"]["existing-release"] = {"external": True, "name": network}
     compose["services"]["public-web"] = {
         **composition._runtime(uid, gid, cpus=1, memory=512 * 1024**2, pids=64),
         "image": image,
-        "networks": {"website": {"aliases": ["web"]}, "existing-release": {}},
+        "networks": {"website": {"aliases": ["web"]}},
         "environment": {
             "WEB_ORIGIN": config.public_origin,
             "WEB_UPSTREAM": "http://conversation-api:8000",
@@ -177,13 +195,69 @@ def bind_public_web(
     plan = compose.setdefault("x-depositar-plan", {})
     plan["status"] = "public_entry_prepared"
     plan["revision"] = revision
-    plan["private_backend"] = {
-        "schema_version": 1,
-        "release_project": release["name"],
-        "network_name": network,
-        "api_image": api["image"],
-    }
     return result
+
+
+def bind_remote_web(
+    config, rendered, backend, image, image_proof, frontend_image, frontend_proof
+):
+    """Bind only the CPU BFF to a fixed authenticated HTTPS origin."""
+    revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
+    if image_proof["Labels"].get("io.depositar.ai.conversation.version") != "3":
+        raise ValueError("public_entry_remote_contract_invalid")
+    result = _bind_website(
+        config, rendered, image, frontend_image, revision, backend.api_key_file
+    )
+    compose = result["compose"]
+    if compose["networks"].get("outbound", {}).get("internal") is not False:
+        raise ValueError("public_entry_remote_network_invalid")
+    web = compose["services"]["public-web"]
+    web["networks"]["outbound"] = {}
+    web["environment"].update(
+        WEB_UPSTREAM=backend.origin,
+        WEB_UPSTREAM_CA_FILE="/run/certs/upstream-ca.pem",
+    )
+    web["volumes"].append(
+        composition._mount(backend.ca_file, "/run/certs/upstream-ca.pem")
+    )
+    compose["x-depositar-plan"]["private_backend"] = backend.to_plan()
+    return result
+
+
+def bind_configured_web(
+    config,
+    rendered,
+    release_compose,
+    image,
+    image_proof,
+    frontend_image,
+    frontend_proof,
+    *,
+    backend_config=None,
+):
+    if (release_compose is None) == (backend_config is None):
+        raise ValueError("public_entry_backend_source_invalid")
+    if backend_config is not None:
+        from .remote import load_remote_backend
+
+        return bind_remote_web(
+            config,
+            rendered,
+            load_remote_backend(backend_config),
+            image,
+            image_proof,
+            frontend_image,
+            frontend_proof,
+        )
+    return bind_public_web(
+        config,
+        rendered,
+        strict_json(_read(release_compose)),
+        image,
+        image_proof,
+        frontend_image,
+        frontend_proof,
+    )
 
 
 def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
@@ -258,17 +332,18 @@ def prepare_public_entry(
     web_nginx_image,
     *,
     image_inspector=inspect_web_image,
+    backend_config=None,
 ):
     config = public_entry.load_public_entry_config(Path(config_path))
-    release = strict_json(_read(release_compose))
-    rendered = bind_public_web(
+    rendered = bind_configured_web(
         config,
         public_entry.render_public_entry(config),
-        release,
+        release_compose,
         web_image,
         image_inspector(web_image),
         web_nginx_image,
         image_inspector(web_nginx_image),
+        backend_config=backend_config,
     )
     assets = {name: value.encode("utf-8") for name, value in rendered["assets"].items()}
     assets["compose.json"] = private_io.canonical(rendered["compose"])
@@ -298,6 +373,7 @@ def up_public_entry(
     *,
     runner=subprocess.run,
     image_inspector=inspect_web_image,
+    backend_config=None,
 ):
     from .updates import bootstrap_public_entry
 
@@ -308,4 +384,5 @@ def up_public_entry(
         web_nginx_image,
         runner=runner,
         image_inspector=image_inspector,
+        backend_config=backend_config,
     )
