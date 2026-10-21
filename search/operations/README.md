@@ -11,6 +11,7 @@ the command order, prerequisites and incomplete installer boundaries.
 | [cli.py](cli.py) | Argument parsing, command dispatch, safe diagnostics and exit codes |
 | [config.py](config.py), [doctor.py](doctor.py) | Validate operator configuration and perform read-only preflight |
 | [state.py](state.py), [lifecycle.py](lifecycle.py) | Private state, operation locks/receipts and metadata lifecycle |
+| [local_status.py](local_status.py) | Local preparation/activation records and recovery reasons; never live service health |
 | [metadata/](metadata/sync.py) | Public source acquisition, bounded sync and metadata cache |
 | [metadata/storage.py](metadata/storage.py) | Metadata/catalog private receipt IO, with the existing 4 MiB record limit and `SyncError` contract |
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |

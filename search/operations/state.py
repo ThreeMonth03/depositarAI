@@ -39,6 +39,16 @@ OPERATIONS = frozenset(
 )
 
 
+class ActivationOutcomeError(ValueError):
+    """An activation changed, or may have changed, before persistence failed."""
+
+    def __init__(self, *, active_changed):
+        if active_changed is not True and active_changed is not None:
+            raise ValueError("product_activation_outcome_invalid")
+        super().__init__("product_activation_outcome_unconfirmed")
+        self.active_changed = active_changed
+
+
 def _canonical(value):
     return private_io.canonical(value)
 
@@ -66,6 +76,8 @@ class StateStore:
 
     def __init__(self, root: Path, fd: int):
         self.root, self.fd = root, fd
+        # This invocation's write evidence, never an observation of live services.
+        self._activation_changed = False
 
     def _check_directory(self):
         private_io.verify_directory(self.fd, self.root)
@@ -101,9 +113,14 @@ class StateStore:
                 self.read(name)
             except FileNotFoundError:
                 pass
+        if name == "active.json":
+            # A link/rename may succeed before fsync reports an IO failure.
+            self._activation_changed = None
         private_io.write_json(
             self.fd, name, value, replace=replace, max_bytes=MAX_BYTES
         )
+        if name == "active.json":
+            self._activation_changed = True
 
 
 def _marker(config):
@@ -236,11 +253,19 @@ def operation(store: StateStore, name: str, revision: str):
         "status": "started",
         "active_changed": False,
     }
+    if name == "activate-gateway":
+        store._activation_changed = False
     store.write(receipt, value)
     outcome = {}
     try:
         yield outcome
     except Exception as error:
+        if name == "activate-gateway" and store._activation_changed is not False:
+            # Retain the started intent: a failed/unchanged receipt would lie,
+            # and another write may mask the original storage failure.
+            raise ActivationOutcomeError(
+                active_changed=store._activation_changed
+            ) from error
         store.write(
             receipt,
             {**value, "status": "failed", "error_type": type(error).__name__},
@@ -248,4 +273,9 @@ def operation(store: StateStore, name: str, revision: str):
         )
         raise
     else:
-        store.write(receipt, {**value, "status": "staged", **outcome}, replace=True)
+        try:
+            store.write(receipt, {**value, "status": "staged", **outcome}, replace=True)
+        except Exception as error:
+            if name == "activate-gateway" and outcome.get("active_changed") is True:
+                raise ActivationOutcomeError(active_changed=True) from error
+            raise

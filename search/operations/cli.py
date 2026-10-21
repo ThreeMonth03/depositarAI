@@ -148,6 +148,37 @@ def _operator_error_code(error, command):
     return candidate if type(candidate) is str and candidate in codes else None
 
 
+def _activation_outcome(error, command):
+    if (
+        command not in {"activate-gateway", "up-private"}
+        or type(error).__module__ != "search.operations.state"
+    ):
+        return None
+    from search.operations.state import ActivationOutcomeError
+
+    arguments = error.args
+    if (
+        type(error) is not ActivationOutcomeError
+        or type(arguments) is not tuple
+        or len(arguments) != 1
+        or type(arguments[0]) is not str
+        or arguments[0] != "product_activation_outcome_unconfirmed"
+        or "active_changed" not in error.__dict__
+    ):
+        return None
+    changed = error.__dict__["active_changed"]
+    if changed is not True and changed is not None:
+        return None
+    return {
+        "status": "recovery_required",
+        "error_code": "product_activation_outcome_unconfirmed",
+        "active_changed": changed,
+        "activation_performed": changed,
+        "runtime_verified": False,
+        "confers_runtime_authority": False,
+    }
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument(
@@ -498,6 +529,9 @@ def main(argv=None):
             "error_type": type(error).__name__,
             "active_changed": False,
         }
+        activation_outcome = _activation_outcome(error, options.command)
+        if activation_outcome is not None:
+            report.update(activation_outcome)
         error_code = _operator_error_code(error, options.command)
         if error_code is not None:
             report["error_code"] = error_code

@@ -324,3 +324,56 @@ class CLIStartupTests(unittest.TestCase):
                     },
                     report,
                 )
+
+
+class ActivationDiagnosticBoundaryTests(unittest.TestCase):
+    def test_only_closed_activation_errors_can_claim_a_changed_pointer(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+        from search.operations.state import ActivationOutcomeError
+
+        private = "private-storage-detail-must-not-be-printed"
+        wrong_arguments = ActivationOutcomeError(active_changed=True)
+        wrong_arguments.args = (private,)
+        wrong_flag = ActivationOutcomeError(active_changed=True)
+        wrong_flag.active_changed = 1
+        missing_flag = ActivationOutcomeError(active_changed=True)
+        del missing_flag.active_changed
+        forged_type = type(
+            "ActivationOutcomeError",
+            (ValueError,),
+            {"__module__": "search.operations.state"},
+        )
+        forged = forged_type("product_activation_outcome_unconfirmed")
+        forged.active_changed = True
+        subclass = type(
+            "DerivedActivationError",
+            (ActivationOutcomeError,),
+            {"__module__": "search.operations.state"},
+        )(active_changed=True)
+        cases = [
+            ("up-private", error)
+            for error in (wrong_arguments, wrong_flag, missing_flag, forged, subclass)
+        ]
+        cases.append(("sync", ActivationOutcomeError(active_changed=True)))
+        for command, error in cases:
+            with self.subTest(command=command, error_type=type(error).__name__):
+                output, errors = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(cli, "_runtime_report", side_effect=error),
+                    redirect_stdout(output),
+                    redirect_stderr(errors),
+                ):
+                    result = cli.main(["--config", "/unused/product.json", command])
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(), "")
+                report = json.loads(errors.getvalue())
+                self.assertEqual(report["status"], "failed")
+                self.assertIs(report["active_changed"], False)
+                self.assertNotIn("error_code", report)
+                self.assertNotIn("activation_performed", report)
+                self.assertNotIn("confers_runtime_authority", report)
+                self.assertNotIn(private, errors.getvalue())

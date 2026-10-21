@@ -79,6 +79,8 @@ python3 -m unittest -v \
   tests.unit.operations.test_cli \
   tests.unit.operations.test_lifecycle \
   tests.unit.operations.test_private_up \
+  tests.unit.operations.test_activation_outcome \
+  tests.unit.operations.test_status \
   tests.unit.deployment.test_first_activation \
   tests.unit.operations.test_product_restore_cli \
   tests.unit.operations.test_public_entry_cli \

@@ -7,8 +7,10 @@ source/data boundaries and the existing granular operation journal.
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import copy
+import errno
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -16,7 +18,7 @@ import unittest
 from unittest.mock import patch
 
 from search.catalog.bundle import CatalogBundle
-from search.operations import lifecycle
+from search.operations import cli, lifecycle
 from search.operations.catalog import backend, query, runtime, vectors
 from search.operations.config import GPUConfig, ProductConfig
 from search.operations.deployment import (
@@ -29,7 +31,7 @@ from search.operations.deployment import (
 from search.operations.deployment.gateway import activation, preparation
 from search.operations.deployment.release import controller as release
 from search.operations.metadata import sync as metadata_sync
-from search.operations.state import locked_state, operation_receipts
+from search.operations.state import StateStore, locked_state, operation_receipts
 
 
 REVISION = "a" * 40
@@ -619,6 +621,72 @@ class PrivateUpTests(unittest.TestCase):
         )
         self.assertEqual(activation_receipt["status"], "staged")
         self.assertIs(activation_receipt["active_changed"], True)
+
+    def test_final_receipt_failure_preserves_activation_without_repeating_steps(self):
+        original = StateStore.write
+        for error_number in (errno.ENOSPC, errno.EROFS):
+            for committed in (False, True):
+                with self.subTest(error_number=error_number, committed=committed):
+                    self.new_case()
+                    writes = []
+
+                    def write(store, name, value, *, replace=False):
+                        if (
+                            name.startswith("op-")
+                            and value.get("operation") == "activate-gateway"
+                        ):
+                            writes.append(value["status"])
+                            if value["status"] == "staged":
+                                if committed:
+                                    original(store, name, value, replace=replace)
+                                raise OSError(error_number, PRIVATE, str(self.root))
+                        return original(store, name, value, replace=replace)
+
+                    output, errors = io.StringIO(), io.StringIO()
+                    with (
+                        patch.object(StateStore, "write", new=write),
+                        patch(
+                            "search.operations.config.load_config",
+                            return_value=self.config,
+                        ),
+                        patch.object(metadata_sync.source, "fetch_page", self.fetch),
+                        redirect_stdout(output),
+                        redirect_stderr(errors),
+                    ):
+                        code = cli.main(
+                            ["--config", str(self.root / "private.json"), "up-private"]
+                        )
+                    self.assertEqual(code, 1)
+                    self.assertEqual(output.getvalue(), "")
+                    raw = errors.getvalue()
+                    self.assertNotIn(PRIVATE, raw)
+                    self.assertNotIn(str(self.root), raw)
+                    self.assertNotIn("Traceback", raw)
+                    report = json.loads(raw)
+                    self.assertEqual(report["status"], "recovery_required")
+                    self.assertEqual(report["code"], "product_operation_failed")
+                    self.assertEqual(
+                        report["error_code"], "product_activation_outcome_unconfirmed"
+                    )
+                    self.assertIs(report["active_changed"], True)
+                    self.assertIs(report["activation_performed"], True)
+                    self.assertIs(report["confers_runtime_authority"], False)
+                    self.assertIs(report["runtime_verified"], False)
+                    self.assertEqual(self.events, ["barrier", *ALL_STEPS])
+                    self.assertEqual(writes, ["started", "staged"])
+                    with locked_state(self.config) as store:
+                        self.assertEqual(
+                            store.read("active.json")["revision"], REVISION
+                        )
+                    receipts = self.receipts()
+                    self.assertEqual(len(receipts), len(ALL_STEPS))
+                    for row in receipts:
+                        terminal = row["operation"] == "activate-gateway"
+                        self.assertEqual(
+                            row["status"],
+                            "started" if terminal and not committed else "staged",
+                        )
+                        self.assertIs(row["active_changed"], terminal and committed)
 
 
 if __name__ == "__main__":

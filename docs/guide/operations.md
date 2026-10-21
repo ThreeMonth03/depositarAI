@@ -136,6 +136,13 @@ python3 scripts/depositarai.py restore-product \
 | 來源變更或目錄／映像不符 | 回到準備流程核對版本；不要手動改寫完成紀錄或套用其他版本的結果 |
 | 網頁無法連線 | 確認 activation 已完成、SSH tunnel 仍連線，以及本機18083未被占用 |
 
-`status` 可以查看本地操作狀態，但不能代替網頁或模型健康檢查。
+`status` 區分 catalog 準備（`staged`）、部分應用準備（`partially_prepared`）、
+本地啟用已記錄（`active_recorded`）及需要診斷的失敗或中斷（`recovery_required`）。
+`active_release` 只顯示核對過的本地啟用身分；`runtime_verified` 一律為 `false`，
+不代表網頁或模型健康。沒有本地啟用身分也不表示服務一定停止。
+
+若啟用已發布指標，之後卻無法補寫完成收據，錯誤會保留 `active_changed=true`
+並要求恢復診斷；若無法確定指標是否發布，則為 `active_changed=null`。兩種情況都
+先保留 state、檢查 `status` 與原始錯誤，不要把錯誤當成「未變更」而直接重跑。
 查詢參數時使用 `python3 scripts/depositarai.py --help` 或子命令的 `--help`。
 使用搜尋介面請看[搜尋使用說明](using-search.md)；調整程式與文件請看[開發與文件](development.md)。

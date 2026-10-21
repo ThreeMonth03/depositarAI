@@ -177,7 +177,11 @@ def _sync_locked(
 
 def status(config: ProductConfig):
     """Report local receipt identities; do not pretend they are runtime health."""
-    if not config.state_root.exists():
+    from search.operations.local_status import classify_local_state
+
+    try:
+        config.state_root.lstat()
+    except FileNotFoundError:
         return {
             "schema_version": 1,
             "status": "not_initialized",
@@ -186,17 +190,13 @@ def status(config: ProductConfig):
             "runtime_verified": False,
         }
     with locked_state(config) as store:
-        try:
-            candidate = _candidate(store)
-        except FileNotFoundError:
-            candidate = None
+        candidate = (
+            _candidate(store) if "candidate.json" in os.listdir(store.fd) else None
+        )
         operations = operation_receipts(store)
         return {
             "schema_version": 1,
-            "status": "recovery_required"
-            if any(item["status"] == "started" for item in operations)
-            else "staged",
-            "active_release": None,
+            **classify_local_state(store, operations),
             "candidate": candidate,
             "operations": operations,
             "runtime_verified": False,

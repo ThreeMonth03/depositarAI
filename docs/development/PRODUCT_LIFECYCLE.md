@@ -78,9 +78,21 @@ Compose 至少為 `2.38.0`；NVIDIA runtime 註冊檢查不等於已完成 GPU �
 blob 並校驗 SHA256。它不安裝軟體、pull／build image 或修復主機；Docker visibility
 probe 可能建立有界、無網路／無 GPU 的臨時容器，所需 probe image 必須已在本機。
 
-`status` 讀取本地 candidate 與操作收據；`active_release=null`、
-`runtime_verified=false` 不表示 gateway 一定停止，而是此命令不觀察線上服務。
-未完成操作可能回報 `recovery_required`，不可把 staging 狀態當成 HTTP health check。
+`status` 只讀取本地 candidate、操作收據及固定位置的啟用紀錄，不呼叫 Docker、GPU
+或線上服務。狀態摘要的判讀如下：
+
+| `status` | 本地紀錄的意思 |
+|---|---|
+| `not_initialized` | 尚無產品 state 目錄 |
+| `staged` | 尚無應用準備或啟用紀錄；包含乾淨的 catalog staging／checkpoint |
+| `partially_prepared` | 已準備部分應用素材或完成部分啟動步驟，尚無完整啟用紀錄 |
+| `active_recorded` | 啟用指標、完成紀錄與成功操作收據的身分相符 |
+| `recovery_required` | 有失敗、中斷、不完整啟用或不安全的應用紀錄；先依 `recovery_reasons` 與操作收據診斷 |
+
+`active_release` 只列出已核對的本地啟用身分；若指標與完成紀錄相符，但操作收據
+未完成，仍保留此身分並回報 `recovery_required`。`active_release=null` 不表示
+gateway 一定停止。所有結果的 `runtime_verified` 都是 `false`，不能當成網頁、
+模型或 HTTP health check，也不能據此自動重跑啟用。
 
 ### 首次私有啟用
 
@@ -341,6 +353,11 @@ CLI 成功結果以 JSON 寫入 stdout；被捕捉的操作錯誤以安全摘要
 錯誤摘要不輸出秘密、原始 Docker output 或任意 exception 文字；只有受允許的固定
 `error_code` 與 catalog diagnostic 會額外公開，其他錯誤使用 `product_operation_failed`。
 參數／缺少設定等 argparse 錯誤使用一般 CLI 用法訊息，不是操作結果 JSON。
+
+啟用指標寫入後，若操作無法完成，會回報 `recovery_required` 與
+`error_code=product_activation_outcome_unconfirmed`。`active_changed=true` 表示本次
+呼叫已完成指標寫入；`null` 表示曾嘗試寫入，但持久化結果待確認。兩者保留原始
+操作紀錄，不自動重跑啟用。這是本次指標寫入的證據；服務與路由狀態仍須另查。
 
 | 退出碼／狀態 | 下一步 |
 |---|---|
