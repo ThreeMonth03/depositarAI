@@ -191,8 +191,7 @@ BASE_URL = "http://127.0.0.1:8000"
 _API_SCRIPT = (
     _COMMON_SCRIPT
     + r"""
-from search.api.shared.config import Settings
-from search.api.conversation import CONVERSATION_CONTRACT_VERSION
+from search.api.shared.config import CONVERSATION_CONTRACT_VERSION, Settings
 from search.secrets import read_secret
 from search.catalog.bundle import CatalogBundle
 

@@ -16,8 +16,7 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest import mock
 
-from search.api.shared.config import Settings
-from search.api.conversation import CONVERSATION_CONTRACT_VERSION
+from search.api.shared.config import CONVERSATION_CONTRACT_VERSION, Settings
 from search.transport.http import HTTPResponse
 from search.catalog.bundle import CatalogBundle
 from search.operations.deployment.release import probe

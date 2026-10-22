@@ -9,12 +9,11 @@ from rest_framework.response import Response
 from search.http.application import application
 from search.http.views import APIView
 
-from ..shared.config import Settings
+from ..shared.config import CONVERSATION_CONTRACT_VERSION, Settings
 from ..shared.admission import Busy
 from ..shared.backend import BackendFailure
 from ..shared.readiness import BackendReadiness
 from ..shared.middleware import BoundaryMiddleware, error_details
-from . import CONVERSATION_CONTRACT_VERSION
 from .contract import TurnRequest
 from .engine import ConversationEngine
 from .worker import ConversationBackend
