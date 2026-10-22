@@ -326,6 +326,87 @@ class CLIStartupTests(unittest.TestCase):
                 )
 
 
+class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
+    def run_error(self, command, error):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli, "_runtime_report", side_effect=error),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            result = cli.main(["--config", "/unused/product.json", command])
+        self.assertEqual(result, 1)
+        self.assertEqual(output.getvalue(), "")
+        return json.loads(errors.getvalue())
+
+    def test_fixed_release_diagnostics_are_reported_for_private_runtime_commands(self):
+        from search.operations.deployment.release.controller import ReleaseError
+
+        for command in (
+            "up-private",
+            "start-inference",
+            "start-release",
+            "prepare-gateway",
+            "activate-gateway",
+        ):
+            for code in ("release_acceptance_blocked", "release_acceptance_invalid"):
+                with self.subTest(command=command, code=code):
+                    self.assertEqual(
+                        self.run_error(command, ReleaseError(code)),
+                        {
+                            "schema_version": 1,
+                            "status": "failed",
+                            "code": "product_operation_failed",
+                            "error_type": "ReleaseError",
+                            "active_changed": False,
+                            "error_code": code,
+                        },
+                    )
+
+    def test_release_diagnostics_reject_untrusted_errors_without_raw_arguments(self):
+        from search.operations.deployment.release.controller import ReleaseError
+
+        private = "private-release-detail-must-not-be-printed"
+        similar = type(
+            "ReleaseError", (ValueError,), {"__module__": ReleaseError.__module__}
+        )
+        subclass = type(
+            "DerivedReleaseError",
+            (ReleaseError,),
+            {"__module__": ReleaseError.__module__},
+        )
+        for kind, command, error in (
+            ("unknown", "start-release", ReleaseError(private)),
+            ("similar", "start-release", similar("release_acceptance_blocked")),
+            ("subclass", "start-release", subclass("release_acceptance_blocked")),
+            ("wrong-command", "doctor", ReleaseError("release_acceptance_blocked")),
+            (
+                "multiple-arguments",
+                "start-release",
+                ReleaseError("release_acceptance_blocked", private),
+            ),
+        ):
+            with self.subTest(kind=kind):
+                report = self.run_error(command, error)
+                self.assertEqual(
+                    report,
+                    {
+                        "schema_version": 1,
+                        "status": "failed",
+                        "code": "product_operation_failed",
+                        "error_type": type(error).__name__,
+                        "active_changed": False,
+                    },
+                )
+                self.assertNotIn(private, json.dumps(report))
+
+
 class ActivationDiagnosticBoundaryTests(unittest.TestCase):
     def test_only_closed_activation_errors_can_claim_a_changed_pointer(self):
         from contextlib import redirect_stderr, redirect_stdout

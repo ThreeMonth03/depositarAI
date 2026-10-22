@@ -14,6 +14,7 @@ from ..shared.admission import Busy
 from ..shared.backend import BackendFailure
 from ..shared.readiness import BackendReadiness
 from ..shared.middleware import BoundaryMiddleware, error_details
+from . import CONVERSATION_CONTRACT_VERSION
 from .contract import TurnRequest
 from .engine import ConversationEngine
 from .worker import ConversationBackend
@@ -52,7 +53,7 @@ def create_app(settings=None, backend=None):
                 {
                     "revision": settings.revision,
                     "catalog_manifest_sha256": settings.manifest_sha256,
-                    "conversation_contract_version": 3,
+                    "conversation_contract_version": CONVERSATION_CONTRACT_VERSION,
                     "geography": False,
                     "persistent_memory": False,
                     "generated_answers": False,

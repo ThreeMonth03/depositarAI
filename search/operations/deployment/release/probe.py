@@ -192,6 +192,7 @@ _API_SCRIPT = (
     _COMMON_SCRIPT
     + r"""
 from search.api.shared.config import Settings
+from search.api.conversation import CONVERSATION_CONTRACT_VERSION
 from search.secrets import read_secret
 from search.catalog.bundle import CatalogBundle
 
@@ -228,6 +229,7 @@ def run():
     expected_version = {
         "revision": REVISION,
         "catalog_manifest_sha256": MANIFEST,
+        "conversation_contract_version": CONVERSATION_CONTRACT_VERSION,
         "geography": False,
         "persistent_memory": False,
         "generated_answers": False,
@@ -236,6 +238,7 @@ def run():
     if (
         type(version) is not dict or set(version) != set(expected_version)
         or version != expected_version
+        or type(version["conversation_contract_version"]) is not int
         or any(version[key] is not False for key in (
             "geography", "persistent_memory", "generated_answers",
         ))

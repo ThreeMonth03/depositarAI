@@ -17,6 +17,7 @@ import unittest
 from unittest import mock
 
 from search.api.shared.config import Settings
+from search.api.conversation import CONVERSATION_CONTRACT_VERSION
 from search.transport.http import HTTPResponse
 from search.catalog.bundle import CatalogBundle
 from search.operations.deployment.release import probe
@@ -506,6 +507,7 @@ class APIScriptTests(unittest.TestCase):
         self.version = {
             "revision": REVISION,
             "catalog_manifest_sha256": MANIFEST,
+            "conversation_contract_version": CONVERSATION_CONTRACT_VERSION,
             "geography": False,
             "persistent_memory": False,
             "generated_answers": False,
@@ -554,6 +556,28 @@ class APIScriptTests(unittest.TestCase):
         )
         self.assertEqual(value, api_ready())
         self.assertEqual(len(fixture.calls), 4)
+
+    def test_api_requires_exact_current_integer_conversation_contract(self):
+        missing = dict(self.version)
+        del missing["conversation_contract_version"]
+        versions = [missing, {**self.version, "private": PRIVATE}]
+        versions.extend(
+            {**self.version, "conversation_contract_version": invalid}
+            for invalid in (None, True, False, 0, 2, 4, -1, "3", 3.0, PRIVATE)
+        )
+        for version in versions:
+            with self.subTest(version=version):
+                value, fixture = self.run_script([("/v1/version", 200, version)])
+                self.assertIs(value["api_version_verified"], False)
+                self.assertIs(value["backend_ready"], False)
+                self.assertIs(value["pinned_backend_models_verified"], False)
+                self.assertIs(value["reranker_ready"], False)
+                self.assertEqual(value["documents"], 0)
+                self.assertEqual(value["code"], "api_probe_failed")
+                self.assertEqual(len(fixture.calls), 1)
+                self.assertTrue(fixture.calls[0][0].url.endswith("/v1/version"))
+                probe._api(value, REVISION, BUNDLE, MANIFEST)
+                self.assertNotIn(PRIVATE, json.dumps(value))
 
     def test_api_bad_readiness_cannot_become_ready(self):
         for ready in (
