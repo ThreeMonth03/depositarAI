@@ -355,7 +355,11 @@ class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
             "prepare-gateway",
             "activate-gateway",
         ):
-            for code in ("release_acceptance_blocked", "release_acceptance_invalid"):
+            for code in (
+                "release_acceptance_blocked",
+                "release_acceptance_invalid",
+                "release_acceptance_probe_failed",
+            ):
                 with self.subTest(command=command, code=code):
                     self.assertEqual(
                         self.run_error(command, ReleaseError(code)),

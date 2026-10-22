@@ -63,6 +63,7 @@ _RELEASE_CODES = frozenset(
     {
         "release_acceptance_blocked",
         "release_acceptance_invalid",
+        "release_acceptance_probe_failed",
     }
 )
 

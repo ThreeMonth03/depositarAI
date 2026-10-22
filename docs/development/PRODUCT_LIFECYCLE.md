@@ -480,6 +480,7 @@ CLI 可回報以下固定 `error_code`，協助定位原 owner 拒絕的原因�
 | `inference_start_identity_changed` | 原啟動身分與目前來源、映像或模型契約不一致；回到原 slot 與來源查明差異。 |
 | `release_acceptance_blocked` | 暖機、API 版本、readiness 或兩輪搜尋驗收未通過。容器可能已啟動；保留失敗 slot 與操作紀錄，先查明原因，不直接重試部分完成的啟動。 |
 | `release_acceptance_invalid` | 驗收回報的結構或識別資訊不符；核對 operator 與應用介面版本，不放寬欄位檢查或補寫成功收據。 |
+| `release_acceptance_probe_failed` | 容器內驗收程式無法執行，或其回報未通過結構驗證；核對映像是否包含驗收相依模組，保留失敗 slot，不補寫成功收據。 |
 
 ### 共用 Docker client 錯誤碼
 
