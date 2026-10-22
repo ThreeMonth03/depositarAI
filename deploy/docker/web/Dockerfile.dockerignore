@@ -7,6 +7,10 @@ search/http/**
 !search/http/*.py
 !search/serialization.py
 !search/secrets.py
+!search/transport/
+search/transport/**
+!search/transport/__init__.py
+!search/transport/http.py
 !search/catalog/
 search/catalog/**
 !search/catalog/__init__.py

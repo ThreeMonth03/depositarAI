@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import json
@@ -14,6 +15,7 @@ import unittest
 from unittest import mock
 
 from search.operations.deployment import source_bundle as bundle
+from search.operations.deployment.release import probe
 from search.operations.shared import private_io
 from tests.unit.deployment.image_fixtures import (
     blob as blob,
@@ -71,6 +73,52 @@ class SourceBundlePlanTests(unittest.TestCase):
                         )
                     )
                 )
+
+    def test_web_probe_imports_are_in_the_sealed_runtime_source(self):
+        sources = self.plan()["services"]["web"]["source_map"]
+        for node in ast.walk(ast.parse(probe._WEB_SCRIPT)):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if not node.module.startswith("search."):
+                continue
+            module = node.module.replace(".", "/")
+            self.assertIn(module + ".py", sources)
+            for parent in Path(module).parents:
+                if parent != Path("."):
+                    self.assertIn(str(parent / "__init__.py"), sources)
+
+        # Import the actual packaged transport with only its reviewed Python
+        # sources and the standard library available, without the checkout or
+        # installed host packages satisfying an accidentally missing module.
+        with tempfile.TemporaryDirectory() as directory:
+            staged = Path(directory)
+            for relative in sources:
+                if not relative.endswith(".py"):
+                    continue
+                target = staged / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    "-c",
+                    "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "
+                    "import search.transport.http as transport; "
+                    "assert pathlib.Path(transport.__file__).is_relative_to(sys.argv[1])",
+                    str(staged),
+                ],
+                cwd=staged,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr.decode())
+            self.assertEqual(b"", result.stdout)
 
     def test_reviewed_real_source_is_complete_without_working_tree_extras(self):
         sources = {path: (ROOT / path).read_bytes() for path in self.sources}
@@ -177,6 +225,7 @@ class SourceBundlePlanTests(unittest.TestCase):
         for path in (
             "search/api/private.py",
             "search/api/shared/new.py",
+            "search/transport/new.py",
             "search/planning/new.py",
             "search/reranker/new.py",
             "search/web/new.py",

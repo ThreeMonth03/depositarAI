@@ -86,6 +86,7 @@ CATALOG_QUERY = _paths(
 CATALOG_RETRIEVAL = _paths("search/catalog/", "bundle.py codec.py embedding.py")
 WEB_CONTRACT = (
     _paths("search/", "__init__.py serialization.py secrets.py")
+    | _paths("search/transport/", "__init__.py http.py")
     | CATALOG_QUERY
     | _paths("search/api/", "__init__.py")
     | _paths("search/api/conversation/", "__init__.py calendar.py contract.py time.py")
@@ -168,8 +169,8 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "de8aa1147d06b648cf18901650ea8b7c0b19640ed3e6dcbc5204833bd288df7b",
-        "dockerignore_sha256": "00ac7b8cc5b65510dfaf5e8b7c2682eff09197a587009033777fd69d615211f8",
+        "dockerfile_sha256": "3bba92250603254f4bacb24b6e94c87498dab03b6a0c9553cb0e7f67f2299341",
+        "dockerignore_sha256": "d41a24a9cc347a38de21387e3f0724028d31edab0be9e641ed14cf668db66283",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (

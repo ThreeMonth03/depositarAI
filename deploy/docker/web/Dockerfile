@@ -5,6 +5,7 @@ COPY search/api/requirements.lock /tmp/api.lock
 COPY search/web/requirements.lock /tmp/web.lock
 RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/api.lock -r /tmp/web.lock
 COPY search/__init__.py search/serialization.py search/secrets.py /app/search/
+COPY search/transport/__init__.py search/transport/http.py /app/search/transport/
 COPY search/catalog/__init__.py search/catalog/errors.py \
     search/catalog/policy.py search/catalog/query.py /app/search/catalog/
 COPY search/api/__init__.py /app/search/api/

@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import re
 
+CONVERSATION_CONTRACT_VERSION = 3
+
 
 @dataclass(frozen=True)
 class Settings:

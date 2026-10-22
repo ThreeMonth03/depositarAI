@@ -546,6 +546,21 @@ class PrivateReleaseTests(unittest.TestCase):
                     self.invoke()
                 self.assertFalse((self.slot() / "complete.json").exists())
 
+    def test_probe_execution_error_has_fixed_diagnostic_and_no_completion(self):
+        private = "PRIVATE_SENTINEL-http-body-or-subprocess-output"
+        self.probe.side_effect = release.release_probe.ReleaseProbeError(private)
+        with self.assertRaisesRegex(
+            release.ReleaseError, "^release_acceptance_probe_failed$"
+        ) as raised:
+            self.invoke()
+        self.assertNotIn(private, str(raised.exception))
+        self.assertEqual(
+            release.FILES - {"complete.json"}, set(os.listdir(self.slot()))
+        )
+        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        for path in self.slot().iterdir():
+            self.assertNotIn(private, path.read_text())
+
     def test_probe_cannot_claim_gateway(self):
         self.acceptance["gateway_verified"] = True
         with self.assertRaisesRegex(release.ReleaseError, "acceptance_invalid"):

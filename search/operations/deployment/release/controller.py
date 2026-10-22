@@ -827,13 +827,16 @@ def _start(
             if reused:
                 _same(completed, result, "release_completed_runtime_changed")
                 _same(store.read("release-candidate.json"), result)
-            probe = release_probe.verify_private_release(
-                docker,
-                proof["container_ids"],
-                revision=revision,
-                bundle_id=identity["bundle_id"],
-                manifest_sha256=identity["manifest_sha256"],
-            )
+            try:
+                probe = release_probe.verify_private_release(
+                    docker,
+                    proof["container_ids"],
+                    revision=revision,
+                    bundle_id=identity["bundle_id"],
+                    manifest_sha256=identity["manifest_sha256"],
+                )
+            except release_probe.ReleaseProbeError:
+                raise ReleaseError("release_acceptance_probe_failed") from None
             for field in (
                 "model_warmup_verified",
                 "readiness_verified",

@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from search.http.application import application
 from search.http.views import APIView
 
-from ..shared.config import Settings
+from ..shared.config import CONVERSATION_CONTRACT_VERSION, Settings
 from ..shared.admission import Busy
 from ..shared.backend import BackendFailure
 from ..shared.readiness import BackendReadiness
@@ -52,7 +52,7 @@ def create_app(settings=None, backend=None):
                 {
                     "revision": settings.revision,
                     "catalog_manifest_sha256": settings.manifest_sha256,
-                    "conversation_contract_version": 3,
+                    "conversation_contract_version": CONVERSATION_CONTRACT_VERSION,
                     "geography": False,
                     "persistent_memory": False,
                     "generated_answers": False,

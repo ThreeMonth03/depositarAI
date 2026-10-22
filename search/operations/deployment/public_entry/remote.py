@@ -13,6 +13,7 @@ import ssl
 import subprocess
 import sys
 
+from search.api.shared.config import CONVERSATION_CONTRACT_VERSION
 from search.serialization import strict_json
 from .. import frontend_check, image_build
 from . import profile as public_entry
@@ -42,7 +43,6 @@ PLAN_FIELDS = frozenset(
 )
 API_KEY_TARGET = "/run/secrets/api_key"
 CA_TARGET = "/run/certs/upstream-ca.pem"
-CONVERSATION_CONTRACT_VERSION = 3
 PROOF = {
     "authenticated_version_status": 200,
     "backend_identity_verified": True,

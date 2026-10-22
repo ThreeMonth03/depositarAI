@@ -59,6 +59,14 @@ _INFERENCE_RUNTIME_CODES = frozenset(
     }
 )
 
+_RELEASE_CODES = frozenset(
+    {
+        "release_acceptance_blocked",
+        "release_acceptance_invalid",
+        "release_acceptance_probe_failed",
+    }
+)
+
 _CATALOG_RUNTIME_CODES = frozenset(
     {
         "catalog_admin_inventory_conflict",
@@ -159,6 +167,15 @@ def _operator_error_code(error, command):
         if error_type is not InferenceRuntimeError:
             return None
         codes = _INFERENCE_RUNTIME_CODES
+    elif (
+        owner == "search.operations.deployment.release.controller"
+        and command in _PRIVATE_RUNTIME_COMMANDS
+    ):
+        from search.operations.deployment.release.controller import ReleaseError
+
+        if error_type is not ReleaseError:
+            return None
+        codes = _RELEASE_CODES
     elif command == "up-private" and owner == "search.operations.lifecycle":
         from search.operations import lifecycle
 
