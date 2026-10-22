@@ -461,7 +461,7 @@ SIGKILL 可留下 started intent；失敗收據不會改寫成成功，也不會
 ### 私有 runtime 驗證錯誤碼
 
 CLI 可回報以下固定 `error_code`，協助定位原 owner 拒絕的原因。
-推論類錯誤碼僅適用於 `up-private`、`start-inference`、`start-release`、
+推論與 release 類錯誤碼僅適用於 `up-private`、`start-inference`、`start-release`、
 `prepare-gateway` 與 `activate-gateway`。上層控制器若已轉成自己的摘要，CLI 不再
 拆解 exception chain；沒有細項碼時仍依失敗步驟與私有紀錄調查。
 這些診斷不授權重啟、認領或改寫完成證據。
@@ -478,6 +478,8 @@ CLI 可回報以下固定 `error_code`，協助定位原 owner 拒絕的原因�
 | `inference_partial_state_recovery_required` | 啟動紀錄不完整；保留 slot，不重送啟動或刪除 intent。 |
 | `inference_completed_runtime_changed` | 現行 runtime proof 不再等於完成證據；核對容器、網路與 process start，不補寫新的 digest。 |
 | `inference_start_identity_changed` | 原啟動身分與目前來源、映像或模型契約不一致；回到原 slot 與來源查明差異。 |
+| `release_acceptance_blocked` | 暖機、API 版本、readiness 或兩輪搜尋驗收未通過。容器可能已啟動；保留失敗 slot 與操作紀錄，先查明原因，不直接重試部分完成的啟動。 |
+| `release_acceptance_invalid` | 驗收回報的結構或識別資訊不符；核對 operator 與應用介面版本，不放寬欄位檢查或補寫成功收據。 |
 
 ### 共用 Docker client 錯誤碼
 
