@@ -100,5 +100,7 @@ CSV 僅索引明確採第一列政策的欄名，最多 32 個、單欄 128 字�
 新 bundle 格式為 `depositar-public-metadata-v3`，包含逐資料集的
 `resource-context.v1.jsonl.gz`；摘要及 provenance 參與 catalog 身分；公開摘要與索引文字另參與 document 身分。
 匯入及向量重建仍走既有隔離候選流程，不能把舊索引改標成新版。
+`prepare-query` 沿用既有索引投影步驟，寫回來源陣列並再次校驗；Fess 匯入時
+省略的空陣列在此補齊。非空摘要缺漏或不一致則拒絕，不視為沒有摘要。
 API／BFF／前端使用 conversation contract 4，須與新 catalog 配套部署。
 這些指令準備候選；切換現役服務仍由部署流程另外完成。

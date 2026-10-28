@@ -14,7 +14,7 @@
 | `search/catalog/journal.py`、`search/vector_journal.py` | Durable event 介面、host/helper 的 hash chain 與 report schema |
 | `search/operations/catalog/vectors.py` | 有界多輪、checkpoint、helper 移除與精確 ID 不存在證據 |
 | `search/operations/shared/private_io.py` | 私有檔案、原子寫入與 fsync |
-| `search/operations/catalog/projection.py`、`access.py` | 時間／格式投影、metadata／vectors 核對、query-only binding 與權限檢查 |
+| `search/operations/catalog/projection.py`、`access.py` | 時間／格式與資源來源投影、metadata／vectors 核對、query-only binding 與權限檢查 |
 
 表內 `catalog/`、`shared/` 位於 `search/operations/`。
 `prepare-query` 已串接 projection 與 query-only access：要求完整 catalog／vectors，

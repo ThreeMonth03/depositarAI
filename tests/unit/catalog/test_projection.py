@@ -12,9 +12,12 @@ import unittest
 
 from search.catalog.build import builder
 from search.catalog.bundle import CatalogBundle
+from search.catalog.codec import _json_wire_copy
 from search.catalog.inventory import InventorySnapshot
+from search.catalog.resources import validate_resource_context
 from search.catalog.vectors import VectorProgressSnapshot
 from search.operations.catalog import projection
+from search.operations.catalog.transport import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from search.operations.shared import private_io
 from search.planning import index_filters as filters
 from search.vector_journal import state_sha256
@@ -24,26 +27,36 @@ from tests.unit.operations.test_metadata_sync import dataset
 INDEX = "fess.20261008120000"
 
 
-def make_bundle(root, count=101):
+def make_bundle(root, count=101, *, resource_context=None):
     source = root / "snapshot.jsonl"
-    source.write_text(
-        "".join(
-            json.dumps(
-                dataset(
-                    number,
-                    extras=[
-                        {"key": "temporal_start", "value": "2020"},
-                        {"key": "temporal_end", "value": "2022"},
-                    ],
-                )
-            )
-            + "\n"
-            for number in range(1, count + 1)
+    rows = []
+    for number in range(1, count + 1):
+        row = dataset(
+            number,
+            extras=[
+                {"key": "temporal_start", "value": "2020"},
+                {"key": "temporal_end", "value": "2022"},
+            ],
         )
-    )
+        entries = (resource_context or {}).get(row["id"], [])
+        if entries:
+            row["resources"] = [
+                {
+                    "id": entry["context"]["resource_id"],
+                    "name": entry["context"]["name"],
+                    "format": entry["context"]["format"],
+                    "url": "https://data.depositar.io/"
+                    + entry["context"]["resource_id"],
+                }
+                for entry in entries
+            ]
+        rows.append(row)
+    source.write_text("".join(json.dumps(row) + "\n" for row in rows))
     destination = root / "bundles"
     destination.mkdir(mode=0o700)
-    report = builder.build_bundle(source, destination)
+    report = builder.build_bundle(
+        source, destination, resource_context=resource_context
+    )
     return CatalogBundle.load(
         Path(report["bundle_path"]),
         expected_manifest_sha256=report["manifest_sha256"],
@@ -93,6 +106,9 @@ class ProjectionClient:
                     filters.VECTOR_PATH: [{"vector": [1.0] + [0.0] * 767}],
                 }
             )
+            # Fess 15.8 convertToStorableDoc drops empty top-level collections.
+            if row["resource_context"]:
+                source["resource_context"] = _json_wire_copy(row["resource_context"])
             self.rows.append(
                 {
                     "_index": INDEX,
@@ -251,6 +267,169 @@ class CatalogConditionMappingTests(unittest.TestCase):
                     self.assertFalse(projection._condition_mapping(actual))
 
 
+class CatalogResourceProjectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-source-projection-"
+        )
+        identifier = "00000000-0000-4000-8000-000000000001"
+        resource_id = "11111111-1111-4111-8111-111111111111"
+        cls.context = {
+            "resource_id": resource_id,
+            "name": "Water observations",
+            "format": "CSV",
+            "url": "https://data.depositar.io/dataset/dataset-1/resource/"
+            + resource_id,
+            "columns": ["station", "temperature"],
+            "excerpt": "",
+        }
+        entry = {
+            "context": cls.context,
+            "index_text": "station temperature",
+            "profile_sha256": "a" * 64,
+            "source_manifest_sha256": "b" * 64,
+            "content_sha256": "c" * 64,
+            "extractor_image_id": "sha256:" + "d" * 64,
+            "extractor_source_sha256": "e" * 64,
+            "acquired_at": 100,
+            "truncated": False,
+        }
+        cls.bundle = make_bundle(
+            Path(cls.temporary.name), count=1, resource_context={identifier: [entry]}
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temporary.cleanup()
+
+    def test_nested_context_survives_actual_serialized_cas_update(self):
+        client = ProjectionClient(self.bundle)
+        report = projection.provision_projection(client, self.bundle)
+        self.assertEqual(1, report["projection_updated_count"])
+        updates = [body for _, path, body, _ in client.calls if path.endswith("/_bulk")]
+        self.assertEqual(1, len(updates))
+        action, body = [json.loads(line) for line in updates[0].splitlines()]
+        self.assertEqual(0, action["update"]["if_seq_no"])
+        self.assertEqual(1, action["update"]["if_primary_term"])
+        self.assertEqual([self.context], body["doc"]["resource_context"])
+        self.assertEqual([self.context], client.rows[0]["_source"]["resource_context"])
+        client.calls.clear()
+        self.assertEqual(
+            "ready", projection.verify_projection(client, self.bundle, INDEX)["status"]
+        )
+        self.assertTrue(all(method != "PUT" for method, _, _, _ in client.calls))
+
+    def test_missing_null_empty_or_tampered_enriched_context_fails_before_write(self):
+        missing = object()
+        for value in (missing, None, [], [{**self.context, "columns": ["invented"]}]):
+            client = ProjectionClient(self.bundle)
+            if value is missing:
+                del client.rows[0]["_source"]["resource_context"]
+            else:
+                client.rows[0]["_source"]["resource_context"] = value
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    projection.ProjectionError, "resource_context_changed"
+                ),
+            ):
+                projection.provision_projection(client, self.bundle)
+            self.assertTrue(
+                all(
+                    method == "GET" or path.endswith("/_search")
+                    for method, path, _, _ in client.calls
+                )
+            )
+
+    def test_postscan_rejects_enriched_context_removed_or_mutated_after_cas(self):
+        for mutate in (
+            lambda rows: rows[0]["_source"].pop("resource_context"),
+            lambda rows: rows[0]["_source"]["resource_context"][0]["columns"].append(
+                "invented"
+            ),
+        ):
+            client = ProjectionClient(self.bundle)
+            client.after_bulk = mutate
+            with (
+                self.subTest(mutate=mutate),
+                self.assertRaisesRegex(
+                    projection.ProjectionError, "resource_context_changed"
+                ),
+            ):
+                projection.provision_projection(client, self.bundle)
+
+    def test_worst_unicode_context_fits_transport_for_one_hundred_rows(self):
+        astral = "\U00020000"
+        contexts = []
+        for number in range(1, 4):
+            resource_id = f"11111111-1111-4111-8111-{number:012d}"
+            prefix = "https://data.depositar.io/dataset/"
+            suffix = "/resource/" + resource_id
+            contexts.append(
+                {
+                    "resource_id": resource_id,
+                    "name": astral * 160,
+                    "format": "CSV",
+                    "url": prefix + "a" * (2048 - len(prefix) - len(suffix)) + suffix,
+                    "columns": [astral * 64] * 32,
+                    "excerpt": "",
+                }
+            )
+        contexts = validate_resource_context(contexts)
+        row = {
+            "id": astral * 1000,
+            "seq_no": 100,
+            "primary_term": 1,
+            "projection": {"schema": filters.VERSION},
+            "resource_context": contexts,
+        }
+
+        class Client:
+            payload = None
+
+            def request(self, method, path, payload, **kwargs):
+                self.payload = payload
+                return 200, {
+                    "errors": False,
+                    "items": [
+                        {
+                            "update": {
+                                "_index": INDEX,
+                                "_id": row["id"],
+                                "status": 200,
+                                "result": "updated",
+                                "_shards": shards(),
+                            }
+                        }
+                        for _ in range(100)
+                    ],
+                }
+
+        client = Client()
+        projection._update(client, INDEX, [row] * 100)
+        self.assertLess(len(client.payload.encode("utf-8")), MAX_REQUEST_BYTES)
+        escaped = "\n".join(
+            json.dumps(json.loads(line)) for line in client.payload.splitlines()
+        )
+        self.assertGreater(len(escaped.encode("ascii")), MAX_REQUEST_BYTES)
+        response = {
+            "hits": {
+                "hits": [
+                    {
+                        "_id": row["id"],
+                        "_source": {
+                            "resource_context": contexts,
+                            filters.VECTOR_PATH: [{"vector": [1.0] * 768}],
+                        },
+                    }
+                ]
+                * 100
+            }
+        }
+        self.assertLess(len(private_io.canonical(response)), MAX_RESPONSE_BYTES)
+
+
 class CatalogProjectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -294,6 +473,7 @@ class CatalogProjectionTests(unittest.TestCase):
         ]
         self.assertEqual([0, 50, 100, 0, 50, 100], [p["from"] for p in searches])
         self.assertTrue(all(p["seq_no_primary_term"] is True for p in searches))
+        self.assertTrue(all("resource_context" in p["_source"] for p in searches))
         self.assertTrue(all(path.startswith("/" + INDEX) for _, path in self.writes()))
         for row in self.client.rows:
             identifier = row["_source"]["dataset_id"]
@@ -303,6 +483,19 @@ class CatalogProjectionTests(unittest.TestCase):
                 ),
                 row["_source"][filters.FIELD],
             )
+            self.assertEqual([], row["_source"]["resource_context"])
+        updates = [
+            payload
+            for _, path, payload, _ in self.client.calls
+            if path.endswith("/_bulk")
+        ]
+        self.assertTrue(updates)
+        for payload in updates:
+            for body in payload.splitlines()[1::2]:
+                self.assertEqual(
+                    {filters.FIELD, "resource_context"}, set(json.loads(body)["doc"])
+                )
+                self.assertEqual([], json.loads(body)["doc"]["resource_context"])
 
     def test_verified_repeat_never_rewrites_mapping_or_projection(self):
         first = self.provision()
@@ -502,6 +695,7 @@ class CatalogProjectionTests(unittest.TestCase):
             self.bundle.condition_metadata[row["_source"]["dataset_id"]],
             self.bundle.bundle_id,
         )
+        row["_source"]["resource_context"] = []
         report = self.provision()
         self.assertEqual(100, report["projection_updated_count"])
         updates = "".join(
@@ -638,6 +832,8 @@ class CatalogProjectionTests(unittest.TestCase):
     def test_postscan_detects_omitted_projection_and_vector_changes(self):
         for mutate in (
             lambda rows: rows[0]["_source"].pop(filters.FIELD, None),
+            lambda rows: rows[0]["_source"].pop("resource_context", None),
+            lambda rows: rows[0]["_source"].update(resource_context=None),
             lambda rows: rows[0]["_source"][filters.VECTOR_PATH][0][
                 "vector"
             ].__setitem__(0, 2.0),
@@ -646,6 +842,29 @@ class CatalogProjectionTests(unittest.TestCase):
             self.client.after_bulk = mutate
             with self.assertRaises(projection.ProjectionError):
                 self.provision()
+
+    def test_existing_conditions_without_empty_context_are_repaired_in_same_cas(self):
+        self.client.mapping[INDEX]["mappings"]["properties"].update(
+            filters.mapping()["properties"]
+        )
+        for row in self.client.rows:
+            row["_source"][filters.FIELD] = filters.metadata(
+                self.bundle.condition_metadata[row["_source"]["dataset_id"]],
+                self.bundle.bundle_id,
+            )
+        report = self.provision()
+        self.assertEqual(101, report["projection_updated_count"])
+        self.assertTrue(
+            all(row["_source"]["resource_context"] == [] for row in self.client.rows)
+        )
+
+    def test_null_context_is_not_treated_as_fess_empty_collection_omission(self):
+        self.client.rows[0]["_source"]["resource_context"] = None
+        with self.assertRaisesRegex(
+            projection.ProjectionError, "resource_context_changed"
+        ):
+            self.provision()
+        self.assertEqual([], self.writes())
 
     def test_mapping_ack_and_refresh_must_be_confirmed(self):
         self.client.mapping_ack = False

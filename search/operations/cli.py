@@ -105,6 +105,7 @@ _CATALOG_PROJECTION_CODES = frozenset(
         "catalog_projection_bulk_partial_shards",
         "catalog_projection_bundle_invalid",
         "catalog_projection_document_changed",
+        "catalog_projection_resource_context_changed",
         "catalog_projection_document_invalid",
         "catalog_projection_index_changed",
         "catalog_projection_index_invalid",
