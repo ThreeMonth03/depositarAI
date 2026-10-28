@@ -93,6 +93,9 @@ CA 檔須可由 `WEB_UID` 讀取；服務 key 另須由相同 UID 擁有，權�
 
 在自己的電腦建立 tunnel，將 `user@server` 換成前端主機：
 
+需要多段跳板、且 VM 私鑰留在伺服器上時，可使用[私有 demo 連線工具](development/PRIVATE_DEMO.md)
+統一建立通道並驗證實際部署版本；它不重新部署或送出模型查詢。
+
 ```sh
 ssh -N -o ExitOnForwardFailure=yes \
   -L 127.0.0.1:18081:127.0.0.1:18081 user@server
