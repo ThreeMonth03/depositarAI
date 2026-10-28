@@ -47,6 +47,7 @@ depositarAI/
 │   └── tests/                 搜尋、API、BFF 及 planning 測試
 ├── scripts/                   薄產品 CLI、模型準備及設定檢查工具
 │   └── ci/                    可獨立執行的 CI helpers
+├── experiments/               第三方工具比較；依賴及執行與產品部署分開
 ├── tests/
 │   ├── unit/                  operations、catalog、deployment 政策與失敗案例
 │   └── integration/           隔離 Compose／真實 OSS 案例
@@ -80,6 +81,7 @@ depositarAI/
 | 產品映像及 ignore | `deploy/docker/<service>/`，明確指定 repository-root build context |
 | 產品非私密設定 | `deploy/config/`、`deploy/env/`；runtime Compose 由工具產生 |
 | 文件 | 操作／使用指南放 `docs/guide/`，詳細參考由 `docs/REFERENCE.md` 導覽 |
+| 第三方工具選型比較 | `experiments/`；[CSV／PDF 比較](../../experiments/document-extraction/README.md)使用獨立 CPU 容器，真實資料與輸出放在 Git 外 |
 | 原始量測及操作收據 | Git 外的私有儲存；保留來源版本、資料及比較條件 |
 
 目錄表達 domain，檔名表達責任，不重複父目錄前綴。測試目錄對應來源，保留
