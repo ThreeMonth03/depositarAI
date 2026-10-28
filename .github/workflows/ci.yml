@@ -36,11 +36,6 @@ jobs:
       - name: Install verified Docker Compose
         run: bash scripts/ci/install-compose.sh
 
-      - name: Install linters
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck
-
       - name: Run Depositár search CI suite
         run: make search-ci
 

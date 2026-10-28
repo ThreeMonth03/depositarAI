@@ -34,14 +34,10 @@ shell_files=(
   scripts/test-search-web.sh
 )
 bash -n "${shell_files[@]}"
-if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -x "${shell_files[@]}"
-else
-  docker run --rm --network none \
-    --mount "type=bind,src=$project_dir,dst=/mnt,readonly" \
-    koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb \
-    -x "${shell_files[@]}"
-fi
+docker run --rm --network none \
+  --mount "type=bind,src=$project_dir,dst=/mnt,readonly" \
+  koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb \
+  -x "${shell_files[@]}"
 
 python3 -m unittest -v \
   search.tests.test_catalog_bundle \
