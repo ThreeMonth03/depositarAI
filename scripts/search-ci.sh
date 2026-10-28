@@ -90,6 +90,7 @@ python3 -m unittest -v \
   tests.unit.operations.test_metadata_sync \
   tests.unit.operations.test_metadata_storage \
   tests.unit.operations.test_private_io \
+  tests.unit.operations.test_search_quality \
   tests.unit.operations.test_bounded_process \
   tests.unit.operations.test_model_source \
   tests.unit.catalog.test_backend \

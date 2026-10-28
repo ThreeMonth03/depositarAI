@@ -47,7 +47,6 @@ def result(index: int, score: float) -> dict:
         "metadata_modified": "2026-09-10T00:00:00",
         "temporal_coverage": {"start": "2020", "end": "2025", "status": "complete"},
         "resource_count": 2,
-        "raw_score": score * 10,
         "rank_fusion_score": score,
         "searchers": ["opensearch-bm25", "opensearch-knn"],
     }
