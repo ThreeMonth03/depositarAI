@@ -131,7 +131,7 @@ class RemoteConfigurationTests(RemoteFixture):
                 "origin": self.value["origin"],
                 "api_revision": REVISION,
                 "catalog_manifest_sha256": MANIFEST,
-                "conversation_contract_version": 3,
+                "conversation_contract_version": 4,
             },
         )
         self.assertNotIn(API_KEY, repr(backend))
@@ -343,9 +343,10 @@ class RemoteAdmissionTests(RemoteFixture):
             {"unexpected": "value"},
             {"conversation_contract_version": 1},
             {"conversation_contract_version": 2},
+            {"conversation_contract_version": 3},
             {"conversation_contract_version": True},
-            {"conversation_contract_version": "3"},
-            {"conversation_contract_version": 3.0},
+            {"conversation_contract_version": "4"},
+            {"conversation_contract_version": 4.0},
         ):
             value = copy.deepcopy(original)
             value["x-depositar-plan"]["private_backend"].update(change)
@@ -485,7 +486,7 @@ class RemoteTLSProbeTests(RemoteFixture):
                         "catalog_manifest_sha256": MANIFEST
                         if case.mode != "manifest"
                         else "f" * 64,
-                        "conversation_contract_version": 3
+                        "conversation_contract_version": 4
                         if case.mode != "contract"
                         else 1,
                     }
@@ -494,7 +495,7 @@ class RemoteTLSProbeTests(RemoteFixture):
                     elif case.mode == "old_contract":
                         value["conversation_contract_version"] = 2
                     elif case.mode == "untyped_contract":
-                        value["conversation_contract_version"] = 3.0
+                        value["conversation_contract_version"] = 4.0
                     raw = json.dumps(value).encode()
                     if case.mode == "oversize":
                         raw = b"PRIVATE_RESPONSE" * 2000

@@ -9,6 +9,7 @@ import re
 import subprocess
 
 from search.serialization import strict_json
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from .. import image_build
 
 
@@ -202,7 +203,8 @@ def _verify_private_backend(profile, release, runner):
     )
     _require(api.get("Image") == expected_image, "image_changed")
     _require(
-        api["Labels"].get("io.depositar.ai.conversation.version") == "3",
+        api["Labels"].get("io.depositar.ai.conversation.version")
+        == str(CONVERSATION_CONTRACT_VERSION),
         "contract_changed",
     )
     ports = api.get("Ports")

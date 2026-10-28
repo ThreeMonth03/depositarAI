@@ -116,7 +116,7 @@ API key、推論、query 或 release；這些中途流程須以原細項命令�
 步驟，見[故障診斷與人工停用](#故障診斷與人工停用)。
 這不是從零安裝主機軟體／模型、完整產品 update／rollback 或公眾 OIDC 入口工具。
 
-參數與 `stage-catalog` 相同：`--snapshot`、`--force`、`--max-passes`、
+參數與 `stage-catalog` 相同：`--snapshot`、`--force`、`--profile-file`、`--max-passes`、
 `--wall-seconds`、`--catalog-revision`。Snapshot 仍是離線建置 metadata 的輸入，
 不是跳過建置的 sealed bundle；預算只限制向量階段。以下分段命令仍保留原本的
 副作用、前置條件及失敗處理。
@@ -138,6 +138,10 @@ API key、推論、query 或 release；這些中途流程須以原細項命令�
 亦可使用 JSONL；離線快照不發下載請求，也不使用 TTL cache。沒有 `--snapshot` 時，
 從固定公開來源匿名下載，完整掃描兩次並確認一致；`--force` 略過設定的 TTL，
 不略過下載、資料或 digest 檢查。沒有自動安裝 cron／timer。
+
+明確選取的 CSV 欄位／PDF 節錄可用重複的 `--profile-file /absolute/private/PROFILE_SHA256.json`
+封入同一份候選 catalog；每次同步都須提供選取清單，省略即只有 metadata。
+這三個指令不下載資源原檔，摘要準備及來源核對見[資源摘要](RESOURCE_PROFILES.md)。
 
 首次同步不需要基準；之後預設與前次 staged metadata 比較，該基準不是 active catalog。
 只有 `sync` 提供自訂基準，兩個參數必須一起使用：

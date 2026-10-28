@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import re
 
-CONVERSATION_CONTRACT_VERSION = 3
+from search.transport.version import (
+    CONVERSATION_CONTRACT_VERSION as CONVERSATION_CONTRACT_VERSION,
+)
 
 
 @dataclass(frozen=True)

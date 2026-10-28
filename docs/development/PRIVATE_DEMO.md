@@ -27,7 +27,7 @@ chmod 600 /absolute/private/demo.json
 | `hops[].local_forward_port` | 在該段 SSH client 所在主機建立的 loopback port；第一段固定 `18081`，其他段為未占用的非特權 port。 |
 | `remote_checker` | 最後一台主機上已驗證版本的 `scripts/check_search_web.py` 絕對路徑。 |
 | `remote_profile` | 最後一台主機上的正式 `frontend-check.json` 絕對路徑。 |
-| `expected` | 從已完成部署的收據取得 frontend/API 完整 Git SHA、contract integer `3` 與 catalog manifest SHA256；不以網站自行回報的值建立預期值。 |
+| `expected` | 從已完成部署的收據取得 frontend/API 完整 Git SHA、contract integer `4` 與 catalog manifest SHA256；不以網站自行回報的值建立預期值。 |
 
 `hops` 的第二段 SSH client 在第一段目的地主機上執行，第三段則在第二段目的地主機
 執行。因此 VM key 可以留在原本的伺服器上；不用複製私鑰到展示電腦，也不使用

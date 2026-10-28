@@ -83,7 +83,9 @@ test("depositar AI branding, quieter defaults and discoverable search limitation
   const details = page.locator(".diagnostics").last();
   await expect(details.getByText(/metadata/)).toBeHidden();
   await details.getByText("搜尋詳情", { exact: true }).click();
-  await expect(details.getByText(/尚未讀取 PDF／CSV 內文/)).toBeVisible();
+  await expect(
+    details.getByText(/已建入索引的 CSV 欄位與 PDF 文字節錄/),
+  ).toBeVisible();
   await page.locator(".usage-notes summary").click();
   await expect(page.locator(".usage-notes")).toContainText("30 分鐘");
 });

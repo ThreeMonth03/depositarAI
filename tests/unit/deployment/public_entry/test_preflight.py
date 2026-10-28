@@ -64,7 +64,7 @@ def fixture():
         "Labels": {
             "com.docker.compose.project": PROJECT,
             "com.docker.compose.service": "conversation-api",
-            "io.depositar.ai.conversation.version": "3",
+            "io.depositar.ai.conversation.version": "4",
         },
         "State": {
             "Running": True,
@@ -231,7 +231,7 @@ class PrivateBackendPreflightTests(unittest.TestCase):
 
     def test_actual_local_api_must_advertise_current_wire_contract(self):
         original = dict(self.api["Labels"])
-        for version in (None, "1", "2", 3, True):
+        for version in (None, "1", "2", "3", 4, True):
             self.api["Labels"] = dict(original)
             if version is None:
                 self.api["Labels"].pop("io.depositar.ai.conversation.version")

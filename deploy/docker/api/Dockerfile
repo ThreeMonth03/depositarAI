@@ -11,7 +11,7 @@ COPY search/http /app/search/http/
 COPY search/transport /app/search/transport/
 COPY search/catalog/__init__.py search/catalog/bundle.py search/catalog/codec.py \
     search/catalog/embedding.py search/catalog/errors.py search/catalog/policy.py \
-    search/catalog/query.py /app/search/catalog/
+    search/catalog/query.py search/catalog/resources.py /app/search/catalog/
 COPY search/api/*.py /app/search/api/
 COPY search/api/conversation/*.py /app/search/api/conversation/
 COPY search/api/retrieval/*.py /app/search/api/retrieval/
@@ -22,7 +22,7 @@ COPY search/operations/__init__.py /app/search/operations/
 COPY search/operations/shared/__init__.py search/operations/shared/runtime_probe.py /app/search/operations/shared/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
-LABEL io.depositar.ai.conversation.version="3"
+LABEL io.depositar.ai.conversation.version="4"
 ENV SOURCE_REVISION=$SOURCE_REVISION
 USER 1000:1000
 CMD ["python", "-m", "uvicorn", "search.api.conversation.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "16"]

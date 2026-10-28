@@ -6,6 +6,7 @@ RUN /opt/conda/bin/python -m pip install --no-cache-dir --no-deps --require-hash
 WORKDIR /app
 COPY search/__init__.py search/serialization.py search/secrets.py /app/search/
 COPY search/reranker /app/search/reranker/
+COPY search/catalog/__init__.py search/catalog/resources.py /app/search/catalog/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 ENV SOURCE_REVISION=$SOURCE_REVISION HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \

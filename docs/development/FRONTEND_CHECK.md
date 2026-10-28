@@ -17,7 +17,7 @@ python3 scripts/check_search_web.py --config /absolute/private/frontend/check.js
 `catalog_manifest_sha256` 則來自已驗證的私有 backend／catalog receipt。
 
 新版配對部署使用範例中的 `schema_version: 2`，另以
-`conversation_contract_version` 明確指定預定受檢的 wire 契約版本，範例使用第 `3` 版。
+`conversation_contract_version` 明確指定預定受檢的 wire 契約版本，範例使用第 `4` 版。
 此值只接受 1–32 的整數，拒絕布林值、字串與缺少欄位。工具會同時核對實際
 immutable BFF image 的 `io.depositar.ai.conversation.version` label，以及通過服務 key
 驗證的 API `/v1/version` 回應；API 欄位也必須是完全相同的整數。

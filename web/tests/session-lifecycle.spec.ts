@@ -23,6 +23,7 @@ function reply(version: number, referenceDate: string): Reply {
             snippet: "測試資料說明",
             organization_title: "測試單位",
             resource_formats: ["CSV"],
+            resource_context: [],
             temporal_coverage: { start: null, end: null, status: "absent" },
             condition_status: "match",
           },

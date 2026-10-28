@@ -68,13 +68,58 @@ class RetrievalResultTests(unittest.TestCase):
             "resource_formats",
             "metadata_modified",
             "temporal_coverage",
+            "resource_context",
         }
         for rank, card in enumerate(cards, 1):
             self.assertEqual(set(card), expected)
             self.assertEqual(card["rank"], rank)
         self.assertEqual(len(cards[0]["snippet"]), 2000)
         self.assertEqual(cards[0]["url"], source["results"][0]["url"])
+        self.assertEqual(cards[0]["resource_context"], [])
         json.dumps(cards, ensure_ascii=False, allow_nan=False).encode()
+
+    def test_resource_context_is_required_grounded_bounded_and_copied(self):
+        source = report("水質", count=1)
+        context = {
+            "resource_id": IDS[1],
+            "name": "水質觀測",
+            "format": "CSV",
+            "url": source["results"][0]["url"] + "/resource/" + IDS[1],
+            "columns": ["測站", "水溫"],
+            "excerpt": "",
+        }
+        source["results"][0]["resource_context"] = [copy.deepcopy(context)]
+        found = ValidatedSearch.from_report(
+            "水質", source, conditions={}, manifest_sha256="b" * 64
+        )
+        source["results"][0]["resource_context"][0]["columns"].clear()
+        cards = found.cards()
+        self.assertEqual(cards[0]["resource_context"], [context])
+        cards[0]["resource_context"][0]["columns"].append("invented")
+        self.assertEqual(found.cards()[0]["resource_context"], [context])
+        for value in (
+            None,
+            "missing",
+            [context] * 4,
+            [{**context, "extra": "untrusted"}],
+            [{**context, "columns": ["x"] * 33}],
+            [{**context, "excerpt": "not CSV metadata"}],
+            [
+                {
+                    **context,
+                    "url": "https://data.depositar.io/dataset/other/resource/" + IDS[1],
+                }
+            ],
+        ):
+            invalid = copy.deepcopy(source)
+            if value == "missing":
+                del invalid["results"][0]["resource_context"]
+            else:
+                invalid["results"][0]["resource_context"] = value
+            with self.subTest(value=value), self.assertRaises(ResultError):
+                ValidatedSearch.from_report(
+                    "水質", invalid, conditions={}, manifest_sha256="b" * 64
+                )
 
     def test_malformed_retrieval_shapes_fail_closed(self):
         query = "臺灣氣候資料"

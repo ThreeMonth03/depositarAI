@@ -28,6 +28,7 @@ import time
 from search.operations.shared.bounded_http import AbortableConnection
 from search.operations.shared.bounded_process import captured_pipes
 from search.serialization import strict_json
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 
 
 ORIGIN = "http://127.0.0.1:18081"
@@ -164,7 +165,7 @@ def validate_profile(value):
         )
     require(
         type(expected["conversation_contract_version"]) is int
-        and expected["conversation_contract_version"] == 3,
+        and expected["conversation_contract_version"] == CONVERSATION_CONTRACT_VERSION,
         "profile",
         "expected_identity_invalid",
     )

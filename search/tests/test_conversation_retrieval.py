@@ -201,6 +201,16 @@ class ConversationConditionRegressionTests(unittest.TestCase):
         return response.json()
 
     def test_year_followup_preserves_topic_and_dataset_coverage(self):
+        row = self.backend.rows[0]
+        context = {
+            "resource_id": IDS[6],
+            "name": "Observations published in 2020",
+            "format": "CSV",
+            "url": row["url"] + "/resource/" + IDS[6],
+            "columns": ["2020 reference", "temperature"],
+            "excerpt": "",
+        }
+        row["resource_context"] = [context]
         first = self.turn(
             "找 2020 到 2025 年的氣候資料",
             time_op="set",
@@ -258,6 +268,8 @@ class ConversationConditionRegressionTests(unittest.TestCase):
             ],
         )
         self.assertIn("unknown_condition_results_retained", search["warnings"])
+        self.assertEqual(cards[-1]["resource_context"], [context])
+        self.assertTrue(all(card["resource_context"] == [] for card in cards[:-1]))
 
     def test_year_and_format_refinements_preserve_the_other_condition(self):
         first = self.turn(

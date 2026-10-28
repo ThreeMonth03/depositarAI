@@ -1,5 +1,7 @@
 """Metadata builder limits, output fields and fixed validation policy."""
 
+from search.catalog import resources
+
 MAX_COMPRESSED_BYTES = 64 * 1024 * 1024
 
 
@@ -43,6 +45,7 @@ ARTIFACT_NAMES = (
     "source.jsonl.gz",
     "corpus.v2.jsonl.gz",
     "fess-documents.jsonl.gz",
+    "resource-context.v1.jsonl.gz",
 )
 
 
@@ -71,6 +74,9 @@ STRING_LIMITS = {
     "list_item": 512,
     "fess_important_content": 16_384,
     "fess_content": 50_000,
+    "resource_context_name": resources.MAX_RESOURCE_NAME_CHARS,
+    "resource_context_column": resources.MAX_COLUMN_CHARS,
+    "resource_context_index_text": resources.MAX_INDEX_TEXT_CHARS,
 }
 
 
@@ -111,6 +117,7 @@ FESS_FIELD_ALLOWLIST = frozenset(
         "metadata_created",
         "metadata_modified",
         "resource_count",
+        "resource_context",
     }
 )
 
@@ -157,9 +164,18 @@ POLICY = {
         "role": [FIXED_SEARCH_ROLE],
         "boost": 1.0,
         "virtual_host": [FIXED_VIRTUAL_HOST],
-        "resource_url_field_included": False,
+        "resource_download_url_field_included": False,
+        "resource_landing_url_field_included": True,
         "email_addresses": False,
         "raw_spatial": False,
+    },
+    "resource_context": {
+        "resources_per_dataset_max": resources.MAX_RESOURCES,
+        "columns_per_resource_max": resources.MAX_COLUMNS,
+        "column_characters_max": resources.MAX_COLUMN_CHARS,
+        "column_total_characters_max": resources.MAX_COLUMN_TOTAL_CHARS,
+        "excerpt_characters_max": resources.MAX_EXCERPT_CHARS,
+        "index_text_characters_max": resources.MAX_INDEX_TEXT_CHARS,
     },
     "dataset_id_digest_encoding": "lowercase UUIDs sorted, one UTF-8 ID plus LF per record",
 }

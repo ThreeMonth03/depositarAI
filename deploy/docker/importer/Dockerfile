@@ -8,7 +8,7 @@ COPY --chown=root:root search/catalog/__init__.py search/catalog/errors.py \
     search/catalog/policy.py search/catalog/codec.py search/catalog/transport.py \
     search/catalog/session.py search/catalog/admin.py search/catalog/bundle.py \
     search/catalog/inventory.py search/catalog/importer.py search/catalog/journal.py \
-    search/catalog/vectors.py ./search/catalog/
+    search/catalog/vectors.py search/catalog/resources.py ./search/catalog/
 COPY --chown=root:root search/operations/__init__.py ./search/operations/
 COPY --chown=root:root search/operations/shared/__init__.py \
     search/operations/shared/private_io.py ./search/operations/shared/

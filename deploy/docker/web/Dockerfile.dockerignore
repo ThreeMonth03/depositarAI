@@ -14,6 +14,7 @@ search/transport/**
 !search/catalog/
 search/catalog/**
 !search/catalog/__init__.py
+!search/catalog/resources.py
 !search/catalog/errors.py
 !search/catalog/policy.py
 !search/catalog/query.py

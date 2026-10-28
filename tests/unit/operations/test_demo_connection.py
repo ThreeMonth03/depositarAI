@@ -44,7 +44,7 @@ def profile():
         "expected": {
             "frontend_revision": "a" * 40,
             "api_revision": "b" * 40,
-            "conversation_contract_version": 3,
+            "conversation_contract_version": 4,
             "catalog_manifest_sha256": "c" * 64,
         },
     }
@@ -108,6 +108,7 @@ class ProfileTests(unittest.TestCase):
             lambda p: p.update(remote_checker="/private/checker\n.py"),
             lambda p: p.update(remote_profile="relative"),
             lambda p: p["expected"].update(conversation_contract_version=True),
+            lambda p: p["expected"].update(conversation_contract_version=3),
             lambda p: p["expected"].update(frontend_revision="latest"),
             lambda p: p.update(extra=True),
         ]
@@ -180,7 +181,7 @@ class ProfileTests(unittest.TestCase):
             ("assets_verified", True),
             ("deployment_performed", True),
             ("model_inference_verified", True),
-            ("conversation_contract_version", 3.0),
+            ("conversation_contract_version", 4.0),
             ("schema_version", True),
             ("extra", "PRIVATE_SENTINEL"),
         ):

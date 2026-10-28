@@ -41,6 +41,7 @@ def result(index: int, score: float) -> dict:
         "tags": ["氣候", "臺灣"],
         "groups": ["研究資料"],
         "resource_formats": ["CSV", "PDF"],
+        "resource_context": [],
         "license_id": "cc-by",
         "license_title": "Creative Commons Attribution",
         "metadata_created": "2026-01-01T00:00:00",

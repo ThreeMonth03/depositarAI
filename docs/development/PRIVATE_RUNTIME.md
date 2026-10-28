@@ -29,14 +29,15 @@ mount 與 network 限制來自配置及 Compose，啟動和重用時仍核對實
 ```
 
 LLM 負責用途檢查與結構化搜尋條件，搜尋結果來自索引及排序服務。此流程不生成
-資料內容摘要或保存永久聊天記憶；地理篩選及 PDF／CSV 內文 ingestion 尚未提供。
+自由答案或保存永久聊天記憶；地理篩選尚未提供。CSV 欄位及 PDF 節錄來自
+明確選取的離線資源摘要，不由使用者請求現場解析。
 多輪狀態、篩選範圍與網站 HTTP 契約見[網站參考](../SEARCH_WEBSITE.md)。
 
 所有查詢都走同一條 OpenSearch／Haystack 流程；文字與向量兩路在索引內套用
 相同條件，再取得有界候選。Fess 用於資料匯入、inventory 與向量工作，不接收
 使用者搜尋。Query embedding 使用與 catalog 向量配方相同的固定模型身分。
 
-資料準備是另一條流程：公開 metadata 經快取與封存後，匯入隔離 catalog 並建立
+資料準備是另一條流程：公開 metadata 與選取的資源摘要經快取與封存後，匯入隔離 catalog 並建立
 向量及查詢權限。`stage-catalog` 不下載原始資源檔、不改 active release，也不啟動
 網站入口；候選資料完成後，release 與 gateway 仍各自核對並啟用。
 

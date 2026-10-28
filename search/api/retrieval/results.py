@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional, Tuple
 import urllib.parse
 
 from search.catalog.query import MAX_TOP_K, normalize_query
+from search.catalog.resources import validate_resource_context
 
 from .metadata import bounded_text, validate_temporal_coverage
 
@@ -51,6 +52,7 @@ _RESULT_FIELDS = frozenset(
     (
         *METADATA_FIELDS,
         "temporal_coverage",
+        "resource_context",
         "rank_fusion_score",
         "searchers",
     )
@@ -183,8 +185,14 @@ def validate_result(row: Any) -> dict[str, Any]:
         copied["temporal_coverage"] = validate_temporal_coverage(
             row["temporal_coverage"]
         )
+        copied["resource_context"] = validate_resource_context(row["resource_context"])
     except ValueError:
-        raise ResultError("invalid temporal coverage") from None
+        raise ResultError("invalid catalog context") from None
+    if any(
+        context["url"] != row["url"] + "/resource/" + context["resource_id"]
+        for context in copied["resource_context"]
+    ):
+        raise ResultError("resource context dataset mismatch")
     for field in ("tags", "groups", "resource_formats", "searchers"):
         copied[field] = list(row[field])
     return copied
@@ -251,6 +259,7 @@ def _card(row: Mapping[str, Any], rank: int) -> dict[str, Any]:
         "resource_formats": list(row["resource_formats"]),
         "metadata_modified": row["metadata_modified"],
         "temporal_coverage": dict(row["temporal_coverage"]),
+        "resource_context": validate_resource_context(row["resource_context"]),
     }
 
 

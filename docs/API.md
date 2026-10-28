@@ -31,8 +31,8 @@ API 不提供公開 Swagger UI；request／response 型別以
 API 與 BFF 共用嚴格的回應型別。變更契約時，兩者須協調切換；回退也須選回
 對應的 API 與 BFF。不要只更新其中一端，再把回應驗證失敗當成暫時網路問題。
 
-`/v1/version` 的整數 `conversation_contract_version` 目前為 `3`，表示使用目前的
-`TurnRequest`／`TurnResponse`，其中資料集卡片必須包含 `temporal_coverage`。
+`/v1/version` 的整數 `conversation_contract_version` 目前為 `4`，表示使用目前的
+`TurnRequest`／`TurnResponse`，其中資料集卡片必須包含 `temporal_coverage` 與 `resource_context`。
 跨主機入口只接受此版本，同時核對固定的 API revision 與 catalog manifest；
 舊 API 沒有此欄位時拒絕啟用。
 相容的網站更新可以使用不同的 source revision；破壞性 wire 契約變更須同時調整
@@ -114,6 +114,29 @@ API 與 BFF 共用嚴格的回應型別。變更契約時，兩者須協調切�
 此欄位為必要契約。採用此版本時，conversation API、BFF 與 frontend 須配套更新；
 回退也使用對應版本，不能將新版結果交給舊版嚴格 schema。
 
+每張 card 的 `resource_context` 是必要陣列，最多三筆；沒有選取的可用摘要時為 `[]`。
+每筆只有 `resource_id`、`name`、`format`、`url`、`columns` 與 `excerpt`：
+
+```json
+{
+  "resource_context": [{
+    "resource_id": "11111111-1111-4111-8111-111111111111",
+    "name": "水質觀測",
+    "format": "CSV",
+    "url": "https://data.depositar.io/dataset/water/resource/11111111-1111-4111-8111-111111111111",
+    "columns": ["eventDate", "pH"],
+    "excerpt": ""
+  }]
+}
+```
+
+CSV 僅提供欄名，最多 32 個、每個 128 字元、合計 2,048 字元；不將資料列值加入索引。
+PDF 的 `columns` 為空，`excerpt` 是同一份正規化索引文字的前 320 字元。
+檔名最多 160 字元，連結固定指向該資料集的 depositar 資源頁，不公開原下載 URL。
+欄位與摘錄提供可核對的來源，不能當成模型已證明的命中理由或完整檔案內容。
+來源雜湊、抽取器身分與取得時間留在 sealed catalog 的私有 provenance，不送入卡片。
+條件篩選仍依 dataset metadata；檔案文字不覆寫時間涵蓋欄位。
+
 | HTTP | 處理方式 |
 |---|---|
 | 400／408／411／413／415／422 | 修正格式、長度、欄位或時區；不要原樣重送。 |
@@ -133,4 +156,4 @@ API 本身不保存 session；網站的版本衝突、到期與 session 所有�
 不代表來源目前的 ACL；其他系統整合時，須在顯示前核對資料仍可見。
 
 模型只協助判斷意圖與整理條件。服務不執行任意工具、不生成自由答案，
-不提供 PDF／CSV 內文搜尋、永久對話記憶或地理距離篩選。
+可搜尋已納入 catalog 的 CSV 欄位及 PDF 文字節錄；不提供檔案內文問答、永久對話記憶或地理距離篩選。

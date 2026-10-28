@@ -122,7 +122,7 @@ class PublicEntryUpdatesTests(unittest.TestCase):
                 if image in (FRONT, NEW_FRONT)
                 else "2",
                 host.CAPABILITY: "2",
-                host.CONVERSATION_CAPABILITY: "3",
+                host.CONVERSATION_CAPABILITY: "4",
             },
         }
 

@@ -18,6 +18,7 @@ import subprocess
 import uuid
 
 from search.serialization import strict_json
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.operations.deployment import composition
 from search.operations.deployment.public_entry import profile as public_entry
 from search.operations.shared import private_io
@@ -79,7 +80,7 @@ def _web_revision(image, image_proof, frontend_image, frontend_proof):
         or image_proof.get("Id") != image
         or type(labels) is not dict
         or labels.get(CAPABILITY) != "2"
-        or labels.get(CONVERSATION_CAPABILITY) != "3"
+        or labels.get(CONVERSATION_CAPABILITY) != str(CONVERSATION_CONTRACT_VERSION)
         or type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):

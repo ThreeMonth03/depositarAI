@@ -1,7 +1,7 @@
 # 有界 embedding 建置與續跑
 
 這是產品候選 catalog 的建置工具，不是已完成的網站 `install`／`update`。
-只處理公開 metadata；不下載 PDF／CSV、不公開 port、不分配 GPU、不更動 driver。
+處理 sealed catalog 中的 metadata 與已選取的資源文字；不下載 PDF／CSV、不公開 port、不分配 GPU、不更動 driver。
 操作順序、配置與退出碼見[產品 CLI 參考](PRODUCT_LIFECYCLE.md)，首次部署見
 [部署與維護](../guide/operations.md)。
 

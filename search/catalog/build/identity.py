@@ -12,6 +12,7 @@ SOURCE_FILES = tuple(
             "search/__init__.py",
             "search/catalog/__init__.py",
             "search/catalog/policy.py",
+            "search/catalog/resources.py",
             "search/catalog/build/__init__.py",
             "search/catalog/build/__main__.py",
             "search/catalog/build/policy.py",

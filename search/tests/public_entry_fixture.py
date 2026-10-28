@@ -110,7 +110,7 @@ def serve(directory):
                     else {
                         "revision": "a" * 40,
                         "catalog_manifest_sha256": "b" * 64,
-                        "conversation_contract_version": 3,
+                        "conversation_contract_version": 4,
                     }
                 )
                 return self.reply(200, value)

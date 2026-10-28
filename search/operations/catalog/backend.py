@@ -89,6 +89,7 @@ DATA_FILES = (
     "search/catalog/session.py",
     "search/catalog/admin.py",
     "search/catalog/bundle.py",
+    "search/catalog/resources.py",
     "search/catalog/inventory.py",
     "search/catalog/importer.py",
     "search/catalog/journal.py",

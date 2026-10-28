@@ -21,7 +21,12 @@ from search.catalog.admin import (
     TOKEN_LIFETIME_MINUTES,
     VECTOR_TOKEN_LIFETIME_MINUTES,
 )
-from search.catalog.bundle import CATALOG_MANIFEST_POLICY, CatalogBundle, DOCUMENTS_NAME
+from search.catalog.bundle import (
+    CATALOG_MANIFEST_POLICY,
+    CatalogBundle,
+    DOCUMENTS_NAME,
+    RESOURCE_CONTEXT_NAME,
+)
 from search.catalog.errors import (
     BundleError,
     CatalogError,
@@ -1517,6 +1522,167 @@ class FessCatalogTests(unittest.TestCase):
                 self.built.path,
                 expected_manifest_sha256=self.built.manifest_sha256,
             )
+
+
+class ResourceContextBundleTests(unittest.TestCase):
+    def setUp(self):
+        self.built = BuiltBundle(count=1)
+        self.addCleanup(self.built.close)
+        resource_id = "00000000-0000-4000-8000-000000000003"
+        self.entry = {
+            "context": {
+                "resource_id": resource_id,
+                "name": "測站 CSV",
+                "format": "CSV",
+                "url": self.built.bundle.documents[0]["url"]
+                + "/resource/"
+                + resource_id,
+                "columns": ["profile_only_column"],
+                "excerpt": "",
+            },
+            "index_text": "profile_only_column",
+            "profile_sha256": "a" * 64,
+            "source_manifest_sha256": "b" * 64,
+            "content_sha256": "c" * 64,
+            "extractor_image_id": "sha256:" + "d" * 64,
+            "extractor_source_sha256": "e" * 64,
+            "acquired_at": 1_800_000_000,
+            "truncated": False,
+        }
+
+        def bind_resource(rows):
+            rows[0]["resources"][0]["id"] = resource_id
+
+        def bind_document(rows):
+            rows[0]["resource_context"] = [self.entry["context"]]
+            rows[0]["content"] += " " + self.entry["index_text"]
+
+        self.built.reseal(
+            artifact_mutations={
+                "source.jsonl.gz": bind_resource,
+                "corpus.v2.jsonl.gz": bind_resource,
+                DOCUMENTS_NAME: bind_document,
+                RESOURCE_CONTEXT_NAME: lambda rows: rows[0].__setitem__(
+                    "resources", [self.entry]
+                ),
+            }
+        )
+        self.load()
+
+    def load(self):
+        return CatalogBundle.load(
+            self.built.path, expected_manifest_sha256=self.built.manifest_sha256
+        )
+
+    def test_fess_bulk_serializes_public_context_without_private_provenance(self):
+        transport = FakeTransport()
+        client = CatalogImporter(
+            self.load(),
+            AdminAccess(
+                "http://127.0.0.1:8080",
+                transport=transport,
+                utcnow=lambda: datetime.datetime(
+                    2026, 9, 9, 12, 0, 0, tzinfo=datetime.timezone.utc
+                ),
+                sleep=lambda _seconds: None,
+            ),
+        )
+        client.import_bundle(
+            "admin", PASSWORD, nonce=NONCE, batch_size=1, deadline_seconds=30
+        )
+        document = next(iter(transport.documents.values()))
+        self.assertEqual([self.entry["context"]], document["resource_context"])
+        self.assertIsInstance(document["resource_context"][0]["columns"], list)
+        self.assertNotIn("profile_sha256", json.dumps(document))
+        self.assertNotIn("source_manifest_sha256", json.dumps(document))
+
+    def test_document_public_projection_is_cross_checked_after_resealing(self):
+        self.built.reseal(
+            artifact_mutations={
+                DOCUMENTS_NAME: lambda rows: rows[0].__setitem__("resource_context", [])
+            }
+        )
+        with self.assertRaisesRegex(
+            BundleError, "document and resource context disagree"
+        ):
+            self.load()
+
+    def test_context_dataset_and_schema_are_exact_after_resealing(self):
+        for field, value in (("dataset_id", "f" * 36), ("schema_version", True)):
+            # Restore the valid row between independent shape checks.
+            self.built.reseal(
+                artifact_mutations={
+                    RESOURCE_CONTEXT_NAME: lambda rows: rows[0].update(
+                        dataset_id="00000000-0000-4000-8000-000000000001",
+                        schema_version=1,
+                    )
+                }
+            )
+            self.built.reseal(
+                artifact_mutations={
+                    RESOURCE_CONTEXT_NAME: lambda rows: rows[0].__setitem__(
+                        field, value
+                    )
+                }
+            )
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(BundleError, "resource context row"),
+            ):
+                self.load()
+
+    def test_profile_provenance_is_validated_after_resealing(self):
+        self.built.reseal(
+            artifact_mutations={
+                RESOURCE_CONTEXT_NAME: lambda rows: rows[0]["resources"][0].__setitem__(
+                    "profile_sha256", "invalid"
+                )
+            }
+        )
+        with self.assertRaisesRegex(BundleError, "resource enrichment is invalid"):
+            self.load()
+
+    def test_resource_must_exist_in_original_source_after_resealing(self):
+        self.built.reseal(
+            artifact_mutations={
+                "source.jsonl.gz": lambda rows: rows[0]["resources"][0].__setitem__(
+                    "id", "unknown"
+                )
+            }
+        )
+        with self.assertRaisesRegex(BundleError, "does not match its dataset resource"):
+            self.load()
+
+    def test_resource_format_must_match_normalized_metadata_after_resealing(self):
+        self.built.reseal(
+            artifact_mutations={
+                "corpus.v2.jsonl.gz": lambda rows: rows[0]["resources"][0].__setitem__(
+                    "format", "PDF"
+                )
+            }
+        )
+        with self.assertRaisesRegex(BundleError, "does not match its dataset resource"):
+            self.load()
+
+    def test_indexed_content_cannot_omit_bound_profile_text(self):
+        self.built.reseal(
+            artifact_mutations={
+                DOCUMENTS_NAME: lambda rows: rows[0].__setitem__(
+                    "content", "metadata only"
+                )
+            }
+        )
+        with self.assertRaisesRegex(BundleError, "indexed content omits"):
+            self.load()
+
+    def test_old_bundle_format_has_no_parallel_compatibility_path(self):
+        self.built.reseal(
+            manifest_mutation=lambda manifest: manifest.__setitem__(
+                "bundle_format", "depositar-public-metadata-v2"
+            )
+        )
+        with self.assertRaisesRegex(BundleError, "manifest values"):
+            self.load()
 
 
 class QueryBoundaryTests(unittest.TestCase):

@@ -111,7 +111,7 @@ class PrivateApiTlsRuntimeTests(unittest.TestCase):
             "com.docker.compose.service=" + role,
         ]
         if role == "conversation-api":
-            labels += ["--label", "io.depositar.ai.conversation.version=3"]
+            labels += ["--label", "io.depositar.ai.conversation.version=4"]
         argv = [
             "docker",
             "run",

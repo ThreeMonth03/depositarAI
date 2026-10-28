@@ -320,6 +320,60 @@ main {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.resource-contexts {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+}
+.resource-context {
+  border-left: 2px solid #dce8db;
+  padding-left: 12px;
+  color: #59685f;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.resource-name {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.resource-name > span {
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.resource-name a {
+  color: var(--green);
+  text-underline-offset: 3px;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.resource-context summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.resource-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 3px;
+  max-height: 12rem;
+  overflow: auto;
+}
+.resource-columns code {
+  background: #f0f4ee;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: pre-wrap;
+}
+.resource-context p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
 .card-foot {
   border-top: 1px solid #edf1eb;
   padding-top: 13px;

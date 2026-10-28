@@ -31,7 +31,7 @@ def _make_manifest(
     )
     core: Dict[str, Any] = {
         "schema_version": 1,
-        "bundle_format": "depositar-public-metadata-v2",
+        "bundle_format": "depositar-public-metadata-v3",
         "artifacts": dict(artifacts),
         "dataset_count": len(dataset_ids),
         "resource_count": resource_count,
@@ -51,7 +51,12 @@ def _make_manifest(
     return manifest, manifest_bytes, bundle_digest
 
 
-def build_bundle(input_path: os.PathLike, output_root: os.PathLike) -> Dict[str, Any]:
+def build_bundle(
+    input_path: os.PathLike,
+    output_root: os.PathLike,
+    *,
+    resource_context: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
+) -> Dict[str, Any]:
     """Validate *input_path* and atomically publish a deterministic bundle."""
 
     source = storage._absolute_without_resolving(input_path)
@@ -70,9 +75,19 @@ def build_bundle(input_path: os.PathLike, output_root: os.PathLike) -> Dict[str,
 
         lock_descriptor = storage._open_lock(root_descriptor)
         raw_records = snapshot.load_source(source)
+        if resource_context is not None and not isinstance(resource_context, Mapping):
+            raise policy.BundleError("resource context selection must be a dataset map")
+        selected_context = {} if resource_context is None else dict(resource_context)
         counters: Dict[str, Any] = {}
         normalized: List[
-            Tuple[str, str, Dict[str, Any], Dict[str, Any], Dict[str, Any]]
+            Tuple[
+                str,
+                str,
+                Dict[str, Any],
+                Dict[str, Any],
+                Dict[str, Any],
+                Dict[str, Any],
+            ]
         ] = []
         seen_ids = set()
         seen_urls = set()
@@ -86,14 +101,29 @@ def build_bundle(input_path: os.PathLike, output_root: os.PathLike) -> Dict[str,
                 raise policy.BundleError("duplicate normalized dataset URL")
             seen_ids.add(dataset_id)
             seen_urls.add(dataset_url)
-            fess = normalize.fess_document(corpus, counters)
-            normalized.append((dataset_id, dataset_url, raw_record, corpus, fess))
+            enrichment = normalize.resource_enrichment(
+                corpus, selected_context.pop(dataset_id, []), counters
+            )
+            fess = normalize.fess_document(
+                corpus, counters, resource_context=enrichment
+            )
+            context_row = {
+                "schema_version": 1,
+                "dataset_id": dataset_id,
+                "resources": enrichment,
+            }
+            normalized.append(
+                (dataset_id, dataset_url, raw_record, corpus, fess, context_row)
+            )
+        if selected_context:
+            raise policy.BundleError("resource context references an unknown dataset")
         normalized.sort(key=lambda item: item[0])
 
         dataset_ids = [item[0] for item in normalized]
         source_rows = [item[2] for item in normalized]
         corpus_rows = [item[3] for item in normalized]
         fess_rows = [item[4] for item in normalized]
+        context_rows = [item[5] for item in normalized]
         resource_count = sum(item["resource_count"] for item in corpus_rows)
 
         staging_name, staging_descriptor = storage._make_staging_directory(
@@ -103,6 +133,7 @@ def build_bundle(input_path: os.PathLike, output_root: os.PathLike) -> Dict[str,
             (policy.ARTIFACT_NAMES[0], source_rows, 1),
             (policy.ARTIFACT_NAMES[1], corpus_rows, 2),
             (policy.ARTIFACT_NAMES[2], fess_rows, 1),
+            (policy.ARTIFACT_NAMES[3], context_rows, 1),
         )
         artifacts: Dict[str, Dict[str, Any]] = {}
         for name, rows, schema_version in artifact_rows:

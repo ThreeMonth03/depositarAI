@@ -13,6 +13,9 @@ from search.serialization import strict_json
 from search.api.conversation.contract import TurnResponse
 
 
+MAX_TURN_RESPONSE_BYTES = 1024 * 1024
+
+
 @dataclass(frozen=True)
 class WebSettings:
     origin: str
@@ -110,7 +113,7 @@ class Upstream:
                         raw = bytearray()
                         async for block in response.aiter_bytes():
                             raw.extend(block)
-                            if len(raw) > 256 * 1024:
+                            if len(raw) > MAX_TURN_RESPONSE_BYTES:
                                 raise ValueError("upstream response limit")
                         value = TurnResponse.model_validate(strict_json(bytes(raw)))
                         if (response.status_code == 503) != (
