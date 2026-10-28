@@ -21,6 +21,7 @@ ENV_NAMES = (
 PRODUCTION_DOCKERFILES = (
     "api/Dockerfile",
     "fess/Dockerfile",
+    "extractor/Dockerfile",
     "importer/Dockerfile",
     "opensearch/Dockerfile",
     "reranker/Dockerfile",

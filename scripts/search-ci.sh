@@ -85,6 +85,10 @@ python3 -m unittest -v \
   tests.unit.operations.test_public_entry_cli \
   tests.unit.operations.test_metadata_sync \
   tests.unit.operations.test_metadata_storage \
+  tests.unit.operations.test_document_source \
+  tests.unit.operations.test_document_cache \
+  tests.unit.operations.test_document_extractor \
+  tests.unit.operations.test_document_profiles \
   tests.unit.operations.test_private_io \
   tests.unit.operations.test_search_quality \
   tests.unit.operations.test_demo_connection \

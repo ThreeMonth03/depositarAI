@@ -17,6 +17,7 @@ prerequisites, side effects and incomplete installer boundaries.
 | [state.py](state.py), [lifecycle.py](lifecycle.py) | Private state, operation locks/receipts, metadata lifecycle and first private activation orchestration |
 | [local_status.py](local_status.py) | Local preparation/activation records and recovery reasons; never live service health |
 | [metadata/](metadata/sync.py) | Public source acquisition, bounded sync and metadata cache |
+| [documents/](documents/controller.py) | Selected CSV/PDF acquisition, private content/profile caches and isolated Fess extraction; no catalog activation |
 | [metadata/storage.py](metadata/storage.py) | Metadata/catalog private receipt IO, with the existing 4 MiB record limit and `SyncError` contract |
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |
 | [catalog/commands.py](catalog/commands.py) | Catalog text-command runner and stdout validation; command selection and runtime authority stay with callers |
