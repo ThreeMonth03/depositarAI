@@ -25,6 +25,7 @@ import urllib.request
 
 from .codec import _canonical_json, _exact_int, _exact_json_equal, _strict_json
 from .errors import BundleError, ProtocolError
+from . import resources as resource_contract
 from .policy import (
     BUNDLE_BUILDER_NAME,
     CATALOG_LABEL,
@@ -41,10 +42,14 @@ MANIFEST_NAME = "bundle-manifest.json"
 DOCUMENTS_NAME = "fess-documents.jsonl.gz"
 
 
+RESOURCE_CONTEXT_NAME = "resource-context.v1.jsonl.gz"
+
+
 ARTIFACT_NAMES = (
     "source.jsonl.gz",
     "corpus.v2.jsonl.gz",
     DOCUMENTS_NAME,
+    RESOURCE_CONTEXT_NAME,
 )
 
 
@@ -124,6 +129,7 @@ _DOCUMENT_FIELDS = frozenset(
         "metadata_created",
         "metadata_modified",
         "resource_count",
+        "resource_context",
         "label",
         "role",
         "boost",
@@ -151,6 +157,9 @@ _CATALOG_STRING_LIMITS = {
     "list_item": 512,
     "fess_important_content": 16_384,
     "fess_content": 50_000,
+    "resource_context_name": resource_contract.MAX_RESOURCE_NAME_CHARS,
+    "resource_context_column": resource_contract.MAX_COLUMN_CHARS,
+    "resource_context_index_text": resource_contract.MAX_INDEX_TEXT_CHARS,
 }
 
 
@@ -204,9 +213,18 @@ CATALOG_MANIFEST_POLICY = {
         "role": [CATALOG_SEARCH_ROLE],
         "boost": 1.0,
         "virtual_host": [CATALOG_VIRTUAL_HOST],
-        "resource_url_field_included": False,
+        "resource_download_url_field_included": False,
+        "resource_landing_url_field_included": True,
         "email_addresses": False,
         "raw_spatial": False,
+    },
+    "resource_context": {
+        "resources_per_dataset_max": resource_contract.MAX_RESOURCES,
+        "columns_per_resource_max": resource_contract.MAX_COLUMNS,
+        "column_characters_max": resource_contract.MAX_COLUMN_CHARS,
+        "column_total_characters_max": resource_contract.MAX_COLUMN_TOTAL_CHARS,
+        "excerpt_characters_max": resource_contract.MAX_EXCERPT_CHARS,
+        "index_text_characters_max": resource_contract.MAX_INDEX_TEXT_CHARS,
     },
     "dataset_id_digest_encoding": "lowercase UUIDs sorted, one UTF-8 ID plus LF per record",
 }
@@ -524,6 +542,12 @@ def _validated_document(value: Any) -> Dict[str, Any]:
         result[field] = _safe_string_list(result[field], maximum_items=maximum_items)
     if not _exact_int(result.get("resource_count"), maximum=100_000):
         raise BundleError("catalog resource count is invalid")
+    try:
+        result["resource_context"] = resource_contract.validate_resource_context(
+            result["resource_context"]
+        )
+    except ValueError as exc:
+        raise BundleError("catalog resource context is invalid: %s" % exc) from exc
     if (
         result.get("label") != [CATALOG_LABEL]
         or result.get("lang") != ["auto"]
@@ -607,7 +631,7 @@ class CatalogBundle:
         counters = manifest.get("normalization_counters")
         if (
             not _exact_int(manifest.get("schema_version"), minimum=1, maximum=1)
-            or manifest.get("bundle_format") != "depositar-public-metadata-v2"
+            or manifest.get("bundle_format") != "depositar-public-metadata-v3"
             or not isinstance(bundle_id, str)
             or SHA256_RE.fullmatch(bundle_id) is None
             or directory.name != "sha256-" + bundle_id
@@ -660,6 +684,7 @@ class CatalogBundle:
             "source.jsonl.gz": 1,
             "corpus.v2.jsonl.gz": 2,
             DOCUMENTS_NAME: 1,
+            RESOURCE_CONTEXT_NAME: 1,
         }
         for name in ARTIFACT_NAMES:
             descriptor = artifacts.get(name)
@@ -714,15 +739,17 @@ class CatalogBundle:
         dataset_ids = set()
         dataset_id_digest = hashlib.sha256()
         summed_resource_count = 0
-        for source_line, corpus_line, document_line in zip(
+        for source_line, corpus_line, document_line, context_line in zip(
             artifact_lines["source.jsonl.gz"],
             artifact_lines["corpus.v2.jsonl.gz"],
             artifact_lines[DOCUMENTS_NAME],
+            artifact_lines[RESOURCE_CONTEXT_NAME],
         ):
             try:
                 source = _strict_json(source_line)
                 corpus = _strict_json(corpus_line)
                 document = _validated_document(_strict_json(document_line))
+                context_row = _strict_json(context_line)
             except ProtocolError:
                 raise BundleError("catalog artifact JSON is malformed") from None
             source_id = source.get("id") if isinstance(source, Mapping) else None
@@ -767,12 +794,63 @@ class CatalogBundle:
                 or corpus.get("resource_count") != document["resource_count"]
             ):
                 raise BundleError("catalog artifacts disagree on dataset identity")
+            if (
+                not isinstance(context_row, Mapping)
+                or set(context_row) != {"schema_version", "dataset_id", "resources"}
+                or not _exact_int(
+                    context_row.get("schema_version"), minimum=1, maximum=1
+                )
+                or context_row.get("dataset_id") != dataset_id
+            ):
+                raise BundleError("catalog resource context row is invalid")
+            try:
+                enrichment = resource_contract.validate_enrichment_resources(
+                    context_row["resources"]
+                )
+            except ValueError as exc:
+                raise BundleError(
+                    "catalog resource enrichment is invalid: %s" % exc
+                ) from exc
+            contexts = [entry["context"] for entry in enrichment]
+            if not _exact_json_equal(contexts, document["resource_context"]):
+                raise BundleError("catalog document and resource context disagree")
+            resources_by_id = {
+                resource.get("id"): resource
+                for resource in corpus["resources"]
+                if isinstance(resource, Mapping) and isinstance(resource.get("id"), str)
+            }
+            source_resource_ids = {
+                resource["id"]
+                for resource in source_resources
+                if isinstance(resource.get("id"), str)
+            }
+            for context in contexts:
+                resource = resources_by_id.get(context["resource_id"])
+                if (
+                    resource is None
+                    or context["resource_id"] not in source_resource_ids
+                    or not isinstance(resource.get("format"), str)
+                    or resource["format"].upper() != context["format"]
+                    or context["url"]
+                    != resource_contract.resource_url(url, context["resource_id"])
+                ):
+                    raise BundleError(
+                        "catalog enrichment does not match its dataset resource"
+                    )
+            if any(
+                entry["index_text"] not in document["content"] for entry in enrichment
+            ):
+                raise BundleError("catalog indexed content omits resource enrichment")
             if url in by_url or dataset_id in dataset_ids:
                 raise BundleError("catalog bundle contains duplicate datasets")
             document_sha256 = hashlib.sha256(_canonical_json(document)).hexdigest()
             outbound = dict(document)
             outbound["depositar_bundle_id"] = bundle_id
             outbound["depositar_document_sha256"] = document_sha256
+            outbound["resource_context"] = tuple(
+                MappingProxyType({**context, "columns": tuple(context["columns"])})
+                for context in contexts
+            )
             frozen = MappingProxyType(
                 {
                     key: tuple(value) if isinstance(value, list) else value

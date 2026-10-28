@@ -8,3 +8,7 @@ search/**
 search/reranker/**
 !search/reranker/*.py
 !search/reranker/requirements.lock
+!search/catalog/
+search/catalog/**
+!search/catalog/__init__.py
+!search/catalog/resources.py

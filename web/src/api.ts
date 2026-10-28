@@ -9,6 +9,14 @@ export type TemporalCoverage = {
   end: string | null;
   status: "complete" | "partial" | "absent" | "invalid";
 };
+export type ResourceContext = {
+  resource_id: string;
+  name: string;
+  format: "CSV" | "PDF";
+  url: string;
+  columns: string[];
+  excerpt: string;
+};
 export type Card = {
   dataset_id: string;
   title: string;
@@ -17,6 +25,7 @@ export type Card = {
   organization_title: string;
   resource_formats: string[];
   temporal_coverage: TemporalCoverage;
+  resource_context: ResourceContext[];
   condition_status: "match" | "unknown" | "not_checked";
 };
 export type TurnResult = {
@@ -112,6 +121,52 @@ function temporalCoverage(value: unknown): boolean {
   }
 }
 
+function boundedText(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && Array.from(value).length <= maximum;
+}
+
+function resourceContext(value: unknown): value is ResourceContext {
+  if (
+    !record(value) ||
+    typeof value.resource_id !== "string" ||
+    !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value.resource_id) ||
+    !boundedText(value.name, 160) ||
+    !boundedText(value.url, 2048) ||
+    !strings(value.columns) ||
+    value.columns.length > 32 ||
+    !value.columns.every(
+      (column) => boundedText(column, 128) && column.trim(),
+    ) ||
+    value.columns.reduce(
+      (length, column) => length + Array.from(column).length,
+      0,
+    ) > 2048 ||
+    !boundedText(value.excerpt, 320)
+  )
+    return false;
+  return (
+    (value.format === "CSV" &&
+      value.columns.length > 0 &&
+      value.excerpt === "") ||
+    (value.format === "PDF" &&
+      value.columns.length === 0 &&
+      !!value.excerpt.trim())
+  );
+}
+
+function resourceContexts(value: unknown): boolean {
+  if (
+    !Array.isArray(value) ||
+    value.length > 3 ||
+    !value.every(resourceContext)
+  )
+    return false;
+  return value.every(
+    (entry, index) =>
+      index === 0 || value[index - 1].resource_id < entry.resource_id,
+  );
+}
+
 function card(value: unknown): boolean {
   return (
     record(value) &&
@@ -120,6 +175,7 @@ function card(value: unknown): boolean {
     ) &&
     strings(value.resource_formats) &&
     temporalCoverage(value.temporal_coverage) &&
+    resourceContexts(value.resource_context) &&
     ["match", "unknown", "not_checked"].includes(
       value.condition_status as string,
     )

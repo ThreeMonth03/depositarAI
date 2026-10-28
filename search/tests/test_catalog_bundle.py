@@ -22,6 +22,7 @@ from search.catalog.bundle import CatalogBundle
 
 UUID_1 = "00000000-0000-4000-8000-000000000001"
 UUID_2 = "00000000-0000-4000-8000-000000000002"
+RESOURCE_UUID = "00000000-0000-4000-8000-000000000003"
 
 EXPECTED_FESS_FIELDS = {
     "url",
@@ -49,12 +50,14 @@ EXPECTED_FESS_FIELDS = {
     "metadata_created",
     "metadata_modified",
     "resource_count",
+    "resource_context",
 }
 
 EXPECTED_BUILDER_SOURCES = {
     "search/__init__.py",
     "search/catalog/__init__.py",
     "search/catalog/policy.py",
+    "search/catalog/resources.py",
     "search/catalog/build/__init__.py",
     "search/catalog/build/__main__.py",
     "search/catalog/build/builder.py",
@@ -115,6 +118,32 @@ def _dataset(identifier=UUID_1, slug="dataset-one"):
     }
 
 
+def _resource_enrichment(
+    *, kind="CSV", columns=None, text="", resource_id=RESOURCE_UUID
+):
+    columns = ["observation_time", "rainfall_mm"] if columns is None else columns
+    index_text = " ".join(columns) if kind == "CSV" else text
+    return {
+        "context": {
+            "resource_id": resource_id,
+            "name": "measurements.%s" % kind.lower(),
+            "format": kind,
+            "url": "https://data.depositar.io/dataset/dataset-one/resource/"
+            + resource_id,
+            "columns": columns if kind == "CSV" else [],
+            "excerpt": "" if kind == "CSV" else index_text[:320],
+        },
+        "index_text": index_text,
+        "profile_sha256": "a" * 64,
+        "source_manifest_sha256": "b" * 64,
+        "content_sha256": "c" * 64,
+        "extractor_image_id": "sha256:" + "d" * 64,
+        "extractor_source_sha256": "e" * 64,
+        "acquired_at": 1_800_000_000,
+        "truncated": False,
+    }
+
+
 def _make_writable(path):
     if not os.path.lexists(path):
         return
@@ -169,6 +198,139 @@ class CatalogBundleTests(unittest.TestCase):
     def read_jsonl(path):
         with gzip.open(path, "rt", encoding="utf-8", errors="strict") as stream:
             return [json.loads(line) for line in stream]
+
+    def test_metadata_only_bundle_has_canonical_empty_resource_context(self):
+        result = builder.build_bundle(self.write_jsonl([_dataset()]), self.output)
+        path = Path(result["bundle_path"])
+        self.assertEqual(
+            "depositar-public-metadata-v3", result["manifest"]["bundle_format"]
+        )
+        self.assertEqual(
+            [{"schema_version": 1, "dataset_id": UUID_1, "resources": []}],
+            self.read_jsonl(path / "resource-context.v1.jsonl.gz"),
+        )
+        bundle = CatalogBundle.load(
+            path, expected_manifest_sha256=result["manifest_sha256"]
+        )
+        self.assertEqual((), bundle.documents[0]["resource_context"])
+
+    def test_csv_columns_enter_search_content_without_changing_condition_metadata(self):
+        dataset = _dataset()
+        dataset["resources"][0]["id"] = RESOURCE_UUID
+        dataset["notes"] = "Long metadata " * 3000
+        # Existing discovery metadata can consume the complete content cap.
+        dataset["tags"] = [
+            {"name": "tag%d " % number + "x" * 500} for number in range(128)
+        ]
+        entry = _resource_enrichment(
+            columns=["unique_station_measurement", "rainfall_mm"]
+        )
+        result = builder.build_bundle(
+            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+        )
+        path = Path(result["bundle_path"])
+        document = self.read_jsonl(path / "fess-documents.jsonl.gz")[0]
+        corpus = self.read_jsonl(path / "corpus.v2.jsonl.gz")[0]
+        self.assertIn(entry["index_text"], document["content"])
+        self.assertLess(document["content"].index("unique_station_measurement"), 100)
+        self.assertEqual([entry["context"]], document["resource_context"])
+        self.assertEqual(
+            [entry],
+            self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0]["resources"],
+        )
+        self.assertEqual(["CSV"], corpus["resource_formats"])
+        self.assertEqual("2020-01-01", corpus["temporal"]["start"])
+        self.assertEqual("complete", corpus["bbox"]["status"])
+        loaded = CatalogBundle.load(
+            path, expected_manifest_sha256=result["manifest_sha256"]
+        )
+        context = loaded.documents[0]["resource_context"][0]
+        with self.assertRaises(TypeError):
+            context["name"] = "mutated"
+        self.assertIsInstance(context["columns"], tuple)
+
+    def test_pdf_text_is_sanitized_before_indexing_and_public_excerpt(self):
+        dataset = _dataset()
+        dataset["resources"][0].update(id=RESOURCE_UUID, format="PDF")
+        entry = _resource_enrichment(
+            kind="PDF",
+            text="<p>沿海沉積研究 owner@example.org</p><script>hidden</script>\u202e "
+            + "研究內容 " * 200,
+        )
+        result = builder.build_bundle(
+            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+        )
+        path = Path(result["bundle_path"])
+        document = self.read_jsonl(path / "fess-documents.jsonl.gz")[0]
+        saved = self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0]["resources"][
+            0
+        ]
+        self.assertNotIn("@", json.dumps(document, ensure_ascii=False))
+        self.assertNotIn("hidden", saved["index_text"])
+        self.assertNotIn("\u202e", saved["index_text"])
+        self.assertIn("[email removed]", saved["index_text"])
+        self.assertEqual(
+            saved["index_text"][:320], document["resource_context"][0]["excerpt"]
+        )
+        self.assertIn(saved["index_text"], document["content"])
+        self.assertEqual(entry["profile_sha256"], saved["profile_sha256"])
+        self.assertEqual(entry["content_sha256"], saved["content_sha256"])
+        self.assertIn("@", entry["index_text"])
+        CatalogBundle.load(path, expected_manifest_sha256=result["manifest_sha256"])
+
+    def test_resource_selection_rejects_unknown_dataset_resource_or_format(self):
+        dataset = _dataset()
+        dataset["resources"][0]["id"] = RESOURCE_UUID
+        source = self.write_jsonl([dataset])
+        for selection in (
+            {UUID_2: [_resource_enrichment()]},
+            {UUID_1: [_resource_enrichment(resource_id=UUID_2)]},
+            {UUID_1: [_resource_enrichment(kind="PDF", text="body")]},
+            {UUID_1: [_resource_enrichment()] * 4},
+        ):
+            with self.subTest(selection=selection):
+                with self.assertRaises(policy.BundleError):
+                    builder.build_bundle(
+                        source, self.output, resource_context=selection
+                    )
+
+    def test_profile_selection_order_does_not_change_bundle_identity(self):
+        dataset = _dataset()
+        dataset["resources"][0]["id"] = RESOURCE_UUID
+        dataset["resources"].append({**dataset["resources"][0], "id": UUID_2})
+        source = self.write_jsonl([dataset])
+        entries = [_resource_enrichment(), _resource_enrichment(resource_id=UUID_2)]
+        first = builder.build_bundle(
+            source, self.output, resource_context={UUID_1: entries}
+        )
+        second = builder.build_bundle(
+            source, self.output, resource_context={UUID_1: list(reversed(entries))}
+        )
+        self.assertEqual(first["bundle_id"], second["bundle_id"])
+        self.assertFalse(second["created"])
+        rows = self.read_jsonl(
+            Path(first["bundle_path"]) / "resource-context.v1.jsonl.gz"
+        )
+        self.assertEqual(
+            [UUID_2, RESOURCE_UUID],
+            [entry["context"]["resource_id"] for entry in rows[0]["resources"]],
+        )
+
+    def test_profile_text_and_column_budgets_are_explicitly_recorded(self):
+        dataset = _dataset()
+        dataset["resources"][0]["id"] = RESOURCE_UUID
+        entry = _resource_enrichment(
+            columns=["column%02d" % number + "x" * 120 for number in range(32)]
+        )
+        result = builder.build_bundle(
+            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+        )
+        row = self.read_jsonl(
+            Path(result["bundle_path"]) / "resource-context.v1.jsonl.gz"
+        )[0]["resources"][0]
+        self.assertLessEqual(sum(map(len, row["context"]["columns"])), 2048)
+        self.assertTrue(row["truncated"])
+        self.assertEqual(" ".join(row["context"]["columns"]), row["index_text"])
 
     def test_builds_rich_corpus_and_allowlisted_fess_document(self):
         package = _dataset(slug="Ｄata set/測試")

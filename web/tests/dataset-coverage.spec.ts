@@ -44,6 +44,7 @@ async function mockSearch(page: Page, coverage: TemporalCoverage) {
                 snippet: "資料集原始說明",
                 organization_title: "測試資料機構",
                 resource_formats: ["CSV", "<img src=x onerror=alert(1)>"],
+                resource_context: [],
                 temporal_coverage: coverage,
                 metadata_modified: "2020-01-01",
                 condition_status: "unknown",

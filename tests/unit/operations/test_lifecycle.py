@@ -1014,6 +1014,10 @@ class ProductLifecycleTests(unittest.TestCase):
                 ProjectionError("catalog_projection_mapping_changed"),
                 "catalog_projection_mapping_changed",
             ),
+            (
+                ProjectionError("catalog_projection_resource_context_changed"),
+                "catalog_projection_resource_context_changed",
+            ),
             *(
                 (CatalogRuntimeError(code), code)
                 for code in (

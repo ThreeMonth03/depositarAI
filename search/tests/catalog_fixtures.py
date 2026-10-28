@@ -2,6 +2,7 @@
 
 from search.catalog.admin import ADMIN_PERMISSION
 from search.catalog.bundle import CatalogBundle, MANIFEST_NAME
+from search.catalog.codec import _json_wire_copy
 from search.catalog.errors import CatalogTimeout
 from search.catalog.transport import HTTPResponse
 
@@ -35,7 +36,7 @@ NONCE = "0123456789ab"
 
 def _document_sha256(document):
     canonical = {
-        key: list(value) if isinstance(value, tuple) else value
+        key: _json_wire_copy(value)
         for key, value in document.items()
         if key not in {"depositar_bundle_id", "depositar_document_sha256"}
     }

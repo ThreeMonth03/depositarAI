@@ -1,8 +1,10 @@
 """Query one sealed OpenSearch catalog with shared lexical/vector filters."""
 
 from search.catalog.bundle import CatalogBundle
+from search.catalog.codec import _json_wire_copy
 from search.catalog.embedding import MODEL, MODEL_DIGEST
 from search.catalog.query import normalize_query
+from search.catalog.resources import validate_resource_context
 
 import base64
 import hashlib
@@ -132,6 +134,7 @@ class IndexClient:
             "label",
             "virtual_host",
             "depositar_document_sha256",
+            "resource_context",
             filters.FIELD,
         ]
         password = read_secret(Path("/run/secrets/index_query_password"))
@@ -173,11 +176,13 @@ def validate_hits(response, bundle, index, conditions):
             bundle.condition_metadata[identifier], bundle.bundle_id
         )
         score = hit["_score"]
+        context = validate_resource_context(source.get("resource_context"))
         if (
             hit["_index"] != index
             or identifier in seen
             or source.get("url") != document["url"]
             or source.get("depositar_document_sha256") != hashes[document["url"]]
+            or context != _json_wire_copy(document["resource_context"])
             or source.get(filters.FIELD) != expected
             or any(
                 source.get(k) != list(document[k])
@@ -219,6 +224,7 @@ def search(payload, settings):
         row = {k: json.loads(json.dumps(by_id[hit.id][k])) for k in METADATA_FIELDS}
         metadata = bundle.condition_metadata[hit.id]
         row.update(
+            resource_context=_json_wire_copy(by_id[hit.id]["resource_context"]),
             temporal_coverage={
                 "start": metadata["temporal"]["start"],
                 "end": metadata["temporal"]["end"],

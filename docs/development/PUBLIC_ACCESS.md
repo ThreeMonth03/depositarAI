@@ -270,10 +270,10 @@ APISIX 仍處理所有公開路由的登入、配額、身分清理與限速，�
 - 已獨立取得後端的可信 API revision、catalog manifest、API key 與 CA 公開憑證。
   CA 私鑰留在後端，前端不需要它。API key 與 CA 複本皆放入操作帳號擁有的
   `0700` 私有目錄，檔案使用 `0400`／`0600`，不放進 Git。
-- 後端 `/v1/version` 回傳整數 `conversation_contract_version: 3`。
-  第 3 版卡片必須提供資料涵蓋期間 `temporal_coverage`；不接受第 1、2 版。
+- 後端 `/v1/version` 回傳整數 `conversation_contract_version: 4`。
+  第 4 版卡片必須提供 `temporal_coverage` 與 `resource_context`；不接受第 1、2、3 版。
   舊版 API 不符合時，先協調 API／BFF 遷移，不停用這項檢查。
-- BFF 映像另有 `io.depositar.ai.conversation.version=3`，其餘網站 image pair
+- BFF 映像另有 `io.depositar.ai.conversation.version=4`，其餘網站 image pair
   規則與上方相同。保留真實 HTTPS／OIDC 的前置設定與驗收。
 
 將 [遠端 backend 範例](../../deploy/env/public-backend.example.json) 複製到

@@ -2,11 +2,12 @@
 
 `profile-resources` 將明確選取的公開資源下載到私有快取，使用固定 Fess 映像的
 Tika、CSV 與 PDF 抽取器產生欄位與文字摘要。它是離線資料準備指令，
-輸出尚未接入網站的檢索、排序及卡片。
+選取的摘要可再透過既有 `sync`／`stage-catalog` 流程封入新的 catalog，
+供文字／向量檢索、reranker 與資料集卡片共用。搜尋請求不觸發下載或解析。
 
 ## 執行條件
 
-- 已有通過 manifest 校驗的 metadata bundle，以及要處理的 resource UUID。
+- 已有目前 builder 產生、通過 manifest 校驗的 metadata-only v3 bundle，以及要處理的 resource UUID。
 - 主機可使用 Docker、curl；第一次執行需要取得固定的建置映像。
 - 使用 Git 外的專用私有目錄保存素材與摘要；父目錄須先存在。
 
@@ -68,5 +69,38 @@ CSV 只做有界抽取，`rows_observed` 不是完整資料筆數，`rows_comple
 文字截斷以 `text_truncated` 標示。欄名、文字及少量資料均不能直接用來覆寫
 資料集的時間涵蓋或地理範圍。OCR 與 PDF 儲存格結構仍在獨立實驗階段。
 
-正式搜尋接入前，仍需將摘要納入新的 catalog 身分，協調 reranker 與來源呈現，
-再於隔離索引驗證；此指令不會修改現役索引。
+## 封入搜尋 catalog
+
+先用 `sync --snapshot` 固定 metadata，保存回傳的 snapshot 路徑及 metadata-only
+bundle manifest。對這份 bundle 執行上述 `profile-resources` 後，把回傳的
+`profile_file` 加到 `state-root` 路徑，明確選取要納入的摘要：
+
+```sh
+python3 scripts/depositarai.py --config /absolute/private/product.json sync \
+  --snapshot /absolute/private/frozen-snapshot.jsonl.gz \
+  --profile-file /absolute/private/resource-profiles/profiles/PROFILE_SHA256.json
+```
+
+`--profile-file` 可重複，最多 20 份、每個資料集最多三個可用資源。
+檔案須為 Git 外私有 0700 目錄中的 0600 canonical JSON，檔名為內容 SHA256。
+匯入會核對原 metadata-only manifest、dataset/resource ID、來源 URL 雜湊、
+完整下載標記、內容雜湊與抽取契約；不接受把舊 receipt 改標成新 catalog。
+空文字、沒有欄名政策或實際格式不符的摘要會列出 skipped 原因，不製造空證據。
+
+CSV 僅索引明確採第一列政策的欄名，最多 32 個、單欄 128 字元、合計 2,048 字元；
+任意資料列值不進入搜尋。PDF 索引最多 8,192 字元，卡片顯示其中前 320 字元。
+這些文字沿用 metadata 的 HTML、控制字元與 email 清理規則。索引內容的截斷記在
+私有 `truncated`；卡片一律以節錄標示，不承諾全文或完整欄位表。
+
+相同參數也可交給 `stage-catalog`／`up-private`。每次同步都須重新明確提供選取清單；
+省略時產生 metadata-only catalog，不會從上次快取或 profiles 目錄偷偷沿用。
+固定 snapshot 可避免重新下載 metadata；資源與抽取快取也可重用，但 metadata
+或 builder 改變後，須對新的 metadata-only bundle 重新產生 profile receipt。
+
+新 bundle 格式為 `depositar-public-metadata-v3`，包含逐資料集的
+`resource-context.v1.jsonl.gz`；摘要及 provenance 參與 catalog 身分；公開摘要與索引文字另參與 document 身分。
+匯入及向量重建仍走既有隔離候選流程，不能把舊索引改標成新版。
+`prepare-query` 沿用既有索引投影步驟，寫回來源陣列並再次校驗；Fess 匯入時
+省略的空陣列在此補齊。非空摘要缺漏或不一致則拒絕，不視為沒有摘要。
+API／BFF／前端使用 conversation contract 4，須與新 catalog 配套部署。
+這些指令準備候選；切換現役服務仍由部署流程另外完成。

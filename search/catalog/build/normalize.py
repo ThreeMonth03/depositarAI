@@ -14,11 +14,13 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
+    Sequence,
     Tuple,
 )
 from urllib.parse import quote
 
 from . import policy
+from search.catalog import resources as resource_contract
 
 
 _BIDI_CODEPOINTS = frozenset(
@@ -521,8 +523,134 @@ def _bounded_join(
     return _redacted_fess_text(joined, limit_name, counters, counter_name)
 
 
+def resource_profile_content(
+    file_format: str,
+    *,
+    name: str,
+    columns: List[str],
+    text: str,
+    counters: MutableMapping[str, Any],
+) -> Dict[str, Any]:
+    """Return bounded public content; empty text lets callers skip unusable profiles."""
+
+    if file_format not in ("CSV", "PDF") or not isinstance(columns, list):
+        raise policy.BundleError("resource profile content is malformed")
+    truncated = len(columns) > resource_contract.MAX_COLUMNS
+
+    def public_text(value: Any, limit_name: str, field: str) -> str:
+        nonlocal truncated
+        before = counters.get("truncated_fields", 0) + counters.get(
+            "fess_fields_truncated_after_redaction", 0
+        )
+        result = _redacted_fess_text(
+            _clean_text(value, limit_name, counters, field), limit_name, counters
+        )
+        after = counters.get("truncated_fields", 0) + counters.get(
+            "fess_fields_truncated_after_redaction", 0
+        )
+        truncated = truncated or after != before
+        return result
+
+    public_name = public_text(name, "resource_context_name", "resource context name")
+    bounded_columns: List[str] = []
+    remaining = resource_contract.MAX_COLUMN_TOTAL_CHARS
+    for column in columns[: resource_contract.MAX_COLUMNS]:
+        cleaned = public_text(
+            column, "resource_context_column", "resource context column"
+        )
+        if len(cleaned) > remaining:
+            cleaned = cleaned[:remaining]
+            truncated = True
+        if cleaned:
+            bounded_columns.append(cleaned)
+            remaining -= len(cleaned)
+        else:
+            truncated = True
+    index_text = (
+        " ".join(bounded_columns)
+        if file_format == "CSV"
+        else public_text(
+            text, "resource_context_index_text", "resource context index text"
+        )
+    )
+    return {
+        "name": public_name,
+        "columns": bounded_columns,
+        "index_text": index_text,
+        "excerpt": ""
+        if file_format == "CSV"
+        else index_text[: resource_contract.MAX_EXCERPT_CHARS],
+        "truncated": truncated,
+    }
+
+
+def resource_enrichment(
+    corpus: Mapping[str, Any],
+    entries: Sequence[Mapping[str, Any]],
+    counters: MutableMapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Clean selected profiles and bind them to normalized dataset resources."""
+
+    if not isinstance(entries, (list, tuple)):
+        raise policy.BundleError("resource context must be an array")
+    if len(entries) > resource_contract.MAX_RESOURCES:
+        raise policy.BundleError("resource context exceeds its resource limit")
+    cleaned: List[Dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, Mapping) or not isinstance(
+            entry.get("context"), Mapping
+        ):
+            raise policy.BundleError("resource context entry is malformed")
+        result = dict(entry)
+        context = dict(entry["context"])
+        content = resource_profile_content(
+            context.get("format"),
+            name=context.get("name", ""),
+            columns=context.get("columns", []),
+            text=result.get("index_text", ""),
+            counters=counters,
+        )
+        for field in ("name", "columns", "excerpt"):
+            if field in context:
+                context[field] = content[field]
+        if "index_text" in result:
+            result["index_text"] = content["index_text"]
+        if "truncated" in result and type(result["truncated"]) is bool:
+            result["truncated"] = result["truncated"] or content["truncated"]
+        result["context"] = context
+        cleaned.append(result)
+    cleaned.sort(
+        key=lambda item: (
+            item["context"].get("resource_id")
+            if isinstance(item["context"].get("resource_id"), str)
+            else ""
+        )
+    )
+    try:
+        validated = resource_contract.validate_enrichment_resources(cleaned)
+    except ValueError as exc:
+        raise policy.BundleError("resource enrichment is invalid: %s" % exc) from exc
+    resources_by_id = {item["id"]: item for item in corpus["resources"]}
+    for entry in validated:
+        context = entry["context"]
+        resource = resources_by_id.get(context["resource_id"])
+        if (
+            resource is None
+            or resource["format"].upper() != context["format"]
+            or context["url"]
+            != resource_contract.resource_url(corpus["url"], context["resource_id"])
+        ):
+            raise policy.BundleError(
+                "resource context does not match its dataset resource"
+            )
+    return validated
+
+
 def fess_document(
-    corpus: Mapping[str, Any], counters: MutableMapping[str, Any]
+    corpus: Mapping[str, Any],
+    counters: MutableMapping[str, Any],
+    *,
+    resource_context: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     organization = corpus["organization"]
     temporal = corpus["temporal"]
@@ -556,7 +684,18 @@ def fess_document(
     # Repeat the bounded discovery metadata here so every public dataset has a
     # non-empty semantic representation even when its narrative description is
     # blank.  The lexical importance field remains separate for BM25 ranking.
-    content_parts: List[str] = list(important_parts)
+    resource_parts = [
+        "%s %s %s"
+        % (entry["context"]["name"], entry["context"]["format"], entry["index_text"])
+        for entry in resource_context
+    ]
+    # Reserve the leading budget for resource text. Large resource/tag metadata
+    # must not erase the selected profiles before Fess creates its vectors.
+    content_parts: List[str] = (
+        [corpus["title"], *resource_parts, *important_parts]
+        if resource_parts
+        else list(important_parts)
+    )
     content_parts.extend([corpus["notes"], corpus["remarks"], corpus["process_step"]])
     content_parts.extend(item["description"] for item in resources)
 
@@ -626,6 +765,7 @@ def fess_document(
             corpus["metadata_modified"], "date", counters
         ),
         "resource_count": corpus["resource_count"],
+        "resource_context": [dict(entry["context"]) for entry in resource_context],
     }
     if frozenset(document) != policy.FESS_FIELD_ALLOWLIST:
         raise AssertionError("Fess document escaped its field allowlist")

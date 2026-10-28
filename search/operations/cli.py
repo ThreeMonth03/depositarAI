@@ -105,6 +105,7 @@ _CATALOG_PROJECTION_CODES = frozenset(
         "catalog_projection_bulk_partial_shards",
         "catalog_projection_bundle_invalid",
         "catalog_projection_document_changed",
+        "catalog_projection_resource_context_changed",
         "catalog_projection_document_invalid",
         "catalog_projection_index_changed",
         "catalog_projection_index_invalid",
@@ -227,6 +228,15 @@ def _operator_error_code(error, command):
         if error_type is not controller.ProfileError:
             return None
         codes = controller.ERROR_CODES
+    elif (
+        command in {"sync", "stage-catalog", "up-private"}
+        and owner == "search.operations.documents.enrichment"
+    ):
+        from search.operations.documents import enrichment
+
+        if error_type is not enrichment.EnrichmentError:
+            return None
+        codes = enrichment.ERROR_CODES
     else:
         return None
     arguments = error.args
@@ -333,6 +343,13 @@ def parser():
     )
     sync.add_argument("--snapshot", type=Path, help="absolute JSONL(.gz), no network")
     sync.add_argument("--force", action="store_true", help="bypass opt-in cache TTL")
+    sync.add_argument(
+        "--profile-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="explicit private SHA256.json resource profile; repeat up to 20",
+    )
     sync.add_argument("--baseline-bundle", type=Path)
     sync.add_argument("--baseline-manifest-sha256")
     commands.add_parser("status", help="local staging receipts, not runtime health")
@@ -432,6 +449,13 @@ def parser():
         stage.add_argument(
             "--force", action="store_true", help="bypass opt-in cache TTL"
         )
+        stage.add_argument(
+            "--profile-file",
+            type=Path,
+            action="append",
+            default=[],
+            help="explicit private resource profile; repeat up to 20",
+        )
         stage.add_argument("--max-passes", type=int, default=16)
         stage.add_argument("--wall-seconds", type=int, default=7200)
         stage.add_argument(
@@ -496,6 +520,7 @@ def _runtime_report(options):
             snapshot=options.snapshot,
             force=options.force,
             baseline=baseline,
+            **({"profile_files": options.profile_file} if options.profile_file else {}),
         )
     elif options.command in {"stage-catalog", "up-private"}:
         stage = (
@@ -509,6 +534,7 @@ def _runtime_report(options):
             force=options.force,
             max_passes=options.max_passes,
             wall_seconds=options.wall_seconds,
+            **({"profile_files": options.profile_file} if options.profile_file else {}),
             **(
                 {}
                 if options.catalog_revision is None

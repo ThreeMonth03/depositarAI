@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/api.
 COPY search/__init__.py search/serialization.py search/secrets.py /app/search/
 COPY search/transport/__init__.py search/transport/http.py /app/search/transport/
 COPY search/catalog/__init__.py search/catalog/errors.py \
-    search/catalog/policy.py search/catalog/query.py /app/search/catalog/
+    search/catalog/policy.py search/catalog/query.py search/catalog/resources.py /app/search/catalog/
 COPY search/api/__init__.py /app/search/api/
 COPY search/api/conversation/__init__.py search/api/conversation/calendar.py \
     search/api/conversation/contract.py search/api/conversation/time.py /app/search/api/conversation/
@@ -22,7 +22,7 @@ COPY search/web /app/search/web/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 LABEL io.depositar.ai.public-entry.version="2"
-LABEL io.depositar.ai.conversation.version="3"
+LABEL io.depositar.ai.conversation.version="4"
 ENV SOURCE_REVISION=$SOURCE_REVISION
 USER 1000:1000
 CMD ["python", "-m", "uvicorn", "search.web.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers", "--limit-concurrency", "32", "--timeout-keep-alive", "5"]

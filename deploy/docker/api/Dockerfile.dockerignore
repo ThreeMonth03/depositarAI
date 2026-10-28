@@ -13,6 +13,7 @@ search/transport/**
 !search/catalog/
 search/catalog/**
 !search/catalog/__init__.py
+!search/catalog/resources.py
 !search/catalog/bundle.py
 !search/catalog/codec.py
 !search/catalog/embedding.py

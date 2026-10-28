@@ -21,7 +21,7 @@ BACKEND_ORIGIN = "https://backend.test:9443"
 EXPECTED_VERSION = {
     "revision": "a" * 40,
     "catalog_manifest_sha256": "b" * 64,
-    "conversation_contract_version": 3,
+    "conversation_contract_version": 4,
 }
 
 
@@ -334,7 +334,7 @@ http {
         finally:
             self.ca.write_bytes(good_ca)
         wrong_wire = self.directory / "backend-version.json"
-        for version in (1, 2):
+        for version in (1, 2, 3):
             wrong_wire.write_text(
                 json.dumps(
                     {**EXPECTED_VERSION, "conversation_contract_version": version}

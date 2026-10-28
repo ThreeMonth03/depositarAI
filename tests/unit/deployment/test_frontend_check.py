@@ -248,7 +248,7 @@ class FrontendCheckTests(unittest.TestCase):
         with patch.object(check, "_homepage", return_value=2):
             return check.check(self.path, runner=self.runner)
 
-    def wire_profile(self, version=3):
+    def wire_profile(self, version=4):
         self.config.update(schema_version=2, conversation_contract_version=version)
         self.runner.images[WEB_IMAGE]["Config"]["Labels"][
             "io.depositar.ai.conversation.version"
@@ -256,7 +256,7 @@ class FrontendCheckTests(unittest.TestCase):
         self.save()
 
     def test_schema2_verifies_selected_bff_and_passes_exact_contract_to_tls_probe(self):
-        for version in (2, 3):
+        for version in (2, 3, 4):
             with self.subTest(version=version):
                 self.runner = Runner(self.root)
                 self.wire_profile(version)
@@ -296,7 +296,7 @@ class FrontendCheckTests(unittest.TestCase):
         label = "io.depositar.ai.conversation.version"
         # A caller-supplied container label cannot override immutable image proof.
         self.runner.rows[IDS["web"]]["Config"]["Labels"][label] = "3"
-        for value in (None, "2", "03", "3.0", 3, True):
+        for value in (None, "2", "3", "04", "4.0", 4, True):
             self.runner.images[WEB_IMAGE]["Config"]["Labels"][label] = value
             with (
                 self.subTest(label=value),
@@ -574,9 +574,10 @@ class VersionTLSFixtureTests(unittest.TestCase):
                             "invalid-contract": True,
                             "unsupported-contract": 1,
                             "old-contract": 2,
-                            "float-contract": 3.0,
-                            "string-contract": "3",
-                        }.get(case.mode, 3)
+                            "float-contract": 4.0,
+                            "string-contract": "4",
+                            "prior-contract": 3,
+                        }.get(case.mode, 4)
                     body = (
                         b"x" * 16385
                         if case.mode == "oversize"
@@ -644,20 +645,21 @@ class VersionTLSFixtureTests(unittest.TestCase):
     def test_remote_contract_is_checked_without_requiring_matching_website_revision(
         self,
     ):
-        result = self.probe(contract_version=3)
+        result = self.probe(contract_version=4)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(json.loads(result.stdout), PROOF)
         for mode in (
             "legacy-contract",
             "unsupported-contract",
             "old-contract",
+            "prior-contract",
             "invalid-contract",
             "float-contract",
             "string-contract",
         ):
             with self.subTest(mode=mode):
                 self.mode = mode
-                result = self.probe(contract_version=3)
+                result = self.probe(contract_version=4)
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(
                     json.loads(result.stdout),

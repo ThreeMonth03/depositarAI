@@ -117,6 +117,7 @@ metadata_builder_files = (
     "search/catalog/build/snapshot.py",
     "search/catalog/build/storage.py",
     "search/catalog/policy.py",
+    "search/catalog/resources.py",
 )
 sys.path.insert(0, str(root))
 from search.operations.deployment import source_bundle, product_package

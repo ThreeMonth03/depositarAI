@@ -72,7 +72,7 @@ def _paths(prefix, names):
 
 COMMON = _paths(
     "search/",
-    "__init__.py serialization.py secrets.py transport/__init__.py transport/http.py "
+    "__init__.py serialization.py secrets.py transport/__init__.py transport/http.py transport/version.py "
     "model_policy.py scope.py",
 )
 HTTP = _paths(
@@ -81,7 +81,7 @@ HTTP = _paths(
 )
 CATALOG_QUERY = _paths(
     "search/catalog/",
-    "__init__.py errors.py policy.py query.py",
+    "__init__.py errors.py policy.py query.py resources.py",
 )
 CATALOG_RETRIEVAL = _paths("search/catalog/", "bundle.py codec.py embedding.py")
 WEB_CONTRACT = (
@@ -149,8 +149,8 @@ API_PATTERNS = (
 RECIPES = {
     "conversation-api": {
         "dockerfile": "deploy/docker/api/Dockerfile",
-        "dockerfile_sha256": "d723a110a6017a035f0753b191b53d1050bfb1113aa1f251edfb941aaf4b2c46",
-        "dockerignore_sha256": "5f4d8c2e23458948efff1404b345a595c8ddb72bf6e9721808ac7a1b27ccf3eb",
+        "dockerfile_sha256": "8db3a98b7f5b29b1ba98ee14459b2f6ebfe50ffc870744f6b179fdc09d163d03",
+        "dockerignore_sha256": "ffd1200d640569735ed1997397cd12e7aafb78a5427a2720c50e85797f7e96fb",
         "bases": (PYTHON_BASE,),
         "inputs": COMMON
         | HTTP
@@ -169,8 +169,8 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "3bba92250603254f4bacb24b6e94c87498dab03b6a0c9553cb0e7f67f2299341",
-        "dockerignore_sha256": "d41a24a9cc347a38de21387e3f0724028d31edab0be9e641ed14cf668db66283",
+        "dockerfile_sha256": "24a3bc5ab156f4147d3214416d04038bdb0b6362a2a9d6bb787649236688deda",
+        "dockerignore_sha256": "5cdbbfd064a03204506736cd1d4440dfd3313f74fcaff3b2bdf6b2a54b4db8a1",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (
@@ -180,14 +180,16 @@ RECIPES = {
     },
     "reranker": {
         "dockerfile": "deploy/docker/reranker/Dockerfile",
-        "dockerfile_sha256": "ab1a605bb5985b94cd6596e3fe6d9e418b5b47198f63c3a25f8375436e96aced",
-        "dockerignore_sha256": "aa4f80684c05c95a03a45f46714c6ee5c59bbfe620c3e132bc31cd5478738b95",
+        "dockerfile_sha256": "383799ba2ddfddc59b21df091cb800ce70625bdecb328387e7e351f6315ade7a",
+        "dockerignore_sha256": "e4df1b2f5daa54a9afffe57c615a78704701a3312d6dc4cc3ea3642a9212fda4",
         "bases": (RERANKER_BASE,),
         "inputs": RERANKER
         | {
             "search/__init__.py",
             "search/serialization.py",
             "search/secrets.py",
+            "search/catalog/__init__.py",
+            "search/catalog/resources.py",
         },
         "patterns": ("search/reranker/*.py",),
     },

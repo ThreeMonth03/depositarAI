@@ -6,7 +6,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +26,7 @@ class IndexBoundaryTests(unittest.TestCase):
             "role": ["Rdepositar_search"],
             "label": ["catalog"],
             "virtual_host": ["catalog"],
+            "resource_context": [],
         }
         self.bundle = SimpleNamespace(
             documents=[self.doc],
@@ -82,12 +83,52 @@ class IndexBoundaryTests(unittest.TestCase):
             ("url", "https://evil.invalid"),
             ("role", ["admin"]),
             ("depositar_document_sha256", "0" * 64),
+            ("resource_context", None),
             (index_filters.FIELD, {}),
         ):
             changed = copy.deepcopy(self.response)
             changed["hits"]["hits"][0]["_source"][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.check_hits(changed)
+
+    def test_resource_context_projection_must_be_present_and_match_sealed_document(
+        self,
+    ):
+        context = {
+            "resource_id": IDS[1],
+            "name": "Water measurements",
+            "format": "CSV",
+            "url": self.doc["url"] + "/resource/" + IDS[1],
+            "columns": ["station", "temperature"],
+            "excerpt": "",
+        }
+        self.doc["resource_context"] = [context]
+        for value in ([], [{**context, "columns": ["invented"]}], None):
+            changed = copy.deepcopy(self.response)
+            changed["hits"]["hits"][0]["_source"]["resource_context"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.check_hits(changed)
+        changed = copy.deepcopy(self.response)
+        del changed["hits"]["hits"][0]["_source"]["resource_context"]
+        with self.assertRaises(ValueError):
+            self.check_hits(changed)
+        self.source["resource_context"] = [copy.deepcopy(context)]
+        self.assertEqual(self.check_hits(self.response), [(IDS[0], 1.0)])
+
+    def test_native_query_requests_resource_context_for_sealed_projection_check(self):
+        client = index.IndexClient.__new__(index.IndexClient)
+        client.bundle = self.bundle
+        client.binding = {"index": "fess.20260917120000"}
+        client.origin = "https://opensearch-search:9200"
+        client.transport = object()
+        with (
+            patch.object(index, "read_secret", return_value="fixture"),
+            patch.object(client, "json_request", return_value=self.response) as send,
+        ):
+            self.assertEqual(
+                client.retrieve("氣候", CONDITIONS, "lexical", None), [(IDS[0], 1.0)]
+            )
+        self.assertIn("resource_context", send.call_args.args[2]["_source"])
 
     def test_wrong_physical_index_duplicates_and_nonfinite_scores_rejected(self):
         for field, value in (("_index", "fess.other"), ("_score", float("nan"))):
@@ -290,6 +331,17 @@ class IndexBoundaryTests(unittest.TestCase):
 class IndexPipelineTests(unittest.TestCase):
     def test_empty_time_format_and_combined_searches_use_the_same_pipeline(self):
         row = report("氣候", count=1)["results"][0]
+        context = {
+            "resource_id": IDS[1],
+            "name": "Observations",
+            "format": "CSV",
+            "url": row["url"] + "/resource/" + IDS[1],
+            "columns": ["temperature", "precipitation"],
+            "excerpt": "",
+        }
+        row["resource_context"] = (
+            MappingProxyType({**context, "columns": tuple(context["columns"])}),
+        )
         bundle = SimpleNamespace(
             manifest_sha256="b" * 64,
             condition_metadata={row["dataset_id"]: condition_document("2020", "2025")},
@@ -341,3 +393,4 @@ class IndexPipelineTests(unittest.TestCase):
                 self.assertEqual(
                     ["opensearch-bm25", "opensearch-knn"], found.rows[0]["searchers"]
                 )
+                self.assertEqual(found.cards()[0]["resource_context"], [context])

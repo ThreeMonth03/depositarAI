@@ -104,6 +104,41 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 RetrievalResponse.model_validate(malformed)
 
+    async def test_resource_context_survives_rerank_and_fallback_with_required_schema(
+        self,
+    ):
+        self.backend.retrieval = report("氣候", count=5)
+        row = self.backend.retrieval["results"][4]
+        context = {
+            "resource_id": IDS[6],
+            "name": "Climate report",
+            "format": "PDF",
+            "url": row["url"] + "/resource/" + IDS[6],
+            "columns": [],
+            "excerpt": "Measured temperature and precipitation.",
+        }
+        row["resource_context"] = [context]
+        result = await self.search(top_k=1)
+        self.assertEqual(result["cards"][0]["dataset_id"], IDS[4])
+        self.assertEqual(result["cards"][0]["resource_context"], [context])
+        self.assertIn(
+            "PDF excerpt: " + context["excerpt"],
+            self.backend.calls[1][1]["passages"][4],
+        )
+        for mutation in (None, "missing", [{**context, "columns": ["invented"]}]):
+            malformed = copy.deepcopy(result)
+            if mutation == "missing":
+                del malformed["cards"][0]["resource_context"]
+            else:
+                malformed["cards"][0]["resource_context"] = mutation
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                RetrievalResponse.model_validate(malformed)
+        self.backend.rerank = BackendTimeout("PRIVATE")
+        fallback = await self.search(top_k=5)
+        self.assertEqual(fallback["rerank_status"], "fallback")
+        self.assertEqual(fallback["cards"][4]["resource_context"], [context])
+        self.assertEqual(fallback["cards"][0]["resource_context"], [])
+
     async def test_disabled_reranking_uses_requested_bound_and_no_llm(self):
         self.engine = RetrievalEngine(
             self.backend, dataclasses.replace(self.settings, rerank_enabled=False)

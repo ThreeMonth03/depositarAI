@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { safeDatasetUrl } from "./api";
-import type { Card, SearchState, TemporalCoverage, TurnResult } from "./api";
+import type {
+  Card,
+  ResourceContext,
+  SearchState,
+  TemporalCoverage,
+  TurnResult,
+} from "./api";
 
 function dateLabel(value: string): string {
   const [year, month, day] = value.split("-");
@@ -41,6 +47,49 @@ function Conditions({ state }: { state: SearchState }) {
   );
 }
 
+function ResourcePreview({ resource }: { resource: ResourceContext }) {
+  const url = safeDatasetUrl(resource.url);
+  return (
+    <div className="resource-context">
+      <div className="resource-name">
+        <span>{resource.format}</span>
+        {url ? (
+          <a
+            href={url}
+            title={resource.name}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {resource.name.trim() || "查看檔案來源"}{" "}
+            <span aria-hidden="true">↗</span>
+          </a>
+        ) : (
+          resource.name
+        )}
+      </div>
+      {resource.format === "CSV" ? (
+        <details>
+          <summary>CSV 欄位（節錄）</summary>
+          <div
+            className="resource-columns"
+            tabIndex={0}
+            aria-label="CSV 欄位節錄"
+          >
+            {resource.columns.map((column, index) => (
+              <code key={index}>{column}</code>
+            ))}
+          </div>
+        </details>
+      ) : (
+        <p>
+          <strong>檔案摘錄：</strong>
+          {resource.excerpt}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ResultCard({ card, rank }: { card: Card; rank: number }) {
   const [expanded, setExpanded] = useState(false);
   const url = safeDatasetUrl(card.url);
@@ -73,6 +122,13 @@ function ResultCard({ card, rank }: { card: Card; rank: number }) {
         >
           {expanded ? "收合描述" : "展開描述"}
         </button>
+      )}
+      {card.resource_context.length > 0 && (
+        <div className="resource-contexts" aria-label="檔案內容節錄">
+          {card.resource_context.map((resource) => (
+            <ResourcePreview key={resource.resource_id} resource={resource} />
+          ))}
+        </div>
       )}
       <div className="card-foot">
         <div className="format-tags" aria-label="資料集資訊">
@@ -129,7 +185,10 @@ export function Results({ result }: { result: TurnResult }) {
       ))}
       <details className="diagnostics">
         <summary>搜尋詳情</summary>
-        <p>資料來源：公開 metadata 快照；尚未讀取 PDF／CSV 內文。</p>
+        <p>
+          資料來源：公開 metadata 快照，以及已建入索引的 CSV 欄位與 PDF
+          文字節錄。
+        </p>
         <p>
           地名僅作文字比對，未啟用地理篩選。日期指資料涵蓋範圍，不是上架日期。
         </p>

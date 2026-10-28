@@ -13,7 +13,7 @@ import ssl
 import subprocess
 import sys
 
-from search.api.shared.config import CONVERSATION_CONTRACT_VERSION
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.serialization import strict_json
 from .. import frontend_check, image_build
 from . import profile as public_entry

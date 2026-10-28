@@ -2,6 +2,8 @@
 
 import math
 
+from search.catalog.resources import validate_resource_context
+
 MODEL_ID = "nvidia/llama-nemotron-rerank-1b-v2"
 MODEL_REVISION = "828765652b05bd439c9789d2a6d093db1caa1443"
 MAX_CANDIDATES = 20
@@ -13,11 +15,21 @@ INFERENCE_BUDGET_S = 6
 
 
 def passage(card):
-    # Same ordering/template as the measured metadata-only experiment. Bounds
-    # protect tokenizer CPU work before its independent 512-token truncation.
+    # Grounded resource excerpts precede long metadata notes so the independent
+    # 512-token tokenizer cap can still retain source content.
+    context = []
+    for resource in validate_resource_context(card["resource_context"]):
+        context.append(
+            "Resource: " + resource["name"] + " (" + resource["format"] + ")"
+        )
+        if resource["columns"]:
+            context.append("CSV columns: " + ", ".join(resource["columns"]))
+        if resource["excerpt"]:
+            context.append("PDF excerpt: " + resource["excerpt"])
     return "\n".join(
         [
             "Title: " + card["title"],
+            *context,
             "Formats: " + ", ".join(card["resource_formats"]),
             "Tags: " + ", ".join(card["tags"]),
             "Organization: " + card["organization_title"],

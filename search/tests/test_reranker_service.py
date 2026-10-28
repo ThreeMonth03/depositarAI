@@ -24,6 +24,7 @@ class ContractTests(unittest.TestCase):
             "tags": ["tag"],
             "organization_title": "org",
             "resource_formats": ["PDF"],
+            "resource_context": [],
         }
         self.assertEqual(
             contract.passage(card),
@@ -32,6 +33,41 @@ class ContractTests(unittest.TestCase):
                 + "n" * 20000
             )[:8192],
         )
+
+    def test_grounded_resource_content_precedes_long_metadata_notes(self):
+        card = {
+            "title": "title",
+            "notes": "metadata " * 4000,
+            "tags": ["tag"],
+            "organization_title": "org",
+            "resource_formats": ["CSV", "PDF"],
+            "resource_context": [
+                {
+                    "resource_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Observation table",
+                    "format": "CSV",
+                    "url": "https://data.depositar.io/dataset/a/resource/00000000-0000-0000-0000-000000000001",
+                    "columns": ["station", "water temperature"],
+                    "excerpt": "",
+                },
+                {
+                    "resource_id": "00000000-0000-0000-0000-000000000002",
+                    "name": "Observation report",
+                    "format": "PDF",
+                    "url": "https://data.depositar.io/dataset/a/resource/00000000-0000-0000-0000-000000000002",
+                    "columns": [],
+                    "excerpt": "Measured coastal water temperature.",
+                },
+            ],
+        }
+        passage = contract.passage(card)
+        self.assertEqual(len(passage), contract.MAX_PASSAGE_CHARS)
+        self.assertLess(passage.index("CSV columns:"), passage.index("Description:"))
+        self.assertLess(passage.index("PDF excerpt:"), passage.index("Description:"))
+        self.assertIn("station, water temperature", passage)
+        self.assertIn("Measured coastal water temperature.", passage)
+        self.assertNotIn("https://", passage)
+        self.assertNotIn("00000000-", passage)
 
     def test_permutation_rejects_duplicates_missing_boolean_and_extra_output(self):
         good = contract.rank_scores([1, 2, 2])

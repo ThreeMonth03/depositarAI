@@ -23,7 +23,12 @@ from search.api.shared.config import Settings
 from search.tests.fixtures import ConversationFixture
 from search.web.app import create_app
 from search.web.sessions import SessionError, Sessions
-from search.web.upstream import Upstream, UpstreamError, WebSettings
+from search.web.upstream import (
+    MAX_TURN_RESPONSE_BYTES,
+    Upstream,
+    UpstreamError,
+    WebSettings,
+)
 from search.tests.web_support import (
     FakeUpstream as FakeUpstream,
     ORIGIN as ORIGIN,
@@ -582,6 +587,113 @@ class TransportTests(unittest.TestCase):
                     coverage,
                 )
 
+    def resource_context(self, dataset_url):
+        return [
+            {
+                "resource_id": "11111111-1111-4111-8111-111111111111",
+                "name": "氣候資料.csv",
+                "format": "CSV",
+                "url": dataset_url + "/resource/11111111-1111-4111-8111-111111111111",
+                "columns": ["觀測日期", "氣溫"],
+                "excerpt": "",
+            },
+            {
+                "resource_id": "22222222-2222-4222-8222-222222222222",
+                "name": "氣候報告.pdf",
+                "format": "PDF",
+                "url": dataset_url + "/resource/22222222-2222-4222-8222-222222222222",
+                "columns": [],
+                "excerpt": "氣候觀測摘要。",
+            },
+        ]
+
+    def test_resource_context_passes_bff_without_rewriting_dataset_cards(self):
+        for enriched in (False, True):
+            with self.subTest(enriched=enriched):
+                value = self.search_response()
+                card = value["search"]["cards"][0]
+                context = self.resource_context(card["url"]) if enriched else []
+                value["search"]["cards"][0]["resource_context"] = context
+                result = self.invoke(lambda _request: httpx.Response(200, json=value))
+                self.assertEqual(result.model_dump(), value)
+
+    def test_twenty_cards_with_maximum_utf8_resource_context_fit_response_bound(self):
+        value = self.search_response()
+        template = value["search"]["cards"][0]
+        prefix = "https://data.depositar.io/dataset/"
+        slug_chars = 2048 - len(prefix) - len("/resource/") - 36
+        wide = "\U0001f30d"
+        cards = []
+        for index in range(1, 21):
+            dataset_url = prefix + "a" * (slug_chars - 2) + f"{index:02d}"
+            resources = []
+            for resource_index in range(1, 4):
+                identifier = f"{index:08x}-1111-4111-8111-{resource_index:012x}"
+                resources.append(
+                    {
+                        "resource_id": identifier,
+                        "name": wide * 160,
+                        "format": "CSV",
+                        "url": dataset_url + "/resource/" + identifier,
+                        "columns": [wide * 128] * 16,
+                        "excerpt": "",
+                    }
+                )
+                self.assertEqual(len(resources[-1]["url"]), 2048)
+            cards.append(
+                {
+                    **template,
+                    "rank": index,
+                    "dataset_id": f"{index:08x}-0000-4000-8000-000000000000",
+                    "url": dataset_url,
+                    "resource_context": resources,
+                }
+            )
+        value["search"].update(
+            cards=cards,
+            candidate_count=20,
+            condition_counts={
+                "match": 0,
+                "unknown": 20,
+                "outside": 0,
+                "not_checked": 0,
+            },
+        )
+        raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        self.assertGreater(len(raw), 256 * 1024)
+        self.assertLess(len(raw), MAX_TURN_RESPONSE_BYTES)
+        result = self.invoke(lambda _request: httpx.Response(200, content=raw))
+        self.assertEqual(result.model_dump(), value)
+
+    def test_missing_or_invalid_resource_context_rejects_upstream(self):
+        dataset_url = self.search_response()["search"]["cards"][0]["url"]
+        csv, pdf = self.resource_context(dataset_url)
+        for context in (
+            None,
+            [csv, pdf, csv, pdf],
+            [{**csv, "name": "x" * 161}],
+            [{**csv, "columns": ["x" * 129]}],
+            [{**csv, "columns": ["x"] * 33}],
+            [{**csv, "columns": ["x" * 128] * 17}],
+            [{**pdf, "excerpt": "x" * 321}],
+            [{**csv, "excerpt": "prose in a CSV field"}],
+            [{**pdf, "columns": ["not a PDF column"]}],
+            [{**csv, "url": "https://untrusted.example/file.csv"}],
+            [{**csv, "url": csv["url"].replace("/dataset/", "/dataset/another-")}],
+            [{**csv, "resource_id": "not-a-resource-id"}],
+            [{**csv, "extra": "not-in-the-contract"}],
+        ):
+            with self.subTest(context=context):
+                value = self.search_response()
+                card = value["search"]["cards"][0]
+                if context is None:
+                    del card["resource_context"]
+                else:
+                    card["resource_context"] = context
+                with self.assertRaises(UpstreamError) as caught:
+                    self.invoke(lambda _request: httpx.Response(200, json=value))
+                self.assertEqual(caught.exception.status, 503)
+
     def test_missing_or_inconsistent_dataset_coverage_rejects_upstream(self):
         for coverage in (
             None,
@@ -632,7 +744,7 @@ class TransportTests(unittest.TestCase):
 
     def test_oversized_or_malformed_response(self):
         for content in (
-            b"x" * (256 * 1024 + 1),
+            b"x" * (MAX_TURN_RESPONSE_BYTES + 1),
             b"not json",
             b'{"status":"ok","status":"rejected"}',
         ):

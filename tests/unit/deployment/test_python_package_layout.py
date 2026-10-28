@@ -161,27 +161,36 @@ class PythonPackageLayoutTests(unittest.TestCase):
                 self.assertEqual(1, len(tree.body), str(initializer))
 
     def test_conversation_version_import_needs_only_standard_library(self) -> None:
-        script = (
-            "import sys\n"
-            f"sys.path.insert(0, {str(ROOT)!r})\n"
-            "from search.api.shared.config import CONVERSATION_CONTRACT_VERSION\n"
-            "assert type(CONVERSATION_CONTRACT_VERSION) is int\n"
-            "assert CONVERSATION_CONTRACT_VERSION == 3\n"
-            "allowed = {'search', 'search.api', 'search.api.shared', "
-            "'search.api.shared.config'}\n"
-            "loaded = {name for name in sys.modules "
-            "if name == 'search' or name.startswith('search.')}\n"
-            "assert loaded == allowed, sorted(loaded)\n"
-        )
-        completed = subprocess.run(
-            [sys.executable, "-I", "-S", "-B", "-c", script],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
+        transport_modules = {"search", "search.transport", "search.transport.version"}
+        for module, allowed in (
+            ("search.transport.version", transport_modules),
+            (
+                "search.api.shared.config",
+                transport_modules
+                | {"search.api", "search.api.shared", "search.api.shared.config"},
+            ),
+        ):
+            script = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(ROOT)!r})\n"
+                f"from {module} import CONVERSATION_CONTRACT_VERSION\n"
+                "assert type(CONVERSATION_CONTRACT_VERSION) is int\n"
+                "assert CONVERSATION_CONTRACT_VERSION == 4\n"
+                f"allowed = {allowed!r}\n"
+                "loaded = {name for name in sys.modules "
+                "if name == 'search' or name.startswith('search.')}\n"
+                "assert loaded == allowed, sorted(loaded)\n"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-I", "-S", "-B", "-c", script],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            with self.subTest(module=module):
+                self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_importing_packages_does_not_load_implementations_or_heavy_dependencies(
         self,

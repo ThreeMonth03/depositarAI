@@ -18,6 +18,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from search.serialization import strict_json
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.operations.deployment.public_entry import host, profile as public_entry
 from search.operations.deployment.public_entry import preflight
 from search.operations.shared import private_io
@@ -307,7 +308,8 @@ def _verify(config, root, snapshot, inspector):
         )
         if role == "public-web":
             _require(
-                labels.get(host.CONVERSATION_CAPABILITY) == "3",
+                labels.get(host.CONVERSATION_CAPABILITY)
+                == str(CONVERSATION_CONTRACT_VERSION),
                 "profile_changed",
             )
     _require(

@@ -1,4 +1,4 @@
-"""Operator-only time/format projection of one complete, vector-ready catalog.
+"""Operator-only conditions/source projection of a complete vector-ready catalog.
 
 The caller holds the catalog operation lock and supplies a private, bounded
 transport. Its request(method, path, payload=None, **kwargs) returns (status,
@@ -14,6 +14,7 @@ import math
 import re
 
 from search.catalog.bundle import CatalogBundle
+from search.catalog.codec import _json_wire_copy
 from search.catalog.inventory import InventorySnapshot
 from search.catalog.policy import MAX_DOCUMENTS
 from search.catalog.vectors import VectorProgressSnapshot
@@ -37,6 +38,7 @@ SOURCE_FIELDS = (
     "depositar_bundle_id",
     "depositar_document_sha256",
     "content_chunk_status",
+    "resource_context",
     filters.VECTOR_PATH,
     filters.FIELD,
 )
@@ -271,6 +273,12 @@ def _inventory(client, bundle, index, *, projected):
                 projected and actual is None
             ):
                 raise ProjectionError("catalog_projection_document_changed")
+            context = _json_wire_copy(document["resource_context"])
+            has_context = "resource_context" in source
+            if (has_context and not same_json(source["resource_context"], context)) or (
+                not has_context and (projected or context)
+            ):
+                raise ProjectionError("catalog_projection_resource_context_changed")
             chunks = _vectors(source)
             chunk_count += len(chunks)
             vector_hashes[identifier] = hashlib.sha256(
@@ -280,8 +288,9 @@ def _inventory(client, bundle, index, *, projected):
                 "id": native_id,
                 "seq_no": row["_seq_no"],
                 "primary_term": row["_primary_term"],
-                "projected": actual is not None,
+                "projected": actual is not None and has_context,
                 "projection": projection,
+                "resource_context": context,
             }
             native_ids.add(native_id)
             previous_url = document["url"]
@@ -306,9 +315,18 @@ def _update(client, index, rows):
                             "if_seq_no": row["seq_no"],
                             "if_primary_term": row["primary_term"],
                         }
-                    }
+                    },
+                    ensure_ascii=False,
                 ),
-                json.dumps({"doc": {filters.FIELD: row["projection"]}}),
+                json.dumps(
+                    {
+                        "doc": {
+                            filters.FIELD: row["projection"],
+                            "resource_context": row["resource_context"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
             )
         )
     response = _ok(

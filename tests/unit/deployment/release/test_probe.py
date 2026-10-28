@@ -562,7 +562,7 @@ class APIScriptTests(unittest.TestCase):
         versions = [missing, {**self.version, "private": PRIVATE}]
         versions.extend(
             {**self.version, "conversation_contract_version": invalid}
-            for invalid in (None, True, False, 0, 2, 4, -1, "3", 3.0, PRIVATE)
+            for invalid in (None, True, False, 0, 2, 3, 5, -1, "4", 4.0, PRIVATE)
         )
         for version in versions:
             with self.subTest(version=version):

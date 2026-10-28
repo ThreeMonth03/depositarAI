@@ -59,7 +59,7 @@ class RemoteLifecycleTests(unittest.TestCase):
     def inspector(self, image):
         proof = update_fixture.PublicEntryUpdatesTests.inspector(self, image)
         if image in (update_fixture.OLD, update_fixture.NEW):
-            proof["Labels"]["io.depositar.ai.conversation.version"] = "3"
+            proof["Labels"]["io.depositar.ai.conversation.version"] = "4"
         return proof
 
     def invoke(self, function, web=update_fixture.OLD, frontend=update_fixture.FRONT):
@@ -181,12 +181,12 @@ class RemoteLifecycleTests(unittest.TestCase):
                 "catalog_manifest_sha256": self.backend_value[
                     "catalog_manifest_sha256"
                 ],
-                "conversation_contract_version": 3,
+                "conversation_contract_version": 4,
             },
         )
 
     def test_missing_or_legacy_bff_wire_capability_is_rejected_before_prepare(self):
-        for version in (None, "1", "2", 3, True):
+        for version in (None, "1", "2", "3", 4, True):
             proof = self.inspector(update_fixture.OLD)
             if version is None:
                 proof["Labels"].pop("io.depositar.ai.conversation.version")
@@ -380,7 +380,7 @@ class RemoteLifecycleTests(unittest.TestCase):
 
     def test_preflight_rejects_wire_version_mismatch_without_querying_or_docker(self):
         bound = self.bind()
-        for version in (None, 1, 2, True, "3", 3.0):
+        for version in (None, 1, 2, 3, True, "4", 4.0):
             requests = []
             with (
                 self.subTest(version=version),
@@ -391,7 +391,7 @@ class RemoteLifecycleTests(unittest.TestCase):
                 requests, [("GET", "/v1/version", False), ("GET", "/v1/version", True)]
             )
         self.assertEqual(
-            self.verify_bound(bound, runner=self.wire_runner(3, [])), remote.PROOF
+            self.verify_bound(bound, runner=self.wire_runner(4, [])), remote.PROOF
         )
         self.assertEqual(self.runner.commands, [])
 

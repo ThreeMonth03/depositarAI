@@ -43,7 +43,7 @@ class PublicEntryBindingTests(unittest.TestCase):
             "Id": IMAGE,
             "Labels": {
                 host.CAPABILITY: "2",
-                host.CONVERSATION_CAPABILITY: "3",
+                host.CONVERSATION_CAPABILITY: "4",
                 "org.opencontainers.image.revision": REVISION,
             },
         }
@@ -176,7 +176,7 @@ class PublicEntryBindingTests(unittest.TestCase):
                 self.bind(proof=proof)
 
     def test_local_bff_requires_current_wire_contract_before_binding(self):
-        for version in (None, "1", "2", 3, True):
+        for version in (None, "1", "2", "3", 4, True):
             proof = copy.deepcopy(self.proof)
             if version is None:
                 proof["Labels"].pop(host.CONVERSATION_CAPABILITY)

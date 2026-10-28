@@ -19,7 +19,7 @@
   "expected": {
     "frontend_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "api_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "conversation_contract_version": 3,
+    "conversation_contract_version": 4,
     "catalog_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   }
 }

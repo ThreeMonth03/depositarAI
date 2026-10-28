@@ -2,6 +2,14 @@
 
 from search.catalog.errors import UnsafeQuery
 from search.catalog.query import normalize_query
+from search.catalog.resources import (
+    MAX_COLUMNS,
+    MAX_EXCERPT_CHARS,
+    MAX_RESOURCE_NAME_CHARS,
+    MAX_RESOURCES,
+    MAX_URL_CHARS,
+    validate_resource_context,
+)
 
 from typing import Literal
 
@@ -100,6 +108,15 @@ class TemporalCoverage(StrictModel):
         return self
 
 
+class ResourceContext(StrictModel):
+    resource_id: str = Field(min_length=36, max_length=36)
+    name: str = Field(max_length=MAX_RESOURCE_NAME_CHARS)
+    format: Literal["CSV", "PDF"]
+    url: str = Field(max_length=MAX_URL_CHARS)
+    columns: list[str] = Field(max_length=MAX_COLUMNS)
+    excerpt: str = Field(max_length=MAX_EXCERPT_CHARS)
+
+
 class Card(StrictModel):
     rank: int
     dataset_id: str
@@ -110,7 +127,22 @@ class Card(StrictModel):
     resource_formats: list[str]
     metadata_modified: str
     temporal_coverage: TemporalCoverage
+    resource_context: list[ResourceContext] = Field(max_length=MAX_RESOURCES)
     condition_status: Literal["match", "unknown", "not_checked"]
+
+    @field_validator("resource_context", mode="before")
+    @classmethod
+    def valid_resource_context(cls, value):
+        return validate_resource_context(value)
+
+    @model_validator(mode="after")
+    def resource_context_belongs_to_dataset(self):
+        if any(
+            entry.url != self.url + "/resource/" + entry.resource_id
+            for entry in self.resource_context
+        ):
+            raise ValueError("resource context dataset mismatch")
+        return self
 
 
 class RetrievalResponse(StrictModel):

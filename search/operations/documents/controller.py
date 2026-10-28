@@ -79,32 +79,7 @@ def _selected_resources(bundle_path, manifest_sha256, resource_ids):
         raise ProfileError("document_selection_invalid")
     bundle_path = Path(bundle_path)
     CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
-    descriptor = private_io.open_directory(bundle_path, mode=0o500)
-    try:
-        manifest_bytes = private_io.read_file(
-            descriptor, "bundle-manifest.json", mode=0o400, max_bytes=64 * 1024
-        )
-        if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
-            raise ProfileError("document_catalog_changed")
-        manifest = strict_json(manifest_bytes)
-        artifact = manifest["artifacts"]["corpus.v2.jsonl.gz"]
-        raw = private_io.read_file(
-            descriptor,
-            "corpus.v2.jsonl.gz",
-            mode=0o400,
-            max_bytes=64 * 1024**2,
-        )
-        if (
-            hashlib.sha256(raw).hexdigest() != artifact["sha256"]
-            or len(raw) != artifact["bytes"]
-        ):
-            raise ProfileError("document_catalog_changed")
-    finally:
-        os.close(descriptor)
-    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-        expanded = stream.read(artifact["expanded_bytes"] + 1)
-    if len(expanded) != artifact["expanded_bytes"]:
-        raise ProfileError("document_catalog_changed")
+    expanded = _catalog_artifact(bundle_path, manifest_sha256, "corpus.v2.jsonl.gz")
     requested = set(resource_ids)
     matches = {identifier: [] for identifier in resource_ids}
     for line in expanded.splitlines():
@@ -121,6 +96,37 @@ def _selected_resources(bundle_path, manifest_sha256, resource_ids):
     ):
         raise ProfileError("document_resource_format_unsupported")
     return selected
+
+
+def _catalog_artifact(bundle_path, manifest_sha256, name):
+    """Read an artifact of an already validated bundle with its manifest binding."""
+    descriptor = private_io.open_directory(bundle_path, mode=0o500)
+    try:
+        manifest_bytes = private_io.read_file(
+            descriptor, "bundle-manifest.json", mode=0o400, max_bytes=64 * 1024
+        )
+        if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
+            raise ProfileError("document_catalog_changed")
+        manifest = strict_json(manifest_bytes)
+        artifact = manifest["artifacts"][name]
+        raw = private_io.read_file(
+            descriptor,
+            name,
+            mode=0o400,
+            max_bytes=64 * 1024**2,
+        )
+        if (
+            hashlib.sha256(raw).hexdigest() != artifact["sha256"]
+            or len(raw) != artifact["bytes"]
+        ):
+            raise ProfileError("document_catalog_changed")
+    finally:
+        os.close(descriptor)
+    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
+        expanded = stream.read(artifact["expanded_bytes"] + 1)
+    if len(expanded) != artifact["expanded_bytes"]:
+        raise ProfileError("document_catalog_changed")
+    return expanded
 
 
 @contextmanager

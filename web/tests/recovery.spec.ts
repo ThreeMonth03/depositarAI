@@ -26,6 +26,7 @@ const reply = {
           snippet: "公開資料說明",
           organization_title: "測試機構",
           resource_formats: ["CSV"],
+          resource_context: [],
           temporal_coverage: { start: null, end: null, status: "absent" },
           condition_status: "match",
         },

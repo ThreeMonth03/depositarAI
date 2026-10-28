@@ -258,7 +258,14 @@ def _check_deadline(deadline):
 
 
 def sync(
-    cache_root, *, baseline=None, snapshot=None, ttl_seconds=0, force=False, fetch=None
+    cache_root,
+    *,
+    baseline=None,
+    snapshot=None,
+    ttl_seconds=0,
+    force=False,
+    fetch=None,
+    profile_files=(),
 ):
     """Return a staged immutable snapshot/bundle/diff; never change active state."""
     if (
@@ -266,8 +273,10 @@ def sync(
         or not math.isfinite(ttl_seconds)
         or not 0 <= ttl_seconds <= MAX_TTL_SECONDS
         or type(force) is not bool
+        or not isinstance(profile_files, (list, tuple))
+        or len(profile_files) > 20
     ):
-        raise SyncError("TTL or force option is outside its bounded policy")
+        raise SyncError("TTL, force or profile selection is outside its bounded policy")
     if snapshot is not None and fetch is not None:
         raise SyncError("offline snapshot and network fetch are mutually exclusive")
     before = _baseline(
@@ -371,6 +380,45 @@ def sync(
                     else "offline_not_checked",
                     "document_count": len(catalog.documents),
                 }
+            # The metadata cache retains only downloaded snapshot identity. Rebuild
+            # the cheap baseline on cache hits so selected profile files never leak
+            # between invocations through a previous enriched bundle.
+            if cache_hit:
+                built = builder.build_bundle(snapshot_path, root / "bundles")
+                bundle_path = Path(built["bundle_path"])
+                catalog = CatalogBundle.load(
+                    bundle_path, expected_manifest_sha256=built["manifest_sha256"]
+                )
+            profile_report = {
+                "selected_count": 0,
+                "included_count": 0,
+                "skipped_count": 0,
+                "resources": [],
+            }
+            if profile_files:
+                from search.operations.documents.enrichment import load_profiles
+
+                baseline_source = built["manifest"]["artifacts"]["source.jsonl.gz"]
+                context, profile_report = load_profiles(
+                    profile_files, bundle_path, catalog.manifest_sha256, snapshot_path
+                )
+                built = builder.build_bundle(
+                    snapshot_path, root / "bundles", resource_context=context
+                )
+                if built["manifest"]["artifacts"]["source.jsonl.gz"] != baseline_source:
+                    from search.operations.documents.enrichment import EnrichmentError
+
+                    raise EnrichmentError("document_enrichment_source_mismatch")
+                bundle_path = Path(built["bundle_path"])
+                catalog = CatalogBundle.load(
+                    bundle_path, expected_manifest_sha256=built["manifest_sha256"]
+                )
+            latest = {
+                **latest,
+                "run_id": run_id,
+                "bundle_id": catalog.bundle_id,
+                "manifest_sha256": catalog.manifest_sha256,
+            }
             _check_deadline(deadline)
             _verify_cache_directories(root, root_fd, folders, run_id, run_fd)
             report = {
@@ -397,10 +445,10 @@ def sync(
                 "promotion_allowed": False,
                 "live_index_modified": False,
                 "models_called": False,
+                "resource_profiles": profile_report,
             }
             _write_record(run_fd, "result.json", report)
-            if not cache_hit:
-                _write_record(root_fd, "latest.json", latest, replace=True)
+            _write_record(root_fd, "latest.json", latest, replace=True)
             return report
         except Exception as error:
             _write_record(
