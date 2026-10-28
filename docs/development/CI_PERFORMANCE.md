@@ -3,6 +3,11 @@
 日常先執行直接涵蓋修改的檢查，合併前再確認該版本的必要 CI。
 網站與核心政策分開檢查；快取只節省下載，不決定是否執行驗證。
 
+Actions runner 固定使用 `ubuntu-24.04`，ShellCheck 使用固定 digest 的 0.10.0
+容器。背景下載與中斷清理依賴 GNU `timeout` 的 process-group 行為；更換 runner
+或 coreutils 供應者時，須完整驗證失敗、逾時與中斷案例，不能只延長 timeout。
+產品映像內的 Python 與套件仍由各自的 image pin／lock 決定。
+
 `validate` 先以固定版本的 Gitleaks 掃描該 commit 的完整歷史，並驗證原始碼
 打包，再執行核心測試。這份暫存包不會上傳；交付 artifact 使用
 [Source package](SOURCE_PACKAGE.md) workflow。

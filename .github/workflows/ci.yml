@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -40,7 +40,7 @@ jobs:
         run: make search-ci
 
   private-website-oss:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       scope_run: ${{ steps.scope.outputs.run }}
@@ -108,7 +108,7 @@ jobs:
         run: echo 'No website dependency changed; the full validate gate still runs.'
 
   private-website-browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       scope_run: ${{ steps.scope.outputs.run }}
@@ -178,7 +178,7 @@ jobs:
   private-website:
     needs: [private-website-oss, private-website-browser]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - name: Check out source
