@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "browser_origin": "http://127.0.0.1:18081",
+  "remote_port": 18081,
+  "hops": [
+    {
+      "destination": "demo-gpu",
+      "ssh_config": "/absolute/private/client-ssh.conf",
+      "local_forward_port": 18081
+    },
+    {
+      "destination": "demo-vm",
+      "ssh_config": "/absolute/private/server-vm-ssh.conf",
+      "local_forward_port": 38081
+    }
+  ],
+  "remote_checker": "/absolute/private/operator-source/scripts/check_search_web.py",
+  "remote_profile": "/absolute/private/frontend-check.json",
+  "expected": {
+    "frontend_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "api_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "conversation_contract_version": 3,
+    "catalog_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}
