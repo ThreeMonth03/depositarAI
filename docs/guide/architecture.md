@@ -40,7 +40,7 @@ depositar AI 將網站互動、搜尋處理與資料準備分開。使用者只�
 
 索引以資料集描述與資源中繼資料為主。選取的 CSV 欄位與 PDF 文字由離線抽取工具準備，連同來源紀錄封入同一份 catalog；既有文字／向量檢索與 reranker 共用這些有界內容，仍以資料集為結果單位。搜尋請求不下載或解析原檔，也不從檔案文字推斷時間及地點條件。
 
-[準備資源摘要](../development/RESOURCE_PROFILES.md)說明選取、快取、封存與重新建置流程。
+[準備資源摘要](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/RESOURCE_PROFILES.md)說明選取、快取、封存與重新建置流程。
 
 ## 暫存條件與入口存取
 
