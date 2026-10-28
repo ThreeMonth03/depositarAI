@@ -20,6 +20,7 @@ import uuid
 from search.operations.deployment.public_entry import profile as edge
 from search.operations.deployment.public_entry import host
 from search.operations.deployment.public_entry import updates
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from tests.integration.public_entry.test_runtime import (
     ISSUER,
     ORIGIN,
@@ -98,9 +99,12 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                 ]
             ).stdout
         )
-        if (backend_labels or {}).get(host.CONVERSATION_CAPABILITY) != "3":
+        if (backend_labels or {}).get(host.CONVERSATION_CAPABILITY) != str(
+            CONVERSATION_CONTRACT_VERSION
+        ):
             raise AssertionError(
-                "rebuild the CPU API fixture image for wire contract 3"
+                "rebuild the CPU API fixture image for wire contract "
+                + str(CONVERSATION_CONTRACT_VERSION)
             )
         backend["networks"] = {
             "website": {"aliases": ["conversation-api"]},
