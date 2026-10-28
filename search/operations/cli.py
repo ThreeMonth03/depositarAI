@@ -218,6 +218,15 @@ def _operator_error_code(error, command):
         if error_type is not updates.PublicEntryUpdateError:
             return None
         codes = updates.ERROR_CODES
+    elif (
+        command == "profile-resources"
+        and owner == "search.operations.documents.controller"
+    ):
+        from search.operations.documents import controller
+
+        if error_type is not controller.ProfileError:
+            return None
+        codes = controller.ERROR_CODES
     else:
         return None
     arguments = error.args
@@ -279,6 +288,24 @@ def parser():
     restore.add_argument("--expected-revision", required=True)
     restore.add_argument("--expected-manifest-sha256", required=True)
     restore.add_argument("--destination", type=Path, required=True)
+    profiles = commands.add_parser(
+        "profile-resources",
+        help="cache selected public CSV/PDF profiles; no index or deployment changes",
+    )
+    profiles.add_argument("--bundle", type=Path, required=True)
+    profiles.add_argument("--expected-manifest-sha256", required=True)
+    profiles.add_argument("--state-root", type=Path, required=True)
+    profiles.add_argument("--resource-id", action="append", required=True)
+    profiles.add_argument("--refresh", action="store_true")
+    profiles.add_argument(
+        "--encoding", choices=("utf-8", "cp950", "utf-16"), default="utf-8"
+    )
+    profiles.add_argument(
+        "--header-policy",
+        choices=("first-record", "absent"),
+        default="first-record",
+        help="explicit CSV first-row assumption; not automatic header confirmation",
+    )
     for command in ("prepare-public-entry", "up-public-entry", "update-public-entry"):
         entry = commands.add_parser(
             command,
@@ -544,13 +571,30 @@ def _runtime_report(options):
 def main(argv=None):
     arguments = parser()
     options = arguments.parse_args(argv)
-    independent = {"restore-product", *PUBLIC_COMMANDS}
+    independent = {"restore-product", "profile-resources", *PUBLIC_COMMANDS}
     if options.command in independent:
         if options.config is not None:
             arguments.error(f"{options.command} does not use --config")
     elif options.config is None:
         arguments.error("--config is required for runtime commands")
     try:
+        if options.command == "profile-resources":
+            from search.operations.documents import controller
+
+            report = controller.run(
+                options.bundle,
+                options.expected_manifest_sha256,
+                options.state_root,
+                options.resource_id,
+                refresh=options.refresh,
+                encoding=options.encoding,
+                header_policy=options.header_policy.replace("-", "_"),
+                source_root=ROOT,
+            )
+            print(
+                json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            )
+            return 1 if report["status"] == "partial" else 0
         if options.command in PUBLIC_COMMANDS:
             extra = (
                 (options.release_compose, options.web_image, options.web_nginx_image)

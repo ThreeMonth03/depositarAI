@@ -1,0 +1,11 @@
+**
+!deploy/
+deploy/**
+!deploy/docker/
+deploy/docker/**
+!deploy/docker/extractor/
+deploy/docker/extractor/**
+!deploy/docker/extractor/Dockerfile
+!deploy/docker/extractor/Dockerfile.dockerignore
+!deploy/docker/extractor/Main.java
+!deploy/docker/extractor/log4j2.xml

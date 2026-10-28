@@ -12,6 +12,7 @@
 | 前端部署檢查與私有 API TLS | [唯讀檢查](development/FRONTEND_CHECK.md)、[TLS 接口](development/PRIVATE_API_TLS.md) |
 | 模型與檢索服務 | [私有 runtime](development/PRIVATE_RUNTIME.md) |
 | Catalog 重用與 metadata 比較 | [Catalog cache](development/CATALOG_CACHE.md)、[Sync 與候選索引](development/PRODUCT_LIFECYCLE.md#metadata-與候選索引) |
+| CSV／PDF 離線擷取與快取 | [資源摘要](development/RESOURCE_PROFILES.md) |
 | 向量續跑與失敗恢復 | [Vector passes](development/VECTOR_PASSES.md)、[Token 清理](CATALOG_CLEANUP_RECOVERY.md) |
 | 產品包及來源交接 | [Product restore](development/PRODUCT_RESTORE.md)、[Source package](development/SOURCE_PACKAGE.md) |
 | 模型與索引保存 | [儲存及復原](MODEL_STORAGE_AND_RECOVERY.md) |
