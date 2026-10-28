@@ -224,7 +224,6 @@ def search(payload, settings):
                 "end": metadata["temporal"]["end"],
                 "status": project(metadata)["time_status"],
             },
-            raw_score=hit.score,
             rank_fusion_score=hit.score,
             searchers=[
                 label

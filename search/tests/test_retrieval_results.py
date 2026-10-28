@@ -100,9 +100,13 @@ class RetrievalResultTests(unittest.TestCase):
         extra_result = copy.deepcopy(baseline)
         extra_result["results"][0]["model_url"] = "https://evil.example"
         mutations.append(extra_result)
-        non_finite = copy.deepcopy(baseline)
-        non_finite["results"][0]["rank_fusion_score"] = math.nan
-        mutations.append(non_finite)
+        invented_raw_score = copy.deepcopy(baseline)
+        invented_raw_score["results"][0]["raw_score"] = 9.0
+        mutations.append(invented_raw_score)
+        for score in (math.nan, math.inf, -math.inf, 0, -1, True):
+            invalid_score = copy.deepcopy(baseline)
+            invalid_score["results"][0]["rank_fusion_score"] = score
+            mutations.append(invalid_score)
         duplicate = copy.deepcopy(baseline)
         duplicate["results"][1]["dataset_id"] = duplicate["results"][0]["dataset_id"]
         mutations.append(duplicate)

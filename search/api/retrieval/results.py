@@ -51,7 +51,6 @@ _RESULT_FIELDS = frozenset(
     (
         *METADATA_FIELDS,
         "temporal_coverage",
-        "raw_score",
         "rank_fusion_score",
         "searchers",
     )
@@ -103,14 +102,14 @@ def _exact_int(value: Any, minimum: int, maximum: int) -> bool:
     return type(value) is int and minimum <= value <= maximum
 
 
-def _finite_score(value: Any, *, positive: bool = False) -> bool:
+def _positive_score(value: Any) -> bool:
     if type(value) not in (int, float):
         return False
     try:
         converted = float(value)
     except (OverflowError, TypeError, ValueError):
         return False
-    return math.isfinite(converted) and (converted > 0 if positive else converted >= 0)
+    return math.isfinite(converted) and converted > 0
 
 
 def _canonical_dataset_url(value: Any, slug: Any) -> bool:
@@ -150,8 +149,7 @@ def validate_result(row: Any) -> dict[str, Any]:
         or _DATASET_ID_RE.fullmatch(row["dataset_id"]) is None
         or not _canonical_dataset_url(row.get("url"), row.get("name"))
         or not _exact_int(row.get("resource_count"), 0, 100_000)
-        or not _finite_score(row.get("raw_score"))
-        or not _finite_score(row.get("rank_fusion_score"), positive=True)
+        or not _positive_score(row.get("rank_fusion_score"))
     ):
         raise ResultError("invalid retrieval result value")
 
