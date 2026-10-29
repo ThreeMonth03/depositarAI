@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "archive_date": "2026-10-29",
+  "archive_base_revision": "415db0fc272cb62e14424a5afb1a570bb27df25e",
+  "method": "Derived allowlisted aggregate summaries from existing local evidence; no experiments rerun. Original operational paths, request captures, raw files and private logs are omitted.",
+  "source_artifact_fingerprints": [
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "inventory.json",
+      "bytes": 16208,
+      "sha256": "012edd559cf953e1fcd298cbb7b82d7104e3a9a34f596010f12168d50b7ceaff"
+    },
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "verification.json",
+      "bytes": 610,
+      "sha256": "5ab298e65396b6a4c97297d8ce7a5f5c2b9cd1f86df0d91db6ca23cc9c84f389"
+    },
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "csv-probe.json",
+      "bytes": 6422,
+      "sha256": "09f07e6ac0714bdd6c48c2ec8f098770136636471616f6fde2822ceb563210e4"
+    },
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "csv-curl-probe-first-run.json",
+      "bytes": 14967,
+      "sha256": "d89827fbfc41295a98dc69935f5013482c1c3b5795a1c30ec521ef8f107f244a"
+    },
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "csv-curl-probe.json",
+      "bytes": 14967,
+      "sha256": "ccc6781a404064a2b15f79ed4d779723a04f17a6f89fd245140f7d6042339c3e"
+    },
+    {
+      "experiment": "resource-readiness",
+      "artifact_name": "readiness-report.txt",
+      "bytes": 6416,
+      "sha256": "70ca75ea9460834ffa203de24a021a1e63ddbac11fef6aeaeec0f2f9f7982e9f"
+    },
+    {
+      "experiment": "rerank-proposal",
+      "artifact_name": "runtime-preflight.json",
+      "bytes": 3990,
+      "sha256": "76e4cc2ccc8befe6fdbbc0e2dce47ab4b69a109ed0f5718534dd9420b59d3d1f"
+    },
+    {
+      "experiment": "rerank-proposal",
+      "artifact_name": "case-proposal.json",
+      "bytes": 3846,
+      "sha256": "8c526876c0a94fd7c28ec1fb3767557ed3cff1922508cb0532a3972100948f73"
+    },
+    {
+      "experiment": "search-quality",
+      "artifact_name": "live-evaluation-final.json",
+      "bytes": 4882,
+      "sha256": "3a0efe4e1580e3934905b6293fc6e541ac839210130a5f6f20d1876877e603c3"
+    },
+    {
+      "experiment": "search-quality",
+      "artifact_name": "ci-result.json",
+      "bytes": 1421,
+      "sha256": "4f2ccf6b146c1bc09e4cb54adde5348060312c15c53d8275feff1796308c3c14"
+    },
+    {
+      "experiment": "search-quality",
+      "artifact_name": "runtime-source-equivalence-9584a60c.json",
+      "bytes": 1557,
+      "sha256": "02047f4271e21c52a8119cc92a7f074076ba372c6a8a62f6fba513741a215a10"
+    },
+    {
+      "experiment": "search-quality",
+      "artifact_name": "investigation.txt",
+      "bytes": 7201,
+      "sha256": "f15f2aa5db934baba80ade3b66f697792d841910e90cb73e06a34ae8c5ca1731"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/comparison.json",
+      "bytes": 1110,
+      "sha256": "1e7de9c8467b0f27e63e041e86edcdcf6367500dad0712a531fe2ca74b954ecd"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/delivery.json",
+      "bytes": 399,
+      "sha256": "df0d8c70ef2fc98ee9d7c84a23c7a4e2e4aa7b7c58eef2bfe69bf665b193e8ba"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/fess-summary.json",
+      "bytes": 1529,
+      "sha256": "92be017ab53c88d6a3cfeb1337d9d88ddbb079cb9065b3550876dc2479b64d1b"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/decision.txt",
+      "bytes": 5521,
+      "sha256": "f7d2b5912affe8685c1987c52830df79879a5270bebde0f90ff27ee234de2c95"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/docling-csv/report.json",
+      "bytes": 77086,
+      "sha256": "24b58db3fd0036f5a32dc2f56d83a7dac32628e2fc6babde1619bcb9db550991"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/docling-pdf/report.json",
+      "bytes": 10608,
+      "sha256": "d8ed1b1d96ecab6385f0bde479c076c872954fe0afca7f7da463c29447d48b37"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/docling-accurate-table/report.json",
+      "bytes": 5492,
+      "sha256": "106893ea99773740c77c5b02cb97adaee65f8cdaef69471e36d7557969f5b0c8"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/docling-ocr/report.json",
+      "bytes": 3267,
+      "sha256": "34c102c2790a844d46f1d20f655c8c6349680268f33bbca899553814a9ccd21d"
+    },
+    {
+      "experiment": "document-extraction",
+      "artifact_name": "results/docling-ocr-chinese/report.json",
+      "bytes": 8186,
+      "sha256": "ed1857a7513357da02546fc87cd7763d38890670b3113e8c863b9c9dba8df426"
+    }
+  ],
+  "public_source_commits": {
+    "search_quality": "9584a60c43db2526ac8fe0019b7fc43206571ec6",
+    "search_quality_merge": "415db0fc272cb62e14424a5afb1a570bb27df25e",
+    "document_extraction": "cd5f28eed2946d09fed559ea85ab974aa816a9e5"
+  },
+  "scope": "Historical experiments only; not acceptance of the current product or host."
+}

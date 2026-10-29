@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "status": "proposal_only_not_executed",
+  "prepared_at_utc": "2026-10-28T02:36:24.686789+00:00",
+  "basis": "Sealed public catalog metadata only; no search results used for selection and no relevance grades assigned. Root may freeze or adjust before capture.",
+  "catalog_manifest_sha256": "d8da74f0f59d973548c4646556d01dd3409fb3466a746468068b7192e1ac5f1d",
+  "bundle_id": "2a7ea3094e3e804daac80229a80cb76b493b580e21a11ae284dc477623fdc515",
+  "case_count": 8,
+  "cases": [
+    {
+      "id": "river-water-quality",
+      "intent": "River water quality, pollution and river-water environment metadata.",
+      "kind": "broad",
+      "query": "河川水質",
+      "target_dataset_id": null
+    },
+    {
+      "id": "earthquake-preparedness",
+      "intent": "Earthquake disaster preparedness, evacuation and institutional response.",
+      "kind": "broad",
+      "query": "地震防災",
+      "target_dataset_id": null
+    },
+    {
+      "id": "land-use",
+      "intent": "Land use and zoning datasets/maps.",
+      "kind": "broad",
+      "query": "土地利用",
+      "target_dataset_id": null
+    },
+    {
+      "id": "air-pm25",
+      "intent": "PM2.5 air pollution or emissions metadata.",
+      "kind": "broad",
+      "query": "PM2.5 空氣污染",
+      "target_dataset_id": null
+    },
+    {
+      "id": "named-earthquake-survey",
+      "kind": "named_item",
+      "query": "2017年地震緊急避難及臨時安置調查",
+      "target_dataset_id": "70340f32-9720-42cf-aed7-eac898cfccc7",
+      "target_title_unique_in_catalog": true
+    },
+    {
+      "id": "named-taijiang-zoning",
+      "kind": "named_item",
+      "query": "台江國家公園海域土地使用分區圖",
+      "target_dataset_id": "29e5e59b-0b9b-4bc5-b942-9022fc270352",
+      "target_title_unique_in_catalog": true
+    },
+    {
+      "id": "named-emissions-elevation",
+      "kind": "named_item",
+      "query": "Percentile-Based Daily Biomass Burning Emissions of PM2.5, OC, BC, SO2, and CO Aggregated by Elevation Zones in Continental Southeast Asia (2003–2022)",
+      "target_dataset_id": "58ed4eb5-5b27-4dc6-abca-1cf6231e4a02",
+      "target_title_unique_in_catalog": true
+    },
+    {
+      "id": "named-penghu-tombstones",
+      "kind": "named_item",
+      "query": "Penghu Tombstones 澎湖的墓碑",
+      "target_dataset_id": "0f571c8f-ca07-4a20-be22-0d64dc1c2452",
+      "target_title_unique_in_catalog": true
+    }
+  ],
+  "cautions": [
+    "This small corpus-aware set is not representative of general search quality.",
+    "The Penghu record concerns tombstones; do not describe it as proof of officially designated ancient monuments.",
+    "Named titles are unique in this sealed catalog; broad cases still require independent relevance judgments."
+  ],
+  "relevance_grades_assigned": false,
+  "reranker_vs_rrf_comparison_performed": false,
+  "measured_quality_delta": null
+}

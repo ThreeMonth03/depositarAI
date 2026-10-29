@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "image": "ghcr.io/codelibs/fess:15.8.0@sha256:442a58831e87aae6ae22ef60e0536ececbda553bd5f5e8e5dc98cc022578dc75",
+  "input_manifest_sha256": "ff44e1b6d53c004e42932c7c4b9575fb47283911e31e12c03fda7c2ba6a7c2ba",
+  "case_count": 20,
+  "first_pass_statuses": {
+    "ok": 17,
+    "empty_text": 2,
+    "error": 1
+  },
+  "exact_header_cases_passed": 12,
+  "repeat_outputs_identical": true,
+  "headerless_has_no_invented_columns": true,
+  "malformed_csv_reported": true,
+  "html_requires_external_format_guard": true,
+  "image_only_pdf_requires_ocr": true,
+  "process_peak_rss_mib": 263.09,
+  "extractor_initialization_ms": 710.06,
+  "java_total_ms": 2571.51,
+  "csv_first_pass_ms": 190.71,
+  "pdf_first_pass_ms": 883.7,
+  "native_pdf_structure_output": "plain text only; no extracted table cell model",
+  "ocr_enabled": false,
+  "network": "none",
+  "gpu": false,
+  "limitations": [
+    "20 selected cases, not wholecatalog accuracy/throughput evidence",
+    "Fess encoding/header policy supplied from experimentmanifest, not automatically proven",
+    "RSS is JVM process /proc/self/status VmHWM, not RAMlimit or wholehost/container-memory maximum",
+    "Timing includes firstuse/JIT effects; no speed ratio vs model-based table extraction or OCR",
+    "JRE image requires precompiled entrypoint; probe used existing hostjavac8 without downloads"
+  ],
+  "exact_header_cases_include_explicit_headerless_empty_list": true,
+  "nonempty_expected_column_cases_passed": 11,
+  "expected_headerless_cases_passed": 1
+}

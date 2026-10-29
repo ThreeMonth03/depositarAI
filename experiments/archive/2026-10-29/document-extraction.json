@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "status": "small_cpu_feasibility_comparison_completed",
+  "source_commit": "cd5f28eed2946d09fed559ea85ab974aa816a9e5",
+  "remote_branch": "experiment/document-extraction-1esicrts",
+  "source_base_revision": "d99a96bb4c283430de5ee81844eb6d776a21620a",
+  "comparison": {
+    "input_manifest_sha256": "ff44e1b6d53c004e42932c7c4b9575fb47283911e31e12c03fda7c2ba6a7c2ba",
+    "unique_cases": 20,
+    "real_csv_cases": 8,
+    "real_pdf_cases": 3,
+    "controlled_cases": 9,
+    "real_csv_exact_expected_headers": {
+      "fess": 8,
+      "docling": 8
+    },
+    "fess_repeat_outputs_identical": true,
+    "controlled_pdf_table": {
+      "fast_correct_cell_associations": false,
+      "accurate_correct_cell_associations": true,
+      "expected_cell_count": 9,
+      "scope": "single controlled table; not general table accuracy"
+    },
+    "chinese_scan_ocr": {
+      "input_pages": 3,
+      "output_text_characters": 774,
+      "conversion_seconds": 24.743171,
+      "process_peak_rss_kib": 2009728,
+      "accuracy_evaluated": false
+    },
+    "product_changes": false,
+    "deployment_changes": false,
+    "gpu_used": false,
+    "live_index_queries": false,
+    "checks": {
+      "repository_layout_tests": 7,
+      "ruff_check": true,
+      "ruff_format": true,
+      "gitleaks_experiment_sources": true,
+      "documentation_example_both_tools": true
+    }
+  },
+  "original_delivery": {
+    "remote_head_matches": true,
+    "source_worktree_clean": true,
+    "pull_request_created": false,
+    "deployment_performed": false,
+    "github_actions_runs_for_branch": []
+  },
+  "findings": [
+    "Both tools matched the assistant-reviewed expected first row of 8 selected real CSV files; these are not human-labelled general accuracy results.",
+    "Fess supported the explicitly configured CP950 and headerless cases; pinned Docling CSV handling did not support those overrides.",
+    "Malformed CSV produced parsing failures. Direct parser acceptance of a mislabeled HTML resource did not establish CSV format; the separate Tika check identified HTML.",
+    "Fess yielded ordinary PDF text, with no structured cell model and no OCR in this experiment.",
+    "Docling fast table reconstruction misassociated values in one controlled table; accurate mode matched that single 9-cell expected table.",
+    "OCR produced text for controlled and selected Chinese scans, but character and table accuracy were not evaluated."
+  ],
+  "limitations": [
+    "20 selected cases: 8 real CSV, 3 real PDF and 9 controls, not a whole-catalog success-rate sample.",
+    "OCR character count and nonempty output are not correctness metrics.",
+    "Fess text extraction and Docling layout/table/OCR are different workloads; timings are not a speed ranking.",
+    "Fixed image/tool versions only; findings do not establish the behavior of future versions.",
+    "No product code, production index, retrieval quality or deployment changed in the original experiment."
+  ]
+}

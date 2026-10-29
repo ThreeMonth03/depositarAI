@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "status": "three_turn_existing_runtime_capture_and_offline_consistency_checks_completed",
+  "experiment_source_revision": "9584a60c43db2526ac8fe0019b7fc43206571ec6",
+  "source_tree": "470324d2d8ef38d0461b8d19fd215dbe64f70045",
+  "source_base_revision": "4a1f0bc6fac8803dfcde1df15b9e03c2ebaf4501",
+  "pr": "https://github.com/ThreeMonth03/depositarAI/pull/9",
+  "historical_receipt_pr_state": "OPEN",
+  "subsequent_merge_commit": "415db0fc272cb62e14424a5afb1a570bb27df25e",
+  "catalog_manifest_sha256": "d8da74f0f59d973548c4646556d01dd3409fb3466a746468068b7192e1ac5f1d",
+  "queries": [
+    "找 2020 到 2025 年的氣候資料",
+    "我要2024年的",
+    "只要 CSV"
+  ],
+  "turns": [
+    {
+      "turn": 1,
+      "candidate_count": 20,
+      "returned_count": 5,
+      "information_availability": {
+        "returned_count": 5,
+        "unknown_condition_count": 1,
+        "unknown_condition_fraction": 0.2
+      },
+      "issues": [],
+      "ranking": "nvidia-rerank",
+      "rerank_status": "applied",
+      "original_subject_rank": 4,
+      "elapsed_ms": 22353.925
+    },
+    {
+      "turn": 2,
+      "candidate_count": 20,
+      "returned_count": 5,
+      "information_availability": {
+        "returned_count": 5,
+        "unknown_condition_count": 1,
+        "unknown_condition_fraction": 0.2
+      },
+      "issues": [],
+      "ranking": "nvidia-rerank",
+      "rerank_status": "applied",
+      "original_subject_rank": 1,
+      "elapsed_ms": 18533.257
+    },
+    {
+      "turn": 3,
+      "candidate_count": 20,
+      "returned_count": 5,
+      "information_availability": {
+        "returned_count": 5,
+        "unknown_condition_count": 1,
+        "unknown_condition_fraction": 0.2
+      },
+      "issues": [],
+      "ranking": "nvidia-rerank",
+      "rerank_status": "applied",
+      "original_subject_rank": 1,
+      "elapsed_ms": 18120.926
+    }
+  ],
+  "observed_condition_transitions": [
+    "topic retained; requested 2020 through 2025",
+    "topic retained; replaced requested years with 2024",
+    "topic and 2024 retained; added CSV format"
+  ],
+  "original_subject_temporal_coverage": "absent; kept as unknown, not proven to match 2024",
+  "session_reset_succeeded": true,
+  "offline_consistency_status": "passed",
+  "topical_relevance": "not_evaluated",
+  "unavailable_trace": [
+    "branch_candidates_and_scores",
+    "rrf_candidate_order_and_scores",
+    "reranker_scores_and_complete_order"
+  ],
+  "ci": {
+    "all_five_checks_passed": true,
+    "run": "https://github.com/ThreeMonth03/depositarAI/actions/runs/40615479045",
+    "docs_run": "https://github.com/ThreeMonth03/depositarAI/actions/runs/40615479120",
+    "checkout_revision": "3c61fcb8c7b8abafc55e5dea2a32a0944ee08ebc",
+    "checkout_tree_matches_branch": true,
+    "jobs": [
+      {
+        "name": "validate",
+        "status": "success"
+      },
+      {
+        "name": "private-website-oss",
+        "status": "success"
+      },
+      {
+        "name": "private-website-browser",
+        "status": "success"
+      },
+      {
+        "name": "private-website",
+        "status": "success"
+      },
+      {
+        "name": "Build reader handbook",
+        "status": "success"
+      }
+    ]
+  },
+  "deployment_performed_by_original_experiment": false,
+  "model_or_index_rebuilt": false,
+  "limitations": [
+    "The three queries ran against the existing API, not the newly built PR9 image.",
+    "Offline replay checks consistency and source-backed condition handling; it does not measure topical relevance, full recall, or reranker superiority.",
+    "The original subject lacks temporal coverage; metadata creation dates do not establish observation years.",
+    "The historical PR receipt said OPEN; the subsequent merge is recorded separately.",
+    "This archive is historical evidence, not current deployment or hardware acceptance."
+  ],
+  "captured_runtime_revision": "4a43cddaeb1a527f4b3d0c5a6f128fd94a2ea0c2"
+}

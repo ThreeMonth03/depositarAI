@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "status": "completed_inventory_and_bounded_prefix_feasibility_only",
+  "source_revision": "415db0fc272cb62e14424a5afb1a570bb27df25e",
+  "catalog_manifest_sha256": "d8da74f0f59d973548c4646556d01dd3409fb3466a746468068b7192e1ac5f1d",
+  "bundle_id": "2a7ea3094e3e804daac80229a80cb76b493b580e21a11ae284dc477623fdc515",
+  "snapshot_scope": "sealed metadata bound to the inspected API; not a fresh upstream crawl",
+  "dataset_count": 3618,
+  "resource_count": 14683,
+  "datasets_without_resources": 37,
+  "datasets_with_csv_and_pdf": 27,
+  "formats": {
+    "CSV": {
+      "dataset_count": 193,
+      "resource_count": 658,
+      "declared_size": {
+        "maximum_positive_bytes": 612978070,
+        "missing": 28,
+        "positive": 629,
+        "sum_positive_bytes_per_resource": 3649113463,
+        "zero": 1
+      }
+    },
+    "PDF": {
+      "dataset_count": 2447,
+      "resource_count": 8744,
+      "declared_size": {
+        "maximum_positive_bytes": 580081865,
+        "missing": 143,
+        "positive": 8601,
+        "sum_positive_bytes_per_resource": 37558354214,
+        "zero": 0
+      }
+    }
+  },
+  "bbox": {
+    "complete_but_rejected_by_production_predicate": 0,
+    "declared_status": {
+      "absent": 3052,
+      "complete": 564,
+      "invalid": 2
+    },
+    "point_boxes": 2,
+    "production_predicate_known": 564,
+    "source_spatial_nonempty": 700,
+    "world_boxes": 3,
+    "zero_width_or_height_boxes": 3
+  },
+  "temporal": {
+    "declared_status": {
+      "absent": 2567,
+      "complete": 956,
+      "partial": 95
+    },
+    "production_predicate_status": {
+      "absent": 2567,
+      "complete": 956,
+      "partial": 95
+    }
+  },
+  "csv_prefix_probe": {
+    "selection": "fixed diversity sample; 12 CSV candidates, 8 admitted direct same-host CSV URLs; not a random sample",
+    "first_urllib_statuses": {
+      "outside_direct_csv_probe_scope": 4,
+      "network_error": 8,
+      "pdf_metadata_only_deferred": 4
+    },
+    "first_urllib_failure": "RemoteDisconnected; exact transport discrepancy not diagnosed",
+    "successful_transport": "curl",
+    "prefix_byte_limit": 65536,
+    "successful_resources": 8,
+    "cached_prefix_bytes": 233711,
+    "complete_files": 5,
+    "partial_files": 3,
+    "replay_network_requests": 0,
+    "replay_cache_hits": 8,
+    "replay_identical_resource_results": true,
+    "encoding_candidates": [
+      "utf-8-sig"
+    ],
+    "literal_new_column_count": 86,
+    "header_review": "assistant_review_only_not_human_validated"
+  },
+  "retrieval_quality_evaluated": false,
+  "runtime_changed_by_original_experiment": false,
+  "limitations": [
+    "Declared format, MIME, URL suffix and size are metadata, not verified remote content.",
+    "A zero size is not evidence of a genuinely empty file; missing sizes prevent a full capacity estimate.",
+    "Per-resource declared byte sums may count repeated URLs and are not storage provisioning estimates.",
+    "Bbox validity checks do not prove administrative containment or observation locations.",
+    "CSV probing will inspect bounded prefixes; it cannot establish full date/geographic coverage or row counts.",
+    "First urllib transport failed with RemoteDisconnected; curl diagnostic succeeded. Exact transport discrepancy is unconfirmed.",
+    "Fixed sample of direct HTTPS .csv resources, no redirects/retries/archive/PDF processing.",
+    "First record is only a candidate header until reviewed; all novelty checks are literal metadata comparisons.",
+    "Prefix bytes are not a whole-file backup and establish no full row counts/time/spatial coverage.",
+    "No live indexing, retrieval, embedding or reranking was performed."
+  ]
+}
