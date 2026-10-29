@@ -748,7 +748,7 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         phases = [
             line for line in result.stdout.splitlines() if line.startswith("CI_PHASE ")
         ]
-        self.assertEqual(13, len(phases))
+        self.assertEqual(14, len(phases))
         for line in phases:
             self.assertRegex(line, r"^CI_PHASE phase=[a-z-]+ seconds=\d+ exit=0$")
 
@@ -838,7 +838,11 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "npm",
             "web-image",
         }
-        oss_phases = {"public-entry-images", "public-entry-runtime"}
+        oss_phases = {
+            "intranet-entry-runtime",
+            "public-entry-images",
+            "public-entry-runtime",
+        }
         browser_phases = {
             "browser-image",
             "gateway-bootstrap",
@@ -903,6 +907,13 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     suite == "oss",
                     any(
                         "tests.integration.public_entry.test_runtime" in args
+                        for args in python
+                    ),
+                )
+                self.assertEqual(
+                    1 if suite == "oss" else 0,
+                    sum(
+                        "tests.integration.test_intranet_web_runtime" in args
                         for args in python
                     ),
                 )

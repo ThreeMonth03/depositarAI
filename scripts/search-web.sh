@@ -35,7 +35,13 @@ fi
 has_private_ca="$("${compose[@]}" config --format json | python3 -c '
 import json, sys
 from pathlib import PurePosixPath
-value = json.load(sys.stdin)["services"]["web"]["environment"].get("WEB_UPSTREAM_CA_FILE")
+from search.web.origin import validate_origin
+environment = json.load(sys.stdin)["services"]["web"]["environment"]
+try:
+    validate_origin(environment["WEB_ORIGIN"], access_mode=sys.argv[1])
+except (ValueError, KeyError, TypeError):
+    raise SystemExit("Website origin does not match SEARCH_WEB_MODE.") from None
+value = environment.get("WEB_UPSTREAM_CA_FILE")
 if value and (
     not isinstance(value, str)
     or not PurePosixPath(value).is_absolute()
@@ -43,7 +49,7 @@ if value and (
 ):
     raise SystemExit("Private upstream CA must be an absolute file path.")
 print("yes" if value else "no")
-')"
+' "$mode")"
 if [[ "$has_private_ca" == yes ]]; then
   compose+=(-f deploy/compose/compose.search-web.ca.yaml)
 fi
