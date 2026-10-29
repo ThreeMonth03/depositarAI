@@ -1,0 +1,101 @@
+name: Frontend release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-test:
+    if: github.repository == 'ThreeMonth03/depositarAI' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the approved main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up an isolated containerd image store
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.7.2
+          set-host: true
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - name: Install verified Docker Compose
+        run: bash scripts/ci/install-compose.sh
+      - name: Scan the selected source and history
+        run: |
+          bash scripts/ci/install-gitleaks.sh
+          bash scripts/ci/source-package.sh \
+            "$RUNNER_TEMP/frontend-source-check" "$GITHUB_SHA" "$GITLEAKS_BINARY"
+      - name: Validate product policy and publisher
+        run: |
+          make search-ci
+          python3 -B -m unittest tests.unit.deployment.test_frontend_release_publisher -v
+      - name: Build and test the frontend images once
+        env:
+          CI_FRONTEND_TESTED_IMAGES_FILE: ${{ runner.temp }}/frontend-tested-images.json
+        run: bash scripts/test-search-web.sh
+      - name: Export the exact tested images
+        run: |
+          python3 scripts/ci/frontend-release.py export \
+            --tested-images "$RUNNER_TEMP/frontend-tested-images.json" \
+            --output "$RUNNER_TEMP/frontend-release"
+      - name: Pass only verified frontend artifacts to the publisher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-tested-${{ github.sha }}
+          path: ${{ runner.temp }}/frontend-release/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [build-test]
+    if: github.repository == 'ThreeMonth03/depositarAI' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the same trusted publisher revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download this run's tested frontend artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frontend-tested-${{ github.sha }}
+          path: ${{ runner.temp }}/frontend-release
+      - name: Verify the payload before signing
+        run: |
+          python3 scripts/ci/frontend-release.py verify \
+            --directory "$RUNNER_TEMP/frontend-release"
+      - name: Attest the manifest covering both image archives
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/frontend-release/frontend-release.json
+      - name: Keep the offline signature bundle beside the manifest
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          install -m 600 -- "$BUNDLE_PATH" \
+            "$RUNNER_TEMP/frontend-release/frontend-release.sigstore.json"
+      - name: Publish only after every release asset is uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ci/frontend-release.py publish \
+            --directory "$RUNNER_TEMP/frontend-release"
