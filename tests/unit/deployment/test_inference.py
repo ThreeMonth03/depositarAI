@@ -650,7 +650,7 @@ class InferenceDockerBoundsTests(unittest.TestCase):
 
         with mock.patch.object(image_build, "_run", side_effect=timeout) as runner:
             with self.assertRaisesRegex(
-                inference.InferenceError, "command_failed"
+                inference.InferenceError, "command_timeout"
             ) as caught:
                 self.client(None).call(["info"])
             self.assertEqual(1, runner.call_count)
@@ -685,3 +685,47 @@ class InferenceDockerBoundsTests(unittest.TestCase):
         ):
             client.call(["info"])
         self.assertEqual(1, runner.call_count)
+
+
+class PrivateInferenceTLSOwnershipTests(unittest.TestCase):
+    def test_gpu_gate_keeps_tls_in_the_real_ownership_collector(self):
+        from tests.unit.deployment.test_gpu_ownership import (
+            CONFIG,
+            FakeRunner,
+            tls_container,
+            tls_proof,
+        )
+
+        row = tls_container("outer")
+        proof = tls_proof(row, "outer")
+        runner = FakeRunner([row])
+        inference._gpu(CONFIG, (), runner, cpu_proofs=(proof,))
+        self.assertEqual(runner.inspect_count[row["Id"]], 2)
+        with self.assertRaisesRegex(inference.InferenceError, "gpu_ownership_blocked"):
+            inference._gpu(CONFIG, (), FakeRunner([row]))
+
+    def test_gpu_gate_requires_cpu_count_in_the_verified_result(self):
+        from tests.unit.deployment.test_gpu_ownership import (
+            CONFIG,
+            tls_container,
+            tls_proof,
+        )
+
+        proof = tls_proof(tls_container())
+        response = {
+            "schema_version": 1,
+            "status": "ok",
+            "code": "gpu_ownership_verified",
+            "snapshot_only": True,
+            "exclusive_reservation": False,
+            "runtime_modified": False,
+            "sealed_gpu_container_count": 0,
+            "gpu_count": 4,
+        }
+        with mock.patch.object(
+            inference.gpu_ownership, "run_gpu_ownership", return_value=response
+        ):
+            with self.assertRaisesRegex(
+                inference.InferenceError, "gpu_ownership_blocked"
+            ):
+                inference._gpu(CONFIG, (), None, cpu_proofs=(proof,))

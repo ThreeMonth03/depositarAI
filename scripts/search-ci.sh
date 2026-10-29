@@ -128,6 +128,10 @@ python3 -m unittest -v \
   tests.unit.deployment.test_image_fixtures \
   tests.unit.deployment.test_credentials \
   tests.unit.deployment.test_inference \
+  tests.unit.deployment.test_resident_models \
+  tests.unit.deployment.test_shared_request_policy \
+  tests.unit.deployment.test_shared_backend_probe \
+  tests.unit.deployment.test_shared_backend \
   tests.unit.deployment.test_image_authority \
   tests.unit.deployment.test_runtime_docker \
   tests.unit.deployment.test_inference_runtime \

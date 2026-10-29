@@ -220,7 +220,10 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
             with self.subTest(result_type=type(result).__name__):
                 client, runner = self.client(outputs=[result])
                 self.lifecycle_failure(
-                    lambda: client.call(["info"]), "inference_command_failed"
+                    lambda: client.call(["info"]),
+                    "inference_command_timeout"
+                    if isinstance(result, subprocess.TimeoutExpired)
+                    else "inference_command_failed",
                 )
                 self.assertEqual(runner.call_count, 1)
 

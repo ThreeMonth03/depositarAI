@@ -45,6 +45,33 @@ class RuntimeDockerTests(unittest.TestCase):
         self.assertEqual("InferenceError", runtime_docker.InferenceError.__name__)
         self.assertIsNot(runtime_docker.Docker, image_build._Docker)
 
+    def test_runner_timeouts_keep_the_closed_timeout_code_without_diagnostics(self):
+        for error, code in (
+            (
+                subprocess.TimeoutExpired("PRIVATE_SENTINEL", 130),
+                "inference_command_timeout",
+            ),
+            (
+                image_build.ImageBuildError("image_build_command_timeout"),
+                "inference_command_timeout",
+            ),
+            (
+                image_build.ImageBuildError("image_build_output_limit"),
+                "inference_command_failed",
+            ),
+            (ValueError("image_build_command_timeout"), "inference_command_failed"),
+            (OSError("PRIVATE_SENTINEL"), "inference_command_failed"),
+        ):
+            with self.subTest(error=type(error).__name__, code=code):
+                runner = mock.Mock(side_effect=error)
+                client = runtime_docker.Docker("/private-client", runner)
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError, "^" + code + "$"
+                ) as caught:
+                    client.call(["info"], timeout=130)
+                self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
+                self.assertEqual(runner.call_count, 1)
+
     def test_fresh_import_does_not_load_controllers_or_model_dependencies(self):
         script = """
 import subprocess

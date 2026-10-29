@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "state_root": "/absolute/private/shared-backend",
+  "production_config": "/absolute/private/product.json",
+  "production_source": "/absolute/pinned/live-api-source",
+  "tls_plan": "/absolute/private/tls/endpoint/plan.json"
+}

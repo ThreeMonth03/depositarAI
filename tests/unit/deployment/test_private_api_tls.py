@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.deployment import private_api_tls as endpoint
+from search.operations.deployment import gpu_ownership
+from tests.unit.deployment.test_gpu_ownership import container
 from tests.unit.deployment.public_entry.test_preflight import fixture
 
 OUTER_NAME = "api.example.test"
@@ -105,6 +107,91 @@ class Runner:
             else b"\n".join(json.dumps(row).encode() for row in value)
         )
         return SimpleNamespace(returncode=0, stdout=raw, stderr=b"")
+
+
+class TLSProofRunner:
+    """Exercise real TLS plan/ownership checks against one local-daemon fixture."""
+
+    def __init__(self, backend, path):
+        self.backend, self.calls = backend, []
+        self.projected, self.owned, self.runtime = {}, {}, []
+        compose = json.loads((path / "compose.json").read_bytes())
+        for index, (role, service) in enumerate(compose["services"].items(), 8):
+            identifier = str(index) * 64
+            row = container(identifier, pid=1000 + index)
+            row["Image"] = "sha256:" + "f" * 64
+            row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=void"]
+            row["HostConfig"]["CapAdd"] = service.get("cap_add")
+            row["Mounts"] = [
+                {
+                    "Type": "bind",
+                    "Source": m["source"],
+                    "Destination": m["target"],
+                    "RW": False,
+                    "Propagation": "rprivate",
+                }
+                for m in service["volumes"]
+            ]
+            row["HostConfig"]["Binds"] = [
+                f"{m['Source']}:{m['Destination']}:ro,rprivate" for m in row["Mounts"]
+            ]
+            self.projected[identifier] = row
+            self.runtime.append({"Service": role, "ID": identifier})
+            self.owned[identifier] = {
+                "Id": identifier,
+                "Image": row["Image"],
+                "Mounts": row["Mounts"],
+                "Labels": {
+                    **service["labels"],
+                    "com.docker.compose.project": compose["name"],
+                    "com.docker.compose.service": role,
+                    "com.docker.compose.project.config_files": str(
+                        path / "compose.json"
+                    ),
+                },
+                "NetworkMode": service["network_mode"],
+                "Running": True,
+                "Healthy": "healthy",
+                "Command": service["command"],
+                "Entrypoint": service["entrypoint"],
+                "User": service["user"],
+                "ReadonlyRootfs": True,
+                "Privileged": False,
+                "Runtime": "runc",
+                "PidMode": "",
+                "SecurityOpt": service["security_opt"],
+                "CapDrop": ["ALL"],
+                "CapAdd": service.get("cap_add"),
+                "PortBindings": {},
+            }
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        local_prefix = gpu_ownership.DOCKER_PREFIX
+        if argv[0] == "docker":
+            if tuple(argv[: len(local_prefix)]) != local_prefix:
+                raise AssertionError("TLS ownership must use the fixed local daemon")
+            argv = ["docker", *argv[len(local_prefix) :]]
+        if (
+            argv[:2] == ["docker", "inspect"]
+            and argv[3] == gpu_ownership.INSPECT_FORMAT
+        ):
+            row = copy.deepcopy(self.projected[argv[-1]])
+            row["HostConfig"]["DeviceRequests"].append(None)
+            row["NVIDIAEnv"].append(None)
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(row).encode(), stderr=b""
+            )
+        if argv[:2] == ["docker", "inspect"] and '"NetworkMode"' in argv[3]:
+            value = self.owned[argv[-1]]
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(value).encode(), stderr=b""
+            )
+        if argv[:2] == ["docker", "compose"] and "ps" in argv:
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(self.runtime).encode(), stderr=b""
+            )
+        return self.backend(argv, **kwargs)
 
 
 class PrivateApiTlsTests(unittest.TestCase):
@@ -229,6 +316,79 @@ class PrivateApiTlsTests(unittest.TestCase):
             self.assertEqual(service["cap_drop"], ["ALL"])
             self.assertTrue(service["read_only"])
             self.assertEqual(service["security_opt"], ["no-new-privileges:true"])
+
+    def test_gpu_producer_authenticates_real_plan_and_healthy_pair_without_mutation(
+        self,
+    ):
+        self.prepare()
+        runner = TLSProofRunner(self.runner, self.output)
+        proofs = endpoint.gpu_ownership_proofs(self.output / "plan.json", runner=runner)
+        self.assertEqual(len(proofs), 2)
+        self.assertEqual({p.role for p in proofs}, gpu_ownership.TLS_CPU_ROLES)
+        for proof in proofs:
+            self.assertEqual(
+                proof.projection_sha256,
+                gpu_ownership.cpu_projection_sha256(
+                    runner.projected[proof.container_id]
+                ),
+            )
+        self.assertNotIn(str(self.root), str(proofs))
+        self.assertFalse(
+            any(
+                any(x in call for x in ("up", "stop", "rm", "exec"))
+                for call in runner.calls
+            )
+        )
+
+    def test_gpu_producer_rejects_missing_unhealthy_or_changed_tls_profile(self):
+        self.prepare()
+        for case in (
+            "missing",
+            "unhealthy",
+            "namespace",
+            "capabilities",
+            "gpu",
+            "run_mount",
+        ):
+            with self.subTest(case=case):
+                runner = TLSProofRunner(self.runner, self.output)
+                inner = next(
+                    row["ID"] for row in runner.runtime if row["Service"] == "inner"
+                )
+                outer = next(
+                    row["ID"] for row in runner.runtime if row["Service"] == "outer"
+                )
+                if case == "missing":
+                    runner.runtime.pop()
+                elif case == "unhealthy":
+                    runner.owned[outer]["Healthy"] = "unhealthy"
+                elif case == "namespace":
+                    runner.owned[inner]["NetworkMode"] = "host"
+                elif case == "capabilities":
+                    runner.owned[outer]["CapAdd"] = ["SYS_ADMIN"]
+                elif case == "gpu":
+                    runner.projected[inner]["NVIDIAEnv"] = [
+                        "NVIDIA_VISIBLE_DEVICES=all"
+                    ]
+                else:
+                    runner.projected[inner]["Mounts"][0]["RW"] = True
+                with self.assertRaises(endpoint.EndpointError):
+                    endpoint.gpu_ownership_proofs(
+                        self.output / "plan.json", runner=runner
+                    )
+
+    def test_gpu_producer_rechecks_backend_after_collecting_projection(self):
+        self.prepare()
+        runner = TLSProofRunner(self.runner, self.output)
+
+        def changed(argv, **kwargs):
+            value = runner(argv, **kwargs)
+            if gpu_ownership.INSPECT_FORMAT in argv:
+                self.api["StartedAt"] = "2026-10-30T00:00:00Z"
+            return value
+
+        with self.assertRaises(endpoint.EndpointError):
+            endpoint.gpu_ownership_proofs(self.output / "plan.json", runner=changed)
 
     def test_tls_configs_have_exact_methods_verified_inner_tls_and_no_retry(self):
         self.prepare()

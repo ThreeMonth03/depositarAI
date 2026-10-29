@@ -30,7 +30,9 @@ API_ID = "1" * 64
 CORE_IDS = {"fess-search": "2" * 64, "opensearch-search": "3" * 64}
 
 
-def evidence(*, catalog_revision=REVISION):
+def evidence(
+    *, catalog_revision=REVISION, revision=REVISION, api_id=API_ID, image_id=IMAGE
+):
     """Use the actual renderer; only a future trusted host seal adds ID/labels."""
     config = ProductConfig(
         2,
@@ -69,14 +71,14 @@ def evidence(*, catalog_revision=REVISION):
         config,
         plan,
         QueryBindingPaths.for_catalog(config, plan),
-        REVISION,
+        revision,
         uid=21599,
         gid=564,
         inference_source_sha256="6" * 64,
     )["release"]
     inherited_env = {
         "PATH": "/usr/local/bin:/usr/bin",
-        "SOURCE_REVISION": REVISION,
+        "SOURCE_REVISION": revision,
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
         "HAYSTACK_TELEMETRY_ENABLED": "false",
@@ -84,20 +86,20 @@ def evidence(*, catalog_revision=REVISION):
     }
     image = {
         "schema_version": 1,
-        "revision": REVISION,
+        "revision": revision,
         "service": "conversation-api",
         "source_sha256": SOURCE,
-        "image_id": IMAGE,
+        "image_id": image_id,
         "image_environment_sha256": client_lease.lease_digest(inherited_env),
     }
     labels = {
-        "org.opencontainers.image.revision": REVISION,
-        "io.depositar.ai.source.revision": REVISION,
+        "org.opencontainers.image.revision": revision,
+        "io.depositar.ai.source.revision": revision,
         "io.depositar.ai.source.service": "conversation-api",
         "io.depositar.ai.source.sha256": SOURCE,
     }
     service = compose["services"]["conversation-api"]
-    service.update(image=IMAGE, labels=labels)
+    service.update(image=image_id, labels=labels)
     network_ids = {
         entry["name"]: str(index + 6) * 64
         for index, entry in enumerate(compose["networks"].values())
@@ -113,7 +115,7 @@ def evidence(*, catalog_revision=REVISION):
         "projection_sha256": "4" * 64,
         "access_sha256": "5" * 64,
     }
-    if catalog_revision != REVISION:
+    if catalog_revision != revision:
         identity["catalog_revision"] = catalog_revision
     lease = {
         **identity,
@@ -121,17 +123,17 @@ def evidence(*, catalog_revision=REVISION):
         "phase": "private_clients",
         "release_project": compose["name"],
         "release_compose_sha256": client_lease.lease_digest(compose),
-        "revision": REVISION,
+        "revision": revision,
         "source_sha256": SOURCE,
-        "api_container_id": API_ID,
-        "api_image_id": IMAGE,
+        "api_container_id": api_id,
+        "api_image_id": image_id,
         "network_ids": network_ids,
     }
     api = {
-        "Id": API_ID,
-        "Image": IMAGE,
+        "Id": api_id,
+        "Image": image_id,
         "Config": {
-            "Image": IMAGE,
+            "Image": image_id,
             "User": service["user"],
             "Cmd": list(client_lease.API_COMMAND),
             "Entrypoint": None,
@@ -213,7 +215,7 @@ def evidence(*, catalog_revision=REVISION):
         "Labels": {"com.docker.compose.project": plan["project"]},
         "Containers": {
             identifier: {"Name": "not-an-authority"}
-            for identifier in (*CORE_IDS.values(), API_ID)
+            for identifier in (*CORE_IDS.values(), api_id)
         },
     }
     return {
@@ -225,6 +227,45 @@ def evidence(*, catalog_revision=REVISION):
         "api_container": api,
         "catalog_network": network,
     }
+
+
+def shared_evidence(*, separate_catalogs=False):
+    """Two sealed CPU APIs, with real renderer plans and unfiltered snapshots."""
+    first = evidence()
+    second = evidence(
+        catalog_revision="7" * 40 if separate_catalogs else REVISION,
+        revision="6" * 40,
+        api_id="d" * 64,
+        image_id="sha256:" + "f" * 64,
+    )
+    # Each release has its own website; inference/ranking IDs remain shared.
+    website = second["release_compose"]["networks"]["website"]["name"]
+    second["lease"]["network_ids"][website] = "a" * 64
+    second["api_container"]["NetworkSettings"]["Networks"][website]["NetworkID"] = (
+        "a" * 64
+    )
+    if separate_catalogs:
+        cores = {"fess-search": "c" * 64, "opensearch-search": "e" * 64}
+        for value in (second["catalog_identity"], second["lease"]):
+            value["core_container_ids"] = dict(cores)
+            value["catalog_network_id"] = "b" * 64
+        network = second["catalog_network"]
+        network["Id"] = "b" * 64
+        network["Containers"] = {
+            identifier: {}
+            for identifier in (*cores.values(), second["lease"]["api_container_id"])
+        }
+        second["lease"]["network_ids"][network["Name"]] = "b" * 64
+        second["api_container"]["NetworkSettings"]["Networks"][network["Name"]][
+            "NetworkID"
+        ] = "b" * 64
+    else:
+        network = first["catalog_network"]
+        network["Containers"][second["lease"]["api_container_id"]] = {
+            "Name": "candidate"
+        }
+        second["catalog_network"] = copy.deepcopy(network)
+    return [first, second]
 
 
 def leased_runtime_evidence(*, catalog_revision=REVISION):
@@ -284,6 +325,16 @@ def leased_runtime_evidence(*, catalog_revision=REVISION):
         "core_containers": fixture.containers,
         "core_image_inspections": inspections,
     }
+
+
+def shared_leased_runtime_evidence():
+    values = leased_runtime_evidence()
+    second = shared_evidence()[1]
+    values["catalog_network"]["Containers"][second["lease"]["api_container_id"]] = {}
+    second["catalog_network"] = copy.deepcopy(values["catalog_network"])
+    first = {key: values[key] for key in client_lease.CLIENT_FIELDS}
+    values["shared_clients"] = [copy.deepcopy(first), second]
+    return values
 
 
 class LeasedRuntimeTests(unittest.TestCase):
@@ -1203,6 +1254,231 @@ class ClientLeaseTests(unittest.TestCase):
                     self.values = evidence()
                     self.values[record] = malformed
                     self.reject()
+
+
+class SharedLeasedRuntimeTests(unittest.TestCase):
+    def reject(self, values, error):
+        with self.assertRaises(client_lease.LeaseError) as caught:
+            client_lease.validate_leased_runtime(**values)
+        self.assertEqual(str(caught.exception), error)
+
+    def test_full_catalog_core_and_shared_clients_are_proved_without_mutation(self):
+        values = shared_leased_runtime_evidence()
+        original = copy.deepcopy(values)
+        proof = client_lease.validate_leased_runtime(**values)
+        self.assertTrue(proof["core_runtime_verified"])
+        self.assertEqual(
+            proof["catalog_container_ids"], {**CORE_IDS, "ollama-embedding": "c" * 64}
+        )
+        self.assertEqual(
+            set(proof["expected_peer_ids"]),
+            set(values["catalog_network"]["Containers"]),
+        )
+        self.assertEqual(values, original)
+        values.pop("shared_clients")
+        self.reject(values, "catalog_client_network_peers_changed")
+
+    def test_shared_collection_is_verified_once_and_old_single_path_is_not_used(self):
+        values = shared_leased_runtime_evidence()
+        original = client_lease.validate_clients
+        with (
+            mock.patch.object(
+                client_lease, "validate_clients", wraps=original
+            ) as checker,
+            mock.patch.object(
+                client_lease,
+                "validate_client_lease",
+                side_effect=AssertionError("no single-peer bypass"),
+            ),
+        ):
+            client_lease.validate_leased_runtime(**values)
+        self.assertEqual(checker.call_count, 1)
+        self.assertIs(checker.call_args.args[0], values["shared_clients"])
+
+    def test_selected_member_must_match_actual_snapshot_environment_and_plan(self):
+        for kind in ("snapshot", "environment", "plan", "network"):
+            with self.subTest(kind=kind):
+                values = shared_leased_runtime_evidence()
+                member = values["shared_clients"][0]
+                if kind == "snapshot":
+                    member["api_container"]["State"]["StartedAt"] = (
+                        "2026-10-29T00:00:00.000000000Z"
+                    )
+                elif kind == "environment":
+                    member["image_environment"].reverse()
+                elif kind == "plan":
+                    member["release_compose"]["services"]["web"]["healthcheck"][
+                        "interval"
+                    ] = "30s"
+                    member["lease"]["release_compose_sha256"] = (
+                        client_lease.lease_digest(member["release_compose"])
+                    )
+                else:
+                    for registered in values["shared_clients"]:
+                        registered["catalog_network"]["Containers"]["2" * 64][
+                            "Name"
+                        ] = "another-snapshot"
+                self.reject(values, "catalog_client_shared_member_changed")
+
+    def test_original_core_command_mount_and_network_guards_remain_required(self):
+        for kind in ("command", "mount", "driver"):
+            with self.subTest(kind=kind):
+                values = shared_leased_runtime_evidence()
+                if kind == "command":
+                    values["core_containers"][0]["Config"]["Cmd"] = ["unreviewed"]
+                    error = "catalog_client_core_image_startup_changed"
+                elif kind == "mount":
+                    values["core_containers"][0]["Mounts"][0]["RW"] = True
+                    error = "catalog_client_core_runtime_changed"
+                else:
+                    values["catalog_network"]["Driver"] = "overlay"
+                    for registered in values["shared_clients"]:
+                        registered["catalog_network"]["Driver"] = "overlay"
+                    error = "catalog_client_network_driver_changed"
+                self.reject(values, error)
+
+    def test_no_registered_api_may_collide_with_the_cpu_embedding_container(self):
+        values = shared_leased_runtime_evidence()
+        second = values["shared_clients"][1]
+        old, new = second["lease"]["api_container_id"], "c" * 64
+        second["lease"]["api_container_id"] = new
+        second["api_container"]["Id"] = new
+        for member in values["shared_clients"]:
+            peers = member["catalog_network"]["Containers"]
+            peers[new] = peers.pop(old)
+        peers = values["catalog_network"]["Containers"]
+        peers[new] = peers.pop(old)
+        self.reject(values, "catalog_client_core_catalog_binding_changed")
+
+
+class RegisteredClientsTests(unittest.TestCase):
+    def reject(self, clients, code=None):
+        with self.assertRaises(client_lease.LeaseError) as caught:
+            client_lease.validate_clients(clients)
+        self.assertRegex(str(caught.exception), r"\Acatalog_client_[a-z_]+\Z")
+        if code:
+            self.assertEqual(str(caught.exception), code)
+
+    def test_single_client_has_the_unchanged_proof(self):
+        values = evidence()
+        expected = client_lease.validate_client_lease(**values)
+        self.assertEqual(client_lease.validate_clients([values]), [expected])
+
+    def test_two_clients_keep_input_order_and_full_unfiltered_catalog_peers(self):
+        for separate in (False, True):
+            with self.subTest(separate_catalogs=separate):
+                clients = shared_evidence(separate_catalogs=separate)
+                original = copy.deepcopy(clients)
+                proofs = client_lease.validate_clients(clients)
+                self.assertEqual(clients, original)
+                self.assertEqual(
+                    [p["api_container_id"] for p in proofs],
+                    [c["lease"]["api_container_id"] for c in clients],
+                )
+                for member, proof in zip(clients, proofs):
+                    self.assertEqual(
+                        set(proof["expected_peer_ids"]),
+                        set(member["catalog_network"]["Containers"]),
+                    )
+                    self.assertEqual(
+                        proof["lease_sha256"],
+                        client_lease.lease_digest(member["lease"]),
+                    )
+                self.assertNotIn("Env", json.dumps(proofs))
+                self.assertNotIn("/srv", json.dumps(proofs))
+
+    def test_shared_admission_does_not_weaken_the_single_client_default(self):
+        for member in shared_evidence():
+            with self.assertRaisesRegex(
+                client_lease.LeaseError, "network_peers_changed"
+            ):
+                client_lease.validate_client_lease(**member)
+
+    def test_no_empty_third_client_tuple_bare_proof_or_extra_fields(self):
+        for invalid in (
+            None,
+            [],
+            (),
+            [evidence()] * 3,
+            [None],
+            [client_lease.validate_client_lease(**evidence())],
+        ):
+            with self.subTest(type=type(invalid)):
+                self.reject(invalid, "catalog_client_set_invalid")
+        values = evidence()
+        values["allow_peer_ids"] = ["f" * 64]
+        self.reject([values], "catalog_client_set_invalid")
+
+    def test_duplicate_api_or_release_project_is_not_registration(self):
+        for duplicate in ("api", "project"):
+            with self.subTest(duplicate=duplicate):
+                clients = shared_evidence()
+                if duplicate == "api":
+                    clients[1]["lease"]["api_container_id"] = clients[0]["lease"][
+                        "api_container_id"
+                    ]
+                    clients[1]["api_container"]["Id"] = clients[0]["api_container"][
+                        "Id"
+                    ]
+                else:
+                    clients[1] = copy.deepcopy(clients[0])
+                    clients[1]["lease"]["api_container_id"] = "d" * 64
+                    clients[1]["api_container"]["Id"] = "d" * 64
+                self.reject(clients, "catalog_client_identity_duplicate")
+
+    def test_foreign_missing_and_inconsistent_network_peers_are_rejected(self):
+        for kind in ("foreign", "missing", "inconsistent"):
+            with self.subTest(kind=kind):
+                clients = shared_evidence()
+                if kind == "inconsistent":
+                    clients[1]["catalog_network"]["Containers"]["f" * 64] = {}
+                else:
+                    for member in clients:
+                        peers = member["catalog_network"]["Containers"]
+                        if kind == "foreign":
+                            peers["f" * 64] = {}
+                        else:
+                            peers.pop(clients[1]["lease"]["api_container_id"])
+                self.reject(
+                    clients,
+                    "catalog_client_network_snapshot_changed"
+                    if kind == "inconsistent"
+                    else "catalog_client_network_peers_changed",
+                )
+
+    def test_every_member_requires_full_source_capability_and_catalog_proof(self):
+        for kind in ("source", "gpu", "environment", "role", "catalog"):
+            with self.subTest(kind=kind):
+                clients = shared_evidence()
+                second = clients[1]
+                if kind == "source":
+                    second["image_proof"]["source_sha256"] = "f" * 64
+                elif kind == "gpu":
+                    second["api_container"]["HostConfig"]["DeviceRequests"] = [
+                        {"Driver": "nvidia"}
+                    ]
+                elif kind == "environment":
+                    second["api_container"]["Config"]["Env"].append(
+                        "UNAPPROVED=private"
+                    )
+                elif kind == "role":
+                    second["api_container"]["Config"]["Labels"][
+                        "com.docker.compose.service"
+                    ] = "web"
+                else:
+                    for key in ("lease", "catalog_identity"):
+                        second[key]["access_sha256"] = "f" * 64
+                self.reject(clients)
+
+    def test_api_cannot_collide_with_another_catalog_core_identity(self):
+        clients = shared_evidence(separate_catalogs=True)
+        second = clients[1]
+        old = second["lease"]["api_container_id"]
+        second["lease"]["api_container_id"] = CORE_IDS["fess-search"]
+        second["api_container"]["Id"] = CORE_IDS["fess-search"]
+        peers = second["catalog_network"]["Containers"]
+        peers[CORE_IDS["fess-search"]] = peers.pop(old)
+        self.reject(clients, "catalog_client_identity_duplicate")
 
 
 if __name__ == "__main__":

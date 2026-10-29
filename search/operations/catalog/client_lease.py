@@ -1,4 +1,4 @@
-"""Pure, closed permission proof for one private catalog API client.
+"""Pure, closed permission proofs for private catalog API clients.
 
 The host must first authenticate private lease/compose/image receipts, verify
 their ownership and immutable source bytes, and independently verify the core
@@ -12,6 +12,8 @@ A separately sealed lease permits exactly one conversation-api peer;
 the unfiltered actual catalog network must then contain the two sealed core IDs
 and this one API ID. The caller must hold the operation lock and reverify facts
 at the mutation boundary; the returned proof is an observation, not a lock.
+The separate registered-set entry admits at most two fully verified clients,
+with exact unfiltered peer membership for each catalog; defaults stay strict.
 
 The renderer emits image tags and plan-only metadata. The host release facade
 authenticates source and completed receipts, pins image IDs/source labels and
@@ -67,6 +69,17 @@ IMAGE_FIELDS = frozenset(
         "source_sha256",
         "image_id",
         "image_environment_sha256",
+    }
+)
+CLIENT_FIELDS = frozenset(
+    {
+        "lease",
+        "catalog_identity",
+        "release_compose",
+        "image_proof",
+        "image_environment",
+        "api_container",
+        "catalog_network",
     }
 )
 API_FIELDS = frozenset(
@@ -563,7 +576,7 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
         raise LeaseError("catalog_client_network_attachments_changed")
 
 
-def validate_client_lease(
+def _validate_client_member(
     lease,
     *,
     catalog_identity,
@@ -573,7 +586,7 @@ def validate_client_lease(
     api_container,
     catalog_network,
 ):
-    """Validate supplied sealed facts and actual inspect rows, never filter peers.
+    """Validate one member's full facts before checking network-wide admission.
 
     ``catalog_identity`` is the closed CATALOG_FIELDS summary of independently
     host-verified runtime/projection/access receipts, plus ``catalog_revision``
@@ -621,7 +634,6 @@ def validate_client_lease(
             or network.get("Internal") is not True
             or network.get("Attachable") is not False
             or type(network.get("Containers")) is not dict
-            or set(network["Containers"]) != peers
             or network.get("Labels", {}).get("com.docker.compose.project")
             != lease["catalog_project"]
         ):
@@ -668,6 +680,116 @@ def validate_client_lease(
         raise LeaseError("catalog_client_evidence_invalid") from None
 
 
+def validate_client_lease(
+    lease,
+    *,
+    catalog_identity,
+    release_compose,
+    image_proof,
+    image_environment,
+    api_container,
+    catalog_network,
+):
+    """Prove exactly one sealed API client on the unfiltered catalog network.
+
+    The host must authenticate all source/image/lease facts and collect actual
+    same-snapshot inspections. This default never admits another API client.
+    """
+    proof = _validate_client_member(
+        lease,
+        catalog_identity=catalog_identity,
+        release_compose=release_compose,
+        image_proof=image_proof,
+        image_environment=image_environment,
+        api_container=api_container,
+        catalog_network=catalog_network,
+    )
+    if set(catalog_network["Containers"]) != set(proof["expected_peer_ids"]):
+        raise LeaseError("catalog_client_network_peers_changed")
+    return proof
+
+
+def validate_clients(clients):
+    """Prove one or two explicitly registered clients without filtering peers.
+
+    Every member supplies all seven CLIENT_FIELDS, authenticated by the host as
+    for validate_client_lease. Registration and locking remain host duties; bare
+    IDs, previously returned proofs and caller-created dictionaries do not grant
+    authority. Members sharing a catalog must supply identical full network
+    snapshots and catalog identities. Results retain input order and the original
+    proof shape, with expected_peer_ids covering that entire catalog group.
+    """
+    try:
+        if type(clients) is not list or not 1 <= len(clients) <= 2:
+            raise LeaseError("catalog_client_set_invalid")
+        proofs, groups = [], {}
+        api_ids, release_projects = set(), set()
+        catalog_projects = {}
+        for member in clients:
+            _closed(member, CLIENT_FIELDS, "catalog_client_set_invalid")
+            proof = _validate_client_member(**member)
+            api_id, project = proof["api_container_id"], proof["release_project"]
+            if api_id in api_ids or project in release_projects:
+                raise LeaseError("catalog_client_identity_duplicate")
+            api_ids.add(api_id)
+            release_projects.add(project)
+            catalog_id = proof["catalog_network_id"]
+            catalog_project = proof["catalog_project"]
+            if (
+                catalog_project in catalog_projects
+                and catalog_projects[catalog_project] != catalog_id
+            ):
+                raise LeaseError("catalog_client_catalog_group_changed")
+            catalog_projects[catalog_project] = catalog_id
+            identity = {
+                **{key: proof[key] for key in CATALOG_FIELDS},
+                "catalog_revision": member["lease"].get(
+                    "catalog_revision", proof["revision"]
+                ),
+            }
+            if catalog_id not in groups:
+                groups[catalog_id] = {
+                    "identity": identity,
+                    "network": member["catalog_network"],
+                    "peers": set(proof["core_container_ids"].values()),
+                }
+            group = groups[catalog_id]
+            if group["identity"] != identity:
+                raise LeaseError("catalog_client_catalog_group_changed")
+            if group["network"] != member["catalog_network"]:
+                raise LeaseError("catalog_client_network_snapshot_changed")
+            group["peers"].add(api_id)
+            proofs.append(proof)
+        core_ids = set().union(*(set(p["core_container_ids"].values()) for p in proofs))
+        if api_ids & core_ids:
+            raise LeaseError("catalog_client_identity_duplicate")
+        core_owners = {}
+        for proof in proofs:
+            for identifier in proof["core_container_ids"].values():
+                owner = core_owners.setdefault(identifier, proof["catalog_network_id"])
+                if owner != proof["catalog_network_id"]:
+                    raise LeaseError("catalog_client_identity_duplicate")
+        for group in groups.values():
+            if set(group["network"]["Containers"]) != group["peers"]:
+                raise LeaseError("catalog_client_network_peers_changed")
+        for proof in proofs:
+            proof["expected_peer_ids"] = sorted(
+                groups[proof["catalog_network_id"]]["peers"]
+            )
+        return proofs
+    except LeaseError:
+        raise
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ):
+        raise LeaseError("catalog_client_evidence_invalid") from None
+
+
 def validate_leased_runtime(
     core_plan,
     core_compose,
@@ -682,8 +804,9 @@ def validate_leased_runtime(
     image_environment,
     api_container,
     core_image_inspections,
+    shared_clients=None,
 ):
-    """Prove the separate catalog-plus-one-client profile from supplied facts.
+    """Prove catalog core and its selected API from authenticated supplied facts.
 
     This function is pure, not a host readiness/receipt facade. The host must
     independently authenticate the prepared source/Compose/image/query/lease
@@ -700,6 +823,11 @@ def validate_leased_runtime(
     checker: exactly two core peers plus this API are allowed, never an extra
     helper, former release or unknown container. No baseline/network object is
     synthesized to hide the client from ``policy.validate_runtime``.
+
+    The optional ``shared_clients`` collection explicitly admits at most two
+    complete CLIENT_FIELDS evidence records. All members and unfiltered peer
+    groups are verified first, then this call must match one entire record.
+    The default remains exactly one client; no bare proof authorizes sharing.
     """
     try:
         try:
@@ -726,15 +854,31 @@ def validate_leased_runtime(
                 )
             ):
                 raise LeaseError("catalog_client_core_image_startup_changed")
-        proof = validate_client_lease(
-            lease,
-            catalog_identity=catalog_identity,
-            release_compose=release_compose,
-            image_proof=image_proof,
-            image_environment=image_environment,
-            api_container=api_container,
-            catalog_network=catalog_network,
-        )
+        member = {
+            "lease": lease,
+            "catalog_identity": catalog_identity,
+            "release_compose": release_compose,
+            "image_proof": image_proof,
+            "image_environment": image_environment,
+            "api_container": api_container,
+            "catalog_network": catalog_network,
+        }
+        if shared_clients is None:
+            proof = validate_client_lease(**member)
+            api_ids = {proof["api_container_id"]}
+        else:
+            proofs = validate_clients(shared_clients)
+            matches = [
+                proof
+                for evidence, proof in zip(shared_clients, proofs)
+                if evidence == member
+            ]
+            if len(matches) != 1:
+                raise LeaseError("catalog_client_shared_member_changed")
+            proof = matches[0]
+            api_ids = {item["api_container_id"] for item in proofs}
+        if set(core_ids.values()) & api_ids:
+            raise LeaseError("catalog_client_core_catalog_binding_changed")
         if (
             catalog_network.get("Driver") != "bridge"
             or catalog_network.get("Scope") != "local"

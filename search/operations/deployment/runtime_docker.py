@@ -97,6 +97,12 @@ class Docker:
             return streams[0]
         except InferenceError:
             raise
+        except subprocess.TimeoutExpired:
+            raise InferenceError("inference_command_timeout") from None
+        except image_build.ImageBuildError as error:
+            if str(error) == "image_build_command_timeout":
+                raise InferenceError("inference_command_timeout") from None
+            raise InferenceError("inference_command_failed") from None
         except (OSError, ValueError, subprocess.SubprocessError, UnicodeError):
             raise InferenceError("inference_command_failed") from None
 

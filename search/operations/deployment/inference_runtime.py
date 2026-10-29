@@ -192,9 +192,15 @@ def validate_runtime(compose, images, containers, networks):
     return _validate_runtime(compose, images, containers, networks)
 
 
-def _validate_runtime(compose, images, containers, networks, *, client=None):
+def _validate_runtime(
+    compose, images, containers, networks, *, client=None, clients=None
+):
     """Share GPU policy without manufacturing a baseline network snapshot."""
     try:
+        if clients is None:
+            clients = () if client is None else (client,)
+        elif client is not None:
+            raise InferenceRuntimeError("inference_client_snapshot_invalid")
         if (
             type(compose) is not dict
             or set(compose.get("services", {})) != SERVICES
@@ -278,7 +284,7 @@ def _validate_runtime(compose, images, containers, networks, *, client=None):
                 raise InferenceRuntimeError(
                     "inference_runtime_network_attachment_changed"
                 )
-        if client is not None and seen & set(client["expected_peer_ids"]):
+        if any(seen & set(item["expected_peer_ids"]) for item in clients):
             raise InferenceRuntimeError("inference_client_container_identity_collision")
         by_network = {}
         for row in networks:
@@ -298,9 +304,9 @@ def _validate_runtime(compose, images, containers, networks, *, client=None):
                 for name, entry in by_service.items()
                 if key in compose["services"][name]["networks"]
             }
-            if client is not None:
-                peers.add(client["api_container_id"])
-                if row.get("Id") != client["network_ids"][expected["name"]]:
+            for item in clients:
+                peers.add(item["api_container_id"])
+                if row.get("Id") != item["network_ids"][expected["name"]]:
                     raise InferenceRuntimeError("inference_client_network_id_changed")
                 if type(row.get("Containers")) is not dict:
                     raise InferenceRuntimeError(
@@ -345,6 +351,56 @@ def _validate_runtime(compose, images, containers, networks, *, client=None):
         raise InferenceRuntimeError("inference_runtime_snapshot_invalid") from None
 
 
+def _client_model_networks(compose, release_compose):
+    project = release_compose["networks"]["existing-inference"]["name"].removesuffix(
+        "_inference"
+    )
+    if compose.get("name") != project or any(
+        compose["networks"][key]["name"] != project + "_" + key
+        or compose["networks"][key]["name"]
+        != release_compose["networks"][release_key]["name"]
+        for key, release_key in (
+            ("inference", "existing-inference"),
+            ("ranking", "ranking"),
+        )
+    ):
+        raise InferenceRuntimeError("inference_client_source_or_network_changed")
+
+
+def validate_shared_runtime(compose, images, containers, networks, clients):
+    """Prove three GPU roles and one or two fully verified leased API clients.
+
+    The caller authenticates source, images and catalog receipts and supplies
+    complete same-snapshot evidence. Both model networks and each catalog
+    network remain unfiltered; client IDs alone cannot authorize shared access.
+    This validates runtime ownership, not a model-management network ACL.
+    """
+    try:
+        try:
+            proofs = client_lease.validate_clients(clients)
+        except client_lease.LeaseError:
+            raise InferenceRuntimeError("inference_client_lease_invalid") from None
+        for item in clients:
+            _client_model_networks(compose, item["release_compose"])
+        proof = _validate_runtime(compose, images, containers, networks, clients=proofs)
+        return {
+            **proof,
+            "api_container_ids": sorted(item["api_container_id"] for item in proofs),
+            "client_lease_sha256s": sorted(item["lease_sha256"] for item in proofs),
+        }
+    except InferenceRuntimeError:
+        raise
+    except (
+        KeyError,
+        TypeError,
+        AttributeError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+    ):
+        raise InferenceRuntimeError("inference_client_snapshot_invalid") from None
+
+
 def validate_leased_runtime(
     compose,
     images,
@@ -387,19 +443,7 @@ def validate_leased_runtime(
             )
         except client_lease.LeaseError:
             raise InferenceRuntimeError("inference_client_lease_invalid") from None
-        project = release_compose["networks"]["existing-inference"][
-            "name"
-        ].removesuffix("_inference")
-        if compose.get("name") != project or any(
-            compose["networks"][key]["name"] != project + "_" + key
-            or compose["networks"][key]["name"]
-            != release_compose["networks"][release_key]["name"]
-            for key, release_key in (
-                ("inference", "existing-inference"),
-                ("ranking", "ranking"),
-            )
-        ):
-            raise InferenceRuntimeError("inference_client_source_or_network_changed")
+        _client_model_networks(compose, release_compose)
         proof = _validate_runtime(compose, images, containers, networks, client=client)
         return {
             **proof,
