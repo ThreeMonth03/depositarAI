@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "repository": "ThreeMonth03/depositarAI",
+  "repository_id": 1425391257,
+  "state_root": "/absolute/private/frontend-delivery",
+  "frontend_check_file": "/absolute/private/frontend/frontend-check.json",
+  "gh_binary": "/absolute/trusted/gh",
+  "monitor_lock_file": "/absolute/private/frontend-monitor/.check.lock"
+}

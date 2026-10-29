@@ -21,6 +21,17 @@ cd "$project_dir"
 ci_name="depositar-web-ci-$$"
 browser_fixture_started=0
 browser_pull_pid=''
+tested_images_file="${CI_FRONTEND_TESTED_IMAGES_FILE:-}"
+tested_images_pending=''
+if [[ -n "$tested_images_file" ]]; then
+  if [[ "$suite" != all || "$tested_images_file" != /* || \
+    "$tested_images_file" == *$'\n'* || "$tested_images_file" == *$'\r'* || \
+    -e "$tested_images_file" || -L "$tested_images_file" || \
+    -e "$tested_images_file.pending" || -L "$tested_images_file.pending" ]]; then
+    echo 'Tested-image receipt requires suite=all and a new absolute output path.' >&2
+    exit 64
+  fi
+fi
 phase_name=contracts
 phase_started=$SECONDS
 ci_started=$SECONDS
@@ -43,6 +54,9 @@ cleanup() {
   if [[ "$browser_fixture_started" == 1 ]]; then
     docker rm --force "$ci_name-gpu" "$ci_name-web" "$ci_name-nginx" >/dev/null 2>&1 || true
     docker network rm "$ci_name" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$tested_images_pending" ]]; then
+    rm -f -- "$tested_images_pending"
   fi
   printf 'CI_PHASE phase=%s seconds=%s exit=%s\n' "$phase_name" "$((SECONDS - phase_started))" "$status"
   printf 'CI_TOTAL seconds=%s exit=%s\n' "$((SECONDS - ci_started))" "$status"
@@ -110,6 +124,10 @@ docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
   -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
 docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
   -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
+if [[ -n "$tested_images_file" ]]; then
+  tested_images_pending="$tested_images_file.pending"
+  python3 scripts/ci/frontend-release.py capture --output "$tested_images_pending"
+fi
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
 if [[ "$suite" != browser ]]; then
   begin_phase intranet-entry-runtime
@@ -197,6 +215,10 @@ if [[ "$suite" != oss ]]; then
     --cpus 2 --memory 2g --pids-limit 256 -e HOME=/tmp/browser-home \
     --mount "type=bind,src=$project_dir/web,dst=/web" --workdir /web \
     "$browser_image" npm test
+fi
+if [[ -n "$tested_images_pending" ]]; then
+  mv -- "$tested_images_pending" "$tested_images_file"
+  tested_images_pending=''
 fi
 case "$suite" in
   all) echo 'Website unit/contract, build, OSS, native bootstrap and real HTTP browser checks passed.' ;;
