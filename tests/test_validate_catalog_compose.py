@@ -113,6 +113,13 @@ def valid_config() -> dict[str, Any]:
                     "granite-embedding:278m "
                     "-Dfess.system.content_chunker.embedding.ollama.document.prefix= "
                     "-Dfess.system.content_chunker.embedding.ollama.query.prefix= "
+                    "-Dfess.system.content_chunker.chunker.name=length "
+                    "-Dfess.system.content_chunker.length.chunk_size=800 "
+                    "-Dfess.system.content_chunker.length.overlap=0 "
+                    "-Dfess.system.content_chunker.length.boundary.enabled=true "
+                    "-Dfess.system.content_chunker.length.boundary.lookback_percent=20 "
+                    "-Dfess.system.content_chunker.length.boundary.lookahead_percent=5 "
+                    "-Dfess.system.content_chunker.max_chunks_per_document=1000 "
                     "-Dfess.system.content_chunker.job.concurrency=2 "
                     "-Dfess.system.content_chunker.job.bulk_size=100 "
                     "-Dfess.system.content_chunker.job.max_documents_per_run=256 "
@@ -470,6 +477,39 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
 
 
 class SearchComposePolicyTests(unittest.TestCase):
+    def test_native_chunk_profile_cannot_drift_from_nonoverlapping_length_chunks(self):
+        options = (
+            ("chunker.name=length", "chunker.name=other"),
+            ("length.chunk_size=800", "length.chunk_size=801"),
+            ("length.overlap=0", "length.overlap=1"),
+            ("length.boundary.enabled=true", "length.boundary.enabled=false"),
+            (
+                "length.boundary.lookback_percent=20",
+                "length.boundary.lookback_percent=0",
+            ),
+            (
+                "length.boundary.lookahead_percent=5",
+                "length.boundary.lookahead_percent=0",
+            ),
+            ("max_chunks_per_document=1000", "max_chunks_per_document=1001"),
+        )
+        for fixed, changed in options:
+            token = "-Dfess.system.content_chunker." + fixed
+            for mutation in ("remove", "change", "duplicate"):
+                with self.subTest(property=fixed, mutation=mutation):
+                    config = valid_config()
+                    env = config["services"]["fess-search"]["environment"]
+                    if mutation == "remove":
+                        env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(token, "")
+                    elif mutation == "change":
+                        env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(
+                            token, "-Dfess.system.content_chunker." + changed
+                        )
+                    else:
+                        env["FESS_JAVA_OPTS"] += " " + token
+                    with self.assertRaises(ValueError):
+                        validate(config)
+
     def test_only_fixed_product_vector_budget_is_accepted(self):
         validate(valid_config())
         for invalid in (10000, True, "256 ", 0, 255, 257, 50000):

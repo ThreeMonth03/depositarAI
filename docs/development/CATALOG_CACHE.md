@@ -31,6 +31,46 @@ sealed Compose build-path metadata. Actual builds use the verified minimal
 staged sources, and startup uses immutable images with `--no-build`; the old
 checkout path is not used to build or authenticate current application code.
 
+## Reuse unchanged text after a metadata update
+
+Continue using the same private product configuration and state root. A changed
+snapshot or profile-set creates a fresh catalog and imports its metadata. Before
+the first vector pass, `build-vectors` looks for completed native-vector exports
+in retained catalogs. `stage-catalog` uses the same preparation flow.
+
+Reuse requires identical normalized document content and the same embedding
+model manifest, Fess sources and fixed chunking profile. The cache keeps native
+chunk text and vectors together, with their order and complete input verified.
+A changed document is regenerated in full by Fess; partial reuse within a changed
+document is outside this contract.
+
+Only the native chunk text, vectors and completion status are copied into the
+freshly imported document. Its dataset identity, permissions, conditions,
+resource provenance and other metadata come from the new catalog. The ordinary
+vector journal and query checks still run, including when every document was
+reused. Cache data never grants query or deployment authority.
+
+`prepare-query` publishes a private, immutable vector export after its normal
+completion checks. Later catalogs can use it while the source runtime is
+stopped. The source bundle, original query completion and joint text/vector
+digest remain part of its provenance. Retain these files together; do not edit
+or copy receipts to make a cache appear compatible. Missing exports are normal
+cache misses; a malformed published export fails explicitly.
+
+The first catalog built with this export contract generates its vectors
+normally. Pre-contract catalogs do not seed the new cache. Interrupted exports
+publish no manifest until their complete scan passes; repeating `prepare-query`
+can finish the derived export from the retained query evidence. A seeding
+interruption retains its intent and checks any already-applied updates before
+continuing. Once a vector pass has started, its existing journal governs resume
+and no additional documents are seeded.
+
+Exports consume additional private disk space. Records that exceed the fixed
+size limits are counted and omitted without truncating their arrays; their
+documents are generated normally in a later catalog. Removing an old export
+loses that reuse opportunity while leaving the source index intact. Keep
+original catalog data and completion evidence according to the retention policy.
+
 ## Cache compatibility
 
 Reuse requires the full metadata bundle path, manifest digest and document
@@ -101,7 +141,8 @@ exact builder source closure, package initializers and catalog identity policy.
 The reader validates the manifest format, fixed policy and artifact integrity;
 product restore independently checks the builder digest against committed source.
 Changing these inputs changes the bundle and catalog recipe even if normalized
-documents are identical. Prepare a new catalog slot, import metadata and build vectors.
+documents are identical. Prepare a new catalog slot and import metadata. Compatible
+exports can seed unchanged document vectors; Fess generates the remainder.
 An application-only change outside this closure can still use the normal reuse
 flow described above.
 

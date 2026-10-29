@@ -351,6 +351,11 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.secret = self.root / "unused-synthetic-secret-path"
         self.runtime = {"container_ids": {"fess-search": "b" * 64}}
         self.clock = ManualClock()
+        seed_patch = patch.object(
+            vectors.reuse, "seed", return_value={"reused_count": 0}
+        )
+        self.seed_mock = seed_patch.start()
+        self.addCleanup(seed_patch.stop)
         self.transport = PartialTransport()
         self.transport.documents = {
             row["url"]: dict(row) for row in self.built.bundle.documents
@@ -620,6 +625,53 @@ class DurableVectorHistoryTests(unittest.TestCase):
             arguments[arguments.index("--expected-before-state-sha256") + 1],
         )
         self.assertEqual(first["after_state_sha256"], second["before_state_sha256"])
+        self.seed_mock.assert_not_called()
+
+    def test_first_pass_observes_reused_prefix_and_builds_only_the_remainder(self):
+        def seed(*_args, **_kwargs):
+            for row in list(self.transport.documents.values())[:2]:
+                row["content_chunk_status"] = "done"
+            return {"reused_count": 2}
+
+        self.seed_mock.side_effect = seed
+        self.transport.limit = 1
+        result = self.build()
+        self.assertEqual("vectors-complete", result["status"])
+        self.assertEqual({"reused_count": 2}, result["vector_reuse"])
+        final = self.history()[3]
+        self.assertEqual(2, final["before_done_count"])
+        self.assertEqual(1, final["progress_count"])
+        self.assertEqual(3, final["done_count"])
+        self.seed_mock.assert_called_once()
+
+    def test_all_reused_documents_keep_the_normal_no_op_cleanup_proof(self):
+        def seed(*_args, **_kwargs):
+            for row in self.transport.documents.values():
+                row["content_chunk_status"] = "done"
+            return {"reused_count": 3}
+
+        self.seed_mock.side_effect = seed
+        result = self.build()
+        self.assertEqual("vectors-complete", result["status"])
+        self.assertEqual(1, result["passes_this_invocation"])
+        final = self.history()[3]
+        self.assertTrue(final["no_op"])
+        self.assertEqual(3, final["before_done_count"])
+        self.assertEqual(0, final["progress_count"])
+        self.assertTrue(result["host_cleanup_verified"])
+        self.assertTrue(final["token_cleanup_verified"])
+        self.assert_no_scheduler_mutation_since(0)
+
+    def test_cache_preparation_cannot_consume_the_reserved_helper_wall_budget(self):
+        self.seed_mock.side_effect = lambda *_args, **_kwargs: self.clock.sleep(1201)
+        with patch.object(
+            vectors, "_one_pass", side_effect=AssertionError("over budget")
+        ):
+            result = self.build(wall_seconds=3600)
+        self.assertEqual("checkpoint", result["status"])
+        self.assertEqual(0, result["passes_this_invocation"])
+        self.assertEqual(0, result["completed_passes"])
+        self.assertEqual({}, self.helpers)
 
     def test_build_complete_catalog_reverifies_without_a_new_helper_or_http(self):
         self.readonly_admin_evidence()

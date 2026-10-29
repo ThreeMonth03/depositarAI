@@ -103,6 +103,7 @@ class ProjectionClient:
                     "depositar_bundle_id": bundle.bundle_id,
                     "depositar_document_sha256": hashes[row["url"]],
                     "content_chunk_status": "done",
+                    "content": [row["content"]],
                     filters.VECTOR_PATH: [{"vector": [1.0] + [0.0] * 767}],
                 }
             )
@@ -1168,13 +1169,70 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         first = self.verify()
         self.client.rows.reverse()
         self.assertEqual(first, self.verify())
-        self.client.rows[0]["_source"][filters.VECTOR_PATH].append(
-            {"vector": [-1.0] + [0.0] * 767}
-        )
+        source = self.client.rows[0]["_source"]
+        content = source["content"][0]
+        source["content"] = [content[:1], content[1:]]
+        source[filters.VECTOR_PATH].append({"vector": [-1.0] + [0.0] * 767})
         changed = self.verify()
         self.assertEqual(102, changed["vector_chunk_count"])
         self.assertNotEqual(first["vectors_sha256"], changed["vectors_sha256"])
         self.assertEqual(first["after_state_sha256"], changed["after_state_sha256"])
+        self.assert_readonly()
+
+    def test_native_text_must_align_with_vectors_and_exact_sealed_content(self):
+        for content in (None, [], "scalar", ["changed"], ["", "changed"]):
+            with self.subTest(content=content):
+                self.client = ProjectionClient(self.bundle)
+                self.client.rows[-1]["_source"]["content"] = content
+                self.reject("catalog_projection_chunk_content_invalid")
+        self.client = ProjectionClient(self.bundle)
+        self.client.rows[-1]["_source"].pop("content")
+        self.reject("catalog_projection_chunk_content_invalid")
+
+    def test_vector_digest_binds_native_boundaries_when_text_and_vector_count_match(
+        self,
+    ):
+        source = self.client.rows[0]["_source"]
+        content = source["content"][0]
+        source["content"] = [content[:1], content[1:]]
+        source[filters.VECTOR_PATH].append({"vector": [-1.0] + [0.0] * 767})
+        first = self.verify()
+        source["content"] = [content[:2], content[2:]]
+        shifted = self.verify()
+        self.assertEqual(first["vector_chunk_count"], shifted["vector_chunk_count"])
+        self.assertEqual(first["after_state_sha256"], shifted["after_state_sha256"])
+        self.assertNotEqual(first["vectors_sha256"], shifted["vectors_sha256"])
+
+    def test_capture_streams_only_locally_validated_native_payloads(self):
+        captured = []
+        proof = projection.verify_vectors(
+            self.client, self.bundle, capture=lambda *row: captured.append(row)
+        )
+        expected = {row["dataset_id"]: row for row in self.bundle.documents}
+        self.assertEqual(len(expected), len(captured))
+        self.assertEqual(len(expected), proof["done_count"])
+        for identifier, original, content, vectors in captured:
+            self.assertEqual(expected[identifier]["content"], original)
+            self.assertEqual(original, "".join(content))
+            self.assertEqual(len(content), len(vectors))
+        self.assert_readonly()
+
+    def test_capture_rejects_bad_sink_before_network_and_bad_text_before_delivery(self):
+        with self.assertRaisesRegex(
+            projection.ProjectionError, "^catalog_projection_capture_invalid$"
+        ):
+            projection.verify_vectors(self.client, self.bundle, capture=[])
+        self.assertEqual([], self.client.calls)
+        captured = []
+        first = min(self.client.rows, key=lambda row: row["_source"]["url"])
+        first["_source"]["content"] = ["private incorrect content"]
+        with self.assertRaisesRegex(
+            projection.ProjectionError, "^catalog_projection_chunk_content_invalid$"
+        ):
+            projection.verify_vectors(
+                self.client, self.bundle, capture=lambda *row: captured.append(row)
+            )
+        self.assertEqual([], captured)
         self.assert_readonly()
 
     def test_invalid_bundle_is_rejected_before_transport(self):
