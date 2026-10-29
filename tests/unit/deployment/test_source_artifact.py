@@ -167,6 +167,60 @@ class SourceArtifactTests(unittest.TestCase):
         self.assertFalse(restored["runtime_restored"])
         self.assertFalse((destination / ".env.private").exists())
 
+    def test_private_caller_restores_git_modes_without_relaxing_its_umask(self):
+        helper = self.repo / "scripts/ci/tracked-helper.sh"
+        helper.chmod(0o755)
+        self.git("update-index", "--chmod=+x", "scripts/ci/tracked-helper.sh")
+        self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Executable fixture",
+        )
+        self.revision = self.git("rev-parse", "HEAD").strip()
+        previous = os.umask(0o077)
+        try:
+            package, _ = self.package()
+            destination = self.root / "restored-private"
+            report = artifact.restore(package, self.revision, destination)
+            tree = artifact._tree(self.repo, self.revision)
+            self.assertTrue(tree["scripts/ci/tracked-helper.sh"][1])
+            for relative, (_, executable) in tree.items():
+                restored = destination / relative
+                with self.subTest(source=relative):
+                    self.assertEqual(
+                        0o755 if executable else 0o644,
+                        restored.stat().st_mode & 0o777,
+                    )
+                    self.assertEqual(
+                        (self.repo / relative).read_bytes(), restored.read_bytes()
+                    )
+            for path in destination.rglob("*"):
+                if path.is_dir() and ".git" not in path.relative_to(destination).parts:
+                    self.assertEqual(0o755, path.stat().st_mode & 0o777, str(path))
+            self.assertEqual(0o700, destination.stat().st_mode & 0o777)
+            self.assertEqual(0o700, (destination / ".git").stat().st_mode & 0o777)
+            self.assertEqual(0o700, package.stat().st_mode & 0o777)
+            for path in package.iterdir():
+                self.assertEqual(0o600, path.stat().st_mode & 0o777, str(path))
+            secret = self.root / "operator-secret"
+            secret.write_text("private fixture\n")
+            self.assertEqual(0o600, secret.stat().st_mode & 0o777)
+            self.assertEqual(0o077, os.umask(0o077))
+            self.assertTrue(report["clean_git_checkout"])
+            self.assertEqual(
+                b"",
+                artifact._git(
+                    destination, "status", "--porcelain", "--untracked-files=all"
+                ),
+            )
+        finally:
+            os.umask(previous)
+
     def test_history_scan_is_bound_to_expected_commit_and_cannot_inherit_ignores(self):
         with mock.patch.dict(
             os.environ, GITLEAKS_CONFIG="/do/not/use", GITLEAKS_LICENSE="not-needed"
