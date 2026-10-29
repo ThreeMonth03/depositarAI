@@ -1,0 +1,16 @@
+# Explicit opt-in; the normal standalone composition stays loopback-only.
+# Requires Docker Compose >= 2.24.4 for !override.
+services:
+  web:
+    environment:
+      WEB_ACCESS_MODE: intranet-http
+  web-nginx:
+    ports: !override ["${WEB_BIND_IP:?private IPv4 required}:${WEB_PORT:?dedicated port required}:8080"]
+    environment:
+      WEB_ALLOWED_CIDRS: ${WEB_ALLOWED_CIDRS:?explicit client CIDRs required}
+    volumes:
+      - type: bind
+        source: ${WEB_ACCESS_FILE:?absolute intranet-allow.conf path required}
+        target: /etc/nginx/intranet-allow.conf
+        read_only: true
+        bind: {create_host_path: false}

@@ -27,3 +27,4 @@ deploy/config/web-nginx/**
 !deploy/config/web-nginx/nginx.conf
 !deploy/config/web-nginx/http.conf
 !deploy/config/web-nginx/website.conf
+!deploy/config/web-nginx/intranet-allow.conf

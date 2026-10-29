@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 !/deploy/env/.env.search-web.example
+!/deploy/env/.env.search-web-intranet.example
 /search-api-runtime
 /runtime
 /backups

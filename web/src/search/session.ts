@@ -34,6 +34,8 @@ export function useSearchSession(topK: number) {
   const [accessAttempt, setAccessAttempt] = useState(0);
   const previousAccess = useRef<Access | null>(null);
   const session = useRef<Session | null>(null);
+  // These IDs are component-local React keys, not authentication tokens.
+  const nextMessageId = useRef(0);
   const generation = useRef(0);
   const busy = useRef(false);
   const expiry = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,11 +145,10 @@ export function useSearchSession(topK: number) {
     setError("");
     setErrorAction(null);
     setRetryQuery(null);
-    if (!retry)
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "user", text },
-      ]);
+    if (!retry) {
+      const id = String(++nextMessageId.current);
+      setMessages((prev) => [...prev, { id, role: "user", text }]);
+    }
     const ownerGeneration = generation.current;
     let current = session.current;
     try {
@@ -175,10 +176,11 @@ export function useSearchSession(topK: number) {
       setClock(
         `${reply.context_used.reference_date} · ${reply.context_used.timezone}`,
       );
+      const id = String(++nextMessageId.current);
       setMessages((prev) => [
         ...prev,
         {
-          id: crypto.randomUUID(),
+          id,
           role: "assistant",
           text:
             reply.result.status === "ok"

@@ -13,6 +13,7 @@ catalog、模型及服務平面的分工見[私有 runtime](development/PRIVATE_
 |---|---|
 | 完整產品私有試用 | 主機、GPU、模型及產品設定備妥後，依[部署指南](guide/operations.md)執行 `up-private`，串接 catalog 準備與首次啟用；入口是 `127.0.0.1:18083`。 |
 | 獨立 CPU 前端 | `bash scripts/search-web.sh up` 只建立網站與 Nginx，連到操作者核准的 HTTPS Conversation API；入口是 `127.0.0.1:18081`。 |
+| 實驗室 HTTP 試用 | `SEARCH_WEB_MODE=intranet-http bash scripts/search-web.sh up` 使用獨立 project、RFC1918 IP 與專用連接埠，並限制明確的實驗室來源 CIDR。 |
 
 分段命令保留作診斷及明確的分段操作，前置條件見
 [產品 CLI 參考](development/PRODUCT_LIFECYCLE.md)。
@@ -119,6 +120,60 @@ bash scripts/search-web.sh down
 前端映像、版本、網站回應及容器內到 API 的 TLS／版本連線。檢查設定中的預期值
 取自已驗證的交付收據，工具版本可以與現役前端不同。這項檢查不執行 AI 搜尋，
 也不更新或切換服務；完整搜尋操作仍由下方實機驗收另行確認。
+
+## 實驗室 HTTP 入口
+
+此模式供已核准網段內的試用。瀏覽器使用 HTTP，不需要憑證；傳輸不加密。
+VM 到 GPU API 仍使用經驗證的 HTTPS。它沿用上述兩個 CPU 容器，使用獨立的
+`depositar-search-intranet` project，保留原本 `depositar-search-web` SSH demo。
+不修改或重載主機 Apache、其他站台、主機防火牆，也不需要新增 DNS 名稱。
+
+需要 Docker Compose 2.24.4 以上。先確認 VM 的指定私有 IP 可由實驗室到達，
+且專用連接埠未被使用。不要選用其他服務的 80、443 或既有 demo port。
+將[內網範本](../deploy/env/.env.search-web-intranet.example)複製到 Git 外的私有目錄：
+
+```sh
+mkdir -m 700 /absolute/path/private/intranet
+cp deploy/env/.env.search-web-intranet.example /absolute/path/private/intranet/web.env
+chmod 600 /absolute/path/private/intranet/web.env
+```
+
+除原有 UID、GID、服務 key、HTTPS 上游與選填 CA 外，填寫：
+
+| 欄位 | 用途 |
+|---|---|
+| `WEB_BIND_IP` | VM 已有的 RFC1918 IPv4，僅綁此位址。 |
+| `WEB_PORT` | 未被使用的 1024–65535 專用連接埠。 |
+| `WEB_ORIGIN` | 必須與上述位址、連接埠完全一致，例如 `http://10.20.30.40:18082`。 |
+| `WEB_ALLOWED_CIDRS` | 管理者核准的 RFC1918 IPv4 來源 CIDR，以逗號分隔，例如 `10.20.30.0/24,10.20.40.8/32`。 |
+| `WEB_ACCESS_FILE` | 私有目錄內 `intranet-allow.conf` 的絕對路徑；父目錄須已存在。 |
+
+```sh
+export SEARCH_WEB_MODE=intranet-http
+export SEARCH_WEB_ENV_FILE=/absolute/path/private/intranet/web.env
+bash scripts/search-web.sh config
+bash scripts/search-web.sh up
+bash scripts/search-web.sh status
+# 回退時只移除此獨立入口；同樣保留上述 mode 與 env。
+bash scripts/search-web.sh down
+```
+
+`config` 和 `up` 會先驗證完整 Compose，再產生明確允許、其餘拒絕的 Nginx
+來源規則；非機密的 CIDR 規則檔設為 `0444`，父目錄維持私有。只有容器本機健康檢查另允許 loopback。
+規則使用直接 TCP peer，不採信瀏覽器送來的 `X-Forwarded-For`。
+若網路設備改寫來源，須先核對實際路由，不要將 Docker 網段或所有來源加入白名單。
+變更 CIDR 後重新執行 `up`，讓入口重新載入規則。
+
+`WEB_ACCESS_MODE=intranet-http` 只由此 Compose override 開啟；一般入口仍保留
+原有 HTTP loopback／HTTPS 規則，BFF 仍精確比對 Origin。前端的畫面訊息 ID
+不依賴 HTTPS 環境限定的瀏覽器 API；搜尋 token 的產生方式保持不變。
+
+新入口驗收須從實驗室實際電腦開啟完整 `WEB_ORIGIN`，確認首頁、首問、追問與
+重設；再從未核准的來源確認拒絕，並比較舊站網址及容器身分。容器 healthy
+不等同於完成實驗室網路或搜尋驗收。新 BFF 必須與現役 API 使用相同介面版本；
+不可將新版 BFF 直接接到舊版 API，應使用已驗證的相容來源版本。
+既有 `check_search_web.py` 與 SSH demo 工具仍檢查原本的 loopback project，
+不代表此獨立入口已驗收。
 
 ## 私有 VM 的實機驗收
 
