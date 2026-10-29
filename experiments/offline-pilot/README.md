@@ -100,6 +100,9 @@ python3 scripts/depositarai.py --config "$pilot_root/state/operator-config.json"
 - `/run/index/root-ca.pem`：本次 OpenSearch 的 CA。
 - `/run/secrets/index_query_password`：本次 query-only 帳號密碼。
 
+掛載 bundle 時保留最後一層 `sha256-<bundle_id>` 名稱；例如掛到
+`/pilot/sha256-<bundle_id>`，不能改用 `/pilot/bundle` 簡稱。
+
 索引以 `opensearch-search:9200` 解析；CPU query embedding 以
 `filtered-embedding:11434` 解析，使用相同固定模型與唯讀模型目錄。catalog 的
 embedding 只監聽 Fess namespace 的 loopback，不能直接假設它提供此 DNS endpoint。
@@ -132,7 +135,7 @@ metadata 文字中皆不存在。CSV anchor 是完整欄名；PDF anchor 必須�
 
 ```sh
 python3 -m experiments.offline-pilot.evaluate \
-  --bundle /absolute/private/enriched-bundle \
+  --bundle /absolute/private/sha256-BUNDLE_ID \
   --manifest-sha256 MANIFEST_SHA256 \
   --casefile /absolute/private/cases.json \
   --output /absolute/private/evaluation.json \
