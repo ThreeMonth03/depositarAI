@@ -572,6 +572,77 @@ class IntranetDeploymentTests(unittest.TestCase):
             (ROOT / "deploy/compose/compose.search-web.yaml").read_bytes(),
         )
 
+    def wrapper_with_fake_docker(self, command, *, mode=None):
+        directory = self.access_file.parent
+        calls_file = directory / "calls.jsonl"
+        calls_file.unlink(missing_ok=True)
+        (directory / "config.json").write_text(json.dumps(self.config))
+        docker = directory / "docker"
+        docker.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json,os,pathlib,sys\n"
+            "root=pathlib.Path(os.environ['FAKE_WEB_ROOT'])\n"
+            "with (root/'calls.jsonl').open('a') as output:\n"
+            " output.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            "if 'config' in sys.argv:\n"
+            " print((root/'config.json').read_text())\n"
+        )
+        docker.chmod(0o700)
+        environment = dict(
+            os.environ,
+            PATH=str(directory) + os.pathsep + os.environ["PATH"],
+            FAKE_WEB_ROOT=str(directory),
+            SEARCH_WEB_ENV_FILE=str(directory / "intranet.env"),
+        )
+        environment.pop("SEARCH_WEB_MODE", None)
+        if mode is not None:
+            environment["SEARCH_WEB_MODE"] = mode
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/search-web.sh"), command],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+        return result, calls
+
+    def test_missing_intranet_mode_rejects_down_and_status_before_runtime_commands(
+        self,
+    ):
+        for command in ("down", "status"):
+            with self.subTest(command=command):
+                result, calls = self.wrapper_with_fake_docker(command)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "Website origin does not match SEARCH_WEB_MODE.", result.stderr
+                )
+                self.assertEqual(1, len(calls))
+                self.assertIn("config", calls[0])
+                self.assertNotIn("down", calls[0])
+                self.assertNotIn("ps", calls[0])
+
+    def test_correct_intranet_down_does_not_require_intact_admission_file(self):
+        for admission in ("missing", "tampered"):
+            with self.subTest(admission=admission):
+                if admission == "tampered":
+                    self.access_file.write_text("allow all;\n")
+                result, calls = self.wrapper_with_fake_docker(
+                    "down", mode="intranet-http"
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(2, len(calls))
+                self.assertIn("config", calls[0])
+                self.assertEqual("down", calls[1][-1])
+                for call in calls:
+                    index = call.index("--project-name")
+                    self.assertEqual("depositar-search-intranet", call[index + 1])
+                if admission == "missing":
+                    self.assertFalse(self.access_file.exists())
+                else:
+                    self.assertEqual("allow all;\n", self.access_file.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
