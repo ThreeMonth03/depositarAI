@@ -94,6 +94,7 @@ class SearchImageHardeningTests(unittest.TestCase):
                 "!deploy/config/web-nginx/nginx.conf",
                 "!deploy/config/web-nginx/http.conf",
                 "!deploy/config/web-nginx/website.conf",
+                "!deploy/config/web-nginx/intranet-allow.conf",
             },
         }
         for relative, allowed in expected.items():
