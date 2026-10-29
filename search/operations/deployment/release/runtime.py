@@ -351,6 +351,7 @@ def _validate_containers(
     image_proof,
     image_environment,
     catalog_network,
+    validated_clients=None,
 ):
     """The unchanged CPU capability profile, without a website peer claim."""
     if (
@@ -384,18 +385,36 @@ def _validate_containers(
         by_role[role] = row
         seen.add(row["Id"])
     try:
-        client = client_lease.validate_client_lease(
-            lease,
-            catalog_identity=catalog_identity,
-            release_compose=compose,
-            image_proof=image_proof,
-            image_environment=image_environment,
-            api_container=by_role["conversation-api"],
-            catalog_network=catalog_network,
-        )
+        member = {
+            "lease": lease,
+            "catalog_identity": catalog_identity,
+            "release_compose": compose,
+            "image_proof": image_proof,
+            "image_environment": image_environment,
+            "api_container": by_role["conversation-api"],
+            "catalog_network": catalog_network,
+        }
+        if validated_clients is None:
+            client = client_lease.validate_client_lease(**member)
+            core_ids = set(client["core_container_ids"].values())
+        else:
+            matches = [
+                proof for evidence, proof in validated_clients if evidence == member
+            ]
+            if len(matches) != 1:
+                raise ReleaseRuntimeError("release_runtime_shared_client_changed")
+            client = matches[0]
+            core_ids = set().union(
+                *(set(p["core_container_ids"].values()) for _, p in validated_clients)
+            )
+            other_apis = {p["api_container_id"] for _, p in validated_clients} - {
+                client["api_container_id"]
+            }
+            if seen & other_apis:
+                raise ReleaseRuntimeError("release_runtime_identity_collision")
     except client_lease.LeaseError:
         raise ReleaseRuntimeError("release_runtime_client_lease_invalid") from None
-    if seen & set(client["core_container_ids"].values()):
+    if seen & core_ids:
         raise ReleaseRuntimeError("release_runtime_identity_collision")
     _plan(compose, lease)
     website = compose["networks"]["website"]["name"]
@@ -458,6 +477,7 @@ def validate_runtime(
     image_proof,
     image_environment,
     catalog_network,
+    shared_clients=None,
 ):
     """Prove exact CPU release capabilities and pre-gateway website peers.
 
@@ -470,6 +490,12 @@ def validate_runtime(
     independently verify catalog core, inference and ranking peers without
     filtering. ``catalog_network`` is separately passed unfiltered to the lease
     checker. No gateway is allowed in this pre-activation phase.
+
+    ``shared_clients`` explicitly opts into one or two fully authenticated
+    CLIENT_FIELDS evidence records. Validate the entire registered set, then
+    require an exact match for this release's lease, plan, image, environment,
+    actual API and catalog snapshot. Bare proofs and API ID allowlists do not
+    authorize sharing; the default remains the single-client contract.
 
     Shared private helpers from catalog policy normalize memory, duration,
     tmpfs and namespaces. The API field/path helpers intentionally bind this
@@ -486,6 +512,15 @@ def validate_runtime(
             or not 1 <= len(networks) <= 4
         ):
             raise ReleaseRuntimeError("release_runtime_inventory_invalid")
+        validated_clients = None
+        if shared_clients is not None:
+            try:
+                proofs = client_lease.validate_clients(shared_clients)
+            except client_lease.LeaseError:
+                raise ReleaseRuntimeError(
+                    "release_runtime_client_lease_invalid"
+                ) from None
+            validated_clients = list(zip(shared_clients, proofs))
         by_role, client = _validate_containers(
             compose,
             images,
@@ -495,6 +530,7 @@ def validate_runtime(
             image_proof=image_proof,
             image_environment=image_environment,
             catalog_network=catalog_network,
+            validated_clients=validated_clients,
         )
         seen = {row["Id"] for row in by_role.values()}
         website = compose["networks"]["website"]["name"]

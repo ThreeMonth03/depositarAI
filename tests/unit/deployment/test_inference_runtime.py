@@ -9,6 +9,7 @@ from unittest import mock
 from search.operations.catalog import client_lease, policy
 from search.operations.deployment import composition, inference_runtime
 from tests.unit.catalog.test_client_lease import evidence as client_evidence
+from tests.unit.catalog.test_client_lease import shared_evidence
 from tests.unit.deployment.test_composition import REVISION, product
 
 
@@ -661,3 +662,183 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
                 self.setUp()
                 mutation()
                 self.reject()
+
+
+class SharedInferenceRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.prepare()
+
+    def prepare(self, *, separate_catalogs=False):
+        self.clients = shared_evidence(separate_catalogs=separate_catalogs)
+        self.compose = composition._inference(
+            product(),
+            self.clients[0]["lease"]["revision"],
+            21599,
+            564,
+            inference_source_sha256="6" * 64,
+        )
+        self.images = images()
+        for name, image in self.images.items():
+            self.compose["services"][name]["image"] = image["Id"]
+        self.containers, self.networks = snapshot(self.compose, self.images)
+        replacements = {
+            row["Id"]: "456"[index] * 64 for index, row in enumerate(self.containers)
+        }
+        for row in self.containers:
+            row["Id"] = replacements[row["Id"]]
+            for name, attachment in row["NetworkSettings"]["Networks"].items():
+                attachment["NetworkID"] = self.clients[0]["lease"]["network_ids"][name]
+        for row in self.networks:
+            row["Id"] = self.clients[0]["lease"]["network_ids"][row["Name"]]
+            row["Containers"] = {
+                replacements[identifier]: value
+                for identifier, value in row["Containers"].items()
+            } | {item["lease"]["api_container_id"]: {} for item in self.clients}
+
+    def invoke(self):
+        return inference_runtime.validate_shared_runtime(
+            self.compose, self.images, self.containers, self.networks, self.clients
+        )
+
+    def reject(self, code=None):
+        with self.assertRaises(inference_runtime.InferenceRuntimeError) as caught:
+            self.invoke()
+        self.assertRegex(str(caught.exception), r"^inference_[a-z_]+$")
+        if code is not None:
+            self.assertEqual(str(caught.exception), code)
+
+    def test_two_sealed_apis_share_exact_gpu_roles_with_same_or_different_catalogs(
+        self,
+    ):
+        for separate in (False, True):
+            with self.subTest(separate_catalogs=separate):
+                self.prepare(separate_catalogs=separate)
+                before = copy.deepcopy(
+                    (
+                        self.compose,
+                        self.images,
+                        self.containers,
+                        self.networks,
+                        self.clients,
+                    )
+                )
+                proof = self.invoke()
+                self.assertEqual(
+                    set(proof["container_ids"]), inference_runtime.SERVICES
+                )
+                self.assertEqual(
+                    proof["api_container_ids"],
+                    sorted(item["lease"]["api_container_id"] for item in self.clients),
+                )
+                self.assertEqual(
+                    proof["client_lease_sha256s"],
+                    sorted(
+                        client_lease.lease_digest(item["lease"])
+                        for item in self.clients
+                    ),
+                )
+                ownership = inference_runtime.ownership_proofs(
+                    self.compose, proof, self.images
+                )
+                self.assertEqual(
+                    {item.role for item in ownership}, {"scope", "planner", "reranker"}
+                )
+                self.assertEqual(len(ownership), 3)
+                self.assertNotIn("/srv/", str(proof))
+                self.assertNotIn("never-save-this-value", str(proof))
+                self.assertEqual(
+                    before,
+                    (
+                        self.compose,
+                        self.images,
+                        self.containers,
+                        self.networks,
+                        self.clients,
+                    ),
+                )
+                self.clients.reverse()
+                self.assertEqual(self.invoke(), proof)
+
+    def test_single_client_keeps_old_entrypoint_and_gpu_proof_identity(self):
+        second_id = self.clients.pop()["lease"]["api_container_id"]
+        for row in self.networks:
+            row["Containers"].pop(second_id)
+        self.clients[0]["catalog_network"]["Containers"].pop(second_id)
+        proof = self.invoke()
+        old = inference_runtime.validate_leased_runtime(
+            self.compose, self.images, self.containers, self.networks, **self.clients[0]
+        )
+        for key in ("container_ids", "network_ids", "start_identity_sha256"):
+            self.assertEqual(proof[key], old[key])
+
+    def test_full_snapshots_reach_shared_client_and_gpu_validators_without_filtering(
+        self,
+    ):
+        with (
+            mock.patch.object(
+                client_lease, "validate_clients", wraps=client_lease.validate_clients
+            ) as lease_check,
+            mock.patch.object(
+                inference_runtime,
+                "_validate_runtime",
+                wraps=inference_runtime._validate_runtime,
+            ) as gpu_check,
+        ):
+            self.invoke()
+        self.assertIs(lease_check.call_args.args[0], self.clients)
+        self.assertIs(gpu_check.call_args.args[3], self.networks)
+        self.assertEqual(len(gpu_check.call_args.kwargs["clients"]), 2)
+
+    def test_model_network_peers_must_include_all_and_only_registered_apis_and_gpus(
+        self,
+    ):
+        for index in range(2):
+            for mutation in ("extra", "missing-api", "missing-gpu", "list"):
+                with self.subTest(network=index, mutation=mutation):
+                    self.prepare()
+                    row = self.networks[index]
+                    if mutation == "extra":
+                        row["Containers"]["f" * 64] = {}
+                    elif mutation == "missing-api":
+                        row["Containers"].pop(
+                            self.clients[1]["lease"]["api_container_id"]
+                        )
+                    elif mutation == "missing-gpu":
+                        row["Containers"].pop(next(iter(row["Containers"])))
+                    else:
+                        row["Containers"] = list(row["Containers"])
+                    self.reject("inference_runtime_network_peers_changed")
+
+    def test_shared_clients_are_reverified_and_bare_proofs_do_not_authorize_access(
+        self,
+    ):
+        self.clients[1]["api_container"]["HostConfig"]["Privileged"] = True
+        self.reject("inference_client_lease_invalid")
+        self.prepare()
+        self.clients = client_lease.validate_clients(self.clients)
+        self.reject("inference_client_lease_invalid")
+
+    def test_shared_network_ids_and_names_are_bound_to_every_client(self):
+        self.compose["networks"]["ranking"]["name"] += "-other"
+        self.reject("inference_client_source_or_network_changed")
+        self.prepare()
+        network = self.networks[0]
+        network["Id"] = "f" * 64
+        for container in self.containers:
+            attachments = container["NetworkSettings"]["Networks"]
+            if network["Name"] in attachments:
+                attachments[network["Name"]]["NetworkID"] = network["Id"]
+        self.reject("inference_client_network_id_changed")
+
+    def test_gpu_ids_cannot_alias_the_second_catalog_core_or_api(self):
+        for identifier in ("c" * 64, "d" * 64):
+            with self.subTest(identifier=identifier):
+                self.prepare(separate_catalogs=True)
+                row = self.containers[0]
+                previous = row["Id"]
+                row["Id"] = identifier
+                for network in self.networks:
+                    if previous in network["Containers"]:
+                        network["Containers"].pop(previous)
+                        network["Containers"][identifier] = {}
+                self.reject("inference_client_container_identity_collision")

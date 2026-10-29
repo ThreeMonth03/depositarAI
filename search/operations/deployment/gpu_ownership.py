@@ -8,7 +8,10 @@ proofs. It rejects count/index/all/CDI/MIG/legacy-only requests, custom runtimes
 host namespaces, privileged/device grants, and ambiguous mounts.
 
 The caller must obtain GPUContainerProof from trusted sealed runtime evidence;
-constructing a dataclass is not proof of trust. No names or labels grant access.
+constructing a dataclass is not proof of trust. Optional CPUContainerProof values
+allow only an independently authenticated TLS pair's fixed capabilities and
+read-only TLS mounts; they never authorize GPU access or compute PIDs.
+No names or labels grant access.
 All observed compute PIDs must belong to an allowed container's host-PID Docker
 top inventory and its configured UUIDs, even when such containers already exist.
 Inspection deliberately omits ordinary environment values, labels, command
@@ -19,6 +22,8 @@ created/stopped, and no port or daemon setting is changed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import math
 import os
 from pathlib import PurePosixPath
@@ -34,6 +39,9 @@ from search.serialization import strict_json
 
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
+DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+TLS_CPU_ROLES = frozenset({"private-api-tls-inner", "private-api-tls-outer"})
+TLS_OUTER_CAPS = frozenset({"SETUID", "SETGID", "DAC_OVERRIDE", "CHOWN"})
 MAX_CONTAINERS = 128
 MAX_GPU_ROWS = 32
 MAX_PIDS = 4096
@@ -60,6 +68,9 @@ ERROR_CODES = frozenset(
         "compute_role_mismatch",
         "config_invalid",
         "config_overlap",
+        "cpu_identity_changed",
+        "cpu_profile_invalid",
+        "cpu_proof_invalid",
         "container_device_access",
         "container_duplicate",
         "container_host_access",
@@ -99,6 +110,7 @@ ERROR_CODES = frozenset(
         "preflight_failed",
         "proof_invalid",
         "sealed_container_missing",
+        "sealed_cpu_container_missing",
         "sealed_identity_changed",
         "snapshot_changed",
         "unknown_compute_pid",
@@ -183,6 +195,21 @@ class GPUContainerProof:
     image_id: str
     role: str
     gpu_uuids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CPUContainerProof:
+    """An independently verified private-API TLS profile, never GPU authority.
+
+    The TLS producer authenticates its plan, material and healthy runtime first.
+    A caller-created value cannot establish those facts. The digest seals every
+    field of the projected local-daemon inspection, including process identity.
+    """
+
+    container_id: str
+    image_id: str
+    role: str
+    projection_sha256: str
 
 
 @dataclass(frozen=True)
@@ -340,6 +367,74 @@ def _proofs(allowed, roles):
     return result
 
 
+def _cpu_proofs(values, gpu_proofs):
+    if type(values) is not tuple or len(values) > 2:
+        raise GPUOwnershipError("gpu_ownership_cpu_proof_invalid")
+    result, roles = {}, set()
+    for proof in values:
+        if (
+            type(proof) is not CPUContainerProof
+            or type(proof.container_id) is not str
+            or CONTAINER_ID.fullmatch(proof.container_id) is None
+            or type(proof.image_id) is not str
+            or IMAGE_ID.fullmatch(proof.image_id) is None
+            or type(proof.role) is not str
+            or proof.role not in TLS_CPU_ROLES
+            or type(proof.projection_sha256) is not str
+            or DIGEST.fullmatch(proof.projection_sha256) is None
+            or proof.container_id in result
+            or proof.container_id in gpu_proofs
+            or proof.role in roles
+        ):
+            raise GPUOwnershipError("gpu_ownership_cpu_proof_invalid")
+        result[proof.container_id] = proof
+        roles.add(proof.role)
+    return result
+
+
+def _projection(row):
+    """Retain all projected fields; normalize only mount-map presentation."""
+    if type(row) is not dict or type(row.get("Mounts")) is not list:
+        raise GPUOwnershipError("gpu_ownership_container_shape_invalid")
+    destinations = []
+    for mount in row["Mounts"]:
+        if type(mount) is not dict or type(mount.get("Destination")) is not str:
+            raise GPUOwnershipError("gpu_ownership_mount_invalid")
+        destinations.append(mount["Destination"])
+    if len(set(destinations)) != len(destinations):
+        raise GPUOwnershipError("gpu_ownership_mount_duplicate")
+    return {
+        **row,
+        "Mounts": sorted(row["Mounts"], key=lambda mount: mount["Destination"]),
+    }
+
+
+def cpu_projection_sha256(row):
+    """Hash a full GPU inspect projection; this does not authenticate its source."""
+    try:
+        raw = json.dumps(
+            _projection(row),
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(raw) > MAX_OUTPUT_BYTES:
+            raise GPUOwnershipError("gpu_ownership_container_shape_invalid")
+        return hashlib.sha256(raw).hexdigest()
+    except GPUOwnershipError:
+        raise
+    except (ValueError, TypeError, RecursionError, UnicodeError):
+        raise GPUOwnershipError("gpu_ownership_container_shape_invalid") from None
+
+
+def _cpu_targets(proof):
+    role = proof.role.removeprefix("private-api-tls-")
+    return {"/run/endpoint.conf", f"/run/tls/{role}.crt", f"/run/tls/{role}.key"} | (
+        {"/run/tls/ca.pem"} if role == "outer" else set()
+    )
+
+
 def _text(value):
     if type(value) is not str:
         raise GPUOwnershipError("gpu_ownership_input_limit")
@@ -379,7 +474,7 @@ def _list(value, *, nullable=True):
     return value
 
 
-def _path(value, *, target=False):
+def _path(value, *, target=False, tls_targets=()):
     if (
         type(value) is not str
         or not 1 <= len(value) <= 4096
@@ -392,7 +487,8 @@ def _path(value, *, target=False):
         raise GPUOwnershipError("gpu_ownership_mount_path_invalid")
     path = PurePosixPath(value)
     private_target = target and (
-        path == PurePosixPath("/run/opensearch-ca/root-ca.pem")
+        value in tls_targets
+        or path == PurePosixPath("/run/opensearch-ca/root-ca.pem")
         or any(
             path == root or root in path.parents
             for root in (PurePosixPath("/run/secrets"), PurePosixPath("/run/index"))
@@ -533,10 +629,28 @@ def _collect_local_volumes(containers, docker_root_dir, command):
     return tuple(proofs)
 
 
-def _mounts(row):
+def _mounts(row, cpu_proof=None):
     host = row["HostConfig"]
     sources, targets = [], set()
     mounts = _list(row.get("Mounts"), nullable=False)
+    tls_targets = _cpu_targets(cpu_proof) if cpu_proof is not None else set()
+    bind_targets = [
+        m.get("Destination")
+        for m in mounts
+        if type(m) is dict and m.get("Type") == "bind"
+    ]
+    if cpu_proof is not None and (
+        any(type(target) is not str for target in bind_targets)
+        or set(bind_targets) != tls_targets
+        or any(
+            type(m) is not dict
+            or m.get("Type") not in {"bind", "tmpfs"}
+            or m.get("Type") == "tmpfs"
+            and m.get("Destination") != "/tmp"
+            for m in mounts
+        )
+    ):
+        raise GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
     for mount in mounts:
         if type(mount) is not dict:
             raise GPUOwnershipError("gpu_ownership_mount_invalid")
@@ -556,7 +670,7 @@ def _mounts(row):
             or type(mount.get("RW")) is not bool
         ):
             raise GPUOwnershipError("gpu_ownership_mount_type_unknown")
-        target = _path(mount.get("Destination"), target=True)
+        target = _path(mount.get("Destination"), target=True, tls_targets=tls_targets)
         # These are container-local query/secret destinations, not host /run.
         # The independently verified source must still be an ordinary private
         # path, and the actual mount must not permit writes at these targets.
@@ -584,7 +698,10 @@ def _mounts(row):
         pieces = bind.split(":")
         if len(pieces) not in {2, 3}:
             raise GPUOwnershipError("gpu_ownership_mount_invalid")
-        source, target = pieces[0], _path(pieces[1], target=True)
+        source, target = (
+            pieces[0],
+            _path(pieces[1], target=True, tls_targets=tls_targets),
+        )
         is_bind = source.startswith("/")
         if is_bind:
             _path(source)
@@ -613,7 +730,7 @@ def _mounts(row):
     return tuple(sources)
 
 
-def _container(row):
+def _container(row, cpu_proof=None):
     if type(row) is not dict or set(row) != {
         "Id",
         "Image",
@@ -634,6 +751,14 @@ def _container(row):
         or not 0 <= row["RestartCount"] <= 2**31 - 1
     ):
         raise GPUOwnershipError("gpu_ownership_container_identity_invalid")
+    if cpu_proof is not None:
+        _cpu_proofs((cpu_proof,), {})
+        if (
+            identifier != cpu_proof.container_id
+            or image != cpu_proof.image_id
+            or cpu_projection_sha256(row) != cpu_proof.projection_sha256
+        ):
+            raise GPUOwnershipError("gpu_ownership_cpu_identity_changed")
     host, state = row.get("HostConfig"), row.get("State")
     if (
         type(host) is not dict
@@ -678,10 +803,31 @@ def _container(row):
         or host.get("IpcMode") not in {"", "private"}
     ):
         raise GPUOwnershipError("gpu_ownership_container_host_access")
-    for key in ("Devices", "DeviceCgroupRules", "CapAdd", "VolumesFrom"):
+    for key in ("Devices", "DeviceCgroupRules", "VolumesFrom"):
         if key not in host or _list(host[key]):
             raise GPUOwnershipError("gpu_ownership_container_device_access")
+    capabilities = _list(host.get("CapAdd"))
+    if cpu_proof is None:
+        if "CapAdd" not in host or capabilities:
+            raise GPUOwnershipError("gpu_ownership_container_device_access")
+    else:
+        if (
+            host["Runtime"] != "runc"
+            or any(type(value) is not str for value in capabilities)
+            or len(set(capabilities)) != len(capabilities)
+        ):
+            raise GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
+        capabilities = {value.removeprefix("CAP_") for value in capabilities}
+        approved = (
+            (TLS_OUTER_CAPS, TLS_OUTER_CAPS | {"NET_BIND_SERVICE"})
+            if cpu_proof.role == "private-api-tls-outer"
+            else (frozenset(),)
+        )
+        if capabilities not in approved:
+            raise GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
     requests = _list(host.get("DeviceRequests"), nullable=False)
+    if cpu_proof is not None and requests:
+        raise GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
     exposed = set()
     for request in requests:
         if (
@@ -730,21 +876,30 @@ def _container(row):
             raise GPUOwnershipError("gpu_ownership_legacy_gpu_access")
     elif exposed and visible in {"none", "void"}:
         raise GPUOwnershipError("gpu_ownership_legacy_gpu_access")
-    return identifier, image, frozenset(exposed), _mounts(row)
+    if cpu_proof is not None and environment != {"NVIDIA_VISIBLE_DEVICES": "void"}:
+        raise GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
+    return identifier, image, frozenset(exposed), _mounts(row, cpu_proof)
 
 
 def _containers(
-    containers, proofs, roles, verified_bind_sources, verified_local_volumes=()
+    containers,
+    proofs,
+    roles,
+    verified_bind_sources,
+    verified_local_volumes=(),
+    cpu_proofs=None,
 ):
     if type(containers) is not list or len(containers) > MAX_CONTAINERS:
         raise GPUOwnershipError("gpu_ownership_container_limit")
     if type(verified_bind_sources) is not frozenset:
         raise GPUOwnershipError("gpu_ownership_mount_evidence_invalid")
     volumes = _volume_proofs(verified_local_volumes)
+    cpu_proofs = {} if cpu_proofs is None else cpu_proofs
     observed_volumes = set()
     result = {}
     for row in containers:
-        identifier, image, exposed, sources = _container(row)
+        cpu = cpu_proofs.get(row.get("Id")) if type(row) is dict else None
+        identifier, image, exposed, sources = _container(row, cpu)
         if identifier in result:
             raise GPUOwnershipError("gpu_ownership_container_duplicate")
         if not set(sources) <= verified_bind_sources:
@@ -768,6 +923,8 @@ def _containers(
         result[identifier] = row
     if not set(proofs) <= set(result):
         raise GPUOwnershipError("gpu_ownership_sealed_container_missing")
+    if not set(cpu_proofs) <= set(result):
+        raise GPUOwnershipError("gpu_ownership_sealed_cpu_container_missing")
     if observed_volumes != set(volumes):
         raise GPUOwnershipError("gpu_ownership_volume_evidence_invalid")
     return result
@@ -796,6 +953,7 @@ def validate_gpu_ownership(
     compute_apps: str,
     container_pids: dict[str, str],
     allowed: tuple[GPUContainerProof, ...] = (),
+    cpu_proofs: tuple[CPUContainerProof, ...] = (),
     verified_bind_sources: frozenset[str] = frozenset(),
     verified_local_volumes: tuple[LocalVolumeProof, ...] = (),
 ) -> dict:
@@ -807,8 +965,14 @@ def validate_gpu_ownership(
     roles = _roles(gpus)
     available = _inventory(inventory, roles)
     proofs = _proofs(allowed, roles)
+    cpu = _cpu_proofs(cpu_proofs, proofs)
     by_id = _containers(
-        containers, proofs, roles, verified_bind_sources, verified_local_volumes
+        containers,
+        proofs,
+        roles,
+        verified_bind_sources,
+        verified_local_volumes,
+        cpu_proofs=cpu,
     )
     if type(container_pids) is not dict or set(container_pids) != set(proofs):
         raise GPUOwnershipError("gpu_ownership_pid_evidence_missing")
@@ -846,6 +1010,7 @@ def validate_gpu_ownership(
         "code": "gpu_ownership_verified",
         "running_container_count": len(by_id),
         "sealed_gpu_container_count": len(proofs),
+        **({"sealed_cpu_container_count": len(cpu)} if cpu else {}),
         "compute_process_count": len({pid for _identifier, pid in seen}),
         "compute_gpu_pid_record_count": len(seen),
         "gpu_count": len(available),
@@ -890,23 +1055,21 @@ def _inspect(command, identifier):
     return row
 
 
-def _snapshot(row):
+def _snapshot(row, cpu_proof=None):
     """Docker's mount map has no list-order contract; retain every field.
 
     Validate destinations and reject duplicates before ordering. This only
     removes presentation-order noise, not changed access, paths or peers.
     """
-    _container(row)
-    return {
-        **row,
-        "Mounts": sorted(row["Mounts"], key=lambda mount: mount["Destination"]),
-    }
+    _container(row, cpu_proof)
+    return _projection(row)
 
 
 def run_gpu_ownership(
     config: ProductConfig,
     *,
     allowed: tuple[GPUContainerProof, ...] = (),
+    cpu_proofs: tuple[CPUContainerProof, ...] = (),
     runner=None,
     bind_source_probe=None,
     clock=time.monotonic,
@@ -965,6 +1128,7 @@ def run_gpu_ownership(
             raise GPUOwnershipError("gpu_ownership_config_invalid")
         roles = _roles(config.gpus)
         proofs = _proofs(allowed, roles)
+        cpu = _cpu_proofs(cpu_proofs, proofs)
         info = _strict_json(
             command(
                 [
@@ -988,7 +1152,11 @@ def run_gpu_ownership(
         _inventory(inventory, roles)
         ids = _container_ids(command([*DOCKER_PREFIX, "ps", "--quiet", "--no-trunc"]))
         containers = [_inspect(command, identifier) for identifier in ids]
-        sources = {source for row in containers for source in _container(row)[3]}
+        sources = {
+            source
+            for row in containers
+            for source in _container(row, cpu.get(row.get("Id")))[3]
+        }
         if len(sources) > MAX_BIND_SOURCES:
             raise GPUOwnershipError("gpu_ownership_mount_source_limit")
         for source in sorted(sources):
@@ -1004,7 +1172,9 @@ def run_gpu_ownership(
                     source, timeout=min(COMMAND_TIMEOUT_SECONDS, remaining)
                 )
         volumes = _collect_local_volumes(containers, info.get("DockerRootDir"), command)
-        _containers(containers, proofs, roles, frozenset(sources), volumes)
+        _containers(
+            containers, proofs, roles, frozenset(sources), volumes, cpu_proofs=cpu
+        )
         pids = {
             identifier: command([*DOCKER_PREFIX, "top", identifier, "-eo", "pid"])
             for identifier in sorted(proofs)
@@ -1023,6 +1193,7 @@ def run_gpu_ownership(
             compute_apps=compute_apps,
             container_pids=pids,
             allowed=allowed,
+            cpu_proofs=cpu_proofs,
             verified_bind_sources=frozenset(sources),
             verified_local_volumes=volumes,
         )
@@ -1031,7 +1202,9 @@ def run_gpu_ownership(
         ):
             raise GPUOwnershipError("gpu_ownership_snapshot_changed")
         after = [_inspect(command, identifier) for identifier in ids]
-        if [_snapshot(row) for row in containers] != [_snapshot(row) for row in after]:
+        if [_snapshot(row, cpu.get(row.get("Id"))) for row in containers] != [
+            _snapshot(row, cpu.get(row.get("Id"))) for row in after
+        ]:
             raise GPUOwnershipError("gpu_ownership_snapshot_changed")
         if volumes:
             after_info = _strict_json(

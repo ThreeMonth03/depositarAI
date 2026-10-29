@@ -10,6 +10,7 @@ from unittest import mock
 from search.operations.catalog import client_lease
 from search.operations.deployment.release import runtime as release_runtime
 from tests.unit.catalog.test_client_lease import evidence as client_evidence
+from tests.unit.catalog.test_client_lease import shared_evidence
 
 
 def evidence():
@@ -166,6 +167,27 @@ def reseal(values):
     values["lease"]["release_compose_sha256"] = client_lease.lease_digest(
         values["compose"]
     )
+
+
+def shared_runtime_evidence(*, separate_catalogs=False):
+    values = evidence()
+    second = shared_evidence(separate_catalogs=separate_catalogs)[1]
+    if not separate_catalogs:
+        values["catalog_network"]["Containers"][
+            second["lease"]["api_container_id"]
+        ] = {}
+        second["catalog_network"] = copy.deepcopy(values["catalog_network"])
+    first = {
+        "lease": values["lease"],
+        "catalog_identity": values["catalog_identity"],
+        "release_compose": values["compose"],
+        "image_proof": values["image_proof"],
+        "image_environment": values["image_environment"],
+        "api_container": values["containers"][0],
+        "catalog_network": values["catalog_network"],
+    }
+    values["shared_clients"] = [copy.deepcopy(first), second]
+    return values
 
 
 class ReleaseRuntimeTests(unittest.TestCase):
@@ -535,6 +557,112 @@ class ReleaseRuntimeTests(unittest.TestCase):
                 values = evidence()
                 values[key] = None
                 self.reject(values)
+
+
+class SharedReleaseRuntimeTests(unittest.TestCase):
+    def reject(self, values, code):
+        with self.assertRaises(release_runtime.ReleaseRuntimeError) as caught:
+            release_runtime.validate_runtime(**values)
+        self.assertEqual(str(caught.exception), code)
+
+    def test_explicit_clients_preserve_the_release_proof_and_inputs(self):
+        for separate in (False, True):
+            with self.subTest(separate_catalogs=separate):
+                values = shared_runtime_evidence(separate_catalogs=separate)
+                original = copy.deepcopy(values)
+                proof = release_runtime.validate_runtime(**values)
+                self.assertEqual(values, original)
+                self.assertEqual(
+                    proof["lease_sha256"], client_lease.lease_digest(values["lease"])
+                )
+                self.assertEqual(
+                    set(proof["container_ids"].values()),
+                    {c["Id"] for c in values["containers"]},
+                )
+
+    def test_shared_collection_is_verified_once_without_a_single_peer_bypass(self):
+        values = shared_runtime_evidence()
+        real = client_lease.validate_clients
+        with (
+            mock.patch.object(client_lease, "validate_clients", wraps=real) as checker,
+            mock.patch.object(
+                client_lease,
+                "validate_client_lease",
+                side_effect=AssertionError("single-client default must not be reused"),
+            ),
+        ):
+            release_runtime.validate_runtime(**values)
+        self.assertEqual(checker.call_count, 1)
+        self.assertIs(checker.call_args.args[0], values["shared_clients"])
+
+    def test_default_still_rejects_the_second_api(self):
+        values = shared_runtime_evidence()
+        values.pop("shared_clients")
+        self.reject(values, "release_runtime_client_lease_invalid")
+
+    def test_stale_snapshot_environment_plan_or_catalog_cannot_select_a_proof(self):
+        for kind in ("api_snapshot", "image_environment", "plan", "catalog_snapshot"):
+            with self.subTest(kind=kind):
+                values = shared_runtime_evidence()
+                member = values["shared_clients"][0]
+                if kind == "api_snapshot":
+                    member["api_container"]["State"]["StartedAt"] = (
+                        "2026-10-13T01:02:03.000000000Z"
+                    )
+                elif kind == "image_environment":
+                    member["image_environment"].reverse()
+                elif kind == "plan":
+                    member["release_compose"]["services"]["web"]["healthcheck"][
+                        "interval"
+                    ] = "30s"
+                    member["lease"]["release_compose_sha256"] = (
+                        client_lease.lease_digest(member["release_compose"])
+                    )
+                else:
+                    for registered in values["shared_clients"]:
+                        registered["catalog_network"]["Containers"]["2" * 64][
+                            "Name"
+                        ] = "another-snapshot"
+                self.reject(values, "release_runtime_shared_client_changed")
+
+    def test_unknown_peer_bad_other_member_and_third_client_fail_closed(self):
+        for kind in ("foreign", "gpu", "third", "bare_proof"):
+            with self.subTest(kind=kind):
+                values = shared_runtime_evidence()
+                clients = values["shared_clients"]
+                if kind == "foreign":
+                    for member in clients:
+                        member["catalog_network"]["Containers"]["f" * 64] = {}
+                elif kind == "gpu":
+                    clients[1]["api_container"]["HostConfig"]["DeviceRequests"] = [
+                        {"Driver": "nvidia"}
+                    ]
+                elif kind == "third":
+                    clients.append(copy.deepcopy(clients[1]))
+                else:
+                    clients[:] = client_lease.validate_clients(clients)
+                self.reject(values, "release_runtime_client_lease_invalid")
+
+    def test_registered_other_api_still_cannot_join_this_website(self):
+        values = shared_runtime_evidence()
+        second = values["shared_clients"][1]["lease"]["api_container_id"]
+        values["networks"][0]["Containers"][second] = {}
+        self.reject(values, "release_runtime_website_peers_changed")
+
+    def test_other_api_cannot_reuse_this_releases_web_container_identity(self):
+        values = shared_runtime_evidence()
+        second = values["shared_clients"][1]
+        old = second["lease"]["api_container_id"]
+        new = values["containers"][1]["Id"]
+        second["lease"]["api_container_id"] = new
+        second["api_container"]["Id"] = new
+        for member in values["shared_clients"]:
+            peers = member["catalog_network"]["Containers"]
+            peers[new] = peers.pop(old)
+        values["catalog_network"]["Containers"][new] = values["catalog_network"][
+            "Containers"
+        ].pop(old)
+        self.reject(values, "release_runtime_identity_collision")
 
 
 if __name__ == "__main__":

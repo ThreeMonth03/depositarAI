@@ -83,6 +83,11 @@ make search-web-ci
 替代。對話、日期與曆法回歸也在這兩條產品流程內，不需另一個研究環境。
 隔離測試不等於產品服務已部署。
 
+需要以少量真實查詢測試已審查的後端候選時，可使用
+[共用現役後端的私有開發流程](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/SHARED_BACKEND.md)。
+候選保有獨立 CPU API/BFF，重用既有唯讀 index 與已駐留模型，不切換公眾入口。
+這需要現役版本的凍結來源與完整部署證據；一般程式或文件修改仍先跑離線檢查。
+
 新增或搬移 runtime 模組時，一起核對 source inputs、Docker COPY、專屬 ignore
 與 image-owned import；host operator 與 test helpers 不應因此擴張線上映像。
 更改 catalog 的資料格式、投影或向量 recipe，則另評估舊資料是否仍可重用。

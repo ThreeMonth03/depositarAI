@@ -15,7 +15,12 @@ import re
 import subprocess
 
 from search.serialization import strict_json
-from search.operations.deployment import composition, image_build, source_bundle
+from search.operations.deployment import (
+    composition,
+    gpu_ownership,
+    image_build,
+    source_bundle,
+)
 from search.operations.deployment.public_entry import preflight, profile
 from search.operations.shared import private_io
 
@@ -709,7 +714,7 @@ def check(plan_path, *, runner=subprocess.run):
     return plan
 
 
-def _owned(path, plan, runner, *, healthy=False):
+def _owned(path, plan, runner, *, healthy=False, with_roles=False):
     compose = strict_json(_read(path.parent / "compose.json"))
     expected, assets = render(
         validate_config(plan["config"]),
@@ -833,7 +838,63 @@ def _owned(path, plan, runner, *, healthy=False):
                 "runtime_changed",
             )
         result.append(row["ID"])
-    return result
+    return {row["Service"]: row["ID"] for row in rows} if with_roles else result
+
+
+def gpu_ownership_proofs(
+    plan_path, *, runner=subprocess.run
+) -> tuple[gpu_ownership.CPUContainerProof, ...]:
+    """Prove the exact healthy TLS pair without stopping it or granting GPU use.
+
+    Material, backend, rendered profile and actual TLS ownership are independently
+    verified before sealing the full local GPU-ownership inspect projection.
+    Callers must retain operation locks and use these proofs only immediately:
+    subsequent GPU collection rechecks every container and exact fingerprint.
+    """
+    path = _path(str(plan_path))
+
+    def local_runner(argv, **kwargs):
+        if (
+            argv[0] == "docker"
+            and tuple(argv[: len(gpu_ownership.DOCKER_PREFIX)])
+            != gpu_ownership.DOCKER_PREFIX
+        ):
+            argv = [*gpu_ownership.DOCKER_PREFIX, *argv[1:]]
+        if runner is subprocess.run:
+            return image_build._run(
+                argv,
+                timeout=kwargs["timeout"],
+                environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            )
+        return runner(argv, **kwargs)
+
+    plan = check(path, runner=local_runner)
+    identifiers = _owned(path, plan, local_runner, healthy=True, with_roles=True)
+    _require(set(identifiers) == {"inner", "outer"}, "runtime_changed")
+
+    def command(argv):
+        return _output(argv, local_runner).decode("utf-8")
+
+    result = []
+    try:
+        for role, identifier in sorted(identifiers.items()):
+            row = gpu_ownership._inspect(command, identifier)
+            proof = gpu_ownership.CPUContainerProof(
+                identifier,
+                row["Image"],
+                "private-api-tls-" + role,
+                gpu_ownership.cpu_projection_sha256(row),
+            )
+            gpu_ownership._container(row, proof)
+            result.append(proof)
+    except gpu_ownership.GPUOwnershipError:
+        raise EndpointError("private_api_tls_runtime_changed") from None
+    _require(check(path, runner=local_runner) == plan, "material_changed")
+    _require(
+        _owned(path, plan, local_runner, healthy=True, with_roles=True) == identifiers,
+        "runtime_changed",
+    )
+    return tuple(result)
 
 
 def _stop_owned(path, plan, runner):

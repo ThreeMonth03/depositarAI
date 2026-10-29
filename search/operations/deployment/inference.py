@@ -42,6 +42,7 @@ from search.operations.state import StateStore
 MAX_SLOTS = 16
 MAX_MODEL_FILES = 32
 MAX_MODEL_BYTES = 64 * 1024**3
+RESIDENT_METADATA_BYTES = 32 * 1024**2
 SLOT = re.compile(r"inference-[0-9a-f]{12}\Z")
 
 
@@ -180,6 +181,48 @@ def _model_plan(config):
 @contextmanager
 def _verified_models(config, *, deadline=None, include_embedding=False):
     """Deep verify fixed pin authority via retained no-follow ancestry/file FDs."""
+    with _model_files(
+        config, deadline=deadline, include_embedding=include_embedding
+    ) as verified:
+        yield verified
+
+
+@contextmanager
+def _resident_models(
+    config, expected_file_identity_sha256, *, deadline=None, include_embedding=True
+):
+    """Reuse a prior deep identity only while the same model files stay pinned.
+
+    The caller separately proves unchanged resident GPU processes, complete
+    runtime ownership and fixed model/context residency. This cache cannot
+    authorize startup, reload, adoption or a different model recipe. Small
+    artifacts are still hashed; only large model-data reads are skipped.
+    """
+    if (
+        type(expected_file_identity_sha256) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", expected_file_identity_sha256) is None
+    ):
+        raise InferenceError("inference_model_file_identity_invalid")
+    with _model_files(
+        config,
+        deadline=deadline,
+        include_embedding=include_embedding,
+        expected_file_identity_sha256=expected_file_identity_sha256,
+    ) as verified:
+        yield verified
+
+
+@contextmanager
+def _model_files(
+    config, *, deadline, include_embedding, expected_file_identity_sha256=None
+):
+    """Share source pinning and race fences for deep and resident verification."""
+
+    def check_deadline():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise InferenceError("inference_model_verification_deadline")
+
+    check_deadline()
     with ExitStack() as stack:
         roots = {
             "api": stack.enter_context(
@@ -206,9 +249,11 @@ def _verified_models(config, *, deadline=None, include_embedding=False):
         ):
             raise InferenceError("inference_model_inventory_limit")
         records = []
+        identities = []
         for role, files in plans.items():
             root = roots[role]
             for relative, expected in sorted(files.items()):
+                check_deadline()
                 parent, name = root.relative_parent(relative)
                 named = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 search_model_source._source_file_policy(
@@ -226,39 +271,53 @@ def _verified_models(config, *, deadline=None, include_embedding=False):
                     opened
                 ) != search_model_source._file_identity(named):
                     raise InferenceError("inference_model_file_changed")
-                digest, size = hashlib.sha256(), 0
-                while size <= expected["bytes"]:
-                    if deadline is not None and time.monotonic() >= deadline:
-                        raise InferenceError("inference_model_verification_deadline")
-                    block = os.read(
-                        descriptor,
-                        min(
-                            search_model_source.CHUNK_BYTES,
-                            expected["bytes"] + 1 - size,
-                        ),
-                    )
-                    if not block:
-                        break
-                    size += len(block)
-                    digest.update(block)
                 if (
-                    size != expected["bytes"]
-                    or digest.hexdigest() != expected["sha256"]
+                    expected_file_identity_sha256 is None
+                    or expected["bytes"] <= RESIDENT_METADATA_BYTES
                 ):
-                    raise InferenceError("inference_model_digest_changed")
+                    digest, size = hashlib.sha256(), 0
+                    while size <= expected["bytes"]:
+                        check_deadline()
+                        block = os.read(
+                            descriptor,
+                            min(
+                                search_model_source.CHUNK_BYTES,
+                                expected["bytes"] + 1 - size,
+                            ),
+                        )
+                        if not block:
+                            break
+                        size += len(block)
+                        digest.update(block)
+                    if (
+                        size != expected["bytes"]
+                        or digest.hexdigest() != expected["sha256"]
+                    ):
+                        raise InferenceError("inference_model_digest_changed")
+                identity = search_model_source._file_identity(opened)
                 records.append(
                     (
                         descriptor,
                         parent,
                         name,
-                        search_model_source._file_identity(opened),
+                        identity,
                     )
+                )
+                identities.append(
+                    {
+                        "role": role,
+                        "relative": relative,
+                        "expected_sha256": expected["sha256"],
+                        "file_identity": identity,
+                    }
                 )
 
         def verify():
+            check_deadline()
             for root in roots.values():
                 root.verify()
             for descriptor, parent, name, expected in records:
+                check_deadline()
                 if (
                     search_model_source._file_identity(os.fstat(descriptor)) != expected
                     or search_model_source._file_identity(
@@ -268,7 +327,20 @@ def _verified_models(config, *, deadline=None, include_embedding=False):
                 ):
                     raise InferenceError("inference_model_file_changed")
 
+        verify.file_identity_sha256 = _digest(
+            {
+                "schema_version": 1,
+                "files": sorted(
+                    identities, key=lambda item: (item["role"], item["relative"])
+                ),
+            }
+        )
         verify()
+        if (
+            expected_file_identity_sha256 is not None
+            and verify.file_identity_sha256 != expected_file_identity_sha256
+        ):
+            raise InferenceError("inference_model_file_identity_changed")
         yield plans, verify
         verify()
 
@@ -283,8 +355,15 @@ def _inspect_runtime(docker, compose, images):
     return inference_runtime.validate_runtime(compose, images, containers, networks)
 
 
-def _gpu(config, allowed, runner):
-    result = gpu_ownership.run_gpu_ownership(config, allowed=allowed, runner=runner)
+def _gpu(config, allowed, runner, *, cpu_proofs=()):
+    options = (
+        {}
+        if type(cpu_proofs) is tuple and not cpu_proofs
+        else {"cpu_proofs": cpu_proofs}
+    )
+    result = gpu_ownership.run_gpu_ownership(
+        config, allowed=allowed, runner=runner, **options
+    )
     if (
         type(result) is not dict
         or result.get("schema_version") != 1
@@ -298,6 +377,11 @@ def _gpu(config, allowed, runner):
         or result.get("sealed_gpu_container_count") != len(allowed)
         or type(result.get("gpu_count")) is not int
         or result.get("gpu_count") != 4
+        or bool(options)
+        and (
+            type(result.get("sealed_cpu_container_count")) is not int
+            or result["sealed_cpu_container_count"] != len(cpu_proofs)
+        )
     ):
         raise InferenceError("inference_gpu_ownership_blocked")
 

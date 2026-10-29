@@ -428,6 +428,7 @@ class _ReleaseInputs:
     key: dict
     verify_client: Callable[[], None]
     refresh: Callable[[], None]
+    model_file_identity_sha256: str | None = None
 
 
 def _runtime_inputs(
@@ -440,6 +441,8 @@ def _runtime_inputs(
     source_runner,
     docker_runner,
     deadline,
+    *,
+    model_file_identity=None,
 ):
     authority = query.read_authority(context)
     key = credentials.read_api_key_authority(config, store)
@@ -457,9 +460,17 @@ def _runtime_inputs(
     gpu_authority = inference._authority(config, store, source_plan, inference_plan)
     # All acquired model/ancestry/client handles must exit successfully before
     # publication; no success survives a failed final FD/path verification.
-    models, verify_models = stack.enter_context(
+    # The shared-candidate observer may reuse a prior deep verification only
+    # while file identities AND the sealed resident GPU instance remain fixed.
+    # All ordinary startup/activation callers retain full content hashing.
+    model_context = (
         inference._verified_models(config, deadline=deadline, include_embedding=True)
+        if model_file_identity is None
+        else inference._resident_models(
+            config, model_file_identity, deadline=deadline, include_embedding=True
+        )
     )
+    models, verify_models = stack.enter_context(model_context)
     client = Path(
         stack.enter_context(
             tempfile.TemporaryDirectory(prefix="depositar-release-client-")
@@ -583,7 +594,13 @@ def _runtime_inputs(
         )
 
     return _ReleaseInputs(
-        host, identity, authority, key, verify_client, authority_check
+        host,
+        identity,
+        authority,
+        key,
+        verify_client,
+        authority_check,
+        getattr(verify_models, "file_identity_sha256", None),
     )
 
 
