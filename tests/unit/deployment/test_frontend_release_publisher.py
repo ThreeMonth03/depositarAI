@@ -51,6 +51,7 @@ class PublisherTests(unittest.TestCase):
             "GITHUB_EVENT_NAME": "workflow_dispatch",
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_SHA": REVISION,
+            "EXPECTED_RELEASE_REVISION": REVISION,
             "RUNNER_ENVIRONMENT": "github-hosted",
             "GITHUB_WORKFLOW_REF": publisher.REPOSITORY
             + "/"
@@ -211,6 +212,8 @@ class PublisherTests(unittest.TestCase):
             ("GITHUB_REF", "refs/heads/feature"),
             ("GITHUB_EVENT_NAME", "pull_request"),
             ("GITHUB_SHA", "b" * 40),
+            ("EXPECTED_RELEASE_REVISION", "b" * 40),
+            ("EXPECTED_RELEASE_REVISION", ""),
             ("GITHUB_ACTIONS", "false"),
             ("RUNNER_ENVIRONMENT", "self-hosted"),
             (

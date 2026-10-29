@@ -49,6 +49,7 @@ def _context():
         and os.environ.get("GITHUB_REPOSITORY") == REPOSITORY
         and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
         and os.environ.get("GITHUB_REF") == "refs/heads/main"
+        and os.environ.get("EXPECTED_RELEASE_REVISION") == revision
         and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
         and os.environ.get("GITHUB_WORKFLOW_REF")
         == REPOSITORY + "/" + WORKFLOW + "@refs/heads/main"

@@ -2,6 +2,14 @@ name: Frontend release
 
 on:
   workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact current main commit to release (40 lowercase hex characters)
+        required: true
+        type: string
+
+env:
+  EXPECTED_RELEASE_REVISION: ${{ inputs.revision }}
 
 permissions:
   contents: read
@@ -22,13 +30,39 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Reject a changed or unselected main revision
+        run: test "$EXPECTED_RELEASE_REVISION" = "$GITHUB_SHA"
+      - name: Stop the disposable runner's original Docker socket
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo systemctl stop docker.service docker.socket
       - name: Set up an isolated containerd image store
+        id: docker
         uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
         with:
           version: v29.7.2
           set-host: true
           daemon-config: |
             {"features":{"containerd-snapshotter":true}}
+      - name: Use the same tested daemon for native operator checks
+        env:
+          SETUP_DOCKER_SOCKET: ${{ steps.docker.outputs.sock }}
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          socket_path="${SETUP_DOCKER_SOCKET#unix://}"
+          test "$socket_path" != "$SETUP_DOCKER_SOCKET"
+          test -S "$socket_path"
+          sudo ln -sfnT -- "$socket_path" /var/run/docker.sock
+          export DOCKER_HOST=unix:///var/run/docker.sock
+          unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_API_VERSION
+          test "$(docker info --format '{{.ID}}')" = \
+            "$(docker --host "$SETUP_DOCKER_SOCKET" info --format '{{.ID}}')"
+          test "$(docker version --format '{{.Server.Version}}')" = 29.7.2
+          docker info --format '{{json .DriverStatus}}' | python3 -c \
+            'import json,sys; assert ["driver-type","io.containerd.snapshotter.v1"] in json.load(sys.stdin)'
+          printf '%s\n' 'DOCKER_HOST=unix:///var/run/docker.sock' \
+            'DOCKER_CONTEXT=' 'DOCKER_TLS_VERIFY=' 'DOCKER_CERT_PATH=' \
+            'DOCKER_API_VERSION=' >> "$GITHUB_ENV"
       - name: Install verified Docker Compose
         run: bash scripts/ci/install-compose.sh
       - name: Scan the selected source and history

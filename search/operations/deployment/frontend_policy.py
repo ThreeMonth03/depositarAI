@@ -3,11 +3,34 @@
 from pathlib import PurePosixPath
 import re
 
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
 
 PROJECTS = {
     "private": "depositar-search-web",
     "intranet-http": "depositar-search-intranet",
 }
+
+
+def validate_image_labels(labels, revision, role):
+    """Bind a frontend image role to reviewed source and the current wire version."""
+    if (
+        type(labels) is not dict
+        or type(revision) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+        or role not in ("web", "web-nginx")
+    ):
+        raise ValueError("frontend_image_labels_invalid")
+    expected = {
+        "org.opencontainers.image.revision": revision,
+        "io.depositar.ai.public-entry.version": "2",
+        **(
+            {"io.depositar.ai.conversation.version": str(CONVERSATION_CONTRACT_VERSION)}
+            if role == "web"
+            else {"io.depositar.ai.frontend.version": "1"}
+        ),
+    }
+    if any(labels.get(key) != value for key, value in expected.items()):
+        raise ValueError("frontend_image_labels_invalid")
 
 
 def _origin(value, *, upstream=False, access_mode="private"):

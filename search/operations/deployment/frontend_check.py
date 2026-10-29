@@ -178,6 +178,26 @@ def _admission(client, runtime, composition, config):
         _require(raw == rules.encode("ascii"), "admission_changed")
 
 
+def inspect_frontend_image(client, reference, manifest, revision, role):
+    """Inspect an exact platform image; a tag is only its locator."""
+    image = client.inspect(reference, platform="linux/amd64")
+    _descriptor(image.get("Descriptor"), manifest)
+    _require(
+        image.get("Id") == manifest
+        and image.get("Os") == "linux"
+        and image.get("Architecture") == "amd64"
+        and type(image.get("Config")) is dict,
+        "image_changed",
+    )
+    try:
+        frontend_policy.validate_image_labels(
+            image["Config"].get("Labels"), revision, role
+        )
+    except ValueError:
+        raise FrontendCheckError("frontend_check_image_changed") from None
+    return image
+
+
 def _runtime(client, expected, config):
     project = expected["name"]
     raw = client.call(
@@ -230,7 +250,9 @@ def _runtime(client, expected, config):
             "web_platform_manifest" if role == "web" else "web_nginx_platform_manifest"
         ]
         locator = service["image"]
-        image = client.inspect(locator, platform="linux/amd64")
+        image = inspect_frontend_image(
+            client, locator, manifest, config["frontend_revision"], role
+        )
         _require(
             row["Id"] in identifiers
             and type(row.get("Image")) is str
@@ -238,40 +260,6 @@ def _runtime(client, expected, config):
             "image_changed",
         )
         _descriptor(row.get("ImageManifestDescriptor"), manifest)
-        _descriptor(image.get("Descriptor"), manifest)
-        _require(
-            image.get("Id") == manifest
-            and image.get("Os") == "linux"
-            and image.get("Architecture") == "amd64",
-            "image_changed",
-        )
-        _require(
-            type(image.get("Config")) is dict
-            and type(image["Config"].get("Labels")) is dict,
-            "image_changed",
-        )
-        _require(
-            image["Config"]["Labels"].get("org.opencontainers.image.revision")
-            == config["frontend_revision"],
-            "image_changed",
-        )
-        _require(
-            image["Config"]["Labels"].get("io.depositar.ai.public-entry.version")
-            == "2",
-            "image_changed",
-        )
-        if role == "web":
-            _require(
-                image["Config"]["Labels"].get("io.depositar.ai.conversation.version")
-                == str(config["conversation_contract_version"]),
-                "contract_changed",
-            )
-        else:
-            _require(
-                image["Config"]["Labels"].get("io.depositar.ai.frontend.version")
-                == "1",
-                "image_changed",
-            )
         wanted_env = _environment(image["Config"].get("Env") or [])
         wanted_env.update(
             {k: str(v) for k, v in service.get("environment", {}).items()}

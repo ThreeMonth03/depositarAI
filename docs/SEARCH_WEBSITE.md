@@ -121,6 +121,9 @@ bash scripts/search-web.sh down
 取自已驗證的交付收據，工具版本可以與現役前端不同。這項檢查不執行 AI 搜尋，
 也不更新或切換服務；完整搜尋操作仍由下方實機驗收另行確認。
 
+已建立 GitHub frontend release 的部署可使用[主機交付命令](development/FRONTEND_DELIVERY.md)，
+下載並驗證兩個 CPU 映像後，沿用同一 checker 與 canonical profile 切換或回退。
+
 ## 實驗室 HTTP 入口
 
 此模式供已核准網段內的試用。瀏覽器使用 HTTP，不需要憑證；傳輸不加密。
