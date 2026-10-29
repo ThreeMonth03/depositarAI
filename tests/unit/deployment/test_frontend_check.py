@@ -411,6 +411,67 @@ class FrontendCheckTests(unittest.TestCase):
                     self.run_check()
                 self.assertFalse(any("exec" in c for c in self.runner.calls))
 
+    def test_loaded_image_descriptor_may_omit_platform_after_image_verification(self):
+        for image in self.runner.images.values():
+            image["Descriptor"].pop("platform")
+        result = self.run_check()
+        self.assertEqual(result["status"], "frontend_checked")
+        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
+        self.assertEqual(
+            result["runtime"]["web-nginx"]["platform_manifest"], NGINX_IMAGE
+        )
+        self.assertTrue(
+            all(
+                "platform" not in image["Descriptor"]
+                for image in self.runner.images.values()
+            )
+        )
+
+    def test_loaded_image_without_platform_still_requires_body_and_manifest_identity(
+        self,
+    ):
+        mutations = (
+            ("Os", "windows"),
+            ("Architecture", "arm64"),
+            ("Id", "sha256:" + "f" * 64),
+            ("digest", "sha256:" + "f" * 64),
+            ("mediaType", "application/vnd.oci.image.index.v1+json"),
+        )
+        for field, value in mutations:
+            self.runner = Runner(self.root)
+            image = self.runner.images[WEB_IMAGE]
+            descriptor = image["Descriptor"]
+            descriptor.pop("platform")
+            (descriptor if field in ("digest", "mediaType") else image)[field] = value
+            with self.subTest(field=field), self.assertRaises(check.FrontendCheckError):
+                self.run_check()
+            self.assertFalse(any("exec" in c for c in self.runner.calls))
+
+    def test_container_platform_is_required_and_explicit_image_platform_is_strict(self):
+        for target, platform in (
+            ("container", "absent"),
+            ("image", None),
+            ("image", {}),
+            ("image", {"architecture": "arm64", "os": "linux"}),
+            ("image", {"architecture": "amd64", "os": "linux", "variant": "v3"}),
+        ):
+            self.runner = Runner(self.root)
+            descriptor = (
+                self.runner.rows[IDS["web"]]["ImageManifestDescriptor"]
+                if target == "container"
+                else self.runner.images[WEB_IMAGE]["Descriptor"]
+            )
+            if platform == "absent":
+                descriptor.pop("platform")
+            else:
+                descriptor["platform"] = platform
+            with (
+                self.subTest(target=target, platform=platform),
+                self.assertRaises(check.FrontendCheckError),
+            ):
+                self.run_check()
+            self.assertFalse(any("exec" in c for c in self.runner.calls))
+
     def test_intranet_uses_shared_policy_mount_and_explicit_project(self):
         self.runner = Runner(self.root, mode="intranet-http")
         self.config["deployment_mode"] = "intranet-http"
