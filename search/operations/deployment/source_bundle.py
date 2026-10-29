@@ -119,7 +119,7 @@ RERANKER_PY = _paths("search/reranker/", "__init__.py contract.py model.py serve
 RERANKER = RERANKER_PY | {"search/reranker/requirements.lock"}
 WEB = _paths(
     "search/web/",
-    "__init__.py app.py identity.py sessions.py upstream.py requirements.lock",
+    "__init__.py app.py identity.py origin.py sessions.py upstream.py requirements.lock",
 )
 ASSETS = (
     _paths(
@@ -169,7 +169,7 @@ RECIPES = {
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
         "dockerfile_sha256": "de8aa1147d06b648cf18901650ea8b7c0b19640ed3e6dcbc5204833bd288df7b",
-        "dockerignore_sha256": "00ac7b8cc5b65510dfaf5e8b7c2682eff09197a587009033777fd69d615211f8",
+        "dockerignore_sha256": "21ab18bea34f423cd75053b70d3837e336faf8a81d7cc6e17ed7f43e5a1df69d",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (
@@ -192,11 +192,14 @@ RECIPES = {
     },
     "web-nginx": {
         "dockerfile": "deploy/docker/web-nginx/Dockerfile",
-        "dockerfile_sha256": "dd5d6dafbcf50965a1a6482d210e0f5f27c8b40fbd61e0012abbc81be5379d17",
-        "dockerignore_sha256": "bfb266c8815591f71888618bcb240881e623ec775f16584e138bfbeaba6c2f88",
+        "dockerfile_sha256": "832598580d7978ac2c2797361d934e346c424b6e31f3b0c1479972da3da5a785",
+        "dockerignore_sha256": "9bae44a1e0822f159c1ba5c0bfe9c4bf7fa5734a6ccd436933c8226bd9137aa1",
         "bases": (NODE_BASE, NGINX_BASE),
         "inputs": ASSETS
-        | _paths("deploy/config/web-nginx/", "nginx.conf http.conf website.conf"),
+        | _paths(
+            "deploy/config/web-nginx/",
+            "nginx.conf http.conf website.conf intranet-allow.conf",
+        ),
         "patterns": (
             "web/src/*.ts",
             "web/src/*.tsx",
