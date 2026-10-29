@@ -45,7 +45,7 @@ class ArtifactError(ValueError):
     """Fixed diagnostic code; do not leak subprocess output or private paths."""
 
 
-def _run(argv, *, cwd=None, timeout=120, environment=None):
+def _run(argv, *, cwd=None, timeout=120, environment=None, umask=-1):
     try:
         result = subprocess.run(
             [str(value) for value in argv],
@@ -55,6 +55,7 @@ def _run(argv, *, cwd=None, timeout=120, environment=None):
             stdin=subprocess.DEVNULL,
             timeout=timeout,
             check=False,
+            umask=umask,
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise ArtifactError("source_command_failed") from error
@@ -502,7 +503,21 @@ def restore(package_directory, revision, destination):
     tree = _tree(target, revision)
     _verify_archive(source / archive_name, tree)
     _git(target, "bundle", "verify", source / bundle_name)
-    _git(target, "-c", "core.hooksPath=/dev/null", "checkout", "--detach", revision)
+    # Only the trusted worktree needs readable files and traversable subdirs;
+    # its existing root and Git directory retain their private creation modes.
+    _run(
+        [
+            "git",
+            "-C",
+            target,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "checkout",
+            "--detach",
+            revision,
+        ],
+        umask=0o022,
+    )
     if _source_revision(target) != revision or _git(
         target, "status", "--porcelain", "--untracked-files=all"
     ):

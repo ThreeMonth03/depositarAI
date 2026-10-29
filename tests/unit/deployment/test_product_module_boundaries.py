@@ -53,6 +53,7 @@ OPERATOR_NAMESPACES = (
     "search.catalog.build",
     "search.operations.catalog",
     "search.operations.deployment",
+    "search.operations.documents",
     "search.operations.metadata",
     "search.operations.lifecycle",
 )
@@ -194,12 +195,24 @@ class ProductModuleBoundaryTests(unittest.TestCase):
             ast.parse(
                 "from search.operations.shared import runtime_probe\n"
                 "import search.operations.catalog_utils\n"
+                "import search.operations.documents_utils\n"
                 "import search.api.engineering"
             ),
             "search.web",
         )
         self.assertEqual([], forbidden_dependencies(found, OPERATOR_NAMESPACES))
         self.assertEqual([], forbidden_dependencies(found, ("search.api.engine",)))
+
+    def test_request_handlers_cannot_import_resource_batching_directly_or_lazily(self):
+        for source in (
+            "import search.operations.documents.batches",
+            "from search.operations import documents",
+            "from ...operations.documents import batches",
+            "def later():\n    from ...operations.documents import controller",
+        ):
+            with self.subTest(source=source):
+                found = dependencies(ast.parse(source), "search.api.shared")
+                self.assertTrue(forbidden_dependencies(found, OPERATOR_NAMESPACES))
 
     def test_neutral_policy_rejects_application_operator_research_and_model_edges(self):
         for namespace in (
@@ -209,6 +222,7 @@ class ProductModuleBoundaryTests(unittest.TestCase):
             "search.scope",
             "search.operations.shared.runtime_probe",
             "search.operations.catalog",
+            "search.operations.documents",
             "search.evaluation.query_design_worker",
             "search.planning.model",
             "research",

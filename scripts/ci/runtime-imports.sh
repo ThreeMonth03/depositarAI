@@ -58,6 +58,7 @@ assert search_root.is_dir() and not search_root.is_symlink(), "missing image pac
 for relative in (
     "evaluation",
     "operations/catalog",
+    "operations/documents",
     "operations/metadata",
     "operations/cli.py",
     "catalog/build",
@@ -133,6 +134,7 @@ for name, module in loaded.items():
         relative.startswith("evaluation/")
         or relative.startswith("catalog/build/")
         or relative.startswith("operations/catalog/")
+        or relative.startswith("operations/documents/")
         or relative.startswith("operations/metadata/")
     ), "offline implementation loaded: " + name
 

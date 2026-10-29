@@ -81,6 +81,25 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual(first["bundle_id"], value["candidate"]["bundle_id"])
         self.assertIn("failed", {item["status"] for item in value["operations"]})
 
+    def test_invalid_profile_set_keeps_previous_candidate_for_sync_and_stage(self):
+        from search.operations.catalog import backend
+        from search.operations.documents.sets import ProfileSetError
+
+        first = self.sync()
+        invalid = self.root / ("profile-set-" + "a" * 64 + ".json")
+        invalid.write_bytes(b"{}")
+        invalid.chmod(0o600)
+        for action in (self.sync, self.stage):
+            with (
+                self.subTest(action=action.__name__),
+                patch.object(backend, "prepare", side_effect=AssertionError("runtime")),
+                self.assertRaises(ProfileSetError),
+            ):
+                action(profile_set=invalid)
+            value = lifecycle.status(self.config)
+            self.assertEqual(first["bundle_id"], value["candidate"]["bundle_id"])
+            self.assertIsNone(value["active_release"])
+
     def test_config_identity_change_rejected_but_ttl_change_allowed(self):
         self.sync()
         with self.assertRaisesRegex(ValueError, "configuration_mismatch"):

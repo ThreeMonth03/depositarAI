@@ -64,10 +64,17 @@ def _external_root(path):
     return path
 
 
-def _selected_resources(bundle_path, manifest_sha256, resource_ids):
+def _selected_resources(
+    bundle_path,
+    manifest_sha256,
+    resource_ids,
+    *,
+    max_resources=MAX_RESOURCES,
+    metadata_only=False,
+):
     if (
         not isinstance(resource_ids, (list, tuple))
-        or not 1 <= len(resource_ids) <= MAX_RESOURCES
+        or not 1 <= len(resource_ids) <= max_resources
         or any(
             type(value) is not str or UUID.fullmatch(value) is None
             for value in resource_ids
@@ -78,7 +85,9 @@ def _selected_resources(bundle_path, manifest_sha256, resource_ids):
     ):
         raise ProfileError("document_selection_invalid")
     bundle_path = Path(bundle_path)
-    CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
+    bundle = CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
+    if metadata_only and any(row["resource_context"] for row in bundle.documents):
+        raise ProfileError("document_selection_invalid")
     expanded = _catalog_artifact(bundle_path, manifest_sha256, "corpus.v2.jsonl.gz")
     requested = set(resource_ids)
     matches = {identifier: [] for identifier in resource_ids}
@@ -130,13 +139,15 @@ def _catalog_artifact(bundle_path, manifest_sha256, name):
 
 
 @contextmanager
-def _state(path):
-    descriptor = private_io.open_directory(path, create=True)
+def _state(path, *, create=True, read_only=False):
+    descriptor = private_io.open_directory(path, create=create)
     lock = None
     try:
         lock = os.open(
             ".profiles.lock",
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            (os.O_RDONLY if read_only else os.O_RDWR | (os.O_CREAT if create else 0))
+            | os.O_NOFOLLOW
+            | os.O_NONBLOCK,
             0o600,
             dir_fd=descriptor,
         )
@@ -148,7 +159,9 @@ def _state(path):
             or stat.S_IMODE(info.st_mode) != 0o600
         ):
             raise ProfileError("document_state_lock_invalid")
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(
+            lock, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB
+        )
         private_io.verify_directory(descriptor, path)
         try:
             yield descriptor
@@ -195,7 +208,15 @@ def _child(descriptor, name):
         return private_io.open_child_directory(descriptor, name)
 
 
-def _extraction(acquired, image, expected_format, encoding, header_policy, descriptor):
+def _extraction(
+    acquired,
+    image,
+    expected_format,
+    encoding,
+    header_policy,
+    descriptor,
+    container_name,
+):
     from search.operations.documents import extractor
 
     identity = {
@@ -217,6 +238,7 @@ def _extraction(acquired, image, expected_format, encoding, header_policy, descr
             encoding,
             header_policy,
             image=image,
+            container_name=container_name,
         )
         cache_hit = False
     else:
@@ -239,134 +261,58 @@ def _extraction(acquired, image, expected_format, encoding, header_policy, descr
     return result, cache_hit
 
 
-def run(
-    bundle_path,
+def process(
+    dataset_id,
+    resource,
     manifest_sha256,
     state_root,
-    resource_ids,
+    image,
+    encoding,
+    header_policy,
+    extractions,
+    profiles,
     *,
-    refresh=False,
-    encoding="utf-8",
-    header_policy="first_record",
-    source_root=None,
+    container_name,
 ):
-    """Write private profiles and return IDs/statuses without source text or URLs."""
-    from search.operations.documents import extractor, source
+    """Publish one immutable profile through the shared acquisition/parser path."""
+    from search.operations.documents import source
 
-    if (
-        type(refresh) is not bool
-        or type(encoding) is not str
-        or type(header_policy) is not str
-        or encoding not in ENCODINGS
-        or header_policy not in HEADER_POLICIES
-    ):
-        raise ProfileError("document_extraction_policy_invalid")
-    selected = _selected_resources(bundle_path, manifest_sha256, resource_ids)
-    state_root = _external_root(state_root)
-    if (
-        state_root == Path(bundle_path)
-        or state_root in Path(bundle_path).parents
-        or Path(bundle_path) in state_root.parents
-    ):
-        raise ProfileError("document_state_overlaps_catalog")
-    source_root = (
-        Path(source_root)
-        if source_root is not None
-        else Path(__file__).resolve().parents[3]
+    acquired = source.acquire(state_root / "acquisition", resource)
+    result, hit = _extraction(
+        acquired,
+        image,
+        resource["format"].strip().upper(),
+        encoding,
+        header_policy,
+        extractions,
+        container_name,
     )
-    rows = []
-    with _state(state_root) as descriptor:
-        acquisition_fd = _child(descriptor, "acquisition")
-        os.close(acquisition_fd)
-        extractions = _child(descriptor, "extractions")
-        profiles = None
-        try:
-            profiles = _child(descriptor, "profiles")
-            image = extractor.build_image(source_root)
-            private_io.verify_directory(descriptor, state_root)
-            for dataset_id, resource in selected:
-                row = {"dataset_id": dataset_id, "resource_id": resource["id"]}
-                try:
-                    acquired = source.acquire(
-                        state_root / "acquisition", resource, refresh=refresh
-                    )
-                    row["acquisition_cache_hit"] = acquired["cache_hit"]
-                    result, hit = _extraction(
-                        acquired,
-                        image,
-                        resource["format"].strip().upper(),
-                        encoding,
-                        header_policy,
-                        extractions,
-                    )
-                    profile = {
-                        "schema_version": 1,
-                        "source": {
-                            "catalog_manifest_sha256": manifest_sha256,
-                            "dataset_id": dataset_id,
-                            "resource_id": resource["id"],
-                            "url_sha256": acquired["source_url_sha256"],
-                            "content_sha256": acquired["sha256"],
-                            "bytes": acquired["bytes"],
-                            "acquired_at": acquired["acquired_at"],
-                            "complete": True,
-                        },
-                        "extractor": {
-                            "image_id": image["image_id"],
-                            "source_sha256": image["source_sha256"],
-                        },
-                        "policy": {
-                            "encoding": encoding,
-                            "header_policy": header_policy,
-                        },
-                        "result": result,
-                    }
-                    profile_sha256 = digest(profile)
-                    _publish(profiles, profile_sha256 + ".json", profile)
-                    row.update(
-                        status=result["status"],
-                        extraction_cache_hit=hit,
-                        profile_sha256=profile_sha256,
-                        profile_file="profiles/" + profile_sha256 + ".json",
-                    )
-                except (source.SourceError, extractor.ExtractorError) as error:
-                    code = str(error)
-                    if code == "document_extractor_cleanup_failed":
-                        raise
-                    row.update(
-                        status="failed",
-                        code=code
-                        if re.fullmatch(r"document_[a-z_]{1,80}", code)
-                        else "document_resource_failed",
-                    )
-                rows.append(row)
-        finally:
-            try:
-                for child, name in (
-                    (profiles, "profiles"),
-                    (extractions, "extractions"),
-                ):
-                    if child is not None:
-                        try:
-                            private_io.verify_directory(child, state_root / name)
-                        except (OSError, ValueError) as error:
-                            raise ProfileError("document_state_changed") from error
-            finally:
-                if profiles is not None:
-                    os.close(profiles)
-                os.close(extractions)
-    failed = sum(row["status"] in {"failed", "parse_error"} for row in rows)
-    return {
+    profile = {
         "schema_version": 1,
-        "status": "partial" if failed else "completed",
-        "catalog_manifest_sha256": manifest_sha256,
-        "selected_count": len(rows),
-        "failed_count": failed,
-        "acquisition_cache_hits": sum(
-            row.get("acquisition_cache_hit", False) for row in rows
-        ),
-        "extraction_cache_hits": sum(
-            row.get("extraction_cache_hit", False) for row in rows
-        ),
-        "resources": rows,
+        "source": {
+            "catalog_manifest_sha256": manifest_sha256,
+            "dataset_id": dataset_id,
+            "resource_id": resource["id"],
+            "url_sha256": acquired["source_url_sha256"],
+            "content_sha256": acquired["sha256"],
+            "bytes": acquired["bytes"],
+            "acquired_at": acquired["acquired_at"],
+            "complete": True,
+        },
+        "extractor": {
+            "image_id": image["image_id"],
+            "source_sha256": image["source_sha256"],
+        },
+        "policy": {"encoding": encoding, "header_policy": header_policy},
+        "result": result,
+    }
+    profile_sha256 = digest(profile)
+    _publish(profiles, profile_sha256 + ".json", profile)
+    return {
+        "dataset_id": dataset_id,
+        "resource_id": resource["id"],
+        "status": result["status"],
+        "profile_sha256": profile_sha256,
+        "acquisition_cache_hit": acquired["cache_hit"],
+        "extraction_cache_hit": hit,
     }

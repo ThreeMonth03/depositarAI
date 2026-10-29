@@ -462,3 +462,162 @@ class ActivationDiagnosticBoundaryTests(unittest.TestCase):
                 self.assertNotIn("activation_performed", report)
                 self.assertNotIn("confers_runtime_authority", report)
                 self.assertNotIn(private, errors.getvalue())
+
+
+class ResourceBatchCLITests(unittest.TestCase):
+    def invoke(self, arguments, action, result):
+        from contextlib import redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+        from search.operations.documents import batches
+
+        output = io.StringIO()
+        with (
+            patch.object(batches, action, return_value=result) as called,
+            patch.object(cli, "_runtime_report", side_effect=AssertionError("runtime")),
+            redirect_stdout(output),
+        ):
+            code = cli.main(["profile-resources", *arguments])
+        self.assertEqual(result, json.loads(output.getvalue()))
+        return code, called
+
+    def test_prepare_is_config_free_and_forwards_explicit_selection_policy(self):
+        from search.operations import cli
+
+        code, called = self.invoke(
+            [
+                "prepare",
+                "--bundle",
+                "/private/bundle",
+                "--expected-manifest-sha256",
+                "a" * 64,
+                "--state-root",
+                "/private/profiles",
+                "--resource-id-file",
+                "/private/selection.json",
+                "--encoding",
+                "cp950",
+                "--header-policy",
+                "absent",
+            ],
+            "prepare",
+            {"status": "prepared", "plan_sha256": "b" * 64},
+        )
+        self.assertEqual(0, code)
+        called.assert_called_once_with(
+            Path("/private/bundle"),
+            "a" * 64,
+            Path("/private/profiles"),
+            Path("/private/selection.json"),
+            encoding="cp950",
+            header_policy="absent",
+            source_root=cli.ROOT,
+        )
+
+    def test_run_distinguishes_checkpoint_completion_and_partial_outcomes(self):
+        from search.operations import cli
+
+        for status, expected in (("checkpoint", 2), ("completed", 0), ("partial", 1)):
+            with self.subTest(status=status):
+                code, called = self.invoke(
+                    [
+                        "run",
+                        "--bundle",
+                        "/private/bundle",
+                        "--state-root",
+                        "/private/profiles",
+                        "--expected-plan-sha256",
+                        "b" * 64,
+                        "--max-resources",
+                        "7",
+                        "--retry-failed",
+                    ],
+                    "run",
+                    {"status": status},
+                )
+                self.assertEqual(expected, code)
+                called.assert_called_once_with(
+                    Path("/private/bundle"),
+                    Path("/private/profiles"),
+                    "b" * 64,
+                    max_resources=7,
+                    retry_failed=True,
+                    source_root=cli.ROOT,
+                )
+
+    def test_status_does_not_start_processing_or_require_a_bundle(self):
+        code, called = self.invoke(
+            [
+                "status",
+                "--state-root",
+                "/private/profiles",
+                "--expected-plan-sha256",
+                "b" * 64,
+            ],
+            "status",
+            {"status": "checkpoint", "pending_count": 3},
+        )
+        self.assertEqual(0, code)
+        called.assert_called_once_with(Path("/private/profiles"), "b" * 64)
+
+    def test_profile_set_and_individual_files_are_mutually_exclusive(self):
+        from contextlib import redirect_stderr
+        import io
+
+        from search.operations import cli
+
+        for command in ("sync", "stage-catalog", "up-private"):
+            with self.subTest(command=command), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    cli.parser().parse_args(
+                        [
+                            "--config",
+                            "/private/product.json",
+                            command,
+                            "--profile-set",
+                            "/private/profile-set.json",
+                            "--profile-file",
+                            "/private/profile.json",
+                        ]
+                    )
+                self.assertEqual(2, caught.exception.code)
+
+    def test_profile_set_reaches_each_existing_lifecycle_owner(self):
+        from contextlib import redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli, config, lifecycle
+
+        for command, action in (
+            ("sync", "sync_metadata"),
+            ("stage-catalog", "stage_catalog"),
+            ("up-private", "up_private"),
+        ):
+            with (
+                self.subTest(command=command),
+                patch.object(config, "load_config", return_value=object()),
+                patch.object(
+                    lifecycle, action, return_value={"status": "ready"}
+                ) as run,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(
+                    0,
+                    cli.main(
+                        [
+                            "--config",
+                            "/private/product.json",
+                            command,
+                            "--profile-set",
+                            "/private/profile-set.json",
+                        ]
+                    ),
+                )
+                self.assertEqual(
+                    Path("/private/profile-set.json"),
+                    run.call_args.kwargs["profile_set"],
+                )
+                self.assertNotIn("profile_files", run.call_args.kwargs)

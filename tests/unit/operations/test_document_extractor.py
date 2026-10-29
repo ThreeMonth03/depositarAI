@@ -246,6 +246,55 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(["rm", "--force", run[run.index("--name") + 1]], commands[-1])
 
+    def test_attempt_name_is_used_for_run_and_exact_cleanup(self):
+        docker = FakeDocker()
+        name = "depositarai-extract-" + "d" * 32
+        extractor.extract(
+            self.path, "CSV", image=IMAGE, container_name=name, runner=docker
+        )
+        commands = [call[0][5:] for call in docker.calls]
+        run = next(command for command in commands if command[0] == "run")
+        self.assertEqual(run[run.index("--name") + 1], name)
+        self.assertEqual(commands[-1], ["rm", "--force", name])
+        for invalid in ("", "foreign-service", "depositarai-extract-" + "D" * 32):
+            with (
+                self.subTest(name=invalid),
+                self.assertRaisesRegex(extractor.ExtractorError, "settings_invalid"),
+            ):
+                extractor.extract(
+                    self.path, "CSV", image=IMAGE, container_name=invalid, runner=docker
+                )
+
+    def test_resume_inspects_only_exact_recorded_helper_and_fails_closed(self):
+        name = "depositarai-extract-" + "d" * 32
+        calls = []
+
+        def runner(argv, *, timeout, environment):
+            calls.append(argv[5:])
+            return subprocess.CompletedProcess(
+                argv, 0, ("/" + name + "\n").encode(), b""
+            )
+
+        self.assertTrue(extractor.helper_exists(name, runner=runner))
+        self.assertEqual(
+            calls, [["container", "inspect", "--format", "{{.Name}}", name]]
+        )
+        for code, output, expected in (
+            (1, b"Error: No such container: " + name.encode(), False),
+            (1, b"Cannot connect to Docker daemon: private details", None),
+        ):
+
+            def failed(argv, *, timeout, environment):
+                return subprocess.CompletedProcess(argv, code, b"", output)
+
+            if expected is None:
+                with self.assertRaisesRegex(
+                    extractor.ExtractorError, "^document_extractor_inspect_failed$"
+                ):
+                    extractor.helper_exists(name, runner=failed)
+            else:
+                self.assertFalse(extractor.helper_exists(name, runner=failed))
+
     def test_digest_or_mime_mismatch_and_duplicate_json_are_rejected(self):
         wrong_digest = report()
         wrong_digest["input_sha256"] = "0" * 64
