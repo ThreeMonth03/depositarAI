@@ -41,6 +41,79 @@ async function submit(page: Page, query: string) {
   await page.getByRole("button", { name: "送出搜尋" }).click();
 }
 
+test("intranet HTTP supports search, follow-up and reset without secure-context APIs", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // Serve the built app under an ordinary HTTP origin, without DNS or TLS setup.
+  await page.route("http://intranet.test/**", async (route) => {
+    const url = new URL(route.request().url());
+    url.host = "127.0.0.1:8080";
+    await route.fulfill({ response: await route.fetch({ url: url.href }) });
+  });
+
+  let sessions = 0;
+  const turns: { query: string; version: number; authorization?: string }[] =
+    [];
+  const deleted: string[] = [];
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/access") return route.fulfill({ json: privateAccess });
+    if (path === "/api/session" && request.method() === "POST")
+      return route.fulfill({
+        json: {
+          token: `http-session-${++sessions}`,
+          version: 0,
+          expires_in: 1800,
+          max_turns: 20,
+          revision: "test",
+        },
+      });
+    if (path === "/api/session" && request.method() === "DELETE") {
+      deleted.push(request.headers().authorization);
+      return route.fulfill({ status: 204 });
+    }
+    if (path !== "/api/turn")
+      throw new Error(`unexpected request: ${request.method()} ${path}`);
+    const { query, version } = request.postDataJSON();
+    turns.push({
+      query,
+      version,
+      authorization: request.headers().authorization,
+    });
+    return route.fulfill({ json: reply(version + 1, "2026-10-29") });
+  });
+
+  await page.goto("http://intranet.test/");
+  expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
+  expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe("undefined");
+  await expect(page.getByRole("textbox", { name: "搜尋或追問" })).toBeEnabled();
+  await submit(page, "河川水質");
+  await expect(page.locator(".message")).toHaveCount(2);
+  await expect(page.locator(".result-card:visible")).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "搜尋或追問" })).toBeEnabled();
+  await submit(page, "只要 CSV");
+  await expect(page.locator(".message")).toHaveCount(4);
+  await expect(page.getByRole("textbox", { name: "搜尋或追問" })).toBeEnabled();
+  await page.getByRole("button", { name: "新搜尋" }).click();
+  await expect(page.locator(".message")).toHaveCount(0);
+  await expect(page.locator(".result-card")).toHaveCount(0);
+  await expect.poll(() => deleted).toEqual(["Bearer http-session-1"]);
+  await submit(page, "氣候");
+  await expect(page.locator(".message")).toHaveCount(2);
+  await expect(page.locator(".result-card:visible")).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "搜尋或追問" })).toBeEnabled();
+  expect(sessions).toBe(2);
+  expect(turns).toEqual([
+    { query: "河川水質", version: 0, authorization: "Bearer http-session-1" },
+    { query: "只要 CSV", version: 1, authorization: "Bearer http-session-1" },
+    { query: "氣候", version: 0, authorization: "Bearer http-session-2" },
+  ]);
+  expect(errors).toEqual([]);
+});
+
 for (const outcome of ["success", "unavailable", "login_required"] as const)
   test(`local expiry discards a late ${outcome} response and a new search uses a fresh session`, async ({
     page,

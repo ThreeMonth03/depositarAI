@@ -1,39 +1,39 @@
 """Guard the standalone CPU frontend composition."""
 
+import argparse
 import json
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import sys
-from urllib.parse import urlsplit
 
 
-def _origin(value, *, upstream=False):
-    if not isinstance(value, str) or any(c.isspace() for c in value):
-        raise ValueError("a fixed origin is required")
-    parsed = urlsplit(value)
-    if (
-        not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("only a bare origin is permitted")
-    # Accessing port rejects malformed and out-of-range values.
-    parsed.port
-    if parsed.scheme != "https" and not (
-        not upstream and parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
-    ):
+def _origin(value, *, upstream=False, access_mode="private"):
+    from search.web.origin import validate_origin
+
+    parsed = validate_origin(value, access_mode=access_mode)
+    if upstream and parsed.scheme != "https":
         raise ValueError("remote upstream requires an approved HTTPS origin")
+    return parsed
 
 
-def validate(config):
+def validate(config, *, intranet=False, prepare=False):
+    if prepare and not intranet:
+        raise ValueError("admission preparation requires intranet mode")
     services = config["services"]
-    if config.get("name") != "depositar-search-web":
+    expected_project = (
+        "depositar-search-intranet" if intranet else "depositar-search-web"
+    )
+    if config.get("name") != expected_project:
         raise ValueError("unexpected frontend project")
     if set(services) != {"web", "web-nginx"}:
         raise ValueError("remote frontend may contain only web and web-nginx")
+    web = services["web"]
+    access_mode = "intranet-http" if intranet else "private"
+    if web["environment"].get("WEB_ACCESS_MODE", "private") != access_mode:
+        raise ValueError("website access mode differs from deployment mode")
+    origin = _origin(web["environment"].get("WEB_ORIGIN"), access_mode=access_mode)
+    expected_host = origin.hostname if intranet else "127.0.0.1"
+    expected_port = str(origin.port) if intranet else "18081"
     for name, service in services.items():
         if (
             not service.get("read_only")
@@ -75,17 +75,18 @@ def validate(config):
         if name == "web-nginx":
             if (
                 len(ports) != 1
-                or ports[0].get("host_ip") != "127.0.0.1"
-                or str(ports[0].get("published")) != "18081"
+                or ports[0].get("host_ip") != expected_host
+                or str(ports[0].get("published")) != expected_port
                 or ports[0].get("target") != 8080
+                or ports[0].get("protocol", "tcp") != "tcp"
             ):
-                raise ValueError("only the frontend loopback port permitted")
+                raise ValueError(
+                    "only the configured frontend address and port permitted"
+                )
         elif ports:
             raise ValueError("private backend cannot publish a port")
     if not config["networks"]["website"].get("internal"):
         raise ValueError("website backend network must be internal")
-    web = services["web"]
-    _origin(web["environment"].get("WEB_ORIGIN"))
     _origin(web["environment"].get("WEB_UPSTREAM"), upstream=True)
     if (
         set(config["networks"]) != {"website", "upstream-route", "ingress"}
@@ -111,15 +112,35 @@ def validate(config):
         or any(
             not PurePosixPath(mount.get("source", "")).is_absolute() for mount in mounts
         )
-        or services["web-nginx"].get("volumes")
+        or (not intranet and services["web-nginx"].get("volumes"))
     ):
         raise ValueError("remote frontend receives only its API key and optional CA")
+    if intranet:
+        from search.operations.deployment.intranet_access import (
+            intranet_settings,
+            prepare_access,
+            verify_access,
+        )
+
+        intranet_settings(config)
+        if prepare:
+            prepare_access(config)
+        else:
+            verify_access(config)
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--intranet", action="store_true")
+    parser.add_argument("--prepare-access", action="store_true")
+    args = parser.parse_args()
+    description = "Intranet" if args.intranet else "Private"
     try:
-        validate(json.load(sys.stdin))
-    except (ValueError, KeyError, TypeError):
-        print("Private website deployment policy failed.", file=sys.stderr)
+        validate(
+            json.load(sys.stdin), intranet=args.intranet, prepare=args.prepare_access
+        )
+    except (ValueError, KeyError, TypeError, OSError):
+        print(f"{description} website deployment policy failed.", file=sys.stderr)
         raise SystemExit(1) from None
-    print("Private website deployment policy passed.")
+    print(f"{description} website deployment policy passed.")

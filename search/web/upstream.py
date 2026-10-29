@@ -11,6 +11,7 @@ import httpx
 from search.secrets import read_secret
 from search.serialization import strict_json
 from search.api.conversation.contract import TurnResponse
+from search.web.origin import validate_origin
 
 
 MAX_TURN_RESPONSE_BYTES = 1024 * 1024
@@ -24,22 +25,10 @@ class WebSettings:
     revision: str = "development"
     edge_secret_file: Path | None = None
     upstream_ca_file: Path | None = None
+    access_mode: str = "private"
 
     def __post_init__(self):
-        url = urlsplit(self.origin)
-        if (
-            url.username
-            or url.password
-            or url.query
-            or url.fragment
-            or url.path
-            or not url.hostname
-        ):
-            raise ValueError("origin must be a bare origin")
-        if url.scheme != "https" and not (
-            url.scheme == "http" and url.hostname == "127.0.0.1"
-        ):
-            raise ValueError("HTTP is allowed only for the local private demo")
+        validate_origin(self.origin, access_mode=self.access_mode)
         peer = urlsplit(self.upstream)
         if (
             peer.username
@@ -71,6 +60,7 @@ class WebSettings:
                 else None
             ),
             upstream_ca_file=Path(upstream_ca_file) if upstream_ca_file else None,
+            access_mode=os.environ.get("WEB_ACCESS_MODE", "private"),
         )
 
 
