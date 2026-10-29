@@ -100,9 +100,14 @@ class Docker:
         except (OSError, ValueError, subprocess.SubprocessError, UnicodeError):
             raise InferenceError("inference_command_failed") from None
 
-    def inspect(self, reference):
+    def inspect(self, reference, *, platform=None):
+        arguments = ["image", "inspect"]
+        if platform is not None:
+            if platform != "linux/amd64":
+                raise InferenceError("inference_image_platform_invalid")
+            arguments += ["--platform", platform]
         value = image_build._json(
-            self.call(["image", "inspect", "--format", "{{json .}}", reference])
+            self.call([*arguments, "--format", "{{json .}}", reference])
         )
         if type(value) is not dict:
             raise InferenceError("inference_image_inspection_invalid")

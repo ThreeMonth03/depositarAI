@@ -14,6 +14,32 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class RuntimeDockerTests(unittest.TestCase):
+    def test_explicit_platform_inspection_preserves_default_call_shape(self):
+        runner = mock.Mock(
+            return_value=subprocess.CompletedProcess([], 0, b'{"Id":"fixture"}', b"")
+        )
+        client = runtime_docker.Docker("/private-client", runner)
+        client.inspect("fixture-tag", platform="linux/amd64")
+        self.assertEqual(
+            [
+                "image",
+                "inspect",
+                "--platform",
+                "linux/amd64",
+                "--format",
+                "{{json .}}",
+                "fixture-tag",
+            ],
+            runner.call_args.args[0][5:],
+        )
+        for value in ("", "linux/arm64", "linux/amd64 --remote", True):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(runtime_docker.InferenceError),
+            ):
+                client.inspect("fixture-tag", platform=value)
+        self.assertEqual(runner.call_count, 1)
+
     def test_runtime_client_owns_error_and_build_client_stays_separate(self):
         self.assertIs(inference.InferenceError, runtime_docker.InferenceError)
         self.assertEqual("InferenceError", runtime_docker.InferenceError.__name__)

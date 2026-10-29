@@ -52,11 +52,18 @@ def profile():
 
 def checked():
     return {
-        "schema_version": 2,
+        "schema_version": 3,
+        "deployment_mode": "private",
+        "project": "depositar-search-web",
+        "origin": "http://127.0.0.1:18081",
         "status": "frontend_checked",
         **profile()["expected"],
         "runtime": {
-            role: {"container_id": digit * 64, "image": "sha256:" + digit * 64}
+            role: {
+                "container_id": digit * 64,
+                "container_image_index": "sha256:" + digit * 64,
+                "platform_manifest": "sha256:" + digit * 64,
+            }
             for role, digit in (("web", "1"), ("web-nginx", "2"))
         },
         "homepage_verified": True,
@@ -183,6 +190,10 @@ class ProfileTests(unittest.TestCase):
             ("model_inference_verified", True),
             ("conversation_contract_version", 4.0),
             ("schema_version", True),
+            ("schema_version", 2),
+            ("deployment_mode", "intranet-http"),
+            ("project", "depositar-search-intranet"),
+            ("origin", "http://10.20.30.40:18082"),
             ("extra", "PRIVATE_SENTINEL"),
         ):
             report = checked()

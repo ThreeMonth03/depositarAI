@@ -18,13 +18,15 @@ import time
 from urllib.parse import urlsplit
 
 from search.serialization import strict_json
+from search.transport.version import CONVERSATION_CONTRACT_VERSION
+from . import frontend_policy
 from search.operations.shared.bounded_http import AbortableConnection
+from .intranet_access import ACCESS_TARGET, intranet_settings
 from .public_entry import profile
 from .runtime_docker import Docker
 
 
 ROOT = Path(__file__).resolve().parents[3]
-PROJECT = "depositar-search-web"
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -33,8 +35,10 @@ FIELDS = frozenset(
         "schema_version",
         "frontend_env_file",
         "frontend_revision",
-        "web_image",
-        "web_nginx_image",
+        "deployment_mode",
+        "conversation_contract_version",
+        "web_platform_manifest",
+        "web_nginx_platform_manifest",
         "api_revision",
         "catalog_manifest_sha256",
     )
@@ -53,26 +57,27 @@ def _require(condition, code):
 def load_config(path):
     path = profile._path(str(path), ROOT)
     value = strict_json(profile._read_private(path, uid=os.geteuid(), maximum=16384))
-    _require(type(value) is dict, "config_invalid")
-    version = value.get("schema_version")
+    _require(type(value) is dict and set(value) == FIELDS, "config_invalid")
     _require(
-        type(version) is int and version in (1, 2),
+        type(value["schema_version"]) is int and value["schema_version"] == 3,
         "config_invalid",
     )
     _require(
-        set(value)
-        == FIELDS | ({"conversation_contract_version"} if version == 2 else set()),
+        type(value["deployment_mode"]) is str
+        and value["deployment_mode"] in frontend_policy.PROJECTS,
         "config_invalid",
     )
-    if version == 2:
-        expected = value["conversation_contract_version"]
-        _require(type(expected) is int and 1 <= expected <= 32, "config_invalid")
+    _require(
+        type(value["conversation_contract_version"]) is int
+        and value["conversation_contract_version"] == CONVERSATION_CONTRACT_VERSION,
+        "config_invalid",
+    )
     for name, pattern in (
         ("frontend_revision", HEX40),
         ("api_revision", HEX40),
         ("catalog_manifest_sha256", HEX64),
-        ("web_image", IMAGE),
-        ("web_nginx_image", IMAGE),
+        ("web_platform_manifest", IMAGE),
+        ("web_nginx_platform_manifest", IMAGE),
     ):
         _require(
             type(value[name]) is str and pattern.fullmatch(value[name]),
@@ -84,46 +89,28 @@ def load_config(path):
     return value
 
 
-def _origin(raw, *, upstream=False):
-    _require(
-        type(raw) is str
-        and raw.isascii()
-        and not any(c.isspace() or ord(c) < 32 for c in raw),
-        "profile_invalid",
-    )
-    parsed = urlsplit(raw)
-    _require(
-        parsed.hostname
-        and not parsed.username
-        and not parsed.password
-        and not parsed.path
-        and not parsed.query
-        and not parsed.fragment
-        and "\\" not in raw
-        and (
-            parsed.scheme == "https"
-            or (
-                not upstream
-                and parsed.scheme == "http"
-                and parsed.hostname == "127.0.0.1"
-            )
-        ),
-        "profile_invalid",
-    )
-    parsed.port
-    return parsed
+def _policy(composition, config):
+    try:
+        frontend_policy.validate(
+            composition, intranet=config["deployment_mode"] == "intranet-http"
+        )
+    except (ValueError, KeyError, TypeError, OSError):
+        raise FrontendCheckError("frontend_check_profile_invalid") from None
 
 
 def _compose(client, config):
+    mode = config["deployment_mode"]
     command = [
         "compose",
         "--project-name",
-        PROJECT,
+        frontend_policy.PROJECTS[mode],
         "--env-file",
         config["frontend_env_file"],
         "-f",
         str(ROOT / "deploy/compose/compose.search-web.yaml"),
     ]
+    if mode == "intranet-http":
+        command += ["-f", str(ROOT / "deploy/compose/compose.search-web.intranet.yaml")]
     first = strict_json(client.call(command + ["config", "--format", "json"]))
     ca = first["services"]["web"]["environment"].get("WEB_UPSTREAM_CA_FILE")
     if ca:
@@ -135,46 +122,7 @@ def _compose(client, config):
         )
         command += ["-f", str(ROOT / "deploy/compose/compose.search-web.ca.yaml")]
         first = strict_json(client.call(command + ["config", "--format", "json"]))
-    _require(
-        first.get("name") == PROJECT and set(first["services"]) == {"web", "web-nginx"},
-        "profile_invalid",
-    )
-    environment = first["services"]["web"]["environment"]
-    _origin(environment["WEB_ORIGIN"])
-    _origin(environment["WEB_UPSTREAM"], upstream=True)
-    _require(
-        set(environment)
-        == {
-            "WEB_ORIGIN",
-            "WEB_UPSTREAM",
-            "WEB_UPSTREAM_CA_FILE",
-            "NVIDIA_VISIBLE_DEVICES",
-        },
-        "profile_invalid",
-    )
-    _require(environment["NVIDIA_VISIBLE_DEVICES"] == "void", "profile_invalid")
-    targets = {"/run/secrets/api_key"}
-    if ca:
-        _require(
-            environment["WEB_UPSTREAM_CA_FILE"] == "/run/certs/upstream-ca.pem",
-            "profile_invalid",
-        )
-        targets.add("/run/certs/upstream-ca.pem")
-    mounts = first["services"]["web"]["volumes"]
-    _require(
-        len(mounts) == len(targets) and {m["target"] for m in mounts} == targets,
-        "profile_invalid",
-    )
-    _require(
-        all(
-            m["type"] == "bind"
-            and m["read_only"] is True
-            and Path(m["source"]).is_absolute()
-            for m in mounts
-        ),
-        "profile_invalid",
-    )
-    _require(not first["services"]["web-nginx"].get("volumes"), "profile_invalid")
+    _policy(first, config)
     return first
 
 
@@ -201,18 +149,44 @@ def _resource_integer(value):
 INSPECT = (
     '{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{{json .Config}},'
     '"State":{{json .State}},"HostConfig":{{json .HostConfig}},'
-    '"Mounts":{{json .Mounts}},"NetworkSettings":{{json .NetworkSettings}}}'
+    '"Mounts":{{json .Mounts}},"NetworkSettings":{{json .NetworkSettings}},'
+    '"ImageManifestDescriptor":{{json .ImageManifestDescriptor}}}'
 )
 
 
+def _descriptor(value, manifest):
+    _require(
+        type(value) is dict
+        and value.get("digest") == manifest
+        and value.get("mediaType")
+        in {
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        }
+        and value.get("platform") == {"architecture": "amd64", "os": "linux"},
+        "image_changed",
+    )
+
+
+def _admission(client, runtime, composition, config):
+    if config["deployment_mode"] == "intranet-http":
+        _, _, rules = intranet_settings(composition)
+        raw = client.call(
+            ["exec", runtime["web-nginx"]["container_id"], "cat", ACCESS_TARGET],
+            timeout=5,
+        )
+        _require(raw == rules.encode("ascii"), "admission_changed")
+
+
 def _runtime(client, expected, config):
+    project = expected["name"]
     raw = client.call(
         [
             "ps",
             "--all",
             "--no-trunc",
             "--filter",
-            "label=com.docker.compose.project=" + PROJECT,
+            "label=com.docker.compose.project=" + project,
             "--format",
             "{{.ID}}",
         ]
@@ -229,6 +203,20 @@ def _runtime(client, expected, config):
         for identifier in identifiers
     ]
     _require(
+        all(
+            type(row) is dict
+            and all(
+                type(row.get(key)) is dict
+                for key in ("Config", "State", "HostConfig", "NetworkSettings")
+            )
+            and type(row["Config"].get("Labels")) is dict
+            and type(row["NetworkSettings"].get("Ports")) is dict
+            and type(row["NetworkSettings"].get("Networks")) is dict
+            for row in rows
+        ),
+        "runtime_invalid",
+    )
+    _require(
         {r["Config"]["Labels"].get("com.docker.compose.service") for r in rows}
         == {"web", "web-nginx"},
         "runtime_invalid",
@@ -238,12 +226,28 @@ def _runtime(client, expected, config):
         actual, host, state = row["Config"], row["HostConfig"], row["State"]
         role = actual["Labels"]["com.docker.compose.service"]
         service = expected["services"][role]
-        image_id = config["web_image" if role == "web" else "web_nginx_image"]
-        image = client.inspect(image_id)
+        manifest = config[
+            "web_platform_manifest" if role == "web" else "web_nginx_platform_manifest"
+        ]
+        locator = service["image"]
+        image = client.inspect(locator, platform="linux/amd64")
         _require(
             row["Id"] in identifiers
-            and row["Image"] == image_id
-            and image["Id"] == image_id,
+            and type(row.get("Image")) is str
+            and IMAGE.fullmatch(row["Image"]),
+            "image_changed",
+        )
+        _descriptor(row.get("ImageManifestDescriptor"), manifest)
+        _descriptor(image.get("Descriptor"), manifest)
+        _require(
+            image.get("Id") == manifest
+            and image.get("Os") == "linux"
+            and image.get("Architecture") == "amd64",
+            "image_changed",
+        )
+        _require(
+            type(image.get("Config")) is dict
+            and type(image["Config"].get("Labels")) is dict,
             "image_changed",
         )
         _require(
@@ -251,18 +255,29 @@ def _runtime(client, expected, config):
             == config["frontend_revision"],
             "image_changed",
         )
-        if role == "web" and config["schema_version"] == 2:
+        _require(
+            image["Config"]["Labels"].get("io.depositar.ai.public-entry.version")
+            == "2",
+            "image_changed",
+        )
+        if role == "web":
             _require(
                 image["Config"]["Labels"].get("io.depositar.ai.conversation.version")
                 == str(config["conversation_contract_version"]),
                 "contract_changed",
+            )
+        else:
+            _require(
+                image["Config"]["Labels"].get("io.depositar.ai.frontend.version")
+                == "1",
+                "image_changed",
             )
         wanted_env = _environment(image["Config"].get("Env") or [])
         wanted_env.update(
             {k: str(v) for k, v in service.get("environment", {}).items()}
         )
         _require(
-            actual["Labels"].get("com.docker.compose.project") == PROJECT
+            actual["Labels"].get("com.docker.compose.project") == project
             and actual["Labels"].get("org.opencontainers.image.revision")
             == config["frontend_revision"]
             and actual["User"] == service["user"]
@@ -278,10 +293,10 @@ def _runtime(client, expected, config):
             and not any(state.get(k) for k in ("Paused", "Restarting", "Dead")),
             "runtime_unhealthy",
         )
+        _require(
+            state.get("Health", {}).get("Status") == "healthy", "runtime_unhealthy"
+        )
         if role == "web":
-            _require(
-                state.get("Health", {}).get("Status") == "healthy", "runtime_unhealthy"
-            )
             _require(
                 actual["WorkingDir"] == "/app"
                 and wanted_env.get("SOURCE_REVISION") == config["frontend_revision"],
@@ -321,11 +336,18 @@ def _runtime(client, expected, config):
             host.get("Tmpfs") == {"/tmp": service["tmpfs"][0].split(":", 1)[1]},
             "runtime_invalid",
         )
-        ports = (
-            {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18081"}]}
-            if role == "web-nginx"
-            else {}
-        )
+        ports = {}
+        if role == "web-nginx":
+            binding = service["ports"][0]
+            ports = {
+                "8080/tcp": [
+                    {
+                        "HostIp": binding["host_ip"],
+                        "HostPort": str(binding["published"]),
+                    }
+                ]
+            }
+
         _require((host.get("PortBindings") or {}) == ports, "ports_exposed")
         observed_ports = {k: v for k, v in row["NetworkSettings"]["Ports"].items() if v}
         _require(observed_ports == ports, "ports_exposed")
@@ -335,7 +357,11 @@ def _runtime(client, expected, config):
             and host["NetworkMode"] in networks,
             "network_changed",
         )
-        result[role] = {"container_id": row["Id"], "image": row["Image"]}
+        result[role] = {
+            "container_id": row["Id"],
+            "container_image_index": row["Image"],
+            "platform_manifest": manifest,
+        }
     for name, value in expected["networks"].items():
         network = strict_json(
             client.call(["network", "inspect", "--format", "{{json .}}", value["name"]])
@@ -344,7 +370,7 @@ def _runtime(client, expected, config):
             network["Name"] == value["name"]
             and network["Driver"] == "bridge"
             and network["Internal"] is (name == "website")
-            and network["Labels"].get("com.docker.compose.project") == PROJECT
+            and network["Labels"].get("com.docker.compose.project") == project
             and network["Labels"].get("com.docker.compose.network") == name,
             "network_changed",
         )
@@ -383,18 +409,23 @@ class _Assets(HTMLParser):
             self.paths.add(path)
 
 
-class _Loopback(AbortableConnection, http.client.HTTPConnection):
-    def __init__(self):
-        http.client.HTTPConnection.__init__(self, "127.0.0.1", 18081, timeout=3)
+class _Endpoint(AbortableConnection, http.client.HTTPConnection):
+    def __init__(self, host, port):
+        http.client.HTTPConnection.__init__(self, host, port, timeout=3)
         self._init_abortable()
 
     def connect(self):
-        self._publish_channel(socket.create_connection(("127.0.0.1", 18081), timeout=3))
+        self._publish_channel(
+            socket.create_connection((self.host, self.port), timeout=3)
+        )
 
 
-def _homepage(origin):
+def _homepage(composition):
+    origin = urlsplit(composition["services"]["web"]["environment"]["WEB_ORIGIN"])
+    binding = composition["services"]["web-nginx"]["ports"][0]
+
     def get(path, maximum):
-        connection = _Loopback()
+        connection = _Endpoint(binding["host_ip"], int(binding["published"]))
         watchdog = threading.Timer(4, connection.abort)
         watchdog.daemon = True
         watchdog.start()
@@ -403,7 +434,7 @@ def _homepage(origin):
             connection.request(
                 "GET",
                 path,
-                headers={"Host": _origin(origin).netloc, "Connection": "close"},
+                headers={"Host": origin.netloc, "Connection": "close"},
             )
             response = connection.getresponse()
             raw = response.read(maximum + 1)
@@ -431,9 +462,9 @@ def _homepage(origin):
 PROBE = r"""
 import http.client, json, os, ssl, sys, threading
 from pathlib import Path
-from urllib.parse import urlsplit
 from search.secrets import read_secret
 from search.serialization import strict_json
+from search.web.origin import validate_origin
 def abort():
     os.write(1, b'{"error":"frontend_check_upstream_failed"}\n')
     os._exit(1)
@@ -442,11 +473,8 @@ watchdog.daemon = True
 watchdog.start()
 try:
     origin = os.environ["WEB_UPSTREAM"]
-    url = urlsplit(origin)
-    if (url.scheme != "https" or not url.hostname or url.username is not None
-        or url.password is not None or url.path or url.query or url.fragment
-        or "\\" in origin or not origin.isascii()
-        or any(c.isspace() or ord(c) < 32 for c in origin)):
+    url = validate_origin(origin)
+    if url.scheme != "https":
         raise ValueError()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     defaults = ssl.get_default_verify_paths()
@@ -476,9 +504,8 @@ try:
     value = strict_json(raw)
     if (status != 200 or type(value) is not dict or value.get("revision") != sys.argv[1]
         or value.get("catalog_manifest_sha256") != sys.argv[2]
-        or (EXPECTED_CONTRACT_VERSION is not None and (
-            type(value.get("conversation_contract_version")) is not int
-            or value["conversation_contract_version"] != EXPECTED_CONTRACT_VERSION))):
+        or type(value.get("conversation_contract_version")) is not int
+        or value["conversation_contract_version"] != EXPECTED_CONTRACT_VERSION):
         raise ValueError()
     print('{"authenticated_version_status":200,"backend_identity_verified":true,"unauthenticated_version_status":401,"upstream_tls_verified":true}')
     watchdog.cancel()
@@ -488,7 +515,14 @@ except Exception:
 """
 
 
-def _probe_source(*, key_file="/run/secrets/api_key", contract_version=None):
+def _probe_source(
+    *, key_file="/run/secrets/api_key", contract_version=CONVERSATION_CONTRACT_VERSION
+):
+    _require(
+        type(contract_version) is int
+        and contract_version == CONVERSATION_CONTRACT_VERSION,
+        "config_invalid",
+    )
     return (
         "KEY_FILE="
         + repr(key_file)
@@ -508,7 +542,8 @@ def check(config_path, *, runner=None):
         client.environment["SOURCE_REVISION"] = config["frontend_revision"]
         composition = _compose(client, config)
         runtime = _runtime(client, composition, config)
-        assets = _homepage(composition["services"]["web"]["environment"]["WEB_ORIGIN"])
+        _admission(client, runtime, composition, config)
+        assets = _homepage(composition)
         raw = client.call(
             [
                 "exec",
@@ -518,9 +553,7 @@ def check(config_path, *, runner=None):
                 "-s",
                 "-B",
                 "-c",
-                _probe_source(
-                    contract_version=config.get("conversation_contract_version")
-                ),
+                _probe_source(contract_version=config["conversation_contract_version"]),
                 config["api_revision"],
                 config["catalog_manifest_sha256"],
             ],
@@ -538,13 +571,14 @@ def check(config_path, *, runner=None):
             "upstream_failed",
         )
         _require(_runtime(client, composition, config) == runtime, "runtime_changed")
+        _policy(composition, config)
+        _admission(client, runtime, composition, config)
     return {
         "schema_version": config["schema_version"],
-        **(
-            {"conversation_contract_version": config["conversation_contract_version"]}
-            if config["schema_version"] == 2
-            else {}
-        ),
+        "deployment_mode": config["deployment_mode"],
+        "project": composition["name"],
+        "origin": composition["services"]["web"]["environment"]["WEB_ORIGIN"],
+        "conversation_contract_version": config["conversation_contract_version"],
         "status": "frontend_checked",
         "frontend_revision": config["frontend_revision"],
         "api_revision": config["api_revision"],

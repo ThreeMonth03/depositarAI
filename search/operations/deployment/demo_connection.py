@@ -327,6 +327,9 @@ def remote_check(profile):
 def validate_remote_check(value, expected):
     fields = {
         "schema_version",
+        "deployment_mode",
+        "project",
+        "origin",
         "status",
         "frontend_revision",
         "api_revision",
@@ -350,7 +353,10 @@ def validate_remote_check(value, expected):
     )
     require(
         type(value["schema_version"]) is int
-        and value["schema_version"] == 2
+        and value["schema_version"] == 3
+        and value["deployment_mode"] == "private"
+        and value["project"] == "depositar-search-web"
+        and value["origin"] == ORIGIN
         and value["status"] == "frontend_checked",
         "remote_check",
         "remote_check_invalid",
@@ -396,11 +402,14 @@ def validate_remote_check(value, expected):
     for row in runtime.values():
         require(
             type(row) is dict
-            and set(row) == {"container_id", "image"}
+            and set(row)
+            == {"container_id", "container_image_index", "platform_manifest"}
             and type(row["container_id"]) is str
             and HEX64.fullmatch(row["container_id"]) is not None
-            and type(row["image"]) is str
-            and IMAGE.fullmatch(row["image"]) is not None,
+            and all(
+                type(row[name]) is str and IMAGE.fullmatch(row[name]) is not None
+                for name in ("container_image_index", "platform_manifest")
+            ),
             "remote_check",
             "remote_check_invalid",
         )
