@@ -426,6 +426,86 @@ class WebsiteRouteTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_intranet_http_requires_explicit_mode_and_keeps_exact_origin(self):
+        origin = "http://192.168.56.137:18082"
+        with self.assertRaises(ValueError):
+            replace(SETTINGS, origin=origin)
+        settings = replace(SETTINGS, origin=origin, access_mode="intranet-http")
+        with ASGITestClient(create_app(settings, FakeUpstream(), Sessions())) as client:
+            self.assertEqual(
+                client.post(
+                    "/api/session", json={}, headers={"Origin": origin}
+                ).status_code,
+                200,
+            )
+            for other in (ORIGIN, "http://192.168.56.138:18082", origin + "/"):
+                with self.subTest(origin=other):
+                    self.assertEqual(
+                        client.post(
+                            "/api/session", json={}, headers={"Origin": other}
+                        ).status_code,
+                        403,
+                    )
+
+    def test_intranet_http_permits_only_rfc1918_and_canonical_dedicated_port(self):
+        for host in ("10.0.0.1", "172.16.0.1", "172.31.255.254", "192.168.56.137"):
+            with self.subTest(host=host):
+                replace(
+                    SETTINGS,
+                    origin=f"http://{host}:18082",
+                    access_mode="intranet-http",
+                )
+        for origin in (
+            "http://8.8.8.8:18082",
+            "http://100.64.0.1:18082",
+            "http://127.0.0.1:18082",
+            "http://169.254.1.1:18082",
+            "http://172.15.255.255:18082",
+            "http://172.32.0.1:18082",
+            "http://192.168.56.137",
+            "http://192.168.56.137:80",
+            "http://192.168.56.137:1023",
+            "http://192.168.56.137:65536",
+            "http://192.168.56.137:018082",
+            "http://192.168.056.137:18082",
+            "http://pineapple.iis.sinica.edu.tw:18082",
+            "http://[fd00::1]:18082",
+            "https://192.168.56.137:18082",
+            "http://user:pass@192.168.56.137:18082",
+            "http://@192.168.56.137:18082",
+            "http://192.168.56.137:18082/",
+            "http://192.168.56.137:18082?",
+            "http://192.168.56.137:18082#",
+            "http://192.168.56.137:18082\\evil",
+            "http://192.168.56.137:18082\n",
+            " http://192.168.56.137:18082",
+        ):
+            with self.subTest(origin=origin), self.assertRaises(ValueError):
+                replace(SETTINGS, origin=origin, access_mode="intranet-http")
+        for mode in ("", "intranet", "public", None):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                replace(SETTINGS, access_mode=mode)
+
+    def test_intranet_http_mode_environment_does_not_relax_upstream_tls(self):
+        with patch.dict(
+            os.environ,
+            {
+                "WEB_ORIGIN": "http://192.168.56.137:18082",
+                "WEB_ACCESS_MODE": "intranet-http",
+                "WEB_UPSTREAM": "https://private-api.test",
+            },
+            clear=True,
+        ):
+            configured = WebSettings.from_environment()
+            self.assertEqual(configured.access_mode, "intranet-http")
+            os.environ["WEB_UPSTREAM"] = "http://192.168.56.1:8000"
+            with self.assertRaises(ValueError):
+                WebSettings.from_environment()
+            os.environ["WEB_UPSTREAM"] = "https://private-api.test"
+            del os.environ["WEB_ACCESS_MODE"]
+            with self.assertRaises(ValueError):
+                WebSettings.from_environment()
+
     def test_optional_upstream_ca_environment_and_https_boundary(self):
         with patch.dict(
             os.environ,

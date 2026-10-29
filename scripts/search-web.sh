@@ -11,15 +11,27 @@ case "$command" in
   up|down|status|config) ;;
   *) echo 'Usage: bash scripts/search-web.sh {up|down|status|config}' >&2; exit 2 ;;
 esac
-config="${SEARCH_WEB_ENV_FILE:-.env.search-web}"
+mode="${SEARCH_WEB_MODE:-private}"
+case "$mode" in
+  private) project=depositar-search-web; default_config=.env.search-web ;;
+  intranet-http) project=depositar-search-intranet; default_config=.env.search-web-intranet ;;
+  *) echo 'SEARCH_WEB_MODE must be private or intranet-http.' >&2; exit 2 ;;
+esac
+config="${SEARCH_WEB_ENV_FILE:-$default_config}"
 # The dedicated file owns frontend settings, independent of an API checkout.
 unset WEB_UID WEB_GID WEB_API_KEY_FILE WEB_ORIGIN WEB_UPSTREAM WEB_UPSTREAM_CA_FILE COMPOSE_PROJECT_NAME
+unset WEB_ACCESS_MODE WEB_BIND_IP WEB_PORT WEB_ALLOWED_CIDRS WEB_ACCESS_FILE
 export SOURCE_REVISION
 SOURCE_REVISION="$(git rev-parse HEAD)"
 if [[ "$command" == up ]] && ! git diff --quiet HEAD -- search web deploy scripts/search-web.sh scripts/validate_search_web.py; then
   echo 'Commit reviewed source changes before starting a versioned website.' >&2; exit 1
 fi
-compose=(docker compose --project-name depositar-search-web --env-file "$config" -f deploy/compose/compose.search-web.yaml)
+compose=(docker compose --project-name "$project" --env-file "$config" -f deploy/compose/compose.search-web.yaml)
+policy=()
+if [[ "$mode" == intranet-http ]]; then
+  compose+=(-f deploy/compose/compose.search-web.intranet.yaml)
+  policy=(--intranet --prepare-access)
+fi
 has_private_ca="$("${compose[@]}" config --format json | python3 -c '
 import json, sys
 from pathlib import PurePosixPath
@@ -36,7 +48,7 @@ if [[ "$has_private_ca" == yes ]]; then
   compose+=(-f deploy/compose/compose.search-web.ca.yaml)
 fi
 if [[ "$command" == up || "$command" == config ]]; then
-  "${compose[@]}" config --format json | python3 scripts/validate_search_web.py
+  "${compose[@]}" config --format json | python3 scripts/validate_search_web.py "${policy[@]}"
 fi
 case "$command" in
   up)
@@ -51,9 +63,13 @@ case "$command" in
     trap '"${compose[@]}" stop --timeout 10 web-nginx >/dev/null 2>&1 || true' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    "${compose[@]}" up --no-build -d --wait --wait-timeout 180
+    "${compose[@]}" up --no-build --pull never -d --wait --wait-timeout 180
     trap - EXIT INT TERM
-    echo 'Private frontend: http://127.0.0.1:18081 (SSH tunnel or approved outer ingress).' ;;
+    if [[ "$mode" == intranet-http ]]; then
+      echo 'Intranet frontend started with the configured HTTP origin and client CIDRs.'
+    else
+      echo 'Private frontend: http://127.0.0.1:18081 (SSH tunnel or approved outer ingress).'
+    fi ;;
   down) "${compose[@]}" down ;;
   status) "${compose[@]}" ps ;;
   config) "${compose[@]}" config --quiet ;;

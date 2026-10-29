@@ -7,7 +7,7 @@ COPY web/src ./src
 RUN npm run build
 
 FROM nginx:1.30.4-alpine@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c
-COPY deploy/config/web-nginx/nginx.conf deploy/config/web-nginx/http.conf deploy/config/web-nginx/website.conf /etc/nginx/
+COPY deploy/config/web-nginx/nginx.conf deploy/config/web-nginx/http.conf deploy/config/web-nginx/website.conf deploy/config/web-nginx/intranet-allow.conf /etc/nginx/
 COPY --from=assets /web/dist /app/web-dist/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION

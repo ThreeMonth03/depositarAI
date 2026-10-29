@@ -77,6 +77,7 @@ for action in check format; do
       search/api/conversation/contract.py search/api/conversation/engine.py search/api/conversation/worker.py \
       search/api/conversation/calendar.py search/tests/test_conversation_calendar.py \
       search/api/conversation/time.py search/tests/test_conversation_time.py \
+      search/operations/deployment/intranet_access.py \
       search/tests/test_conversation.py search/tests/test_search_web.py search/tests/test_search_web_identity.py search/tests/web_fixture.py
 done
 for action in check format; do
@@ -87,7 +88,7 @@ for action in check format; do
     --mount "type=bind,src=$project_dir/scripts,dst=/app/scripts,readonly" \
     --mount "type=bind,src=$project_dir/tests,dst=/app/tests,readonly" \
     depositar-search-api:ci ruff "$action" "${options[@]}" scripts/validate_search_web.py \
-      tests/test_search_web_deploy.py
+      tests/test_search_web_deploy.py tests/integration/test_intranet_web_runtime.py
 done
 begin_phase npm
 npm_cache_dir="${CI_NPM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/depositar-ai/npm}"
@@ -110,6 +111,11 @@ docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
 docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
   -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
+if [[ "$suite" != browser ]]; then
+  begin_phase intranet-entry-runtime
+  DEPOSITAR_TEST_INTRANET_WEB_RUNTIME=1 \
+    python3 -m unittest tests.integration.test_intranet_web_runtime -v
+fi
 if [[ "$suite" != oss ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.
   if ! docker image inspect "$browser_image" >/dev/null 2>&1; then

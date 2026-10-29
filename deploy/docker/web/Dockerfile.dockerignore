@@ -45,5 +45,6 @@ search/web/**
 !search/web/identity.py
 !search/web/sessions.py
 !search/web/upstream.py
+!search/web/origin.py
 !search/web/requirements.lock
 !search/api/requirements.lock
