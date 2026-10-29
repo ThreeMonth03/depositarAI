@@ -13,7 +13,13 @@ import re
 import time
 import uuid
 
-from search.operations.catalog import administration, backend, execution, results
+from search.operations.catalog import (
+    administration,
+    backend,
+    execution,
+    results,
+    reuse,
+)
 from search.operations.catalog.policy import CONTAINER_ID, SERVICES, RuntimeError
 from search.operations.shared import private_io
 from search.vector_journal import read_events, validate_all, validate_report
@@ -440,6 +446,7 @@ def build(
     *,
     repo_root,
     runner=None,
+    opensearch_factory=None,
     max_passes=16,
     wall_seconds=7200,
     clock=time.monotonic,
@@ -475,12 +482,23 @@ def build(
             return {**verify_complete(context), "passes_this_invocation": 0}
         secret = administration._secret(context)
         result = None
+        reuse_report = None
         passes = 0
         while (
             passes < max_passes
             and ordinal < MAX_HISTORY
             and clock() + HELPER_TIMEOUT <= expires
         ):
+            if ordinal == 0:
+                runtime, images = execution.require_runtime(context)
+                options = (
+                    {}
+                    if opensearch_factory is None
+                    else {"opensearch_factory": opensearch_factory}
+                )
+                reuse_report = reuse.seed(context, runtime, images, **options)
+                if clock() + HELPER_TIMEOUT > expires:
+                    break
             result = _one_pass(
                 context, image, secret, root, recipe_hash, ordinal + 1, previous
             )
@@ -502,4 +520,5 @@ def build(
             "pending_count": previous["pending_count"] if previous else None,
             "runtime_verified": True,
             "host_cleanup_verified": bool(result),
+            "vector_reuse": reuse_report,
         }

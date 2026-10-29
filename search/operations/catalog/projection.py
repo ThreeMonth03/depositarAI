@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 
 from search.catalog.bundle import CatalogBundle
@@ -18,6 +17,7 @@ from search.catalog.codec import _json_wire_copy
 from search.catalog.inventory import InventorySnapshot
 from search.catalog.policy import MAX_DOCUMENTS
 from search.catalog.vectors import VectorProgressSnapshot
+from search.operations.catalog import chunks
 from search.operations.shared import private_io
 from search.planning import index_filters as filters
 
@@ -25,10 +25,10 @@ from search.planning import index_filters as filters
 PHYSICAL_INDEX = re.compile(r"fess\.[0-9]{14,20}\Z")
 PAGE_SIZE = 50
 BULK_SIZE = 50
-VECTOR_DIMENSION = 768
+VECTOR_DIMENSION = chunks.DIMENSIONS
 # Fess 15.8 ChunkVectorHelper.DEFAULT_MAX_CHUNKS_PER_DOCUMENT; callers cannot
 # widen this recipe. The transport independently caps each response's bytes.
-MAX_CHUNKS_PER_DOCUMENT = 1000
+MAX_CHUNKS_PER_DOCUMENT = chunks.MAX_CHUNKS
 SOURCE_FIELDS = (
     "dataset_id",
     "url",
@@ -38,6 +38,7 @@ SOURCE_FIELDS = (
     "depositar_bundle_id",
     "depositar_document_sha256",
     "content_chunk_status",
+    "content",
     "resource_context",
     filters.VECTOR_PATH,
     filters.FIELD,
@@ -165,36 +166,27 @@ def require_complete_shards(value):
         raise ProjectionError("catalog_projection_partial_shards")
 
 
-def _finite(number):
-    if type(number) not in {int, float}:
-        return False
-    try:
-        return math.isfinite(number)
-    except OverflowError:
-        return False
-
-
-def _vectors(source):
-    chunks = source.get(filters.VECTOR_PATH)
+def _native_chunks(source, original_content):
+    vectors = source.get(filters.VECTOR_PATH)
     if (
         source.get("content_chunk_status") != "done"
-        or type(chunks) is not list
-        or not 1 <= len(chunks) <= MAX_CHUNKS_PER_DOCUMENT
+        or type(vectors) is not list
+        or not 1 <= len(vectors) <= MAX_CHUNKS_PER_DOCUMENT
     ):
         raise ProjectionError("catalog_projection_vectors_incomplete")
-    for chunk in chunks:
-        vector = chunk.get("vector") if type(chunk) is dict else None
-        if (
-            type(vector) is not list
-            or len(vector) != VECTOR_DIMENSION
-            or any(not _finite(number) for number in vector)
-            or not any(vector)
-        ):
-            raise ProjectionError("catalog_projection_vector_invalid")
-    return chunks
+    try:
+        native = chunks.validate(source.get("content"), vectors, original_content)
+    except ValueError as error:
+        code = (
+            "catalog_projection_vector_invalid"
+            if str(error) == "catalog_chunk_vectors_invalid"
+            else "catalog_projection_chunk_content_invalid"
+        )
+        raise ProjectionError(code) from None
+    return native
 
 
-def _inventory(client, bundle, index, *, projected):
+def _inventory(client, bundle, index, *, projected, capture=None):
     expected = {row["dataset_id"]: row for row in bundle.documents}
     expected_hashes = {
         url: digest for url, _bundle, digest in bundle.expected_inventory_entries
@@ -279,11 +271,12 @@ def _inventory(client, bundle, index, *, projected):
                 not has_context and (projected or context)
             ):
                 raise ProjectionError("catalog_projection_resource_context_changed")
-            chunks = _vectors(source)
-            chunk_count += len(chunks)
-            vector_hashes[identifier] = hashlib.sha256(
-                private_io.canonical(chunks)
-            ).hexdigest()
+            native = _native_chunks(source, document["content"])
+            vectors = native[filters.VECTOR_PATH]
+            chunk_count += len(vectors)
+            vector_hashes[identifier] = chunks.digest(native)
+            if capture is not None:
+                capture(identifier, document["content"], native["content"], vectors)
             found[identifier] = {
                 "id": native_id,
                 "seq_no": row["_seq_no"],
@@ -392,7 +385,7 @@ def _report(bundle, index, count, vector_digest, updated):
     }
 
 
-def verify_vectors(client, bundle, index=None):
+def verify_vectors(client, bundle, index=None, *, capture=None):
     """Read all actual vectors and catalog identities, without changing the index.
 
     The caller independently binds this bounded client to the sealed catalog
@@ -402,13 +395,20 @@ def verify_vectors(client, bundle, index=None):
     exactly. Existing projection fields, if present, remain strictly checked.
     The complete partition digest uses the vector-pass algorithm, not a new
     count-only encoding, so a host facade can compare the durable checkpoint.
+    A trusted capture sink receives each validated native payload while paging;
+    it must defer publishing its manifest until the complete returned proof has
+    been compared with the sealed query authority.
     """
     _bundle(bundle)
+    if capture is not None and not callable(capture):
+        raise ProjectionError("catalog_projection_capture_invalid")
     if index is not None:
         require_index(index)
     max_url_length = max(len(row["url"]) for row in bundle.documents)
     physical, _projected = _mapping(client, index, max_url_length=max_url_length)
-    _rows, chunks, digest = _inventory(client, bundle, physical, projected=False)
+    _rows, chunks, digest = _inventory(
+        client, bundle, physical, projected=False, capture=capture
+    )
     repeated, _projected = _mapping(client, index, max_url_length=max_url_length)
     if repeated != physical:
         raise ProjectionError("catalog_projection_index_changed")

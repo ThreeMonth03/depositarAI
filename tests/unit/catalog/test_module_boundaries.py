@@ -68,6 +68,21 @@ def imports_namespace(found, namespace):
 
 
 class CatalogModuleBoundaryTests(unittest.TestCase):
+    def test_vector_cache_helpers_remain_below_query_and_vector_facades(self):
+        for consumer in ("chunks", "connection", "reuse"):
+            found = dependencies(consumer)
+            for namespace in (
+                PACKAGE + ".query",
+                PACKAGE + ".vectors",
+                "search.operations.lifecycle",
+                "search.operations.deployment",
+                "search.api",
+                "torch",
+                "transformers",
+            ):
+                with self.subTest(consumer=consumer, forbidden=namespace):
+                    self.assertFalse(imports_namespace(found, namespace))
+
     def test_import_parser_keeps_absolute_relative_and_aliased_boundaries(self):
         for source, expected in (
             ("from . import runtime", PACKAGE + ".runtime"),

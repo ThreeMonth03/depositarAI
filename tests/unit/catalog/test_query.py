@@ -11,13 +11,20 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from search.operations.catalog import access, execution, projection, query
+from search.operations.catalog import (
+    access,
+    connection,
+    execution,
+    projection,
+    query,
+    reuse,
+)
 from search.operations.shared import private_io
 from tests.unit.catalog.test_access import AccessClient
 from tests.unit.catalog.test_projection import INDEX, ProjectionClient, make_bundle
 from tests.unit.catalog.test_vectors import host_context
 
-READ_MATERIALS = query._materials
+READ_MATERIALS = connection.materials
 
 
 class QueryClient:
@@ -119,7 +126,10 @@ class CatalogQueryTests(unittest.TestCase):
             return_value=self.context["plan"]["revision"],
         ).start()
         self.materials_mock = patch.object(
-            query, "_materials", return_value=("a" * 64, b"sealed-ca")
+            connection, "materials", return_value=("a" * 64, b"sealed-ca")
+        ).start()
+        self.cache_mock = patch.object(
+            reuse, "export", return_value={"status": "exported", "cached_count": 2}
         ).start()
         self.factory_calls = []
 
@@ -209,6 +219,45 @@ class CatalogQueryTests(unittest.TestCase):
             self.assertEqual(
                 state, ((root / name).stat().st_ino, (root / name).read_bytes())
             )
+
+    def test_cache_export_follows_query_completion_and_receives_verified_scan(self):
+        def export(context, client, scan, ready):
+            self.assertIs(context, self.context)
+            self.assertIs(client, self.client)
+            self.assertEqual(self.scan, scan)
+            saved = execution.read_record(self.root / "query-access", "ready.json")
+            self.assertEqual(saved, ready)
+            completed = execution.read_record(
+                self.root / "query-operations" / ready["run_id"], "complete.json"
+            )
+            self.assertEqual(
+                ready["complete_sha256"], execution.digest_record(completed)
+            )
+            return {"status": "exported", "cached_count": 2}
+
+        self.cache_mock.side_effect = export
+        report = self.provision()
+        self.assertEqual(
+            {"status": "exported", "cached_count": 2}, report["vector_cache"]
+        )
+        self.cache_mock.assert_called_once()
+
+    def test_failed_derived_cache_export_can_retry_from_completed_query_evidence(self):
+        self.cache_mock.side_effect = ValueError("cache write interrupted")
+        with self.assertRaisesRegex(ValueError, "cache write interrupted"):
+            self.provision()
+        first = execution.read_record(self.root / "query-access", "ready.json")
+        self.assertTrue(
+            (
+                self.root / "query-operations" / first["run_id"] / "complete.json"
+            ).exists()
+        )
+        self.client.access.calls.clear()
+        self.cache_mock.side_effect = None
+        report = self.provision()
+        self.assertEqual("query-ready", report["status"])
+        self.assertEqual([], self.client.access.admin_writes())
+        self.assertEqual(2, self.cache_mock.call_count)
 
     def test_interrupted_access_never_publishes_ready_or_auto_retries(self):
         self.client.after_access = lambda _: (_ for _ in ()).throw(
@@ -567,7 +616,9 @@ class CatalogQueryTests(unittest.TestCase):
         before = self.authority_snapshot()
         with (
             patch.object(
-                query, "_materials", side_effect=AssertionError("admin HTTP material")
+                connection,
+                "materials",
+                side_effect=AssertionError("admin HTTP material"),
             ),
             patch.object(query, "_write", side_effect=AssertionError("write")),
             patch.object(

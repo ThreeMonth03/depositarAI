@@ -150,6 +150,13 @@ services:
         -Dfess.system.content_chunker.embedding.ollama.model=granite-embedding:278m
         -Dfess.system.content_chunker.embedding.ollama.document.prefix=
         -Dfess.system.content_chunker.embedding.ollama.query.prefix=
+        -Dfess.system.content_chunker.chunker.name=length
+        -Dfess.system.content_chunker.length.chunk_size=800
+        -Dfess.system.content_chunker.length.overlap=0
+        -Dfess.system.content_chunker.length.boundary.enabled=true
+        -Dfess.system.content_chunker.length.boundary.lookback_percent=20
+        -Dfess.system.content_chunker.length.boundary.lookahead_percent=5
+        -Dfess.system.content_chunker.max_chunks_per_document=1000
         -Dfess.system.content_chunker.job.concurrency=2
         -Dfess.system.content_chunker.job.bulk_size=100
         -Dfess.system.content_chunker.job.max_documents_per_run=256
