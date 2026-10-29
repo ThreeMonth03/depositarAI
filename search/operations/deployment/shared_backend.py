@@ -525,7 +525,10 @@ class Session:
             finally:
                 os.close(fd)
             repo = self.profile["production_source"]
-            revision = require_clean_revision(repo)
+            revision = self.context["source_revision"]
+            require(
+                require_clean_revision(repo) == revision, "production_source_changed"
+            )
             result = image_build._run(
                 [
                     "python3",

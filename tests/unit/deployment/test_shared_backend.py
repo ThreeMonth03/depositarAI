@@ -329,6 +329,32 @@ finally:os.close(fd)
         build.assert_not_called()
         live.assert_not_called()
 
+    def test_changed_clean_production_head_is_rejected_before_catalog_audit(self):
+        session = object.__new__(shared.Session)
+        session.profile = self.profile
+        session.context = {"source_revision": REVISION}
+        snapshot = (
+            self.values["catalog_identity"],
+            self.values["containers"],
+            self.values["catalog_network"],
+        )
+        head = self.patch(
+            "search.operations.deployment.shared_backend.require_clean_revision",
+            return_value="b" * 40,
+        )
+        audit = self.patch(
+            "search.operations.deployment.shared_backend.image_build._run",
+            side_effect=AssertionError("changed source must not run its catalog audit"),
+        )
+        with mock.patch.object(session, "observe", return_value=snapshot) as observe:
+            with self.assertRaisesRegex(
+                shared.SharedBackendError, "shared_backend_production_source_changed"
+            ):
+                session.verify({})
+        head.assert_called_once_with(self.production)
+        audit.assert_not_called()
+        observe.assert_called_once_with()
+
     def test_candidate_rows_use_real_capability_checks_and_sealed_launcher(self):
         docker = FakeDocker(self.values)
         rows, names = shared.candidate_rows(
