@@ -56,7 +56,8 @@ python3 scripts/demo_connect.py connect --config /absolute/private/demo.json
 `demo_ready` 與網址，保持終端機開啟，使用 Ctrl+C 結束。連線中斷會退出，重新執行
 相同指令即可；工具不在背景偷偷重試或採用已存在的 tunnel。
 
-兩者都會先透過不配置 TTY 的 SSH chain 執行既有唯讀 checker，核對實際容器、
+兩者都會先透過不配置 TTY 的 SSH chain 執行 schema3 唯讀 checker，
+僅接受 `deployment_mode=private`、loopback origin 與 project 的配對收據，核對實際容器、
 frontend/API revision、catalog、contract、上游 TLS 與授權狀態。之後建立自己的
 loopback tunnel，僅送出首頁、`/healthz` 與帶精確 Origin 的 `/api/access` GET。
 `/healthz` 與 `/api/access` 本身不證明版本；成功結果必須來自本次遠端 checker，

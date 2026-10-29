@@ -125,7 +125,8 @@ bash scripts/search-web.sh down
 
 此模式供已核准網段內的試用。瀏覽器使用 HTTP，不需要憑證；傳輸不加密。
 VM 到 GPU API 仍使用經驗證的 HTTPS。它沿用上述兩個 CPU 容器，使用獨立的
-`depositar-search-intranet` project，保留原本 `depositar-search-web` SSH demo。
+`depositar-search-intranet` project，與 `depositar-search-web` 的設定及資源分離。
+整合部署可只保留內網入口運行，將已退役的 SSH demo 設定與映像封存供回退。
 不修改或重載主機 Apache、其他站台、主機防火牆，也不需要新增 DNS 名稱。
 
 需要 Docker Compose 2.24.4 以上。先確認 VM 的指定私有 IP 可由實驗室到達，
@@ -172,8 +173,9 @@ bash scripts/search-web.sh down
 重設；再從未核准的來源確認拒絕，並比較舊站網址及容器身分。容器 healthy
 不等同於完成實驗室網路或搜尋驗收。新 BFF 必須與現役 API 使用相同介面版本；
 不可將新版 BFF 直接接到舊版 API，應使用已驗證的相容來源版本。
-既有 `check_search_web.py` 與 SSH demo 工具仍檢查原本的 loopback project，
-不代表此獨立入口已驗收。
+`check_search_web.py` 使用 schema3 profile 明確選擇部署模式，
+內網模式沿用相同來源、bind 與 ACL 政策並核對平台映像身分；定時監控指向現役
+canonical profile。唯讀檢查仍不能代替實驗室 browser 搜尋驗收。
 
 ## 私有 VM 的實機驗收
 
@@ -205,7 +207,7 @@ Playwright 清理目錄之前拒絕舊輸出，保留原有證據。驗收核對
 
 | 設定 | 契約 |
 |---|---|
-| `WEB_ORIGIN` | 完整且精確的 origin，不能有帳密、路徑、query 或 fragment。HTTPS 可用於外層入口；HTTP 只接受主機名 `127.0.0.1`。 |
+| `WEB_ORIGIN` | 完整且精確的 origin，不能有帳密、路徑、query 或 fragment。HTTPS 可用於外層入口；預設 HTTP 只接受 `127.0.0.1`，明確的 `intranet-http` 模式另接受核准的 RFC1918 IPv4 與專用 port。 |
 | `WEB_UPSTREAM` | 固定的私有 API origin，不接受路徑、帳密、query 或 fragment。HTTP 唯一例外是同 Docker 網路的 `http://conversation-api:8000`；其他來源必須 HTTPS。 |
 | `WEB_UPSTREAM_CA_FILE` | 選填的容器內 CA 檔絕對路徑，僅供 HTTPS 上游使用；獨立前端由啟動腳本固定為 `/run/certs/upstream-ca.pem`。不影響瀏覽器端或 OIDC 的憑證。 |
 | `/run/secrets/api_key` | BFF 呼叫 `/v1/turn` 的服務 key，獨立前端由 `WEB_API_KEY_FILE` 唯讀掛入；遵守[私有 key 檔驗證](../search/secrets.py)，不得交給瀏覽器。 |

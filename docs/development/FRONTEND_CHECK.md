@@ -6,53 +6,79 @@
 python3 scripts/check_search_web.py --config /absolute/private/frontend/check.json
 ```
 
-將 [設定範例](../../deploy/env/frontend-check.example.json) 放在 Git 外、operator 所有的
-0700 目錄，設定檔與既有 frontend env file 使用 0400／0600。範例版本與 image IDs
-皆是 placeholder，必須填入先前驗證的部署 receipt；不要從待檢查回應反過來接受身份。
+將[設定範例](../../deploy/env/frontend-check.example.json)放在 Git 外、operator 所有的
+0700 目錄，設定檔與 frontend env file 使用 0400／0600。版本與 digest 都須取自已驗證的
+部署收據，不能從待檢查服務的回應建立預期值。checker 的 checkout 必須固定在已檢閱的
+revision，可以與現役 frontend revision 不同。
 
-`frontend_env_file` 指向 `search-web.sh` 已使用的六個環境設定，工具沿用 Docker Compose
-解析它，不執行 shell。`frontend_revision` 是現役前端的完整 commit；`web_image` 與
-`web_nginx_image` 是兩個已驗證的 immutable `sha256:` image IDs，對照實際 container
-`.Image` 與 image `.Id`，不是另取 config digest。`api_revision` 與
-`catalog_manifest_sha256` 則來自已驗證的私有 backend／catalog receipt。
+## 設定與配對版本
 
-新版配對部署使用範例中的 `schema_version: 2`，另以
-`conversation_contract_version` 明確指定預定受檢的 wire 契約版本，範例使用第 `4` 版。
-此值只接受 1–32 的整數，拒絕布林值、字串與缺少欄位。工具會同時核對實際
-immutable BFF image 的 `io.depositar.ai.conversation.version` label，以及通過服務 key
-驗證的 API `/v1/version` 回應；API 欄位也必須是完全相同的整數。
-只核對 revision、manifest 或 `/healthz` 不能代替這項配對檢查。
+目前只接受 `schema_version: 3`，必填欄位如下：
 
-schema 1 保留原本的欄位、legacy profile 檢查與成功收據格式，不推斷 wire 版本，
-也不宣稱已驗證 API／BFF 契約相容。舊的固定部署與監控設定可以繼續使用原檔；
-升級時應依配對部署證據另建 schema 2 設定，不改寫舊收據來接受新版。
+| 欄位 | 用途 |
+| --- | --- |
+| `deployment_mode` | `intranet-http` 或 `private`，明確選擇同一套 checker 的部署模式。 |
+| `frontend_env_file` | 現役 `search-web.sh` 使用的私有 env file 絕對路徑；交給 Compose 解析，不執行 shell。 |
+| `frontend_revision` | 已建置的 frontend／BFF 完整 source commit。 |
+| `web_platform_manifest` | BFF 的 immutable linux/amd64 platform manifest digest。 |
+| `web_nginx_platform_manifest` | Nginx 的 immutable linux/amd64 platform manifest digest。 |
+| `conversation_contract_version` | 必須與此 checkout 的 shared contract constant 相同，目前為整數 `4`。 |
+| `api_revision` | 配對的現役 API 完整 source commit。 |
+| `catalog_manifest_sha256` | 該 API 已驗證的 catalog manifest。 |
 
-工具的 checkout 可以比現役前端更新。Compose 插值明確使用指定的
-`frontend_revision`，不要求重建或搬動原部署目錄，也不把舊容器的 Compose 檔案路徑
-要求為工具 checkout 的位置。既有 env file、API key 與 CA mount 路徑須與現役配置相符。
+工具不提供舊 wire 協議轉換，也不接受 schema 1／2。需要回退舊部署時，使用已封存的
+舊 operator source、profile 與配套映像，不能只改新 profile 的預期版本來消除錯誤。
 
-檢查固定的 `depositar-search-web` project 只有 `web`、`web-nginx` 兩個容器，核對完整
-container ID、指定 image ID／revision、非 root 唯讀 runtime、環境、mount、私有網路、
-資源限制，以及只有 `127.0.0.1:18081` 對外綁定。讀取實際 loopback 首頁與其 JS／CSS
-資源，再在現役 BFF 內使用 Python stdlib 與既有 `search.secrets.read_secret` 驗證
-`WEB_UPSTREAM` 的 CA／hostname：匿名 `GET /v1/version` 須回 401，服務 key 驗證後
-同一路徑須回 200，且 API revision／catalog manifest 必須吻合。最後重查 runtime。
-schema 2 也會在前後兩次 runtime 檢查核對 BFF 的契約 label；成功收據使用
-`schema_version: 2` 並包含已驗證的 `conversation_contract_version`。
+## 同一套部署政策
 
-不接受重新導向、不採 proxy 或 `SSL_CERT_*` 環境覆寫，HTTP 回應與執行時間均有限制。
-API key 只在 BFF 內讀取，沒有 host key read、secret CLI argument、header／body 輸出。
-失敗只回固定錯誤 JSON；成功 receipt 只含受檢版本、image／container IDs 與檢查結果。
+checker 與 `validate_search_web.py` 共用
+[`frontend_policy`](../../search/operations/deployment/frontend_policy.py)，核對完整
+Compose 的 origin、project、位址／port、mount、資源與網路邊界。
 
-這個命令不送 `/v1/turn`、不呼叫 `/readyz`、不建立／停止服務、不 pull／build／升級，
-也不修改 env 或部署設定。`public_readiness_verified`、`model_inference_verified` 與
-`deployment_performed` 固定為 `false`。通過表示這次私有前端與 TLS version 路徑符合
-預期身份，不代表公眾入口、OIDC、搜尋品質或模型推論已驗收。
+- `intranet-http` 使用 `depositar-search-intranet`、指定 RFC1918 IPv4 與專用 port。
+  檢查 host ACL 與容器實際讀取的 ACL 都符合明確設定的 CIDR；不寫入或重建規則。
+- `private` 使用 `depositar-search-web`，固定只綁 `127.0.0.1:18081`。
 
-本機 CPU fixture 與安全回歸，無需啟動 Docker 或存取真實 API：
+兩種模式都只允許 `web`、`web-nginx` 兩個容器。工具核對容器完整 ID、非 root 唯讀
+runtime、完整環境、唯讀 mount、資源限制、network 成員與對外綁定。
+首頁與 JS／CSS 連到 Compose 核准的綁定位址，Host 使用實際 browser origin。
+內網模式下，VM 本身發起檢查時使用的直接來源也必須已獲 CIDR 規則允許；工具不會
+自動增加白名單，也不使用 `X-Forwarded-For` 繞過限制。
+
+## 平台映像身分
+
+Docker 必須支援 `image inspect --platform linux/amd64`，且 container inspect 提供
+`ImageManifestDescriptor`。Compose 中的 source-revision tag 只用於定位映像，須同時滿足：
+
+1. 容器 `ImageManifestDescriptor.digest` 等於 profile 中指定的 platform manifest。
+2. `image inspect --platform linux/amd64` 的 `Descriptor.digest` 與 `.Id` 也等於該 digest。
+3. descriptor 的平台為 linux/amd64，且 source revision、BFF contract 或 Nginx role label 正確。
+
+OCI index 可能包含建置 attestations，與平台 manifest 是不同的身分。成功收據會分別
+記錄 `container_image_index` 與 `platform_manifest`。不要求舊 index 一定仍可獨立 inspect，
+也不以 tag、image config digest 或容器可覆寫的 label 代替上述平台證據。
+
+## API 路徑與收據
+
+工具在已核對的 BFF 內使用既有 key 與 public CA／選填 CA，驗證 `WEB_UPSTREAM` 的
+TLS hostname。匿名 `GET /v1/version` 必須回 401；服務 key 驗證後必須回 200，且 API
+revision、catalog manifest 與整數 contract4 全部吻合。API key 只在 BFF 內讀取。
+最後重查 runtime、映像與 ACL，變動時拒絕回報成功。
+
+不接受重新導向、不採環境 proxy 或 `SSL_CERT_*` 覆寫，HTTP 回應與執行時間均有限制。
+不輸出 key、header、body 或原始 daemon 錯誤。成功 JSON 的 `status` 為 `frontend_checked`，
+並包含 mode、project、origin、版本與受檢 runtime。失敗只回固定錯誤 JSON。
+
+本命令只做 GET 與固定的容器內唯讀檢查，不送搜尋 query、不建立 session、不呼叫
+`/readyz`、不操作模型、不 pull／build 或啟停服務。`public_readiness_verified`、
+`model_inference_verified`、`deployment_performed` 固定為 false。通過不代表實驗室外部
+路由、GPU 推論或搜尋品質已驗收；完整 browser 驗收仍須另行完成。
+
+CPU fixture 與安全回歸：
 
 ```bash
 python3 -m unittest tests.unit.deployment.test_frontend_check -v
 ```
 
-定時執行同一檢查的 systemd user timer 範例，見[前端健康檢查排程](FRONTEND_MONITORING.md)。
+定時執行同一 checker，見[前端健康檢查排程](FRONTEND_MONITORING.md)。現役部署只使用
+一份 canonical profile 與一個排程；舊 profile 和收據留在回退資料中。

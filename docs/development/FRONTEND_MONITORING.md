@@ -2,13 +2,14 @@
 
 這個方案以 systemd user timer 或既有 cron 定時執行
 [`check_search_web.py`](../../scripts/check_search_web.py)，不增加監控服務或資料庫。
-範例檔不會自行安裝、啟用或修改現役部署。它適用於獨立的
-`depositar-search-web` 前端，從前端 VM 本機檢查 `127.0.0.1:18081`，不需要維持筆電 SSH tunnel。
+範例檔不會自行安裝、啟用或修改現役部署。它沿用 schema3 profile 明確選擇
+`private` 或 `intranet-http`，從前端 VM 連到已驗證 Compose 的綁定位址，不需要筆電 SSH tunnel。
+內網模式也會核對 CIDR 規則與容器實際掛載內容。
 公眾 APISIX／Anubis 入口有不同的拓樸，不能直接拿這個 checker 當作其完整驗收。
 
 檢查核對容器的 image／revision、安全設定與網路邊界、首頁及 JS／CSS，再從現役
 BFF 內驗證上游 HTTPS：匿名 `/v1/version` 須回 401，使用既有服務 key 後須回 200，
-且 API revision 與 catalog manifest 符合指定部署收據。key 只在 BFF 內讀取，
+且 API revision、catalog manifest、contract4 與平台映像身分符合指定部署收據。key 只在 BFF 內讀取，
 不放入 unit、命令列或 journal。詳細邊界見[唯讀檢查說明](FRONTEND_CHECK.md)。
 
 這些檢查不送搜尋 query、不建立搜尋 session、不呼叫 `/readyz` 或模型，也不重啟、
@@ -49,6 +50,8 @@ systemd-run --user --wait --pipe --collect /usr/bin/id
 監控重啟整個 user manager，以免中斷其他 user services。若 user manager 群組未更新，或
 `Linger=no` 而機構政策不允許自行啟用，可用下方 cron 方案，並實際驗證 cron 的執行結果。
 同一個 checker 選一種排程即可，避免 timer 與 cron 重複執行。
+現役入口只保留一份 canonical profile；替換入口時先保存舊設定，再更新這個排程的
+operator source／profile 路徑。已退役 demo 的排程須一併移除，不能以它的成功紀錄代表新入口。
 
 ## 使用既有 cron
 

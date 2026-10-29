@@ -17,6 +17,8 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.deployment import frontend_check as check
+from search.operations.deployment import frontend_policy
+from search.operations.deployment.intranet_access import ACCESS_TARGET, prepare_access
 
 
 FRONT = "1" * 40
@@ -34,16 +36,24 @@ PROOF = {
 
 
 class Runner:
-    def __init__(self, root):
+    def __init__(self, root, *, mode="private"):
+        self.mode = mode
+        self.project = frontend_policy.PROJECTS[mode]
+        self.mounted_acl = None
+        address, port = (
+            ("10.20.30.40", "18082")
+            if mode == "intranet-http"
+            else ("127.0.0.1", "18081")
+        )
         self.calls = []
         self.environments = []
         self.proof = PROOF
         self.config = {
-            "name": check.PROJECT,
+            "name": self.project,
             "services": {},
             "networks": {
                 name: {
-                    "name": check.PROJECT + "_" + name,
+                    "name": self.project + "_" + name,
                     "internal": name == "website",
                 }
                 for name in ("website", "ingress", "upstream-route")
@@ -54,7 +64,7 @@ class Runner:
             web = role == "web"
             environment = (
                 {
-                    "WEB_ORIGIN": "http://127.0.0.1:18081",
+                    "WEB_ORIGIN": f"http://{address}:{port}",
                     "WEB_UPSTREAM": "https://backend.test",
                     "WEB_UPSTREAM_CA_FILE": "",
                     "NVIDIA_VISIBLE_DEVICES": "void",
@@ -62,6 +72,12 @@ class Runner:
                 if web
                 else {}
             )
+            if mode == "intranet-http":
+                environment.update(
+                    {"WEB_ACCESS_MODE": mode}
+                    if web
+                    else {"WEB_ALLOWED_CIDRS": "10.20.30.0/24"}
+                )
             mounts = (
                 [
                     {
@@ -69,13 +85,41 @@ class Runner:
                         "source": str(root / "api_key"),
                         "target": "/run/secrets/api_key",
                         "read_only": True,
+                        "bind": {"create_host_path": False},
                     }
                 ]
                 if web
                 else []
             )
+            if mode == "intranet-http" and not web:
+                mounts = [
+                    {
+                        "type": "bind",
+                        "source": str(root / "intranet-allow.conf"),
+                        "target": ACCESS_TARGET,
+                        "read_only": True,
+                        "bind": {"create_host_path": False},
+                    }
+                ]
             network_names = ["website", "upstream-route" if web else "ingress"]
             service = {
+                "image": (
+                    "depositar-search-web:" if web else "depositar-search-web-nginx:"
+                )
+                + FRONT,
+                "read_only": True,
+                "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                "ports": []
+                if web
+                else [
+                    {
+                        "host_ip": address,
+                        "published": port,
+                        "target": 8080,
+                        "protocol": "tcp",
+                    }
+                ],
                 "environment": environment,
                 "user": f"{os.geteuid()}:{os.getegid()}",
                 "mem_limit": 512 * 1024**2 if web else 64 * 1024**2,
@@ -90,37 +134,53 @@ class Runner:
             image_config = {
                 "Env": ["PATH=/usr/bin"]
                 + (["SOURCE_REVISION=" + FRONT] if web else []),
-                "Labels": {"org.opencontainers.image.revision": FRONT},
+                "Labels": {
+                    "org.opencontainers.image.revision": FRONT,
+                    "io.depositar.ai.public-entry.version": "2",
+                    **(
+                        {"io.depositar.ai.conversation.version": "4"}
+                        if web
+                        else {"io.depositar.ai.frontend.version": "1"}
+                    ),
+                },
                 "Cmd": ["python", "-m", "uvicorn"] if web else ["-g", "daemon off;"],
                 "Entrypoint": None if web else ["nginx"],
                 "WorkingDir": "/app" if web else "",
             }
-            self.images[image_id] = {"Id": image_id, "Config": image_config}
+            descriptor = {
+                "digest": image_id,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {"architecture": "amd64", "os": "linux"},
+            }
+            self.images[image_id] = {
+                "Id": image_id,
+                "Config": image_config,
+                "Os": "linux",
+                "Architecture": "amd64",
+                "Descriptor": descriptor,
+            }
             container_config = copy.deepcopy(image_config)
             container_config["Env"] += [k + "=" + v for k, v in environment.items()]
             container_config["User"] = service["user"]
             container_config["Labels"].update(
                 {
-                    "com.docker.compose.project": check.PROJECT,
+                    "com.docker.compose.project": self.project,
                     "com.docker.compose.service": role,
                     "com.docker.compose.project.config_files": "/older/frontend/checkout/deploy/compose/compose.search-web.yaml",
                 }
             )
-            ports = (
-                {}
-                if web
-                else {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18081"}]}
-            )
+            ports = {} if web else {"8080/tcp": [{"HostIp": address, "HostPort": port}]}
             self.rows[IDS[role]] = {
                 "Id": IDS[role],
-                "Image": image_id,
+                "Image": "sha256:" + ("8" if web else "9") * 64,
+                "ImageManifestDescriptor": copy.deepcopy(descriptor),
                 "Config": container_config,
                 "State": {
                     "Running": True,
                     "Paused": False,
                     "Restarting": False,
                     "Dead": False,
-                    "Health": {"Status": "healthy"} if web else None,
+                    "Health": {"Status": "healthy"},
                 },
                 "HostConfig": {
                     "ReadonlyRootfs": True,
@@ -138,7 +198,7 @@ class Runner:
                     "NanoCpus": int(service["cpus"] * 1_000_000_000),
                     "PidsLimit": 64,
                     "Tmpfs": {"/tmp": service["tmpfs"][0].split(":", 1)[1]},
-                    "NetworkMode": check.PROJECT + "_website",
+                    "NetworkMode": self.project + "_website",
                     "PortBindings": ports,
                 },
                 "Mounts": [
@@ -153,11 +213,21 @@ class Runner:
                 "NetworkSettings": {
                     "Ports": ports,
                     "Networks": {
-                        check.PROJECT + "_" + name: {"NetworkID": name}
+                        self.project + "_" + name: {"NetworkID": name}
                         for name in network_names
                     },
                 },
             }
+        if mode == "intranet-http":
+            prepare_access(self.config)
+            self.mounted_acl = (root / "intranet-allow.conf").read_bytes()
+        self.locators = {
+            service["image"]: manifest
+            for service, manifest in (
+                (self.config["services"]["web"], WEB_IMAGE),
+                (self.config["services"]["web-nginx"], NGINX_IMAGE),
+            )
+        }
         for name, value in self.config["networks"].items():
             self.networks[value["name"]] = {
                 "Id": name,
@@ -165,7 +235,7 @@ class Runner:
                 "Driver": "bridge",
                 "Internal": name == "website",
                 "Labels": {
-                    "com.docker.compose.project": check.PROJECT,
+                    "com.docker.compose.project": self.project,
                     "com.docker.compose.network": name,
                 },
                 "Containers": {
@@ -191,10 +261,16 @@ class Runner:
         elif args[0] == "inspect":
             value = self.rows[args[-1]]
         elif args[:2] == ["image", "inspect"]:
-            value = self.images[args[-1]]
+            if args[2:4] != ["--platform", "linux/amd64"]:
+                raise AssertionError("platform identity was not selected explicitly")
+            value = self.images[self.locators[args[-1]]]
         elif args[:2] == ["network", "inspect"]:
             value = self.networks[args[-1]]
         elif args[0] == "exec":
+            if args[1:] == [IDS["web-nginx"], "cat", ACCESS_TARGET]:
+                return SimpleNamespace(
+                    returncode=0, stdout=self.mounted_acl, stderr=b""
+                )
             if args[2:7] != ["python", "-E", "-s", "-B", "-c"] or args[-2:] != [
                 API,
                 CATALOG,
@@ -228,11 +304,13 @@ class FrontendCheckTests(unittest.TestCase):
         self.env.write_text("WEB_UID=1003\nWEB_GID=1003\n")
         self.env.chmod(0o600)
         self.config = {
-            "schema_version": 1,
+            "schema_version": 3,
+            "deployment_mode": "private",
+            "conversation_contract_version": 4,
             "frontend_env_file": str(self.env),
             "frontend_revision": FRONT,
-            "web_image": WEB_IMAGE,
-            "web_nginx_image": NGINX_IMAGE,
+            "web_platform_manifest": WEB_IMAGE,
+            "web_nginx_platform_manifest": NGINX_IMAGE,
             "api_revision": API,
             "catalog_manifest_sha256": CATALOG,
         }
@@ -248,98 +326,164 @@ class FrontendCheckTests(unittest.TestCase):
         with patch.object(check, "_homepage", return_value=2):
             return check.check(self.path, runner=self.runner)
 
-    def wire_profile(self, version=4):
-        self.config.update(schema_version=2, conversation_contract_version=version)
-        self.runner.images[WEB_IMAGE]["Config"]["Labels"][
-            "io.depositar.ai.conversation.version"
-        ] = str(version)
-        self.save()
+    def test_current_schema_checks_platform_identity_and_exact_contract(self):
+        result = self.run_check()
+        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(result["conversation_contract_version"], 4)
+        self.assertEqual(result["deployment_mode"], "private")
+        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
+        self.assertNotEqual(
+            result["runtime"]["web"]["container_image_index"], WEB_IMAGE
+        )
+        source = next(c[c.index("-c") + 1] for c in self.runner.calls if "exec" in c)
+        self.assertIn("EXPECTED_CONTRACT_VERSION=4\n", source)
 
-    def test_schema2_verifies_selected_bff_and_passes_exact_contract_to_tls_probe(self):
-        for version in (2, 3, 4):
-            with self.subTest(version=version):
-                self.runner = Runner(self.root)
-                self.wire_profile(version)
-                result = self.run_check()
-                self.assertEqual(result["schema_version"], 2)
-                self.assertEqual(result["conversation_contract_version"], version)
-                self.assertEqual(result["runtime"]["web"]["image"], WEB_IMAGE)
-                calls = [call for call in self.runner.calls if "exec" in call]
-                self.assertEqual(len(calls), 1)
-                source = calls[0][calls[0].index("-c") + 1]
-                self.assertIn(
-                    "EXPECTED_CONTRACT_VERSION=" + str(version) + "\n", source
-                )
-
-    def test_schema2_requires_bounded_integer_contract_and_exact_fields(self):
-        self.wire_profile()
-        for invalid in (True, False, None, 0, 33, 3.0, "3"):
-            self.config["conversation_contract_version"] = invalid
+    def test_profile_rejects_legacy_schema_protocols_and_unknown_fields(self):
+        for key, value in (
+            ("schema_version", 1),
+            ("schema_version", 2),
+            ("schema_version", True),
+            ("deployment_mode", "public"),
+            ("deployment_mode", None),
+            ("conversation_contract_version", 3),
+            ("conversation_contract_version", True),
+            ("conversation_contract_version", 4.0),
+            ("conversation_contract_version", "4"),
+            ("extra", "refuse"),
+        ):
+            original = dict(self.config)
+            self.config[key] = value
             self.save()
             with (
-                self.subTest(value=invalid),
+                self.subTest(key=key, value=value),
                 self.assertRaises(check.FrontendCheckError),
             ):
                 check.load_config(self.path)
-        del self.config["conversation_contract_version"]
+            self.config = original
+        for key in tuple(self.config):
+            value = self.config.pop(key)
+            self.save()
+            with self.subTest(missing=key), self.assertRaises(check.FrontendCheckError):
+                check.load_config(self.path)
+            self.config[key] = value
         self.save()
-        with self.assertRaises(check.FrontendCheckError):
-            check.load_config(self.path)
-        for version in (1, 32):
-            self.wire_profile(version)
-            self.assertEqual(
-                check.load_config(self.path)["conversation_contract_version"], version
-            )
 
-    def test_schema2_rejects_missing_or_wrong_immutable_bff_label_before_probe(self):
-        self.wire_profile()
-        label = "io.depositar.ai.conversation.version"
-        # A caller-supplied container label cannot override immutable image proof.
-        self.runner.rows[IDS["web"]]["Config"]["Labels"][label] = "3"
-        for value in (None, "2", "3", "04", "4.0", 4, True):
-            self.runner.images[WEB_IMAGE]["Config"]["Labels"][label] = value
+    def test_immutable_role_and_contract_labels_are_required_before_probe(self):
+        for role, label, value in (
+            ("web", "io.depositar.ai.conversation.version", "3"),
+            ("web", "io.depositar.ai.conversation.version", None),
+            ("web", "io.depositar.ai.conversation.version", 4),
+            ("web", "io.depositar.ai.public-entry.version", None),
+            ("web-nginx", "io.depositar.ai.frontend.version", None),
+            ("web-nginx", "org.opencontainers.image.revision", "f" * 40),
+        ):
+            self.runner = Runner(self.root)
+            image = self.runner.images[WEB_IMAGE if role == "web" else NGINX_IMAGE]
+            image["Config"]["Labels"][label] = value
             with (
-                self.subTest(label=value),
-                self.assertRaisesRegex(
-                    check.FrontendCheckError, "^frontend_check_contract_changed$"
-                ),
+                self.subTest(role=role, label=label),
+                self.assertRaises(check.FrontendCheckError),
             ):
                 self.run_check()
-            self.assertFalse(any("exec" in call for call in self.runner.calls))
+            self.assertFalse(any("exec" in c for c in self.runner.calls))
 
-    def test_schema2_bff_label_is_checked_again_after_upstream_probe(self):
-        self.wire_profile()
-        original = self.runner.__call__
+    def test_container_and_locator_platform_descriptors_must_match_pins(self):
+        for target in ("container", "image"):
+            for mutation in ("digest", "platform", "mediaType", "missing"):
+                self.runner = Runner(self.root)
+                obj, key = (
+                    (self.runner.rows[IDS["web"]], "ImageManifestDescriptor")
+                    if target == "container"
+                    else (self.runner.images[WEB_IMAGE], "Descriptor")
+                )
+                if mutation == "missing":
+                    obj.pop(key)
+                else:
+                    obj[key][mutation] = (
+                        {"architecture": "arm64", "os": "linux"}
+                        if mutation == "platform"
+                        else "sha256:" + "f" * 64
+                    )
+                with (
+                    self.subTest(target=target, mutation=mutation),
+                    self.assertRaises(check.FrontendCheckError),
+                ):
+                    self.run_check()
+                self.assertFalse(any("exec" in c for c in self.runner.calls))
 
-        def runner(argv, **kwargs):
-            result = original(argv, **kwargs)
-            if argv[5] == "exec":
-                self.runner.images[WEB_IMAGE]["Config"]["Labels"][
-                    "io.depositar.ai.conversation.version"
-                ] = "2"
-            return result
+    def test_intranet_uses_shared_policy_mount_and_explicit_project(self):
+        self.runner = Runner(self.root, mode="intranet-http")
+        self.config["deployment_mode"] = "intranet-http"
+        self.save()
+        result = self.run_check()
+        self.assertEqual(result["project"], "depositar-search-intranet")
+        self.assertEqual(result["origin"], "http://10.20.30.40:18082")
+        self.assertEqual(result["deployment_mode"], "intranet-http")
+        commands = [c[5:] for c in self.runner.calls]
+        self.assertTrue(
+            all("depositar-search-intranet" in c for c in commands if c[0] == "compose")
+        )
+        self.assertEqual(2, sum(c[0] == "exec" and "cat" in c for c in commands))
+        self.assertIn(
+            str(check.ROOT / "deploy/compose/compose.search-web.intranet.yaml"),
+            commands[0],
+        )
 
-        with patch.object(check, "_homepage", return_value=2):
-            with self.assertRaisesRegex(
-                check.FrontendCheckError, "^frontend_check_contract_changed$"
+    def test_intranet_rejects_origin_bind_and_host_or_mounted_acl_drift(self):
+        for mutation in ("origin", "bind", "host-acl", "mounted-acl", "writable-acl"):
+            self.runner = Runner(self.root, mode="intranet-http")
+            self.config["deployment_mode"] = "intranet-http"
+            self.save()
+            services = self.runner.config["services"]
+            if mutation == "origin":
+                services["web"]["environment"]["WEB_ORIGIN"] = "http://8.8.8.8:18082"
+            elif mutation == "bind":
+                services["web-nginx"]["ports"][0]["host_ip"] = "0.0.0.0"
+            elif mutation == "host-acl":
+                path = self.root / "intranet-allow.conf"
+                path.chmod(0o600)
+                path.write_text("allow all;\n")
+            elif mutation == "mounted-acl":
+                self.runner.mounted_acl = b"allow all;\n"
+            else:
+                self.runner.rows[IDS["web-nginx"]]["Mounts"][0]["RW"] = True
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaises(check.FrontendCheckError),
+            ):
+                self.run_check()
+            self.assertFalse(any("-c" in c for c in self.runner.calls))
+
+    def test_postflight_locator_contract_and_acl_changes_reject_success(self):
+        for mutation in ("contract", "manifest", "acl"):
+            self.runner = Runner(self.root, mode="intranet-http")
+            self.config["deployment_mode"] = "intranet-http"
+            self.save()
+            original = self.runner.__call__
+
+            def runner(argv, **kwargs):
+                result = original(argv, **kwargs)
+                if argv[5] == "exec" and "-c" in argv:
+                    if mutation == "contract":
+                        self.runner.images[WEB_IMAGE]["Config"]["Labels"][
+                            "io.depositar.ai.conversation.version"
+                        ] = "3"
+                    elif mutation == "manifest":
+                        self.runner.images[WEB_IMAGE]["Descriptor"]["digest"] = (
+                            "sha256:" + "f" * 64
+                        )
+                    else:
+                        self.runner.mounted_acl = b"allow all;\n"
+                return result
+
+            with (
+                patch.object(check, "_homepage", return_value=2),
+                self.subTest(mutation=mutation),
+                self.assertRaises(check.FrontendCheckError),
             ):
                 check.check(self.path, runner=runner)
 
-    def test_schema1_keeps_legacy_receipt_and_does_not_infer_a_wire_version(self):
-        self.runner.images[WEB_IMAGE]["Config"]["Labels"][
-            "io.depositar.ai.conversation.version"
-        ] = "3"
-        result = self.run_check()
-        self.assertEqual(result["schema_version"], 1)
-        self.assertNotIn("conversation_contract_version", result)
-        call = next(call for call in self.runner.calls if "exec" in call)
-        self.assertIn("EXPECTED_CONTRACT_VERSION=None\n", call[call.index("-c") + 1])
-        self.config["conversation_contract_version"] = 3
-        self.save()
-        with self.assertRaises(check.FrontendCheckError):
-            check.load_config(self.path)
-
-    def test_expected_old_deployment_and_exact_images_without_mutation_or_host_key_read(
+    def test_exact_deployment_without_mutation_or_host_key_read(
         self,
     ):
         # The key does not exist on this host; only the existing BFF can read it.
@@ -356,7 +500,7 @@ class FrontendCheckTests(unittest.TestCase):
         ):
             result = self.run_check()
         self.assertEqual(result["frontend_revision"], FRONT)
-        self.assertEqual(result["runtime"]["web"]["image"], WEB_IMAGE)
+        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
         self.assertFalse(result["deployment_performed"])
         self.assertFalse(result["public_readiness_verified"])
         self.assertFalse(result["model_inference_verified"])
@@ -401,7 +545,7 @@ class FrontendCheckTests(unittest.TestCase):
         self,
     ):
         changes = [
-            lambda r: r["Image"] and r.update(Image="sha256:" + "e" * 64),
+            lambda r: r["ImageManifestDescriptor"].update(digest="sha256:" + "e" * 64),
             lambda r: r["Config"]["Env"].append("SSL_CERT_FILE=/poison"),
             lambda r: r["Config"].update(User="0:0"),
             lambda r: r["HostConfig"].update(ReadonlyRootfs=False),
@@ -419,7 +563,9 @@ class FrontendCheckTests(unittest.TestCase):
                 self.assertFalse(any("exec" in c for c in self.runner.calls))
 
     def test_foreign_peer_or_missing_frontend_refuses(self):
-        self.runner.networks[check.PROJECT + "_website"]["Containers"]["f" * 64] = {}
+        self.runner.networks[self.runner.project + "_website"]["Containers"][
+            "f" * 64
+        ] = {}
         with self.assertRaises(check.FrontendCheckError):
             self.run_check()
         self.runner.rows.pop(IDS["web-nginx"])
@@ -431,7 +577,7 @@ class FrontendCheckTests(unittest.TestCase):
         self.save()
         with self.assertRaises(ValueError):
             check.load_config(self.path)
-        self.config["schema_version"] = 1
+        self.config["schema_version"] = 3
         self.save()
         self.env.chmod(0o644)
         with self.assertRaises(ValueError):
@@ -496,20 +642,28 @@ class HomepageFixtureTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
 
-        class Loopback(check._Loopback):
+        class Endpoint(check._Endpoint):
             def connect(self):
                 self._publish_channel(
                     socket.create_connection(server.server_address, timeout=3)
                 )
 
-        with patch.object(check, "_Loopback", Loopback):
-            self.assertEqual(check._homepage("http://127.0.0.1:18081"), 2)
+        composition = {
+            "services": {
+                "web": {"environment": {"WEB_ORIGIN": "http://10.20.30.40:18082"}},
+                "web-nginx": {
+                    "ports": [{"host_ip": "10.20.30.40", "published": "18082"}]
+                },
+            }
+        }
+        with patch.object(check, "_Endpoint", Endpoint):
+            self.assertEqual(check._homepage(composition), 2)
             self.assertEqual(
                 paths, ["/", "/assets/index-fixture.css", "/assets/index-fixture.js"]
             )
             redirect = True
             with self.assertRaises(check.FrontendCheckError):
-                check._homepage("http://127.0.0.1:18081")
+                check._homepage(composition)
 
 
 class VersionTLSFixtureTests(unittest.TestCase):
@@ -604,7 +758,7 @@ class VersionTLSFixtureTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def probe(self, *, hostname="localhost", ca=True, contract_version=None):
+    def probe(self, *, hostname="localhost", ca=True, contract_version=4):
         environment = dict(
             os.environ,
             WEB_UPSTREAM=f"https://{hostname}:{self.server.server_port}",
@@ -665,23 +819,11 @@ class VersionTLSFixtureTests(unittest.TestCase):
                     json.loads(result.stdout),
                     {"error": "frontend_check_upstream_failed"},
                 )
-        # Existing private operators can still inspect the pinned legacy API.
-        self.mode = "legacy-contract"
-        self.assertEqual(self.probe().returncode, 0)
 
-    def test_bool_equal_to_expected_integer_is_rejected_and_explicit_v2_is_accepted(
-        self,
-    ):
-        self.mode = "invalid-contract"
-        result = self.probe(contract_version=1)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(
-            json.loads(result.stdout), {"error": "frontend_check_upstream_failed"}
-        )
-        self.mode = "old-contract"
-        result = self.probe(contract_version=2)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(json.loads(result.stdout), PROOF)
+    def test_probe_generator_refuses_old_or_ambiguous_contract_selection(self):
+        for value in (None, True, 1, 2, 3, 4.0, "4"):
+            with self.subTest(value=value), self.assertRaises(check.FrontendCheckError):
+                check._probe_source(contract_version=value)
 
     def test_wrong_identity_redirect_and_oversized_body_fail_without_reflection(self):
         for mode in ("revision", "catalog", "redirect", "oversize"):
