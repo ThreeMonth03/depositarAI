@@ -181,7 +181,6 @@ def _admission(client, runtime, composition, config):
 def inspect_frontend_image(client, reference, manifest, revision, role):
     """Inspect an exact platform image; a tag is only its locator."""
     image = client.inspect(reference, platform="linux/amd64")
-    _descriptor(image.get("Descriptor"), manifest)
     _require(
         image.get("Id") == manifest
         and image.get("Os") == "linux"
@@ -189,6 +188,16 @@ def inspect_frontend_image(client, reference, manifest, revision, role):
         and type(image.get("Config")) is dict,
         "image_changed",
     )
+    descriptor = image.get("Descriptor")
+    # Docker 29 can omit platform on a directly loaded image manifest. Only
+    # this image descriptor can inherit the already-verified image platform;
+    # container descriptors and explicit platform metadata remain strict.
+    if type(descriptor) is dict and "platform" not in descriptor:
+        descriptor = {
+            **descriptor,
+            "platform": {"architecture": image["Architecture"], "os": image["Os"]},
+        }
+    _descriptor(descriptor, manifest)
     try:
         frontend_policy.validate_image_labels(
             image["Config"].get("Labels"), revision, role
