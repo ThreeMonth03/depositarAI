@@ -65,9 +65,10 @@ jobs:
             'DOCKER_API_VERSION=' >> "$GITHUB_ENV"
       - name: Install verified Docker Compose
         run: bash scripts/ci/install-compose.sh
+      - name: Install and self-test the verified secret scanner
+        run: bash scripts/ci/install-gitleaks.sh
       - name: Scan the selected source and history
         run: |
-          bash scripts/ci/install-gitleaks.sh
           bash scripts/ci/source-package.sh \
             "$RUNNER_TEMP/frontend-source-check" "$GITHUB_SHA" "$GITLEAKS_BINARY"
       - name: Validate product policy and publisher
