@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
+import time
 
 from search.catalog import resources
-from search.catalog.build import normalize, snapshot
-from search.operations.documents import controller, extractor, source
+from search.catalog.build import normalize, policy as build_policy, snapshot
+from search.operations.documents import controller, extractor, sets, source
 from search.operations.metadata.source import strict_json
 from search.operations.shared import private_io
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+MAX_REPORT_BYTES = 3 * 1024**2
+MAX_CONTEXT_BYTES = build_policy.MAX_ARTIFACT_EXPANDED_BYTES
 ERROR_CODES = frozenset(
     {
         "document_enrichment_profile_invalid",
@@ -23,6 +27,8 @@ ERROR_CODES = frozenset(
         "document_enrichment_source_mismatch",
         "document_enrichment_result_invalid",
         "document_enrichment_content_mismatch",
+        "document_enrichment_limit_exceeded",
+        "document_enrichment_deadline_exceeded",
     }
 )
 
@@ -108,30 +114,104 @@ def _profile_fields(profile, manifest_sha256):
         raise EnrichmentError("document_enrichment_provenance_invalid")
 
 
-def load_profiles(paths, bundle_path, manifest_sha256, snapshot_path):
+def _check_deadline(deadline):
+    if deadline is not None and time.monotonic() >= deadline:
+        raise EnrichmentError("document_enrichment_deadline_exceeded")
+
+
+def _references(paths, profile_set, manifest_sha256, deadline):
+    if not isinstance(paths, (list, tuple)) or (paths and profile_set is not None):
+        raise EnrichmentError("document_enrichment_selection_invalid")
+    if profile_set is not None:
+        record, digest = sets.read(profile_set)
+        if record["catalog_manifest_sha256"] != manifest_sha256:
+            raise EnrichmentError("document_enrichment_provenance_invalid")
+        references = [
+            {
+                **row,
+                "path": Path(profile_set).parent
+                / "profiles"
+                / (row["profile_sha256"] + ".json"),
+            }
+            for row in record["profiles"]
+        ]
+        return references, record["failures"], digest, record["source_sha256"]
+    if not 1 <= len(paths) <= controller.MAX_RESOURCES:
+        raise EnrichmentError("document_enrichment_selection_invalid")
+    references = []
+    # Only identity references survive this bounded discovery pass. Profile text
+    # is reread and authenticated when consumed, never accumulated across a set.
+    for path in paths:
+        _check_deadline(deadline)
+        digest, profile = _read_profile(path)
+        _profile_fields(profile, manifest_sha256)
+        references.append(
+            {
+                "dataset_id": profile["source"]["dataset_id"],
+                "resource_id": profile["source"]["resource_id"],
+                "profile_sha256": digest,
+                "path": path,
+            }
+        )
+    return references, [], None, None
+
+
+def _source_sha256(bundle_path, manifest_sha256):
+    descriptor = private_io.open_directory(Path(bundle_path), mode=0o500)
+    try:
+        raw = private_io.read_file(
+            descriptor, "bundle-manifest.json", mode=0o400, max_bytes=64 * 1024
+        )
+        private_io.verify_directory(descriptor, bundle_path, mode=0o500)
+    finally:
+        os.close(descriptor)
+    if hashlib.sha256(raw).hexdigest() != manifest_sha256:
+        raise EnrichmentError("document_enrichment_source_mismatch")
+    return strict_json(raw)["artifacts"]["source.jsonl.gz"]["sha256"]
+
+
+def load_profiles(
+    paths,
+    bundle_path,
+    manifest_sha256,
+    snapshot_path,
+    *,
+    profile_set=None,
+    deadline=None,
+):
     """Return grounded enrichment plus an ID-only report; never fetch or parse files.
 
     Profiles must refer to the metadata-only bundle built from this exact snapshot.
-    An explicit selection is bounded like profile-resources; omitted profiles never
-    enter the index through a cache scan or an implicit directory glob.
+    A frozen set may span execution batches; explicit files remain a small one-off
+    selection. Neither path scans caches or performs resource IO. ``deadline`` is
+    an optional absolute monotonic time, checked between profile reads.
     """
-    if (
-        not isinstance(paths, (list, tuple))
-        or not 1 <= len(paths) <= controller.MAX_RESOURCES
+    if deadline is not None and (
+        type(deadline) not in (int, float) or not math.isfinite(deadline)
     ):
         raise EnrichmentError("document_enrichment_selection_invalid")
-    profiles = [_read_profile(path) for path in paths]
-    for _, profile in profiles:
-        _profile_fields(profile, manifest_sha256)
-    identifiers = [profile["source"]["resource_id"] for _, profile in profiles]
+    _check_deadline(deadline)
+    references, failures, set_digest, source_digest = _references(
+        paths, profile_set, manifest_sha256, deadline
+    )
+    identifiers = [row["resource_id"] for row in references + failures]
     if len(set(identifiers)) != len(identifiers):
         raise EnrichmentError("document_enrichment_selection_invalid")
     try:
         selected = controller._selected_resources(
-            bundle_path, manifest_sha256, identifiers
+            bundle_path,
+            manifest_sha256,
+            identifiers,
+            max_resources=sets.MAX_SELECTED,
+            metadata_only=True,
         )
     except controller.ProfileError as error:
         raise EnrichmentError("document_enrichment_selection_invalid") from error
+    if source_digest is not None and source_digest != _source_sha256(
+        bundle_path, manifest_sha256
+    ):
+        raise EnrichmentError("document_enrichment_source_mismatch")
+    _check_deadline(deadline)
     normalized = [
         (record, normalize.normalize_package(record, {})[2])
         for record in snapshot.load_source(str(snapshot_path))
@@ -146,8 +226,38 @@ def load_profiles(paths, bundle_path, manifest_sha256, snapshot_path):
     if candidate.digest() != hashlib.sha256(sealed_source).digest():
         raise EnrichmentError("document_enrichment_source_mismatch")
     corpus = {item["dataset_id"]: item for _, item in normalized}
+    for row, (dataset_id, _) in zip(references + failures, selected):
+        if row["dataset_id"] != dataset_id:
+            raise EnrichmentError("document_enrichment_source_mismatch")
+    context_bytes = sum(
+        len(
+            private_io.canonical(
+                {"schema_version": 1, "dataset_id": dataset_id, "resources": []}
+            )
+        )
+        for dataset_id in corpus
+    )
     contexts, report = {}, []
-    for (digest, profile), (dataset_id, resource) in zip(profiles, selected):
+    report_bytes = len(private_io.canonical(failures)) + 1024
+
+    def report_row(row):
+        nonlocal report_bytes
+        report_bytes += len(private_io.canonical(row))
+        if report_bytes > MAX_REPORT_BYTES:
+            raise EnrichmentError("document_enrichment_limit_exceeded")
+        report.append(row)
+
+    if context_bytes > MAX_CONTEXT_BYTES or report_bytes > MAX_REPORT_BYTES:
+        raise EnrichmentError("document_enrichment_limit_exceeded")
+    for reference, (dataset_id, resource) in zip(references, selected):
+        _check_deadline(deadline)
+        digest, profile = _read_profile(reference["path"])
+        _profile_fields(profile, manifest_sha256)
+        if digest != reference["profile_sha256"] or any(
+            profile["source"][key] != reference[key]
+            for key in ("dataset_id", "resource_id")
+        ):
+            raise EnrichmentError("document_enrichment_provenance_invalid")
         origin, policy = profile["source"], profile["policy"]
         identity = source.source_identity(resource)
         if (
@@ -180,7 +290,7 @@ def load_profiles(paths, bundle_path, manifest_sha256, snapshot_path):
         elif identity["format"] == "PDF" and not result["text"].strip():
             reason = "pdf_text_empty"
         if reason:
-            report.append({**row, "status": "skipped", "reason": reason})
+            report_row({**row, "status": "skipped", "reason": reason})
             continue
         prepared = normalize.resource_profile_content(
             identity["format"],
@@ -190,7 +300,7 @@ def load_profiles(paths, bundle_path, manifest_sha256, snapshot_path):
             counters={},
         )
         if not prepared["index_text"]:
-            report.append({**row, "status": "skipped", "reason": "no_public_text"})
+            report_row({**row, "status": "skipped", "reason": "no_public_text"})
             continue
         raw = {
             "context": {
@@ -213,16 +323,23 @@ def load_profiles(paths, bundle_path, manifest_sha256, snapshot_path):
             "truncated": result["text_truncated"] or prepared["truncated"],
         }
         entries = contexts.setdefault(dataset_id, [])
+        context_bytes += len(private_io.canonical(raw)) - 1 + bool(entries)
+        if context_bytes > MAX_CONTEXT_BYTES:
+            raise EnrichmentError("document_enrichment_limit_exceeded")
         entries.append(raw)
         entries.sort(key=lambda item: item["context"]["resource_id"])
         try:
             resources.validate_enrichment_resources(entries)
         except ValueError as error:
             raise EnrichmentError("document_enrichment_selection_invalid") from error
-        report.append({**row, "status": "included"})
+        report_row({**row, "status": "included"})
+    _check_deadline(deadline)
     return contexts, {
-        "selected_count": len(report),
+        "selected_count": len(report) + len(failures),
         "included_count": sum(row["status"] == "included" for row in report),
         "skipped_count": sum(row["status"] == "skipped" for row in report),
         "resources": report,
+        "failed_count": len(failures),
+        "failures": failures,
+        "profile_set_sha256": set_digest,
     }

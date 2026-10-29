@@ -266,6 +266,7 @@ def sync(
     force=False,
     fetch=None,
     profile_files=(),
+    profile_set=None,
 ):
     """Return a staged immutable snapshot/bundle/diff; never change active state."""
     if (
@@ -275,6 +276,10 @@ def sync(
         or type(force) is not bool
         or not isinstance(profile_files, (list, tuple))
         or len(profile_files) > 20
+        or profile_set is not None
+        and not isinstance(profile_set, (str, Path))
+        or profile_files
+        and profile_set is not None
     ):
         raise SyncError("TTL, force or profile selection is outside its bounded policy")
     if snapshot is not None and fetch is not None:
@@ -395,12 +400,17 @@ def sync(
                 "skipped_count": 0,
                 "resources": [],
             }
-            if profile_files:
+            if profile_files or profile_set is not None:
                 from search.operations.documents.enrichment import load_profiles
 
                 baseline_source = built["manifest"]["artifacts"]["source.jsonl.gz"]
                 context, profile_report = load_profiles(
-                    profile_files, bundle_path, catalog.manifest_sha256, snapshot_path
+                    profile_files,
+                    bundle_path,
+                    catalog.manifest_sha256,
+                    snapshot_path,
+                    profile_set=profile_set,
+                    deadline=deadline,
                 )
                 built = builder.build_bundle(
                     snapshot_path, root / "bundles", resource_context=context

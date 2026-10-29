@@ -229,6 +229,24 @@ def _operator_error_code(error, command):
             return None
         codes = controller.ERROR_CODES
     elif (
+        command == "profile-resources"
+        and owner == "search.operations.documents.batches"
+    ):
+        from search.operations.documents import batches
+
+        if error_type is not batches.BatchError:
+            return None
+        codes = batches.ERROR_CODES
+    elif (
+        command in {"profile-resources", "sync", "stage-catalog", "up-private"}
+        and owner == "search.operations.documents.sets"
+    ):
+        from search.operations.documents import sets
+
+        if error_type is not sets.ProfileSetError:
+            return None
+        codes = sets.ERROR_CODES
+    elif (
         command in {"sync", "stage-catalog", "up-private"}
         and owner == "search.operations.documents.enrichment"
     ):
@@ -282,6 +300,20 @@ def _activation_outcome(error, command):
     }
 
 
+def _profile_selection(arguments):
+    selection = arguments.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--profile-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="explicit private SHA256.json resource profile; repeat up to 20",
+    )
+    selection.add_argument(
+        "--profile-set", type=Path, help="frozen private resource batch profile set"
+    )
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument(
@@ -300,22 +332,34 @@ def parser():
     restore.add_argument("--destination", type=Path, required=True)
     profiles = commands.add_parser(
         "profile-resources",
-        help="cache selected public CSV/PDF profiles; no index or deployment changes",
+        help="prepare, run or inspect a resumable offline CSV/PDF batch",
     )
-    profiles.add_argument("--bundle", type=Path, required=True)
-    profiles.add_argument("--expected-manifest-sha256", required=True)
-    profiles.add_argument("--state-root", type=Path, required=True)
-    profiles.add_argument("--resource-id", action="append", required=True)
-    profiles.add_argument("--refresh", action="store_true")
-    profiles.add_argument(
+    actions = profiles.add_subparsers(dest="profile_action", required=True)
+    prepare = actions.add_parser(
+        "prepare", help="freeze an explicit resource selection"
+    )
+    prepare.add_argument("--bundle", type=Path, required=True)
+    prepare.add_argument("--expected-manifest-sha256", required=True)
+    prepare.add_argument("--state-root", type=Path, required=True)
+    prepare.add_argument("--resource-id-file", type=Path, required=True)
+    prepare.add_argument(
         "--encoding", choices=("utf-8", "cp950", "utf-16"), default="utf-8"
     )
-    profiles.add_argument(
+    prepare.add_argument(
         "--header-policy",
         choices=("first-record", "absent"),
         default="first-record",
         help="explicit CSV first-row assumption; not automatic header confirmation",
     )
+    run = actions.add_parser("run", help="process at most 20 pending resource files")
+    run.add_argument("--bundle", type=Path, required=True)
+    run.add_argument("--state-root", type=Path, required=True)
+    run.add_argument("--expected-plan-sha256", required=True)
+    run.add_argument("--max-resources", type=int, default=20)
+    run.add_argument("--retry-failed", action="store_true")
+    status = actions.add_parser("status", help="inspect saved resource progress")
+    status.add_argument("--state-root", type=Path, required=True)
+    status.add_argument("--expected-plan-sha256", required=True)
     for command in ("prepare-public-entry", "up-public-entry", "update-public-entry"):
         entry = commands.add_parser(
             command,
@@ -343,13 +387,7 @@ def parser():
     )
     sync.add_argument("--snapshot", type=Path, help="absolute JSONL(.gz), no network")
     sync.add_argument("--force", action="store_true", help="bypass opt-in cache TTL")
-    sync.add_argument(
-        "--profile-file",
-        type=Path,
-        action="append",
-        default=[],
-        help="explicit private SHA256.json resource profile; repeat up to 20",
-    )
+    _profile_selection(sync)
     sync.add_argument("--baseline-bundle", type=Path)
     sync.add_argument("--baseline-manifest-sha256")
     commands.add_parser("status", help="local staging receipts, not runtime health")
@@ -449,13 +487,7 @@ def parser():
         stage.add_argument(
             "--force", action="store_true", help="bypass opt-in cache TTL"
         )
-        stage.add_argument(
-            "--profile-file",
-            type=Path,
-            action="append",
-            default=[],
-            help="explicit private resource profile; repeat up to 20",
-        )
+        _profile_selection(stage)
         stage.add_argument("--max-passes", type=int, default=16)
         stage.add_argument("--wall-seconds", type=int, default=7200)
         stage.add_argument(
@@ -521,6 +553,7 @@ def _runtime_report(options):
             force=options.force,
             baseline=baseline,
             **({"profile_files": options.profile_file} if options.profile_file else {}),
+            **({"profile_set": options.profile_set} if options.profile_set else {}),
         )
     elif options.command in {"stage-catalog", "up-private"}:
         stage = (
@@ -535,6 +568,7 @@ def _runtime_report(options):
             max_passes=options.max_passes,
             wall_seconds=options.wall_seconds,
             **({"profile_files": options.profile_file} if options.profile_file else {}),
+            **({"profile_set": options.profile_set} if options.profile_set else {}),
             **(
                 {}
                 if options.catalog_revision is None
@@ -605,22 +639,37 @@ def main(argv=None):
         arguments.error("--config is required for runtime commands")
     try:
         if options.command == "profile-resources":
-            from search.operations.documents import controller
+            from search.operations.documents import batches
 
-            report = controller.run(
-                options.bundle,
-                options.expected_manifest_sha256,
-                options.state_root,
-                options.resource_id,
-                refresh=options.refresh,
-                encoding=options.encoding,
-                header_policy=options.header_policy.replace("-", "_"),
-                source_root=ROOT,
-            )
+            if options.profile_action == "prepare":
+                report = batches.prepare(
+                    options.bundle,
+                    options.expected_manifest_sha256,
+                    options.state_root,
+                    options.resource_id_file,
+                    encoding=options.encoding,
+                    header_policy=options.header_policy.replace("-", "_"),
+                    source_root=ROOT,
+                )
+            elif options.profile_action == "run":
+                report = batches.run(
+                    options.bundle,
+                    options.state_root,
+                    options.expected_plan_sha256,
+                    max_resources=options.max_resources,
+                    retry_failed=options.retry_failed,
+                    source_root=ROOT,
+                )
+            else:
+                report = batches.status(
+                    options.state_root, options.expected_plan_sha256
+                )
             print(
                 json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
             )
-            return 1 if report["status"] == "partial" else 0
+            if options.profile_action == "run":
+                return {"checkpoint": 2, "partial": 1}.get(report["status"], 0)
+            return 0
         if options.command in PUBLIC_COMMANDS:
             extra = (
                 (options.release_compose, options.web_image, options.web_nginx_image)

@@ -3,13 +3,14 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from search.catalog.bundle import CatalogBundle
-from search.operations.documents import enrichment
+from search.operations.documents import enrichment, sets
 from search.operations.metadata import sync as metadata_sync
 from search.operations.shared import private_io
 
@@ -216,8 +217,8 @@ class ResourceEnrichmentTests(unittest.TestCase):
         original = enrichment.load_profiles
         before = (self.cache / "latest.json").read_bytes()
 
-        def mutate(*args):
-            result = original(*args)
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
             snapshot_path = Path(args[3])
             changed = deepcopy(self.rows)
             changed[0]["resources"][0]["url"] = (
@@ -286,3 +287,266 @@ class ResourceEnrichmentTests(unittest.TestCase):
         self.assertEqual(entry["index_text"][:320], entry["context"]["excerpt"])
         self.assertNotIn("<p>", entry["index_text"])
         self.assertEqual(1, report["included_count"])
+
+    def many_profiles(self, count, *, dataset_groups=None):
+        template = deepcopy(self.rows[0])
+        groups = {}
+        for index in range(count):
+            group = index if dataset_groups is None else index % dataset_groups
+            dataset_id = "00000000-0000-4000-8000-%012x" % group
+            if dataset_id not in groups:
+                groups[dataset_id] = {
+                    **deepcopy(template),
+                    "id": dataset_id,
+                    "name": "water-%d" % group,
+                    "resources": [],
+                }
+            groups[dataset_id]["resources"].append(
+                {
+                    "id": "10000000-0000-4000-8000-%012x" % index,
+                    "name": "Resource %d" % index,
+                    "format": "CSV",
+                    "url": "https://data.depositar.io/resource-%d.csv" % index,
+                }
+            )
+        self.rows = list(groups.values())
+        self.base = self.sync(force=True)
+        references = []
+        for dataset in self.rows:
+            for resource in dataset["resources"]:
+                profile = self.make_profile()
+                profile["source"].update(
+                    dataset_id=dataset["id"],
+                    resource_id=resource["id"],
+                    url_sha256=hashlib.sha256(resource["url"].encode()).hexdigest(),
+                )
+                path = self.publish(profile)
+                references.append(
+                    {
+                        "dataset_id": dataset["id"],
+                        "resource_id": resource["id"],
+                        "profile_sha256": path.stem,
+                    }
+                )
+        return sorted(
+            references, key=lambda row: (row["dataset_id"], row["resource_id"])
+        )
+
+    def publish_set(self, references, failures=(), *, source_sha256=None):
+        manifest = json.loads(
+            (Path(self.base["bundle_path"]) / "bundle-manifest.json").read_bytes()
+        )
+        descriptor = private_io.open_directory(self.root)
+        try:
+            result = sets.publish(
+                descriptor,
+                self.base["manifest_sha256"],
+                source_sha256 or manifest["artifacts"]["source.jsonl.gz"]["sha256"],
+                references,
+                list(failures),
+            )
+        finally:
+            os.close(descriptor)
+        return self.root / result["profile_set_file"]
+
+    def load_set(self, path, **kwargs):
+        return enrichment.load_profiles(
+            [],
+            self.base["bundle_path"],
+            self.base["manifest_sha256"],
+            self.base["snapshot_path"],
+            profile_set=path,
+            **kwargs,
+        )
+
+    def test_more_than_twenty_profiles_seal_and_omission_returns_metadata_only(self):
+        references = self.many_profiles(21)
+        path = self.publish_set(references)
+        with (
+            patch(
+                "search.operations.documents.source.fetch",
+                side_effect=AssertionError("network"),
+            ),
+            patch(
+                "search.operations.documents.extractor.extract",
+                side_effect=AssertionError("parser"),
+            ),
+        ):
+            result = self.sync(ttl_seconds=3600, profile_set=path)
+        report = result["resource_profiles"]
+        self.assertEqual(21, report["included_count"])
+        self.assertEqual(0, report["failed_count"])
+        self.assertEqual(
+            path.stem.removeprefix("profile-set-"), report["profile_set_sha256"]
+        )
+        bundle = CatalogBundle.load(
+            Path(result["bundle_path"]),
+            expected_manifest_sha256=result["manifest_sha256"],
+        )
+        self.assertEqual(
+            21, sum(len(row["resource_context"]) for row in bundle.documents)
+        )
+        self.assertEqual(
+            references[0]["resource_id"],
+            bundle.documents[0]["resource_context"][0]["resource_id"],
+        )
+        self.assertEqual(
+            references[-1]["resource_id"],
+            bundle.documents[-1]["resource_context"][0]["resource_id"],
+        )
+        plain = self.sync(ttl_seconds=3600)
+        self.assertEqual(self.base["manifest_sha256"], plain["manifest_sha256"])
+
+    def test_failure_only_and_mixed_coverage_remain_visible(self):
+        references = self.many_profiles(3)
+        failure = {key: references[-1][key] for key in ("dataset_id", "resource_id")}
+        failure["code"] = "document_source_failed"
+        contexts, report = self.load_set(self.publish_set([], [failure]))
+        self.assertEqual({}, contexts)
+        self.assertEqual(
+            (1, 0, 0, 1),
+            tuple(
+                report[key]
+                for key in (
+                    "selected_count",
+                    "included_count",
+                    "skipped_count",
+                    "failed_count",
+                )
+            ),
+        )
+        self.assertEqual([failure], report["failures"])
+        skipped_path = self.profiles / (references[1]["profile_sha256"] + ".json")
+        skipped = json.loads(skipped_path.read_bytes())
+        skipped["policy"]["header_policy"] = "absent"
+        skipped["result"]["columns"] = []
+        references[1]["profile_sha256"] = self.publish(skipped).stem
+        _, report = self.load_set(self.publish_set(references[:2], [failure]))
+        self.assertEqual(
+            (3, 1, 1, 1),
+            tuple(
+                report[key]
+                for key in (
+                    "selected_count",
+                    "included_count",
+                    "skipped_count",
+                    "failed_count",
+                )
+            ),
+        )
+
+    def test_set_source_hash_and_global_per_dataset_limit_are_enforced(self):
+        references = self.many_profiles(21)
+        with self.assertRaisesRegex(enrichment.EnrichmentError, "source_mismatch"):
+            self.load_set(self.publish_set(references, source_sha256="f" * 64))
+        references = self.many_profiles(24, dataset_groups=7)
+        with self.assertRaisesRegex(enrichment.EnrichmentError, "selection_invalid"):
+            self.load_set(self.publish_set(references))
+
+    def test_late_invalid_profile_does_not_publish_candidate_or_latest(self):
+        references = self.many_profiles(21)
+        path = self.publish_set(references)
+        before = (self.cache / "latest.json").read_bytes()
+        last = self.profiles / (references[-1]["profile_sha256"] + ".json")
+        last.write_bytes(last.read_bytes() + b" ")
+        with self.assertRaisesRegex(enrichment.EnrichmentError, "profile_invalid"):
+            self.sync(ttl_seconds=3600, profile_set=path)
+        self.assertEqual(before, (self.cache / "latest.json").read_bytes())
+
+    def test_deadline_and_output_budgets_stop_before_further_profile_reads(self):
+        references = self.many_profiles(3)
+        path = self.publish_set(references)
+        with patch.object(
+            enrichment, "_read_profile", side_effect=AssertionError("profile IO")
+        ):
+            with self.assertRaisesRegex(
+                enrichment.EnrichmentError, "deadline_exceeded"
+            ):
+                self.load_set(path, deadline=0)
+        original = enrichment._read_profile
+        for budget in ("MAX_CONTEXT_BYTES", "MAX_REPORT_BYTES"):
+            with (
+                patch.object(enrichment, budget, 1),
+                patch.object(enrichment, "_read_profile", wraps=original) as reader,
+            ):
+                with self.assertRaisesRegex(
+                    enrichment.EnrichmentError, "limit_exceeded"
+                ):
+                    self.load_set(path)
+                self.assertEqual(0, reader.call_count)
+        with self.assertRaisesRegex(enrichment.EnrichmentError, "selection_invalid"):
+            enrichment.load_profiles(
+                [self.publish()],
+                self.base["bundle_path"],
+                self.base["manifest_sha256"],
+                self.base["snapshot_path"],
+                profile_set=path,
+            )
+
+    def test_each_profile_is_consumed_before_reading_the_next_one(self):
+        references = self.many_profiles(21)
+        path = self.publish_set(references)
+        events = []
+        original_read = enrichment._read_profile
+        original_validate = enrichment.extractor.validate_report
+
+        def read(profile_path):
+            events.append("read")
+            return original_read(profile_path)
+
+        def consume(*args, **kwargs):
+            events.append("consume")
+            return original_validate(*args, **kwargs)
+
+        with (
+            patch.object(enrichment, "_read_profile", side_effect=read),
+            patch.object(enrichment.extractor, "validate_report", side_effect=consume),
+        ):
+            _, report = self.load_set(path)
+        self.assertEqual(21, report["included_count"])
+        self.assertEqual(["read", "consume"] * 21, events)
+
+    def test_midstream_budgets_and_deadline_stop_before_later_files(self):
+        references = self.many_profiles(3)
+        path = self.publish_set(references)
+        contexts, report = self.load_set(path)
+        original = enrichment._read_profile
+        first = references[0]["dataset_id"]
+        baseline_bytes = sum(
+            len(
+                private_io.canonical(
+                    {"schema_version": 1, "dataset_id": dataset_id, "resources": []}
+                )
+            )
+            for dataset_id in contexts
+        )
+        context_limit = (
+            baseline_bytes + len(private_io.canonical(contexts[first][0])) - 2
+        )
+        report_limit = (
+            len(private_io.canonical([]))
+            + 1024
+            + len(private_io.canonical(report["resources"][0]))
+        )
+        for budget, limit, reads in (
+            ("MAX_CONTEXT_BYTES", context_limit, 1),
+            ("MAX_REPORT_BYTES", report_limit, 2),
+        ):
+            with (
+                patch.object(enrichment, budget, limit),
+                patch.object(enrichment, "_read_profile", wraps=original) as reader,
+            ):
+                with self.assertRaisesRegex(
+                    enrichment.EnrichmentError, "limit_exceeded"
+                ):
+                    self.load_set(path)
+                self.assertEqual(reads, reader.call_count)
+        with (
+            patch.object(enrichment.time, "monotonic", side_effect=[0, 0, 0, 2]),
+            patch.object(enrichment, "_read_profile", wraps=original) as reader,
+        ):
+            with self.assertRaisesRegex(
+                enrichment.EnrichmentError, "deadline_exceeded"
+            ):
+                self.load_set(path, deadline=1)
+            self.assertEqual(1, reader.call_count)

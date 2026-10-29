@@ -505,6 +505,19 @@ class PrivateUpTests(unittest.TestCase):
         self.assertEqual(self.events, ["barrier", *ALL_STEPS[1:]])
         self.assertEqual(len(self.receipts()), len(ALL_STEPS))
 
+    def test_invalid_profile_set_stops_before_index_models_or_activation(self):
+        from search.operations.documents.sets import ProfileSetError
+
+        invalid = self.root / ("profile-set-" + "a" * 64 + ".json")
+        invalid.write_bytes(b"{}")
+        invalid.chmod(0o600)
+        with self.assertRaises(ProfileSetError):
+            self.up(profile_set=invalid)
+        self.assertEqual(self.events, ["barrier", "sync"])
+        self.assertFalse((self.config.state_root / "candidate.json").exists())
+        self.assertFalse((self.config.state_root / "active.json").exists())
+        self.assertEqual([row["status"] for row in self.receipts()], ["failed"])
+
     def test_closed_early_barrier_errors_stop_before_metadata_or_other_steps(self):
         for code in first_activation.ERROR_CODES:
             with self.subTest(code=code):

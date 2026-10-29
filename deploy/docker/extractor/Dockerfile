@@ -9,6 +9,6 @@ FROM fess
 USER root
 COPY --from=compiler --chown=root:root /classes/ /opt/depositarai-extractor/classes/
 COPY --chown=root:root deploy/docker/extractor/log4j2.xml /opt/depositarai-extractor/log4j2.xml
-RUN chmod -R a=rX /opt/depositarai-extractor
+RUN test -x /usr/bin/timeout && chmod -R a=rX /opt/depositarai-extractor
 USER 1001:1001
-ENTRYPOINT ["/opt/java/openjdk/bin/java", "-Xmx1400m", "-Djava.io.tmpdir=/tmp", "-Duser.home=/tmp", "-Dlog4j2.configurationFile=/opt/depositarai-extractor/log4j2.xml", "-cp", "/opt/depositarai-extractor/classes:/usr/share/fess/app/WEB-INF/lib/*", "org.depositarai.extractor.Main"]
+ENTRYPOINT ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "25s", "/opt/java/openjdk/bin/java", "-Xmx1400m", "-Djava.io.tmpdir=/tmp", "-Duser.home=/tmp", "-Dlog4j2.configurationFile=/opt/depositarai-extractor/log4j2.xml", "-cp", "/opt/depositarai-extractor/classes:/usr/share/fess/app/WEB-INF/lib/*", "org.depositarai.extractor.Main"]

@@ -272,14 +272,23 @@ def _source_files(source_root):
             os.close(descriptor)
 
 
-def build_image(source_root, *, runner=None):
-    """Build or reuse the immutable helper identified by its exact source bytes."""
-    files = _source_files(source_root)
-    source_sha256 = hashlib.sha256(
+def source_identity(source_root):
+    """Hash the same bounded recipe bytes used to build the extraction helper."""
+    return _source_identity(_source_files(source_root))
+
+
+def _source_identity(files):
+    return hashlib.sha256(
         private_io.canonical(
             {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
         )
     ).hexdigest()
+
+
+def build_image(source_root, *, runner=None):
+    """Build or reuse the immutable helper identified by its exact source bytes."""
+    files = _source_files(source_root)
+    source_sha256 = _source_identity(files)
     tag = "depositarai-resource-extractor:" + source_sha256
     with _client() as prefix:
         existing = _inspect(prefix, tag, runner)
@@ -346,6 +355,33 @@ def _cleanup(prefix, name, runner):
         raise ExtractorError("document_extractor_cleanup_failed")
 
 
+def helper_exists(name, *, runner=None):
+    """Inspect only the exact durable attempt name; never remove a stale helper."""
+    _helper_name(name)
+    with _client() as prefix:
+        result = _call(
+            prefix + ["container", "inspect", "--format", "{{.Name}}", name],
+            timeout=15,
+            runner=runner,
+            max_bytes=4096,
+        )
+    if result.returncode:
+        if b"No such container" in result.stderr or b"No such object" in result.stderr:
+            return False
+        raise ExtractorError("document_extractor_inspect_failed")
+    if result.stdout.strip() != ("/" + name).encode():
+        raise ExtractorError("document_extractor_inspect_failed")
+    return True
+
+
+def _helper_name(name):
+    if (
+        type(name) is not str
+        or re.fullmatch(r"depositarai-extract-[0-9a-f]{32}", name) is None
+    ):
+        raise ExtractorError("document_extractor_settings_invalid")
+
+
 def extract(
     path,
     expected_format,
@@ -353,6 +389,7 @@ def extract(
     header_policy="first_record",
     *,
     image,
+    container_name=None,
     runner=None,
 ):
     """Snapshot one private file, extract it offline, and verify its bound output."""
@@ -373,6 +410,12 @@ def extract(
         or not _IMAGE_ID.fullmatch(image["image_id"])
     ):
         raise ExtractorError("document_extractor_image_invalid")
+    container = (
+        "depositarai-extract-" + uuid.uuid4().hex
+        if container_name is None
+        else container_name
+    )
+    _helper_name(container)
     raw = _input_bytes(path)
     digest = hashlib.sha256(raw).hexdigest()
     with _client() as prefix:
@@ -385,7 +428,6 @@ def extract(
             snapshot = Path(name) / ("resource." + expected_format.lower())
             snapshot.write_bytes(raw)
             snapshot.chmod(0o600)
-            container = "depositarai-extract-" + uuid.uuid4().hex
             command = prefix + [
                 "run",
                 "--pull",
@@ -429,7 +471,7 @@ def extract(
                 header_policy,
             ]
             try:
-                result = _call(command, timeout=30, runner=runner)
+                result = _call(command, timeout=40, runner=runner)
                 if result.returncode:
                     raise ExtractorError("document_extractor_command_failed")
                 try:

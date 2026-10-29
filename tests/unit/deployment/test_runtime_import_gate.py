@@ -194,6 +194,59 @@ class RuntimeImportGateTests(unittest.TestCase):
                 self.assertEqual(code, result.returncode)
                 self.assertEqual(previous_calls + 1, len(self.calls()))
 
+    def test_copied_offline_resource_code_is_rejected_without_importing_it(self):
+        _, tree = self.payload("conversation")
+        guard = next(
+            statement
+            for statement in tree.body
+            if isinstance(statement, ast.For)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "relative"
+            and isinstance(statement.iter, ast.Tuple)
+        )
+        program = compile(
+            ast.Module(body=[guard], type_ignores=[]), "runtime-import-policy", "exec"
+        )
+        search_root = self.root / "image/search"
+        documents = search_root / "operations/documents"
+        documents.mkdir(parents=True)
+        with self.assertRaisesRegex(AssertionError, "offline code in runtime image"):
+            exec(program, {"search_root": search_root})
+        documents.rmdir()
+        (search_root / "operations/shared").mkdir()
+        exec(program, {"search_root": search_root})
+
+    def test_loaded_resource_batching_is_rejected_but_shared_probe_is_allowed(self):
+        _, tree = self.payload("conversation")
+        guard = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assert)
+            and isinstance(node.msg, ast.BinOp)
+            and isinstance(node.msg.left, ast.Constant)
+            and node.msg.left.value == "offline implementation loaded: "
+        )
+        program = compile(
+            ast.Module(body=[guard], type_ignores=[]), "runtime-import-policy", "exec"
+        )
+        for relative in (
+            "operations/documents/__init__.py",
+            "operations/documents/batches.py",
+            "operations/documents/sets.py",
+        ):
+            with (
+                self.subTest(relative=relative),
+                self.assertRaisesRegex(AssertionError, "offline implementation loaded"),
+            ):
+                exec(program, {"relative": relative, "name": "resource_batching"})
+        exec(
+            program,
+            {
+                "relative": "operations/shared/runtime_probe.py",
+                "name": "search.operations.shared.runtime_probe",
+            },
+        )
+
     def test_embedded_python_has_exact_roles_fixed_package_roots_and_no_startup_calls(
         self,
     ) -> None:
