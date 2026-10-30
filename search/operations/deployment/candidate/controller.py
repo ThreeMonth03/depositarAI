@@ -1051,11 +1051,16 @@ def stop(profile, store, record):
     return summary(record)
 
 
-def operate(filename, operation, *, source=None, text=None):
+def operate(filename, operation, *, source=None, text=None, batch_identity=False):
     require(
         operation in {"prepare", "start", "status", "query", "stop"},
         "operation_invalid",
     )
+    require(
+        type(batch_identity) is bool and (not batch_identity or operation == "status"),
+        "batch_identity_operation_invalid",
+    )
+    operator_revision = require_clean_revision(ROOT) if batch_identity else None
     profile = load_config(filename)
     with journal(profile["state_root"]) as store:
         record = current(store)
@@ -1066,11 +1071,15 @@ def operate(filename, operation, *, source=None, text=None):
         if operation == "start":
             return start(profile, store, record)
         if record is None or record["phase"] != "running":
-            require(operation == "status", "candidate_not_running")
+            require(
+                operation == "status" and not batch_identity, "candidate_not_running"
+            )
             return summary(record) if record else {"status": "empty"}
         with live(profile, record) as session:
             session.attach_record(record)
-            session.verify(record["policy"]["policy"], record["compute_sha256"])
+            resident = session.verify(
+                record["policy"]["policy"], record["compute_sha256"]
+            )
             if operation == "query":
                 from .probe import query as run_query
 
@@ -1084,7 +1093,23 @@ def operate(filename, operation, *, source=None, text=None):
                 finally:
                     session.verify(record["policy"]["policy"], record["compute_sha256"])
                 return {**summary(record), **result}
-            return {**summary(record), "runtime_verified": True}
+            result = {**summary(record), "runtime_verified": True}
+            if batch_identity:
+                from .batch.execution import runtime_identity
+
+                require(
+                    require_clean_revision(ROOT) == operator_revision,
+                    "batch_operator_changed",
+                )
+                result["batch_identity_sha256"] = digest(
+                    runtime_identity(session, record, resident, operator_revision)
+                )
+        if batch_identity:
+            require(
+                require_clean_revision(ROOT) == operator_revision,
+                "batch_operator_changed",
+            )
+        return result
 
 
 def main(argv=None):
@@ -1093,13 +1118,14 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("prepare").add_argument("--source", required=True)
     commands.add_parser("start")
-    commands.add_parser("status")
+    commands.add_parser("status").add_argument("--batch-identity", action="store_true")
     commands.add_parser("stop")
     commands.add_parser("query").add_argument("--query", required=True)
     batch = commands.add_parser("batch")
     batch.add_argument("--cases", required=True)
     batch.add_argument("--capture", required=True)
     batch.add_argument("--expected-revision", required=True)
+    batch.add_argument("--expected-identity-sha256")
     args = parser.parse_args(argv)
     try:
         if args.operation == "batch":
@@ -1112,6 +1138,7 @@ def main(argv=None):
                     cases=args.cases,
                     destination=args.capture,
                     expected_revision=args.expected_revision,
+                    expected_identity_sha256=args.expected_identity_sha256,
                 )
             except SharedBatchCaptureError as error:
                 print(json.dumps({"error": str(error)}))
@@ -1122,6 +1149,7 @@ def main(argv=None):
                 args.operation,
                 source=getattr(args, "source", None),
                 text=getattr(args, "query", None),
+                batch_identity=getattr(args, "batch_identity", False),
             )
     except KeyboardInterrupt:
         print('{"error":"shared_backend_interrupted"}')

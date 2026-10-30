@@ -83,6 +83,41 @@ python3 scripts/share_search_backend.py \
 `--expected-revision` 必須與目前登記的 running 候選完全一致。命令不會為了執行
 案例而接管別人的候選、更新映像、切換 catalog 或重試搜尋。
 
+要凍結完整執行目標，可另外提供 `--expected-identity-sha256`。摘要取自已核對的
+完整 batch identity，沿用 `candidate.controller.digest(identity)`：排序 key 的
+compact UTF-8 JSON、保留全部欄位，末尾包含一個 LF，再計算 SHA256。
+不能只取候選 revision、catalog manifest，或省略尚未認得的新欄位。
+
+```text
+--expected-revision FULL_40_HEX_CANDIDATE_COMMIT
+--expected-identity-sha256 FULL_64_LOWERCASE_HEX_IDENTITY_SHA256
+```
+
+使用同一個乾淨 operator checkout 取得送件時的摘要：
+
+```bash
+python3 scripts/share_search_backend.py \
+  --config /absolute/private/shared-backend.json status --batch-identity
+```
+
+這個選項重用 status 原有的一次完整查核，不執行搜尋或新增查核，僅在原摘要加上
+`batch_identity_sha256`，不輸出原始 identity。候選必須正在運行，operator 來源須
+乾淨且前後 revision 一致；否則明確拒絕。沒有旗標的 status 保持原有輸出。
+
+這個 digest 與私有、已核對的 `run.json.identity` 使用同一個完整身分建構函式；
+不能對整份 status JSON 求摘要。它綁定 operator／provider／catalog 來源、模型、
+policy 與實際 candidate runtime。候選重啟或 operator
+換版後，即使候選 commit 相同，也可能需要重新審核身分並送件；不要在等待後才
+以當下目標重算預期值。排程器保存送件時的預期摘要，不能用事後比對取代前置條件。
+
+選用摘要須為 64 位小寫十六進位，格式錯誤會在讀取設定或建立 capture 前拒絕。
+執行時先在既有候選與 product／catalog locks 內完成原有完整查核，再比對完整
+identity；不符時第一個 query 尚未送出，回報 `shared_backend_batch_identity_changed`，
+capture 保持 `quarantined`、完成數為零、各輪為 `not_run`。前置查核可以發出既有
+非搜尋稽核；拒絕時仍執行既有後置 runtime audit。成功批次仍須完成原有來源／
+模型與 authority 的退出檢查，拒絕收據不宣稱身分驗證完成。
+正常輸出不包含實際 identity。省略這個選項時，沿用手動指定 running 候選的操作。
+
 ## 固定題組分批
 
 [固定查詢集](../../tests/fixtures/search-quality.json) 可以超過單批的 3 個案例或

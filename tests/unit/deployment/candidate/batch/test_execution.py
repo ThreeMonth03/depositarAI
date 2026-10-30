@@ -1,8 +1,9 @@
 """Batch lifecycle, audit publication and offline quality interoperability."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from search.quality import contract, evaluator
+from search.quality import batches, contract, evaluator
 from search.operations.deployment.candidate import controller
 from search.operations.deployment.candidate.batch import execution
 from tests.unit.quality.fixtures import turn
@@ -186,7 +187,7 @@ class BatchTests(unittest.TestCase):
             "session_reset": True,
         }
 
-    def run_batch(self, *, expected=REVISION):
+    def run_batch(self, *, expected=REVISION, expected_identity_sha256=None):
         with (
             patch.object(
                 controller, "require_clean_revision", side_effect=self.source_revision
@@ -204,10 +205,24 @@ class BatchTests(unittest.TestCase):
                 cases=self.specfile,
                 destination=self.destination,
                 expected_revision=expected,
+                expected_identity_sha256=expected_identity_sha256,
             )
 
     def read(self, name):
         return json.loads((self.destination / name).read_text())
+
+    def status(self, *, batch_identity=False):
+        with (
+            patch.object(
+                controller, "require_clean_revision", side_effect=self.source_revision
+            ),
+            patch.object(controller, "load_config", return_value=self.profile),
+            patch.object(controller, "current", return_value=self.record),
+            patch.object(controller, "live", side_effect=self.live),
+        ):
+            return controller.operate(
+                self.config, "status", batch_identity=batch_identity
+            )
 
     def test_multiturn_capture_can_be_scored_without_reimplementing_quality(self):
         result = self.run_batch()
@@ -237,6 +252,283 @@ class BatchTests(unittest.TestCase):
         for private in ("PRIVATE_QUERY", "PRIVATE_CASE", "PRIVATE_TITLE"):
             self.assertNotIn(private, serialized)
         self.assertIn("PRIVATE_QUERY", json.dumps(captured))
+
+    def expected_identity(self):
+        return execution.runtime_identity(
+            self.session,
+            self.record,
+            {"models": [{"role": "scope", "digest": "4" * 64}]},
+            "9" * 40,
+        )
+
+    def test_matching_full_identity_keeps_audits_and_existing_capture_contract(self):
+        expected = self.expected_identity()
+        canonical = (
+            json.dumps(
+                expected, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            + "\n"
+        ).encode("utf-8")
+        result = self.run_batch(
+            expected_identity_sha256=hashlib.sha256(canonical).hexdigest()
+        )
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(self.probe_calls, 1)
+        self.assertEqual(self.events.count("audit"), 2)
+        self.assertEqual(self.events.count("model_checkpoint"), 3)
+        receipt = self.read("run.json")
+        self.assertEqual(receipt["identity"], expected)
+        self.assertNotIn("expected_identity_sha256", receipt)
+        report = batches.aggregate(
+            self.specification,
+            [
+                {
+                    "plan": self.specification,
+                    "files": {
+                        name: (self.destination / name).read_bytes()
+                        for name in ("run.json", "capture.json", "outcomes.json")
+                    },
+                }
+            ],
+        )
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["summary"]["evidence_complete_turn_count"], 3)
+
+    def test_readonly_status_digest_matches_batch_receipt_without_extra_audit(self):
+        result = self.status(batch_identity=True)
+        self.assertEqual(
+            set(result),
+            {
+                "status",
+                "revision",
+                "models_restarted",
+                "public_route_changed",
+                "runtime_verified",
+                "batch_identity_sha256",
+            },
+        )
+        self.assertEqual(self.events, ["audit", "live_exit"])
+        self.assertEqual(self.probe_calls, 0)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(
+            self.run_batch(expected_identity_sha256=result["batch_identity_sha256"])[
+                "status"
+            ],
+            "complete",
+        )
+        self.assertEqual(
+            result["batch_identity_sha256"],
+            controller.digest(self.read("run.json")["identity"]),
+        )
+
+    def test_readonly_status_digest_is_bound_to_the_selected_catalog(self):
+        original = self.status(batch_identity=True)["batch_identity_sha256"]
+        selected = copy.deepcopy(self.session.context)
+        selected["source_revision"] = "7" * 40
+        selected["plan"]["manifest_sha256"] = "8" * 64
+        selected["bundle"].manifest_sha256 = "8" * 64
+        selected["bundle"].bundle_id = "9" * 64
+        self.session.query_context = selected
+        self.session.query_authority = {
+            "catalog_identity": {"manifest_sha256": "8" * 64}
+        }
+        for value in self.fixture:
+            value["response"]["result"]["search"]["catalog_manifest_sha256"] = "8" * 64
+        result = self.status(batch_identity=True)
+        self.assertNotEqual(result["batch_identity_sha256"], original)
+        self.assertEqual(self.probe_calls, 0)
+        self.assertEqual(self.events.count("audit"), 2)
+        self.assertEqual(
+            self.run_batch(expected_identity_sha256=result["batch_identity_sha256"])[
+                "status"
+            ],
+            "complete",
+        )
+        identity = self.read("run.json")["identity"]
+        self.assertEqual(identity["production_revision"], "f" * 40)
+        self.assertEqual(identity["catalog_source_revision"], "7" * 40)
+        self.assertEqual(result["batch_identity_sha256"], controller.digest(identity))
+
+    def test_manual_status_omits_digest_and_requires_no_operator_source_check(self):
+        result = self.status()
+        self.assertEqual(
+            result,
+            {
+                "status": "running",
+                "revision": REVISION,
+                "models_restarted": False,
+                "public_route_changed": False,
+                "runtime_verified": True,
+            },
+        )
+        self.assertEqual(self.source_checks, 0)
+        self.assertEqual(self.events, ["audit", "live_exit"])
+
+    def test_readonly_identity_refuses_stopped_or_empty_candidates(self):
+        original = self.record
+        for record in (None, original | {"phase": "stopped"}):
+            self.record = record
+            with self.assertRaisesRegex(
+                controller.SharedBackendError, "^shared_backend_candidate_not_running$"
+            ):
+                self.status(batch_identity=True)
+            self.assertEqual(
+                self.status()["status"], "empty" if record is None else "stopped"
+            )
+            self.assertEqual(self.events, [])
+            self.assertFalse(self.destination.exists())
+
+    def test_readonly_identity_refuses_operator_revision_drift_before_or_after_exit(
+        self,
+    ):
+        for revisions in (("9" * 40, "8" * 40), ("9" * 40, "9" * 40, "8" * 40)):
+            with self.subTest(checks=len(revisions)):
+                values = iter(revisions)
+                self.source_revision = lambda _root: next(values)
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError,
+                    "^shared_backend_batch_operator_changed$",
+                ):
+                    self.status(batch_identity=True)
+                self.assertEqual(self.probe_calls, 0)
+                self.assertFalse(self.destination.exists())
+
+    def test_identity_status_option_is_not_valid_for_other_operations_or_nonbooleans(
+        self,
+    ):
+        for operation, flag in (
+            ("query", True),
+            ("prepare", True),
+            ("start", True),
+            ("stop", True),
+            ("status", 1),
+            ("status", None),
+        ):
+            with self.subTest(operation=operation, flag=flag):
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError,
+                    "^shared_backend_batch_identity_operation_invalid$",
+                ):
+                    controller.operate(self.config, operation, batch_identity=flag)
+
+    def test_identity_drift_is_refused_before_queries_and_retains_final_audit(self):
+        expected = self.expected_identity()
+        expected_sha256 = controller.digest(expected)
+        for field in (
+            "catalog_manifest_sha256",
+            "catalog_source_revision",
+            "model_manifest_sha256",
+            "production_revision",
+            "operator_revision",
+            "candidate_runtime",
+        ):
+            with self.subTest(field=field):
+                self.destination = self.root / field
+                actual = copy.deepcopy(expected)
+                actual[field] = (
+                    {"start_identity_sha256": "7" * 64}
+                    if field == "candidate_runtime"
+                    else "7" * (40 if field.endswith("revision") else 64)
+                )
+                before = self.events.count("audit")
+                with patch.object(execution, "runtime_identity", return_value=actual):
+                    result = self.run_batch(expected_identity_sha256=expected_sha256)
+                self.assertEqual(result["status"], "quarantined")
+                self.assertEqual(
+                    result["error"], "shared_backend_batch_identity_changed"
+                )
+                self.assertEqual(result["completed_cases"], 0)
+                self.assertEqual(result["completed_turns"], 0)
+                self.assertFalse(result["identity_verified"])
+                self.assertEqual(self.probe_calls, 0)
+                self.assertEqual(self.events.count("audit") - before, 2)
+                self.assertEqual(self.read("capture.json")["cases"], [])
+                self.assertEqual(self.read("run.json")["identity"], actual)
+                self.assertEqual(
+                    [
+                        turn["status"]
+                        for turn in self.read("outcomes.json")["cases"][0]["turns"]
+                    ],
+                    ["not_run"] * 3,
+                )
+
+    def test_future_identity_fields_participate_in_the_same_full_digest(self):
+        original = self.expected_identity()
+        future = original | {"future_binding": {"source_sha256": "7" * 64}}
+        for number, expected in enumerate((original, future)):
+            with self.subTest(expected_future=number):
+                self.destination = self.root / f"future-{number}"
+                with patch.object(execution, "runtime_identity", return_value=future):
+                    result = self.run_batch(
+                        expected_identity_sha256=controller.digest(expected)
+                    )
+                self.assertEqual(
+                    result["status"], "complete" if number else "quarantined"
+                )
+                self.assertEqual(self.probe_calls, number)
+                self.assertEqual(self.read("run.json")["identity"], future)
+
+    def test_identity_comparison_is_inside_the_existing_operation_context(self):
+        retained = False
+        original_live, original_digest = self.live, controller.digest
+
+        @contextmanager
+        def live(*args):
+            nonlocal retained
+            with original_live(*args) as session:
+                retained = True
+                try:
+                    yield session
+                finally:
+                    retained = False
+
+        compared = []
+
+        def digest(value):
+            if "candidate_revision" in value:
+                self.assertTrue(retained)
+                self.assertEqual(self.events.count("audit"), 1)
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError, "^shared_backend_busy$"
+                ):
+                    with controller.journal(self.state):
+                        self.fail("batch journal lock was released")
+                compared.append(True)
+            return original_digest(value)
+
+        self.live = live
+        expected = original_digest(self.expected_identity())
+        with patch.object(controller, "digest", side_effect=digest):
+            result = self.run_batch(expected_identity_sha256=expected)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(compared, [True])
+        self.assertFalse(retained)
+
+    def test_malformed_identity_digest_is_rejected_before_mutable_work(self):
+        for value in (
+            "",
+            "a" * 63,
+            "a" * 65,
+            "A" * 64,
+            "a" * 64 + "\n",
+            " " + "a" * 64,
+            b"a" * 64,
+            True,
+            1,
+            [],
+            {},
+            "PRIVATE_DIGEST",
+        ):
+            with self.subTest(value_type=type(value).__name__, length=len(str(value))):
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError,
+                    "^shared_backend_batch_identity_invalid$",
+                ):
+                    self.run_batch(expected_identity_sha256=value)
+                self.assertFalse(self.destination.exists())
+                self.assertEqual(self.probe_calls, 0)
+                self.assertEqual(self.source_checks, 0)
+                self.assertEqual(self.events, [])
 
     def test_selected_catalog_supplies_manifest_identity_and_metadata_for_shared_ids(
         self,
@@ -389,6 +681,102 @@ class BatchTests(unittest.TestCase):
             execution._observations(
                 self.specification["cases"][0], report, self.session.context["bundle"]
             )
+
+
+class BatchCLITests(unittest.TestCase):
+    def arguments(self):
+        return [
+            "--config",
+            "/private/config.json",
+            "batch",
+            "--cases",
+            "/private/cases.json",
+            "--capture",
+            "/private/new-capture",
+            "--expected-revision",
+            REVISION,
+        ]
+
+    def test_optional_identity_argument_preserves_manual_and_pinned_invocations(self):
+        for expected in (None, "b" * 64):
+            with self.subTest(pinned=expected is not None):
+                argv = self.arguments()
+                if expected is not None:
+                    argv += ["--expected-identity-sha256", expected]
+                output = io.StringIO()
+                with (
+                    patch.object(
+                        execution, "run_batch", return_value={"status": "complete"}
+                    ) as run,
+                    redirect_stdout(output),
+                ):
+                    self.assertEqual(controller.main(argv), 0)
+                self.assertEqual(
+                    run.call_args.kwargs["expected_identity_sha256"], expected
+                )
+                self.assertEqual(json.loads(output.getvalue()), {"status": "complete"})
+
+    def test_malformed_cli_digest_uses_closed_diagnostic_without_queries(self):
+        output = io.StringIO()
+        with (
+            patch.object(controller, "load_config") as config,
+            patch.object(execution.probe, "conversation") as query,
+            redirect_stdout(output),
+        ):
+            code = controller.main(
+                self.arguments() + ["--expected-identity-sha256", "PRIVATE_DIGEST"]
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {"error": "shared_backend_batch_identity_invalid"},
+        )
+        self.assertNotIn("PRIVATE", output.getvalue())
+        config.assert_not_called()
+        query.assert_not_called()
+
+    def test_status_cli_exposes_only_the_explicit_optional_digest(self):
+        for selected in (False, True):
+            with self.subTest(batch_identity=selected):
+                argv = ["--config", "/private/config.json", "status"]
+                if selected:
+                    argv.append("--batch-identity")
+                value = {"status": "running", "revision": REVISION}
+                if selected:
+                    value["batch_identity_sha256"] = "b" * 64
+                output = io.StringIO()
+                with (
+                    patch.object(controller, "operate", return_value=value) as operate,
+                    redirect_stdout(output),
+                ):
+                    self.assertEqual(controller.main(argv), 0)
+                self.assertIs(operate.call_args.kwargs["batch_identity"], selected)
+                self.assertEqual(json.loads(output.getvalue()), value)
+
+    def test_dirty_operator_source_refuses_identity_without_reading_config_or_queries(
+        self,
+    ):
+        output = io.StringIO()
+        with (
+            patch.object(
+                controller,
+                "require_clean_revision",
+                side_effect=ValueError("product_source_dirty"),
+            ),
+            patch.object(controller, "load_config") as config,
+            patch.object(execution.probe, "conversation") as query,
+            redirect_stdout(output),
+        ):
+            code = controller.main(
+                ["--config", "/private/config.json", "status", "--batch-identity"]
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(output.getvalue()), {"error": "shared_backend_failed"}
+        )
+        self.assertNotIn("batch_identity_sha256", output.getvalue())
+        config.assert_not_called()
+        query.assert_not_called()
 
 
 if __name__ == "__main__":
