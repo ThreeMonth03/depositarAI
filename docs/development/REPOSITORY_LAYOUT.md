@@ -48,6 +48,7 @@ depositarAI/
 │   │   │   ├── release/       CPU release 協調、runtime 與 probe
 │   │   │   └── public_entry/  OIDC、配額與入口生命週期
 │   │   ├── metadata/          公開來源、同步、快取與收據
+│   │   ├── jobs/              固定工作排隊、凍結輸入與 native 證據核對
 │   │   └── shared/            私有 IO、有界 process 與 source identity
 │   └── tests/                 搜尋、API、BFF 及 planning 測試
 ├── scripts/                   薄產品 CLI、模型準備及設定檢查工具

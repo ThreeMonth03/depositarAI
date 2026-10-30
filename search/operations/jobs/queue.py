@@ -18,9 +18,9 @@ import time
 import uuid
 
 from search.operations.shared import private_io
-from search.operations.documents.sets import MAX_SELECTED
 from search.serialization import strict_json
 
+from . import execution, profiles
 from .pueue import ENVIRONMENT, JobError, MAX_OUTPUT, Pueue, command, require
 from .sources import restore_modes
 
@@ -52,26 +52,12 @@ def queue_identity(registry):
     return digest({key: value for key, value in registry.items() if key != "profiles"})
 
 
-def validate_profile(profile, root):
-    require(
-        type(profile) is dict
-        and set(profile)
-        == {"type", "bundle", "state_root", "plan_sha256", "manifest_sha256"}
-        and profile["type"] == "resource-pass"
-        and all(
-            type(profile[key]) is str and SHA256.fullmatch(profile[key])
-            for key in ("plan_sha256", "manifest_sha256")
-        ),
-        "profile_invalid",
-    )
-    for key in ("bundle", "state_root"):
-        target = path(profile[key])
-        require(
-            root != target
-            and root not in target.parents
-            and target not in root.parents,
-            "profile_overlaps_queue",
-        )
+def no_archive_intent(root):
+    try:
+        (root / "archive-intent.json").lstat()
+    except FileNotFoundError:
+        return
+    raise JobError("job_archive_recovery_required")
 
 
 def path(value):
@@ -140,16 +126,6 @@ def common_directory(source):
     return path(result.stdout.decode("ascii").strip())
 
 
-def verify_profile(profile):
-    plan = read(Path(profile["state_root"]) / "plan.json", maximum=8 * 1024**2)
-    require(
-        type(plan) is dict
-        and digest(plan) == profile["plan_sha256"]
-        and plan.get("catalog_manifest_sha256") == profile["manifest_sha256"],
-        "profile_plan_changed",
-    )
-
-
 def load_registry(filename=None):
     value = read(registry_path() if filename is None else filename)
     require(
@@ -187,14 +163,16 @@ def load_registry(filename=None):
     path(value["pueue"])
     source = path(value["operator_source"])
     require(revision(source) == value["operator_revision"], "operator_changed")
-    profiles = value["profiles"]
-    require(type(profiles) is dict and 1 <= len(profiles) <= 16, "profiles_invalid")
-    for name, profile in profiles.items():
+    definitions = value["profiles"]
+    require(
+        type(definitions) is dict and 1 <= len(definitions) <= 16, "profiles_invalid"
+    )
+    for name, profile in definitions.items():
         require(
             type(name) is str and NAME.fullmatch(name),
             "profile_invalid",
         )
-        validate_profile(profile, root)
+        profiles.validate(profile, root)
     return value
 
 
@@ -223,7 +201,7 @@ def locked(root, name):
             "lock_changed",
         )
         private_io.verify_directory(parent, root)
-        yield
+        yield private_io.identity(os.fstat(fd))
         private_io.verify_directory(parent, root)
     finally:
         if fd is not None:
@@ -307,7 +285,9 @@ def submit(registry, specification):
         common_directory(source) == common_directory(registry["operator_source"]),
         "source_repository_changed",
     )
-    verify_profile(registry["profiles"][specification["profile"]])
+    profile = registry["profiles"][specification["profile"]]
+    profiles.verify_source(profile, specification["revision"])
+    frozen_inputs = profiles.load_inputs(profile)
     root = Path(registry["root"])
     require(
         root != source and root not in source.parents and source not in root.parents,
@@ -315,6 +295,7 @@ def submit(registry, specification):
     )
     transport = Pueue(registry)
     with locked(root, "submissions.lock"):
+        no_archive_intent(root)
         queue_state(registry)
         jobs = root / "jobs"
         os.close(private_io.open_directory(jobs, create=True))
@@ -335,7 +316,7 @@ def submit(registry, specification):
                 "--detach",
                 "--lock",
                 "--reason",
-                "queued resource pass",
+                "queued fixed job",
                 frozen,
                 specification["revision"],
             ],
@@ -361,6 +342,7 @@ def submit(registry, specification):
         require(tree.returncode == 0, "source_tree_invalid")
         restore_modes(frozen, tree.stdout)
         require(revision(frozen) == specification["revision"], "source_changed")
+        profiles.freeze(destination, profile, frozen_inputs)
         request = {
             **specification,
             "job_id": identifier,
@@ -418,6 +400,22 @@ def inputs(registry, identifier):
             "profile_definition",
         }
         and request.get("job_id") == identifier
+        and type(request.get("schema_version")) is int
+        and request["schema_version"] == 1
+        and type(request.get("issue")) is int
+        and 1 <= request["issue"] <= 10**9
+        and type(request.get("revision")) is str
+        and REVISION.fullmatch(request["revision"])
+        and type(request.get("profile")) is str
+        and NAME.fullmatch(request["profile"])
+        and type(request.get("source")) is str
+        and request["source"].isascii()
+        and all(32 <= ord(character) < 127 for character in request["source"])
+        and Path(request["source"]).is_absolute()
+        and ".." not in Path(request["source"]).parts
+        and Path(request["source"]).as_posix() == request["source"]
+        and type(request.get("created_at_ns")) is int
+        and request["created_at_ns"] > 0
         and request.get("queue_identity_sha256") == queue_identity(registry)
         and type(queued) is dict
         and set(queued) == {"task_id", "request_sha256"}
@@ -426,7 +424,9 @@ def inputs(registry, identifier):
         and queued["request_sha256"] == digest(request),
         "request_changed",
     )
-    validate_profile(request["profile_definition"], Path(registry["root"]))
+    profiles.validate(request["profile_definition"], Path(registry["root"]))
+    profiles.verify_source(request["profile_definition"], request["revision"])
+    profiles.read_frozen(root, request["profile_definition"])
     return root, request, queued
 
 
@@ -489,7 +489,7 @@ def status(registry, identifier, *, state=None):
 
 def result(registry, identifier):
     projected = status(registry, identifier)
-    root = job_root(registry, identifier)
+    root, request, _ = inputs(registry, identifier)
     try:
         receipt = read(root / "result.json")
     except FileNotFoundError:
@@ -514,7 +514,68 @@ def result(registry, identifier):
                 and hashlib.sha256(encoded).hexdigest() == metadata["sha256"],
                 "artifact_changed",
             )
+    if receipt["status"] in {"completed", "partial", "checkpoint"}:
+        require(
+            set(receipt)
+            == {
+                "job_id",
+                "status",
+                "request_sha256",
+                "operation_sha256",
+                "source_revision",
+                "artifacts",
+                "log_status",
+            }
+            and receipt["source_revision"] == request["revision"]
+            and receipt["log_status"] == "complete"
+            and artifacts is not None,
+            "result_invalid",
+        )
+        value = read(root / "operation.json")
+        require(
+            execution.verify(
+                value,
+                execution.expected_code(value, request["profile_definition"]),
+                root,
+                request,
+            )
+            == receipt["status"],
+            "operation_result_unverified",
+        )
+    if receipt["status"] == "cancelled":
+        require(
+            set(receipt) == {"job_id", "status", "request_sha256"}, "result_invalid"
+        )
+        for name in ("operation.json", "stdout.bin", "stderr.bin", "capture"):
+            _artifact(root, name, 0)
     return projected
+
+
+def verified_evidence(registry, identifier):
+    """Return the bounded metadata inventory of a fully verified terminal job."""
+    outcome = result(registry, identifier)
+    require(outcome["status"] in TERMINAL, "result_unverified")
+    root, request, _ = inputs(registry, identifier)
+    receipt = read(root / "result.json")
+    names = {name: MAX_RECORD for name in ("request.json", "queue.json", "result.json")}
+    names.update(profiles.frozen_names(request["profile_definition"]))
+    if receipt["status"] != "cancelled":
+        names["operation.json"] = MAX_RECORD
+        names.update(execution.native_names(request["profile_definition"]))
+        names.update(
+            {
+                name: MAX_OUTPUT
+                for name, entry in receipt["artifacts"].items()
+                if entry["bytes"]
+            }
+        )
+    inventory, total = {}, 0
+    for name, maximum in names.items():
+        raw = read(root / name, raw=True, maximum=maximum)
+        total += len(raw)
+        require(total <= execution.MAX_EVIDENCE_BYTES, "evidence_too_large")
+        inventory[name] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    return inventory
 
 
 def _artifact(root, name, size):
@@ -571,38 +632,6 @@ def cancel(registry, identifier):
         return result
 
 
-def _operation_result(value, code, profile):
-    require(
-        type(value) is dict
-        and type(value.get("schema_version")) is int
-        and value["schema_version"] == 1
-        and value.get("status") in {"completed", "partial", "checkpoint"}
-        and value.get("plan_sha256") == profile["plan_sha256"]
-        and value.get("catalog_manifest_sha256") == profile["manifest_sha256"]
-        and all(
-            type(value.get(key)) is int and 0 <= value[key] <= MAX_SELECTED
-            for key in (
-                "selected_count",
-                "pending_count",
-                "profile_count",
-                "failed_count",
-                "retryable_count",
-                "attempted_count",
-            )
-        )
-        and value["attempted_count"] <= 20
-        and value["pending_count"] <= value["selected_count"]
-        and value["profile_count"] <= value["selected_count"] - value["pending_count"]
-        and value["failed_count"] <= value["selected_count"] - value["pending_count"]
-        and value["retryable_count"] <= value["failed_count"]
-        and code == {"completed": 0, "partial": 1, "checkpoint": 2}[value["status"]]
-        and (value["status"] == "checkpoint") == bool(value["pending_count"])
-        and (value["status"] != "completed" or value["failed_count"] == 0)
-        and (value["status"] != "partial" or value["failed_count"] > 0),
-        "operation_result_unverified",
-    )
-
-
 def _capture(root, completed):
     artifacts = {}
     fd = private_io.open_directory(root)
@@ -637,6 +666,7 @@ def execute(registry, identifier):
     }
     try:
         with locked(queue_root, "execution.lock"):
+            no_archive_intent(queue_root)
             require(ROOT == Path(registry["operator_source"]), "operator_changed")
             require(
                 task(registry, identifier, queue_state(registry), queued["task_id"])
@@ -662,7 +692,9 @@ def execute(registry, identifier):
                 == common_directory(registry["operator_source"]),
                 "source_repository_changed",
             )
-            verify_profile(request["profile_definition"])
+            profiles.read_frozen(root, request["profile_definition"])
+            if request["profile_definition"]["type"] == "resource-pass":
+                profiles.verify_resource_plan(request["profile_definition"])
             write(
                 active,
                 {"job_id": identifier, "status": "running"},
@@ -671,34 +703,18 @@ def execute(registry, identifier):
             started = True
             profile = request["profile_definition"]
             completed = command(
-                [
-                    "/usr/bin/python3",
-                    "-I",
-                    "-S",
-                    "-B",
-                    root / "source/scripts/depositarai.py",
-                    "profile-resources",
-                    "run",
-                    "--bundle",
-                    profile["bundle"],
-                    "--state-root",
-                    profile["state_root"],
-                    "--expected-plan-sha256",
-                    profile["plan_sha256"],
-                    "--max-resources",
-                    "20",
-                ],
-                timeout=3600,
+                execution.argv(root, request),
+                timeout=execution.timeout(profile),
                 cwd=root / "source",
             )
             result["artifacts"] = _capture(root, completed)
             result["log_status"] = "complete"
             value = strict_json(completed.stdout)
             write(root / "operation.json", value)
-            _operation_result(value, completed.returncode, profile)
+            normalized = execution.verify(value, completed.returncode, root, request)
             require(revision(root / "source") == request["revision"], "source_changed")
             result.update(
-                status=value["status"],
+                status=normalized,
                 operation_sha256=digest(value),
                 source_revision=request["revision"],
             )
@@ -716,4 +732,10 @@ def execute(registry, identifier):
         )
         if not (root / "result.json").exists():
             write(root / "result.json", result)
+        if (
+            not started
+            and isinstance(error, JobError)
+            and str(error) == "job_archive_recovery_required"
+        ):
+            raise error from None
         raise JobError("job_recovery_required" if started else "job_blocked") from None
