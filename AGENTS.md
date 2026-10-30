@@ -21,6 +21,10 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for Issue, sub-issue and PR examples,
 - Keep ordinary steps as task checkboxes. Create a sub-issue when another owner
   needs an independently verifiable deliverable; link its parent in the body and
   use GitHub's parent relationship when available.
+- Label maintainer-owned Issues and PRs by type, area, priority and useful status.
+  Do not apply newcomer, open-for-contribution or help-wanted labels. Leave
+  third-party PRs to the maintainer: do not review, label, comment on, run or merge
+  them, including submissions that claim an existing Issue.
 
 ## Implement and adjust
 
@@ -52,6 +56,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for Issue, sub-issue and PR examples,
 - Before merging, the coordinator checks the original objective, current plan,
   actual diff, dependencies and evidence. A template or green format check alone
   does not establish correctness. Recheck affected criteria after changes.
+- Keep clean logical commits. Squash failed-CI repairs and exploratory fixups
+  before merging, rerun required CI on the final PR head after rewriting history,
+  and use squash merge for delivery. Earlier green checks do not cover a new SHA.
+- Rewrite only owned, unmerged task branches, using lease-protected pushes when
+  needed. Preserve published history, frozen operational source and original
+  receipts. Generate new source-bound artifacts for the actual new SHA.
 - Close an Issue or sub-issue when its own acceptance criteria are met; do not
   wait for unrelated parent work. Close a parent after its own criteria and
   required children are complete. Explain superseded/duplicate work when closing
@@ -59,8 +69,9 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for Issue, sub-issue and PR examples,
 - Use `Closes #123` only when merging completes that Issue; otherwise use
   `Related to #123` and close it after the remaining acceptance. Source merge is
   not deployment completion.
-- After delivery, clean only your own experimental worktrees and merged branches.
-  Preserve source-bound receipts, data, models, indexes and active runtimes.
+- After delivery, verify completion and PR merge, then remove the work item's
+  owned experimental worktrees and both local and remote task branches. Preserve
+  frozen operational source, source-bound receipts, data, models and indexes.
 
 Owners and status fields coordinate agents sharing one account; they are not
 access controls. Do not claim identity or permission isolation that is absent.

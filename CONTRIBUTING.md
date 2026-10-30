@@ -17,6 +17,12 @@ and implement; adding agents should not create competing plans for one outcome.
 
 ## Issues and sub-issues
 
+Agents use type, area, priority and status labels for maintainer-owned work.
+Do not apply newcomer, open-for-contribution or help-wanted labels. The maintainer
+handles third-party PRs; agents leave those submissions unchanged and do not
+review, label, comment on, execute or merge them, even when they reference an
+existing Issue.
+
 Every Issue needs motivation, a concrete example or bug reproduction, expected
 behavior, scope and acceptance criteria. A sub-issue also links its parent.
 Prefer short code blocks, diffs, diagrams and sanitized screenshots to long prose.
@@ -142,6 +148,21 @@ python3 -I -S -B scripts/ci/contribution.py \
 
 ## Finish and close
 
+Keep final PR commits focused. If CI fails, fix the issue and squash repair or
+exploratory fixups into clean logical commits before merging. History changes
+create a new PR head: rerun required CI on that final SHA and merge only after it
+passes. Use squash merge to deliver the PR.
+
+```text
+work -> failed CI -> fix -> squash fixups -> final-head CI -> squash merge
+```
+
+Rewrite only your own unmerged task branch; use `--force-with-lease` for a needed
+push. Preserve published history, frozen deployment/catalog/operator source and
+original receipts. A squash merge creates a new main SHA: use that actual SHA for
+new packages and operational evidence, retaining the tested PR head and its
+checks separately. Never relabel old validation or captures as checks of new code.
+
 ```mermaid
 flowchart TD
     Check{Own acceptance met?} -->|Yes| Close[Close this Issue or sub-issue]
@@ -154,8 +175,9 @@ flowchart TD
 Use `Closes #123` when that PR's merge fulfills the Issue. Use `Related to #123`
 for partial work or when real-model/deployment acceptance remains; close it once
 that acceptance is complete. Record replacement links for superseded work.
-Update the parent checklist when a child closes, then clean the owner's finished
-worktree. See [AGENTS.md](AGENTS.md) for agent responsibilities and
+Update the parent checklist when a child closes, then delete the owner's finished
+local and remote task branches and experimental worktrees. Retain frozen
+operational source and original evidence. See [AGENTS.md](AGENTS.md) for roles and
 [STYLE.md](STYLE.md) for code, documentation and check commands.
 
 The concise, evidence-based PR style and testable CI helpers are informed by
