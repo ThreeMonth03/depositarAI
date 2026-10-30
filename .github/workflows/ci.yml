@@ -39,7 +39,7 @@ jobs:
       - name: Run Depositár search CI suite
         run: make search-ci
 
-  private-website-oss:
+  private-website-oss-policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -85,12 +85,80 @@ jobs:
           path: ${{ runner.temp }}/depositar-npm/_cacache
           key: ${{ runner.os }}-${{ runner.arch }}-web-npm-node24-${{ hashFiles('web/package-lock.json') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-web-npm-node24-
-      - name: Unit, TypeScript, build and OSS runtime tests
+      - name: Unit, TypeScript, build and OSS policy runtime tests
         id: website
         if: steps.scope.outputs.run != 'false'
         env:
           CI_NPM_CACHE: ${{ runner.temp }}/depositar-npm
-        run: bash scripts/test-search-web.sh --suite oss
+        run: bash scripts/test-search-web.sh --suite oss-policy
+      - name: Save npm downloads
+        if: >-
+          success() && steps.scope.outputs.run != 'false' &&
+          steps.npm-cache.outputs.cache-hit != 'true' &&
+          steps.npm-cache.outputs.cache-primary-key != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/depositar-npm/_cacache
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
+      - name: Report unaffected gate
+        if: steps.scope.outputs.run == 'false'
+        run: echo 'No website dependency changed; the full validate gate still runs.'
+
+  private-website-oss-gateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      scope_run: ${{ steps.scope.outputs.run }}
+      gate_outcome: ${{ steps.website.outcome }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      source_tree: ${{ steps.source.outputs.tree }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Record actual checkout
+        id: source
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ && "$source_sha" == "$GITHUB_SHA" ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
+          printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
+      - name: Select affected specialist gate
+        id: scope
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/changed-scope.py private-website >> "$GITHUB_OUTPUT"
+      - name: Install verified Docker Compose
+        if: steps.scope.outputs.run != 'false'
+        run: bash scripts/ci/install-compose.sh
+      - name: Restore npm downloads
+        id: npm-cache
+        if: steps.scope.outputs.run != 'false'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 2
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+        with:
+          path: ${{ runner.temp }}/depositar-npm/_cacache
+          key: ${{ runner.os }}-${{ runner.arch }}-web-npm-node24-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-web-npm-node24-
+      - name: Unit, TypeScript, build and OSS gateway runtime tests
+        id: website
+        if: steps.scope.outputs.run != 'false'
+        env:
+          CI_NPM_CACHE: ${{ runner.temp }}/depositar-npm
+        run: bash scripts/test-search-web.sh --suite oss-gateway
       - name: Save npm downloads
         if: >-
           success() && steps.scope.outputs.run != 'false' &&
@@ -176,7 +244,7 @@ jobs:
         run: echo 'No website dependency changed; the full validate gate still runs.'
 
   private-website:
-    needs: [private-website-oss, private-website-browser]
+    needs: [private-website-oss-policy, private-website-oss-gateway, private-website-browser]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -197,37 +265,42 @@ jobs:
           [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
           printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
-      - name: Require both website suites and matching source evidence
+      - name: Require all website suites and matching source evidence
         id: aggregate
         if: always() && !cancelled()
         env:
-          OSS_RESULT: ${{ needs.private-website-oss.result }}
+          OSS_POLICY_RESULT: ${{ needs.private-website-oss-policy.result }}
+          OSS_GATEWAY_RESULT: ${{ needs.private-website-oss-gateway.result }}
           BROWSER_RESULT: ${{ needs.private-website-browser.result }}
-          OSS_SCOPE_RUN: ${{ needs.private-website-oss.outputs.scope_run }}
+          OSS_POLICY_SCOPE_RUN: ${{ needs.private-website-oss-policy.outputs.scope_run }}
+          OSS_GATEWAY_SCOPE_RUN: ${{ needs.private-website-oss-gateway.outputs.scope_run }}
           BROWSER_SCOPE_RUN: ${{ needs.private-website-browser.outputs.scope_run }}
-          OSS_GATE_OUTCOME: ${{ needs.private-website-oss.outputs.gate_outcome }}
+          OSS_POLICY_GATE_OUTCOME: ${{ needs.private-website-oss-policy.outputs.gate_outcome }}
+          OSS_GATEWAY_GATE_OUTCOME: ${{ needs.private-website-oss-gateway.outputs.gate_outcome }}
           BROWSER_GATE_OUTCOME: ${{ needs.private-website-browser.outputs.gate_outcome }}
-          OSS_SOURCE_SHA: ${{ needs.private-website-oss.outputs.source_sha }}
+          OSS_POLICY_SOURCE_SHA: ${{ needs.private-website-oss-policy.outputs.source_sha }}
+          OSS_GATEWAY_SOURCE_SHA: ${{ needs.private-website-oss-gateway.outputs.source_sha }}
           BROWSER_SOURCE_SHA: ${{ needs.private-website-browser.outputs.source_sha }}
-          OSS_SOURCE_TREE: ${{ needs.private-website-oss.outputs.source_tree }}
+          OSS_POLICY_SOURCE_TREE: ${{ needs.private-website-oss-policy.outputs.source_tree }}
+          OSS_GATEWAY_SOURCE_TREE: ${{ needs.private-website-oss-gateway.outputs.source_tree }}
           BROWSER_SOURCE_TREE: ${{ needs.private-website-browser.outputs.source_tree }}
           EXPECTED_SHA: ${{ steps.source.outputs.sha }}
           EXPECTED_TREE: ${{ steps.source.outputs.tree }}
         run: |
           set -euo pipefail
-          [[ "$OSS_RESULT" == success && "$BROWSER_RESULT" == success ]]
+          [[ "$OSS_POLICY_RESULT" == success && "$OSS_GATEWAY_RESULT" == success && "$BROWSER_RESULT" == success ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_SHA" == "$GITHUB_SHA" ]]
-          [[ "$OSS_SOURCE_SHA" == "$GITHUB_SHA" && "$BROWSER_SOURCE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$OSS_POLICY_SOURCE_SHA" == "$GITHUB_SHA" && "$OSS_GATEWAY_SOURCE_SHA" == "$GITHUB_SHA" && "$BROWSER_SOURCE_SHA" == "$GITHUB_SHA" ]]
           [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$OSS_SOURCE_TREE" == "$EXPECTED_TREE" && "$BROWSER_SOURCE_TREE" == "$EXPECTED_TREE" ]]
-          case "$OSS_SCOPE_RUN:$BROWSER_SCOPE_RUN" in
-            true:true)
-              [[ "$OSS_GATE_OUTCOME" == success && "$BROWSER_GATE_OUTCOME" == success ]]
-              echo 'Both website suites passed on the exact workflow source.'
+          [[ "$OSS_POLICY_SOURCE_TREE" == "$EXPECTED_TREE" && "$OSS_GATEWAY_SOURCE_TREE" == "$EXPECTED_TREE" && "$BROWSER_SOURCE_TREE" == "$EXPECTED_TREE" ]]
+          case "$OSS_POLICY_SCOPE_RUN:$OSS_GATEWAY_SCOPE_RUN:$BROWSER_SCOPE_RUN" in
+            true:true:true)
+              [[ "$OSS_POLICY_GATE_OUTCOME" == success && "$OSS_GATEWAY_GATE_OUTCOME" == success && "$BROWSER_GATE_OUTCOME" == success ]]
+              echo 'All website suites passed on the exact workflow source.'
               ;;
-            false:false)
+            false:false:false)
               [[ "$GITHUB_EVENT_NAME" == pull_request ]]
-              [[ "$OSS_GATE_OUTCOME" == skipped && "$BROWSER_GATE_OUTCOME" == skipped ]]
+              [[ "$OSS_POLICY_GATE_OUTCOME" == skipped && "$OSS_GATEWAY_GATE_OUTCOME" == skipped && "$BROWSER_GATE_OUTCOME" == skipped ]]
               echo 'Confirmed unaffected website suites; the full validate gate still runs.'
               ;;
             *)

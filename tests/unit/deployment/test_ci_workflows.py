@@ -11,6 +11,11 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+WEBSITE_SUITES = (
+    ("oss-policy", "OSS_POLICY"),
+    ("oss-gateway", "OSS_GATEWAY"),
+    ("browser", "BROWSER"),
+)
 
 
 def literal_run_blocks(source: str) -> list[str]:
@@ -65,7 +70,7 @@ class WorkflowSyntaxTests(unittest.TestCase):
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         package = (ROOT / ".github/workflows/package.yml").read_text(encoding="utf-8")
         installer = "run: bash scripts/ci/install-compose.sh"
-        self.assertEqual(3, ci.count(installer))
+        self.assertEqual(4, ci.count(installer))
         self.assertEqual(2, package.count(installer))
 
     def test_new_ci_helpers_are_in_the_core_syntax_and_unit_checks(self) -> None:
@@ -122,13 +127,13 @@ class SourcePackageWorkflowTests(unittest.TestCase):
                 if name != "private-website":
                     self.assertIn("run: " + command, self.jobs(self.ci)[name])
         ci_jobs = self.jobs(self.ci)
-        for suite in ("oss", "browser"):
+        for suite, _ in WEBSITE_SUITES:
             self.assertIn(
                 "run: bash scripts/test-search-web.sh --suite " + suite,
                 ci_jobs["private-website-" + suite],
             )
         self.assertIn(
-            "needs: [private-website-oss, private-website-browser]",
+            "needs: [private-website-oss-policy, private-website-oss-gateway, private-website-browser]",
             ci_jobs["private-website"],
         )
         self.assertIn("if: always()", ci_jobs["private-website"])
@@ -187,7 +192,7 @@ class WebsiteAggregateTests(unittest.TestCase):
         blocks = [
             block
             for block in literal_run_blocks(self.jobs["private-website"])
-            if "OSS_RESULT" in block
+            if "OSS_POLICY_RESULT" in block
         ]
         self.assertEqual(1, len(blocks))
         self.aggregate = blocks[0]
@@ -195,22 +200,23 @@ class WebsiteAggregateTests(unittest.TestCase):
     @staticmethod
     def environment(*, unaffected=False):
         sha, tree = "a" * 40, "b" * 40
-        return {
+        values = {
             "GITHUB_SHA": sha,
             "GITHUB_EVENT_NAME": "pull_request",
             "EXPECTED_SHA": sha,
             "EXPECTED_TREE": tree,
-            "OSS_RESULT": "success",
-            "BROWSER_RESULT": "success",
-            "OSS_SCOPE_RUN": "false" if unaffected else "true",
-            "BROWSER_SCOPE_RUN": "false" if unaffected else "true",
-            "OSS_GATE_OUTCOME": "skipped" if unaffected else "success",
-            "BROWSER_GATE_OUTCOME": "skipped" if unaffected else "success",
-            "OSS_SOURCE_SHA": sha,
-            "BROWSER_SOURCE_SHA": sha,
-            "OSS_SOURCE_TREE": tree,
-            "BROWSER_SOURCE_TREE": tree,
         }
+        for _, prefix in WEBSITE_SUITES:
+            values.update(
+                {
+                    prefix + "_RESULT": "success",
+                    prefix + "_SCOPE_RUN": "false" if unaffected else "true",
+                    prefix + "_GATE_OUTCOME": "skipped" if unaffected else "success",
+                    prefix + "_SOURCE_SHA": sha,
+                    prefix + "_SOURCE_TREE": tree,
+                }
+            )
+        return values
 
     def run_aggregate(self, values, *, missing=()):
         environment = dict(os.environ)
@@ -237,7 +243,7 @@ class WebsiteAggregateTests(unittest.TestCase):
         self.assertNotIn("WORKFLOW_CANCELLED", aggregate)
         self.assertNotIn("continue-on-error", aggregate)
         self.assertNotIn("${{", self.aggregate)
-        for suite, prefix in (("oss", "OSS"), ("browser", "BROWSER")):
+        for suite, prefix in WEBSITE_SUITES:
             block = self.jobs["private-website-" + suite]
             self.assertNotIn("needs:", block)
             for output, expression in (
@@ -279,14 +285,14 @@ class WebsiteAggregateTests(unittest.TestCase):
                 values["GITHUB_EVENT_NAME"] = event
                 result = self.run_aggregate(values)
                 self.assertEqual(0, result.returncode, result.stderr)
-                self.assertIn("Both website suites passed", result.stdout)
+                self.assertIn("All website suites passed", result.stdout)
         result = self.run_aggregate(self.environment(unaffected=True))
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Confirmed unaffected", result.stdout)
 
     def test_failed_cancelled_skipped_or_unknown_jobs_cannot_pass(self):
         for key, value, unaffected in product(
-            ("OSS_RESULT", "BROWSER_RESULT"),
+            (prefix + "_RESULT" for _, prefix in WEBSITE_SUITES),
             ("failure", "cancelled", "skipped", "", "unknown"),
             (False, True),
         ):
@@ -299,7 +305,7 @@ class WebsiteAggregateTests(unittest.TestCase):
         for unaffected in (False, True):
             expected = "skipped" if unaffected else "success"
             for key, value in product(
-                ("OSS_GATE_OUTCOME", "BROWSER_GATE_OUTCOME"),
+                (prefix + "_GATE_OUTCOME" for _, prefix in WEBSITE_SUITES),
                 ("success", "failure", "cancelled", "skipped", "", "unknown"),
             ):
                 if value == expected:
@@ -310,14 +316,15 @@ class WebsiteAggregateTests(unittest.TestCase):
                     self.assertNotEqual(0, self.run_aggregate(values).returncode)
 
     def test_scopes_must_agree_and_use_the_two_valid_boolean_values(self):
-        for oss, browser in product(
-            ("true", "false", "", "unknown", "True", "0"), repeat=2
-        ):
-            if (oss, browser) in (("true", "true"), ("false", "false")):
+        for scopes in product(("true", "false", "", "unknown", "True", "0"), repeat=3):
+            if scopes in (("true",) * 3, ("false",) * 3):
                 continue
-            with self.subTest(oss=oss, browser=browser):
+            with self.subTest(scopes=scopes):
                 values = self.environment()
-                values.update(OSS_SCOPE_RUN=oss, BROWSER_SCOPE_RUN=browser)
+                values.update(
+                    (prefix + "_SCOPE_RUN", scope)
+                    for (_, prefix), scope in zip(WEBSITE_SUITES, scopes)
+                )
                 self.assertNotEqual(0, self.run_aggregate(values).returncode)
 
     def test_unaffected_requires_a_pull_request(self):
@@ -332,10 +339,12 @@ class WebsiteAggregateTests(unittest.TestCase):
             for key, value in product(
                 (
                     "EXPECTED_SHA",
-                    "OSS_SOURCE_SHA",
+                    "OSS_POLICY_SOURCE_SHA",
+                    "OSS_GATEWAY_SOURCE_SHA",
                     "BROWSER_SOURCE_SHA",
                     "EXPECTED_TREE",
-                    "OSS_SOURCE_TREE",
+                    "OSS_POLICY_SOURCE_TREE",
+                    "OSS_GATEWAY_SOURCE_TREE",
                     "BROWSER_SOURCE_TREE",
                 ),
                 ("", "c" * 40, "invalid"),
@@ -346,8 +355,19 @@ class WebsiteAggregateTests(unittest.TestCase):
                     self.assertNotEqual(0, self.run_aggregate(values).returncode)
         for keys, value in product(
             (
-                ("GITHUB_SHA", "EXPECTED_SHA", "OSS_SOURCE_SHA", "BROWSER_SOURCE_SHA"),
-                ("EXPECTED_TREE", "OSS_SOURCE_TREE", "BROWSER_SOURCE_TREE"),
+                (
+                    "GITHUB_SHA",
+                    "EXPECTED_SHA",
+                    "OSS_POLICY_SOURCE_SHA",
+                    "OSS_GATEWAY_SOURCE_SHA",
+                    "BROWSER_SOURCE_SHA",
+                ),
+                (
+                    "EXPECTED_TREE",
+                    "OSS_POLICY_SOURCE_TREE",
+                    "OSS_GATEWAY_SOURCE_TREE",
+                    "BROWSER_SOURCE_TREE",
+                ),
             ),
             ("", "a" * 39, "g" * 40, "A" * 40),
         ):
@@ -400,7 +420,8 @@ class WebsiteAggregateTests(unittest.TestCase):
                 timeout=10,
             ).strip()
             for name in (
-                "private-website-oss",
+                "private-website-oss-policy",
+                "private-website-oss-gateway",
                 "private-website-browser",
                 "private-website",
             ):

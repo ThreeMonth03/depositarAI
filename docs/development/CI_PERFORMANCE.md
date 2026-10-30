@@ -17,15 +17,24 @@ Actions runner 固定使用 `ubuntu-24.04`，ShellCheck 使用固定 digest 的 
 | Gate | 用途與本機入口 |
 |---|---|
 | `validate` | 核心 Python、部署政策、來源封裝與 API；`make search-ci`。 |
-| `private-website-oss` | 網站共同檢查、真實入口／更新及私有 TLS runtime；`bash scripts/test-search-web.sh --suite oss`。 |
+| `private-website-oss-policy` | 網站共同檢查、intranet 與身分／額度政策 runtime；`bash scripts/test-search-web.sh --suite oss-policy`。 |
+| `private-website-oss-gateway` | 網站共同檢查、gateway／更新／遠端 backend 與私有 TLS runtime；`bash scripts/test-search-web.sh --suite oss-gateway`。 |
 | `private-website-browser` | 網站共同檢查、native gateway bootstrap 與真實 HTTP browser 流程；`bash scripts/test-search-web.sh --suite browser`。 |
-| `private-website` | 彙整兩個網站 job 的結果、scope 與來源，不是另一組測試。 |
+| `private-website` | 彙整兩組 OSS 與 browser job 的結果、scope 與來源，不是另一組測試。 |
 
 `make search-web-ci` 執行完整網站流程，等同 `--suite all`；source package workflow
-也使用完整流程。OSS 與 browser 分流各自在獨立 runner 建置 API／web 映像，
+也使用完整流程。`--suite oss` 保留完整 OSS 流程，依序執行 intranet 與所有 OSS
+runtime 案例。兩組 OSS 與 browser 分流各自在獨立 hosted runner 建置 API／web 映像，
 執行共同的契約、Python、Ruff、npm、TypeScript／Vite 及 image-owned import 檢查。
 日期、曆法與正式 OpenSearch／Haystack 行為仍由產品測試保護。分流縮短等待關鍵路徑，
 但會重複準備工作，不能把 runner 時間總和當成等待時間。
+
+OSS policy 組依序執行 `identity_adapter`、`antibot_runtime`、`runtime` 四個案例與
+`local_volume`，共七個；gateway 組依序執行 `antibot_gateway`、`identity_gateway`、
+`updates`、`remote_backend` 與 `private_api_tls_runtime` 兩個繼承案例，共六個。
+intranet 只由 policy 組執行。每組內的 Docker fixtures 依序啟動與清理，
+平行只發生在不同 runner。這些分組保留完整 OSS 的十三個 qualified test IDs；
+變更案例時須同步檢查 [partition test](../../tests/test_search_ci_scope.py)。
 
 正式映像先執行不掛入原始碼的 import 檢查。HTTP 測試使用繼承相同 runtime
 來源層的 `tests` target，僅額外安裝測試依賴；HTTPX 與 ASGI Lifespan 負責測試
@@ -43,11 +52,11 @@ Actions runner 固定使用 `ubuntu-24.04`，ShellCheck 使用固定 digest 的 
 ## 先確認正在看哪個版本
 
 PR CI checkout 是 GitHub 的整合 merge revision，與 PR head 不同；`main` CI
-checkout 則是接受的 merge commit。重跑或新增提交後，先核對 run 的 event、head
+checkout 則是合併後的實際提交。重跑或新增提交後，先核對 run 的 event、head
 與 attempt，再讀取該次 job log，避免用前一輪結果判斷新程式。
 
-網站 job 的 `CI_SOURCE sha=... tree=...` 必須與當次 checkout 一致，兩個分流與
-彙整也必須相同。文件 workflow 使用 `DOCS_SOURCE`。彙整缺少來源或結果、兩邊
+網站 job 的 `CI_SOURCE sha=... tree=...` 必須與當次 checkout 一致，三個分流與
+彙整也必須相同。文件 workflow 使用 `DOCS_SOURCE`。彙整缺少來源或結果、各組
 scope 不一致、任一 suite 失敗或 workflow 取消，都不能視為成功。
 
 ## 判斷時間花在哪裡
@@ -56,8 +65,12 @@ scope 不一致、任一 suite 失敗或 workflow 取消，都不能視為成功
 網站 script 的紀錄格式如下：
 
 ```text
-CI_SUITE suite=oss
+CI_SUITE suite=oss-policy
+CI_PHASE phase=intranet-entry-runtime seconds=... exit=...
 CI_PHASE phase=public-entry-runtime seconds=... exit=...
+CI_TOTAL seconds=... exit=...
+
+CI_SUITE suite=browser
 CI_PHASE phase=browser-image seconds=... exit=...
 CI_PHASE phase=browser-image-wait seconds=... exit=...
 CI_TOTAL seconds=... exit=...
@@ -90,12 +103,13 @@ Browser 使用單一 worker，直接連到使用正常 image entrypoint 的隔�
 | Unit 或契約失敗 | 第一個 traceback、失敗案例及該 phase exit code；先在相同來源重現最小範圍。 |
 | OSS readiness／bootstrap 失敗 | 該次隔離 fixture 的狀態與啟動 log，不延長所有 timeout 掩蓋真正錯誤。 |
 | Browser 429 或偶發互相影響 | 先辨識回應來自 BFF、私有 API 或公眾 APISIX，再查並發與 fixture 殘留；公眾限流由 OSS suite 驗證。 |
-| 分流成功但彙整失敗 | 兩邊 SHA／tree、scope、suite outcome 與取消狀態。 |
+| 分流成功但彙整失敗 | 各組 SHA／tree、scope、suite outcome 與取消狀態。 |
 | 中斷後仍有背景工作 | 該次 image pull、process group 與 fixture cleanup；只清理已辨識的本輪資源。 |
 
 只在確認為暫時的 runner／網路問題後重跑，保留原失敗與新 attempt，避免把重跑
 成功當成問題已修正。若是確定的程式 race，修正實際競爭條件並保留相關回歸案例。
 
 評估加速時，記錄比較的來源、suite、cache 狀況、wall time 與 phases，放在 PR／CI
-中供 review。優先處理關鍵路徑上的下載、重複建置或昂貴 fixture；不要為了更漂亮
-的秒數少跑案例、放寬資源／安全限制，或新增另一套 CI 管理工具。
+中供 review。以 run 開始至必要 gates 完成計算等待時間，另列各 runner 的執行時間總和，
+區分縮短回饋與增加的 runner 成本。優先處理關鍵路徑上的下載、重複建置或昂貴
+fixture；不要為了更漂亮的秒數少跑案例、放寬資源／安全限制，或新增另一套 CI 管理工具。
