@@ -122,9 +122,32 @@ def full_fixture():
     }, records
 
 
+def unsupported_time_oracle():
+    """Keep artifact integrity valid while inserting an unsupported oracle field."""
+    plan, records = full_fixture()
+    expected = plan["cases"][0]["turns"][0]["expected"]
+    expected["time"]["calendar"] = "unsupported_calendar"
+    record = records[0]
+    record["plan"] = {"schema_version": 1, "cases": [copy.deepcopy(plan["cases"][0])]}
+    captured = json.loads(record["files"]["capture.json"])
+    captured["cases"][0]["turns"][0]["expected"] = copy.deepcopy(expected)
+    run = json.loads(record["files"]["run.json"])
+    # Simulate untrusted input without asking the validator to bless the oracle.
+    raw = json.dumps(
+        record["plan"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    run["plan_sha256"] = hashlib.sha256(raw).hexdigest()
+    rewrite(record, run=run, captured=captured)
+    return plan, records
+
+
 class BatchAggregationTests(unittest.TestCase):
     def setUp(self):
         self.plan, self.records = full_fixture()
+
+    def test_unknown_time_oracle_is_rejected_even_with_matching_artifact_digests(self):
+        plan, records = unsupported_time_oracle()
+        self.rejected(records, plan=plan, code="input_invalid")
 
     def rejected(self, records=None, *, plan=None, code=None, baseline=None):
         with self.assertRaises(batches.BatchEvidenceError) as caught:

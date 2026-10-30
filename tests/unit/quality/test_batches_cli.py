@@ -12,7 +12,11 @@ import unittest
 from unittest.mock import patch
 
 from scripts import check_search_batches as cli
-from tests.unit.quality.test_batches import full_fixture, make_record
+from tests.unit.quality.test_batches import (
+    full_fixture,
+    make_record,
+    unsupported_time_oracle,
+)
 
 
 class BatchCLITests(unittest.TestCase):
@@ -161,6 +165,16 @@ class BatchCLITests(unittest.TestCase):
                 self.write(self.planfile, raw)
                 self.rejected()
                 self.assertFalse(self.output.exists())
+
+    def test_unknown_temporal_oracle_is_rejected_before_writing_a_report(self):
+        plan, records = unsupported_time_oracle()
+        self.write(self.planfile, plan)
+        for subplan, directory, record in zip(self.subplans, self.batchdirs, records):
+            self.write(subplan, record["plan"])
+            for name, raw in record["files"].items():
+                self.write(directory / name, raw)
+        self.rejected()
+        self.assertFalse(self.output.exists())
 
     def test_missing_artifact_is_rejected_and_no_report_is_written(self):
         (self.batchdirs[1] / "outcomes.json").unlink()

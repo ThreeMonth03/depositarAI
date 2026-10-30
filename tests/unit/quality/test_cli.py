@@ -13,6 +13,25 @@ from tests.unit.quality.fixtures import capture, plan_for, turn
 
 
 class QualityCLITests(unittest.TestCase):
+    def test_unknown_temporal_oracle_returns_fixed_invalid_input_diagnostics(self):
+        value = capture(turn({"start": "2024", "end": "2024"}))
+        expected = value["cases"][0]["turns"][0]["expected"]
+        expected["time"] = expected["time"] | {"calendar": "PRIVATE_ORACLE"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.json"
+            for option, payload in (("--plan", plan_for(value)), ("--input", value)):
+                with self.subTest(option=option):
+                    path.write_text(json.dumps(payload))
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        code = cli.main([option, str(path)])
+                    self.assertEqual(2, code)
+                    self.assertEqual(
+                        {"status": "invalid_input", "error": "quality_capture_invalid"},
+                        json.loads(output.getvalue()),
+                    )
+                    self.assertNotIn("PRIVATE_ORACLE", output.getvalue())
+
     def test_domain_functions_are_not_forwarded_through_the_cli(self):
         for name in ("validate_cases", "plan_digest", "evaluate", "normalized"):
             with self.subTest(name=name):

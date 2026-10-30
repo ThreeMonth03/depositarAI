@@ -105,6 +105,10 @@ digest；詳細報告含 case、卡片與來源身分，寫入指定的 `0600` �
 不存在的日期使用 `invalid_date`，短年份未標示紀年使用 `ambiguous_era`，時間條件不夠
 明確使用 `ambiguous_time`。這些澄清原因分別核對，不能互相替代。
 
+`time` 只接受 `start`、`end`，以及可選的 `field: data_coverage`、
+`relation: overlaps`、`endpoints: inclusive`。其他欄位（例如 `calendar`）會被拒絕，
+不會在正規化時忽略；本契約不支援額外的曆法語意。
+
 成功搜尋要求非空主題。澄清／拒絕允許新 session 的空主題，但整份搜尋 state
 必須等於上次已提交的 state，`search` 必須為 `null`，`source_metadata` 為 `{}`。
 這些輪次不改變後續比較使用的 state；下一個成功搜尋才能提交新 state。
