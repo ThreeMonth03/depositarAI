@@ -18,11 +18,11 @@ from search.operations import doctor
 from search.operations.catalog import backend, execution, runtime
 from search.operations.deployment import (
     composition,
-    image_authority as image_evidence,
     inference,
     product_package,
     source_bundle,
 )
+from search.operations.deployment.images import authority as image_evidence
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 

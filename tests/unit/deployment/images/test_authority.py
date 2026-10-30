@@ -8,19 +8,15 @@ import sys
 import unittest
 from unittest import mock
 
-from search.operations.deployment import (
-    image_authority,
-    image_build,
-    inference,
-    runtime_docker,
-    source_bundle,
-)
+from search.operations.deployment import inference, runtime_docker, source_bundle
+from search.operations.deployment.images import authority as image_authority
+from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 from search.operations.state import locked_state
-from tests.unit.deployment.image_fixtures import ImageStagingFixture, fixture_tree
+from tests.unit.deployment.images.fixtures import ImageStagingFixture, fixture_tree
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 class ImageAuthorityBoundaryTests(unittest.TestCase):
@@ -36,7 +32,7 @@ sys.path.insert(0, sys.argv[1])
 def forbidden_process(*args, **kwargs):
     raise AssertionError("image authority import started a process")
 subprocess.Popen = forbidden_process
-from search.operations.deployment import image_authority
+from search.operations.deployment.images import authority as image_authority
 from search.operations.deployment.runtime_docker import InferenceError
 assert image_authority.InferenceError is InferenceError
 for name in (

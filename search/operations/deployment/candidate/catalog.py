@@ -14,12 +14,8 @@ import tempfile
 from search.catalog.bundle import CatalogBundle
 from search.operations import config as product_config
 from search.operations.catalog import chunks, client_lease, commands, execution, policy
-from search.operations.deployment import (
-    composition,
-    credentials,
-    image_build,
-    runtime_docker,
-)
+from search.operations.deployment import composition, credentials, runtime_docker
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import controller as release_controller
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision

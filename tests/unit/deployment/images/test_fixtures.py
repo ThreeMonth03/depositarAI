@@ -7,19 +7,17 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tests.unit.deployment import image_fixtures
+from tests.unit.deployment.images import fixtures as image_fixtures
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 class ImageFixtureBoundaryTests(unittest.TestCase):
     def test_legacy_helpers_keep_the_same_canonical_objects(self):
-        from tests.unit.deployment import (
-            test_image_build,
-            test_image_staging,
-            test_source_bundle,
-        )
+        from tests.unit.deployment import test_source_bundle
+        from tests.unit.deployment.images import test_build as test_image_build
+        from tests.unit.deployment.images import test_staging as test_image_staging
 
         for module, names in (
             (test_source_bundle, ("blob", "fixture_sources", "fixture_tree")),
@@ -52,7 +50,7 @@ Path.open = forbidden
 Path.mkdir = forbidden
 os.open = forbidden
 os.mkdir = forbidden
-from tests.unit.deployment import image_fixtures
+from tests.unit.deployment.images import fixtures as image_fixtures
 assert image_fixtures.ImageStagingFixture.__bases__ == (object,)
 for name in sys.modules:
     assert name != "unittest" and not name.startswith("unittest."), name

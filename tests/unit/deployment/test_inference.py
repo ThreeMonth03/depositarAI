@@ -14,16 +14,12 @@ import unittest
 from unittest import mock
 
 from search.operations.config import GPUConfig
-from search.operations.deployment import (
-    composition,
-    image_build,
-    inference,
-    runtime_docker,
-)
+from search.operations.deployment import composition, inference, runtime_docker
+from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 from search.operations.state import locked_state
 from tests.unit.deployment.test_composition import UUIDS
-from tests.unit.deployment.image_fixtures import ImageStagingFixture
+from tests.unit.deployment.images.fixtures import ImageStagingFixture
 from tests.unit.deployment.test_inference_runtime import snapshot
 
 

@@ -14,10 +14,11 @@ from pathlib import Path
 import re
 
 from search.operations.config import ProductConfig
-from search.operations.deployment import image_build, source_bundle
+from search.operations.deployment import source_bundle
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 from search.operations.state import StateStore
+from . import build
 
 
 MAX_SOURCE_SLOTS = 16
@@ -88,19 +89,19 @@ def _source_stage(
         if not {name, started, complete} <= associated:
             raise ImageStagingError("image_staging_partial_source_state")
         _equal(
-            image_build._record(parent_fd, started),
+            build._record(parent_fd, started),
             identity,
             "image_staging_source_intent_changed",
         )
         _equal(
-            image_build._record(parent_fd, complete),
+            build._record(parent_fd, complete),
             {**identity, "status": "source_staged"},
             "image_staging_source_receipt_changed",
         )
         root_fd = private_io.open_child_directory(parent_fd, name)
         try:
             _equal(
-                image_build._record(root_fd, "manifest.json"),
+                build._record(root_fd, "manifest.json"),
                 plan,
                 "image_staging_committed_manifest_changed",
             )
@@ -111,7 +112,7 @@ def _source_stage(
             raise ImageStagingError("image_staging_retention_limit")
         private_io.verify_directory(parent_fd, parent)
         private_io.write_json(
-            parent_fd, started, identity, max_bytes=image_build.MAX_RECORD_BYTES
+            parent_fd, started, identity, max_bytes=build.MAX_RECORD_BYTES
         )
         private_io.verify_directory(parent_fd, parent)
         staged = source_bundle.stage_source_bundle(
@@ -123,7 +124,7 @@ def _source_stage(
             parent_fd,
             complete,
             {**identity, "status": "source_staged"},
-            max_bytes=image_build.MAX_RECORD_BYTES,
+            max_bytes=build.MAX_RECORD_BYTES,
         )
     private_io.verify_directory(parent_fd, parent)
     return slot, identity, reused
@@ -133,10 +134,10 @@ def _image_result(plan, result):
     if type(result) is not dict or type(result.get("images")) is not dict:
         raise ImageStagingError("image_staging_builder_result_invalid")
     images = result["images"]
-    if set(images) != set(image_build.SERVICES):
+    if set(images) != set(build.SERVICES):
         raise ImageStagingError("image_staging_builder_result_invalid")
     ids = set()
-    for service in image_build.SERVICES:
+    for service in build.SERVICES:
         proof = images[service]
         if type(proof) is not dict:
             raise ImageStagingError("image_staging_image_proof_invalid")
@@ -162,7 +163,7 @@ def _image_result(plan, result):
             "image_staging_image_proof_changed",
         )
         ids.add(image_id)
-    if len(ids) != len(image_build.SERVICES):
+    if len(ids) != len(build.SERVICES):
         raise ImageStagingError("image_staging_image_identity_overlap")
     _equal(
         result,
@@ -232,7 +233,7 @@ def stage_product_images(
         _clean_revision(repo_root, source_revision, source_runner)
         store._check_directory()
         private_io.verify_directory(parent_fd, parent)
-        result = image_build.build_product_images(
+        result = build.build_product_images(
             slot,
             source_revision,
             runner=docker_runner,
@@ -254,29 +255,29 @@ def stage_product_images(
         complete = slot.name + ".image-complete.json"
         if complete in os.listdir(parent_fd):
             _equal(
-                image_build._record(parent_fd, complete),
+                build._record(parent_fd, complete),
                 candidate,
                 "image_staging_completed_images_changed",
             )
         else:
             private_io.write_json(
-                parent_fd, complete, candidate, max_bytes=image_build.MAX_RECORD_BYTES
+                parent_fd, complete, candidate, max_bytes=build.MAX_RECORD_BYTES
             )
         private_io.verify_directory(parent_fd, parent)
         # Recheck persisted source and image receipts before publishing the
         # product pointer; a later role/runner must not silently alter evidence.
         _equal(
-            image_build._record(parent_fd, slot.name + ".stage-started.json"),
+            build._record(parent_fd, slot.name + ".stage-started.json"),
             identity,
             "image_staging_source_intent_changed",
         )
         _equal(
-            image_build._record(parent_fd, slot.name + ".stage-complete.json"),
+            build._record(parent_fd, slot.name + ".stage-complete.json"),
             {**identity, "status": "source_staged"},
             "image_staging_source_receipt_changed",
         )
         _equal(
-            image_build._record(parent_fd, complete),
+            build._record(parent_fd, complete),
             candidate,
             "image_staging_completed_images_changed",
         )
@@ -290,7 +291,7 @@ def stage_product_images(
             error,
             (
                 ImageStagingError,
-                image_build.ImageBuildError,
+                build.ImageBuildError,
                 source_bundle.SourceBundleError,
             ),
         ):

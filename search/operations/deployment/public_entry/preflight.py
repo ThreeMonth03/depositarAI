@@ -10,7 +10,7 @@ import subprocess
 
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
-from .. import image_build
+from search.operations.deployment.images import build as image_build
 
 
 MAX_PEERS = 32

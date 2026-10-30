@@ -22,7 +22,8 @@ import tempfile
 from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME
 from scripts import search_model_source, validate_catalog_compose
 from search.operations.catalog import execution as catalog_execution
-from search.operations.deployment import composition, image_build, source_bundle
+from search.operations.deployment import composition, source_bundle
+from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 
 

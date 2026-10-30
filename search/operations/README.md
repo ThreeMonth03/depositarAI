@@ -22,6 +22,7 @@ prerequisites, side effects and incomplete installer boundaries.
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |
 | [catalog/commands.py](catalog/commands.py) | Catalog text-command runner and stdout validation; command selection and runtime authority stay with callers |
 | [deployment/](deployment/composition.py) | Images/models, private release, gateway activation, product packages and offline restore |
+| [images/](deployment/images/staging.py) | Product image staging, controlled builds and completed source/image evidence; shared COPY/source contracts remain in source_bundle.py |
 | [candidate/](deployment/candidate/controller.py), [batch/](deployment/candidate/batch/execution.py) | Shared-model CPU candidates, independently verified catalog authority and bounded private case capture |
 | [frontend/](deployment/frontend/delivery.py) | Standalone CPU website artifacts, admission policy, authenticated checks and delivery/rollback transactions |
 | [release/controller.py](deployment/release/controller.py), [runtime.py](deployment/release/runtime.py), [probe.py](deployment/release/probe.py) | Private CPU release startup and completed-release verification; startup owns model and HTTP acceptance |
@@ -29,7 +30,7 @@ prerequisites, side effects and incomplete installer boundaries.
 | [gateway/runtime.py](deployment/gateway/runtime.py), [probe_runtime.py](deployment/gateway/probe_runtime.py) | Routing profile and bounded loopback HTTP acceptance; probes do not grant routing authority |
 | [deployment/runtime_docker.py](deployment/runtime_docker.py) | Shared local Docker client with fixed CLI environment, command/output accounting, client guards and bounded project container/network inventories; controllers retain runtime authority |
 | [deployment/process_identity.py](deployment/process_identity.py) | Pure process-start digest shared by inference, CPU release and gateway proofs; callers validate snapshots and own restart and acceptance policy |
-| [deployment/image_authority.py](deployment/image_authority.py) | Read and authenticate completed source/image evidence against the caller's source plan; no runtime mutation or GPU/model policy |
+| [deployment/images/authority.py](deployment/images/authority.py) | Read and authenticate completed source/image evidence against the caller's source plan; no runtime mutation or GPU/model policy |
 | [public_entry/profile.py](deployment/public_entry/profile.py), [host.py](deployment/public_entry/host.py) | Optional APISIX/OIDC entrance configuration and atomic private-material preparation |
 | [public_entry/preflight.py](deployment/public_entry/preflight.py), [updates.py](deployment/public_entry/updates.py) | Private-backend admission and paired CPU website startup, update and manual rollback, retaining Redis quotas |
 | [shared/](shared/private_io.py) | Private IO, bounded HTTP/JSON, process-pipe capture, source identity and runtime probes |
@@ -55,13 +56,13 @@ compatibility when changing them; do not relabel retained data as a new app vers
 
 [bounded_process.py](shared/bounded_process.py) captures both pipes of an already
 created process, enforces their combined byte cap and performs process-group
-cleanup even if selector creation or closing fails. `image_build._run` and
+cleanup even if selector creation or closing fails. `images.build._run` and
 `source_bundle._runner` retain process creation, environment/umask and final-wait
 error handling; workflow budgets stay with their callers. API workers keep their
 separate subprocess contract.
 `runtime_docker.Docker` owns the shared runtime client. Release, gateway and
 inference controllers use this client while retaining their own authority rules.
-`image_authority.read_completed_images` reads source-bound staging/build receipts;
+`images.authority.read_completed_images` reads source-bound staging/build receipts;
 reading them does not prove that a deployment is running or healthy.
 `catalog.commands` owns the text-command runner and its 4 MiB UTF-8 stdout check.
 Metadata receipt IO belongs to storage; product-state schemas and image receipt

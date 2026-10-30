@@ -23,6 +23,7 @@ PACKAGE_PATHS = (
     "search/operations",
     "search/operations/catalog",
     "search/operations/deployment",
+    "search/operations/deployment/images",
     "search/operations/deployment/candidate",
     "search/operations/deployment/candidate/batch",
     "search/operations/deployment/frontend",
@@ -39,6 +40,15 @@ PACKAGE_PATHS = (
     "search/api/shared",
 )
 MODULE_MOVES = {
+    "search/operations/deployment/image_authority.py": (
+        "search/operations/deployment/images/authority.py"
+    ),
+    "search/operations/deployment/image_build.py": (
+        "search/operations/deployment/images/build.py"
+    ),
+    "search/operations/deployment/image_staging.py": (
+        "search/operations/deployment/images/staging.py"
+    ),
     "search/operations/deployment/shared_backend.py": (
         "search/operations/deployment/candidate/controller.py"
     ),

@@ -504,7 +504,7 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
                 tree = ast.parse(source)
                 found = dependencies(tree, package) | imported_attributes(tree, package)
                 self.assertTrue(forbidden_dependencies(found, forbidden))
-        tree = ast.parse("from . import image_build\nclient = image_build._Docker")
+        tree = ast.parse("from .images import build\nclient = build._Docker")
         found = dependencies(tree, package) | imported_attributes(tree, package)
         self.assertEqual([], forbidden_dependencies(found, forbidden))
 
@@ -562,7 +562,7 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
             [],
             forbidden_dependencies(
                 source_dependencies(
-                    ROOT / "search/operations/deployment/image_authority.py"
+                    ROOT / "search/operations/deployment/images/authority.py"
                 ),
                 forbidden,
             ),
@@ -582,11 +582,11 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
                 found = dependencies(tree, package) | imported_attributes(tree, package)
                 self.assertIn(legacy, found)
         tree = ast.parse(
-            "from . import image_authority as image_evidence\n"
+            "from .images import authority as image_evidence\n"
             "image_evidence.read_completed_images(config, store, plan)"
         )
         self.assertIn(
-            package + ".image_authority.read_completed_images",
+            package + ".images.authority.read_completed_images",
             imported_attributes(tree, package),
         )
 
@@ -608,26 +608,25 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
             with self.subTest(consumer=name):
                 self.assertNotIn(owner + ".inference._image_authority", references)
                 self.assertIn(
-                    owner + ".image_authority.read_completed_images", references
+                    owner + ".images.authority.read_completed_images", references
                 )
 
 
 class ImageFixtureConsumerBoundaryTests(unittest.TestCase):
     def test_inference_and_authority_do_not_borrow_staging_test_case(self):
-        package = "tests.unit.deployment"
-        for name in ("test_inference", "test_image_authority"):
-            path = ROOT / "tests/unit/deployment" / (name + ".py")
+        owner = "tests.unit.deployment.images"
+        for name in ("test_inference.py", "images/test_authority.py"):
+            path = ROOT / "tests/unit/deployment" / name
+            _, package = module_context(path.relative_to(ROOT))
             tree = ast.parse(path.read_text(encoding="utf-8"))
             references = dependencies(tree, package) | imported_attributes(
                 tree, package
             )
             with self.subTest(consumer=name):
                 self.assertNotIn(
-                    package + ".test_image_staging.ProductImageStagingTests", references
+                    owner + ".test_staging.ProductImageStagingTests", references
                 )
-                self.assertIn(
-                    package + ".image_fixtures.ImageStagingFixture", references
-                )
+                self.assertIn(owner + ".fixtures.ImageStagingFixture", references)
 
 
 if __name__ == "__main__":

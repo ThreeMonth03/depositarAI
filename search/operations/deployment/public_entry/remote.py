@@ -15,7 +15,7 @@ import sys
 
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.serialization import strict_json
-from .. import image_build
+from search.operations.deployment.images import build as image_build
 from ..frontend import check
 from . import profile as public_entry
 

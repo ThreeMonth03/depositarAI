@@ -14,7 +14,8 @@ from unittest.mock import Mock, patch
 
 from search.operations import cli, lifecycle
 from search.operations.config import GPUConfig, ProductConfig
-from search.operations.deployment import image_build, inference, runtime_docker
+from search.operations.deployment import inference, runtime_docker
+from search.operations.deployment.images import build as image_build
 from search.operations.state import (
     ActivationOutcomeError,
     locked_state,
