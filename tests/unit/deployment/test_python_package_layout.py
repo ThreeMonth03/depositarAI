@@ -23,6 +23,8 @@ PACKAGE_PATHS = (
     "search/operations",
     "search/operations/catalog",
     "search/operations/deployment",
+    "search/operations/deployment/candidate",
+    "search/operations/deployment/candidate/batch",
     "search/operations/deployment/frontend",
     "search/operations/deployment/gateway",
     "search/operations/deployment/release",
@@ -36,6 +38,27 @@ PACKAGE_PATHS = (
     "search/api/shared",
 )
 MODULE_MOVES = {
+    "search/operations/deployment/shared_backend.py": (
+        "search/operations/deployment/candidate/controller.py"
+    ),
+    "search/operations/deployment/shared_backend_probe.py": (
+        "search/operations/deployment/candidate/probe.py"
+    ),
+    "search/operations/deployment/shared_request_policy.py": (
+        "search/operations/deployment/candidate/policy.py"
+    ),
+    "search/operations/deployment/shared_catalog.py": (
+        "search/operations/deployment/candidate/catalog.py"
+    ),
+    "search/operations/deployment/shared_batch.py": (
+        "search/operations/deployment/candidate/batch/execution.py"
+    ),
+    "search/operations/deployment/shared_batch_capture.py": (
+        "search/operations/deployment/candidate/batch/capture.py"
+    ),
+    "search/operations/deployment/shared_batch_probe.py": (
+        "search/operations/deployment/candidate/batch/probe.py"
+    ),
     "search/operations/deployment/frontend_artifact.py": (
         "search/operations/deployment/frontend/artifact.py"
     ),

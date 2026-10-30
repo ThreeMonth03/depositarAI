@@ -11,9 +11,9 @@ import time
 
 from search.quality.contract import plan_digest
 from search.operations import config as product_config
-from . import shared_backend as shared
-from . import shared_batch_capture as capture
-from . import shared_batch_probe as probe
+from .. import controller
+from . import capture
+from . import probe
 
 
 FINAL_AUDIT_RESERVE = 300
@@ -32,13 +32,15 @@ def _plain(value):
         return [_plain(item) for item in value]
     if value is None or type(value) in {str, int, float, bool}:
         return value
-    raise shared.SharedBackendError("shared_backend_capture_metadata_invalid")
+    raise controller.SharedBackendError("shared_backend_capture_metadata_invalid")
 
 
 def _diagnostic(error):
     if isinstance(error, KeyboardInterrupt):
         return "shared_backend_interrupted"
-    if isinstance(error, shared.SharedBackendError):
+    if isinstance(
+        error, (controller.SharedBackendError, controller.catalog.SharedCatalogError)
+    ):
         code = str(error)
         if re.fullmatch(r"shared_backend_[a-z_]+", code):
             return code
@@ -49,7 +51,7 @@ def _observations(case, report, bundle):
     """Project exact responses into the existing offline quality input schema."""
     turns, outcomes = [], []
     observed = report["turns"]
-    shared.require(
+    controller.require(
         type(observed) is list
         and len(observed) <= len(case["turns"])
         and report["status"] in {"complete", "failed"}
@@ -62,7 +64,7 @@ def _observations(case, report, bundle):
         "batch_probe_invalid",
     )
     if report["status"] == "complete":
-        shared.require(
+        controller.require(
             len(observed) == len(case["turns"])
             and all(row.get("status") == "ok" for row in observed)
             and report["session_reset"] is True
@@ -70,7 +72,7 @@ def _observations(case, report, bundle):
             "batch_probe_invalid",
         )
     else:
-        shared.require(report["error"] is not None, "batch_probe_invalid")
+        controller.require(report["error"] is not None, "batch_probe_invalid")
     for number, expected in enumerate(case["turns"]):
         if number >= len(observed):
             outcomes.append({"turn": number + 1, "status": "not_run"})
@@ -84,7 +86,9 @@ def _observations(case, report, bundle):
         reply = row["response"]
         search = reply["result"].get("search")
         cards = search.get("cards", []) if type(search) is dict else []
-        shared.require(type(cards) is list and len(cards) <= 20, "batch_cards_invalid")
+        controller.require(
+            type(cards) is list and len(cards) <= 20, "batch_cards_invalid"
+        )
         identifiers = {
             card.get("dataset_id")
             for card in cards
@@ -118,12 +122,21 @@ def _observations(case, report, bundle):
 
 
 def _identity(session, record, resident, operator_revision):
+    context = session.query_context
+    controller.require(
+        context["bundle"].manifest_sha256
+        == context["plan"]["manifest_sha256"]
+        == session.query_authority["catalog_identity"]["manifest_sha256"],
+        "batch_catalog_binding_changed",
+    )
     return {
         "operator_revision": operator_revision,
         "candidate_revision": record["revision"],
         "production_revision": session.context["source_revision"],
-        "catalog_manifest_sha256": session.context["plan"]["manifest_sha256"],
-        "bundle_id": session.context["bundle"].bundle_id,
+        "catalog_manifest_sha256": session.query_context["plan"]["manifest_sha256"],
+        "catalog_source_revision": session.query_context["source_revision"],
+        "catalog_query_authority_sha256": controller.digest(session.query_authority),
+        "bundle_id": session.query_context["bundle"].bundle_id,
         "request_policy_sha256": record["policy"]["request_policy_sha256"],
         "model_manifest_sha256": session.inputs.identity["model_manifest_sha256"],
         "resident_models": resident["models"],
@@ -137,19 +150,26 @@ def _identity(session, record, resident, operator_revision):
 
 def run_batch(filename, *, cases, destination, expected_revision):
     """Execute only the explicitly selected running candidate, never prepare it."""
-    shared.require(
-        type(expected_revision) is str and shared.HEX40.fullmatch(expected_revision),
+    controller.require(
+        type(expected_revision) is str
+        and controller.HEX40.fullmatch(expected_revision),
         "batch_revision_invalid",
     )
-    operator_revision = shared.require_clean_revision(shared.ROOT)
-    profile = shared.load_config(filename)
+    operator_revision = controller.require_clean_revision(controller.ROOT)
+    profile = controller.load_config(filename)
     specification = capture.load_cases(cases)
     product = product_config.load_config(
         profile["production_config"], repo_root=profile["production_source"]
     )
+    selected_product = product_config.load_config(
+        profile.get("catalog_config", profile["production_config"]),
+        repo_root=profile.get("catalog_source", profile["production_source"]),
+    )
     excluded = (
+        profile.get("catalog_source", profile["production_source"]),
+        selected_product.state_root,
         cases,
-        shared.ROOT,
+        controller.ROOT,
         profile["state_root"],
         profile["production_source"],
         product.state_root,
@@ -163,17 +183,17 @@ def run_batch(filename, *, cases, destination, expected_revision):
     error = None
     fully_verified = False
     audits = {"before_seconds": 0.0, "after_seconds": 0.0}
-    with shared.journal(profile["state_root"]) as store:
-        record = shared.current(store)
-        shared.require(
+    with controller.journal(profile["state_root"]) as store:
+        record = controller.current(store)
+        controller.require(
             record is not None and record["phase"] == "running", "candidate_not_running"
         )
-        shared.require(
+        controller.require(
             record["revision"] == expected_revision, "batch_candidate_changed"
         )
         with capture.capture_run(destination, excluded=excluded) as sink:
             try:
-                with shared.live(profile, record) as session:
+                with controller.live(profile, record) as session:
                     session.attach_record(record)
                     policy = record["policy"]["policy"]
                     before = time.monotonic()
@@ -194,14 +214,14 @@ def run_batch(filename, *, cases, destination, expected_revision):
                     try:
                         for case in specification["cases"]:
                             sink.verify()
-                            shared.require(
-                                shared.require_clean_revision(shared.ROOT)
+                            controller.require(
+                                controller.require_clean_revision(controller.ROOT)
                                 == operator_revision,
                                 "batch_operator_changed",
                             )
                             session.remaining(1, deadline=query_deadline)
                             session.observe()
-                            shared.require(
+                            controller.require(
                                 session.candidate_endpoint == endpoint,
                                 "batch_endpoint_changed",
                             )
@@ -214,7 +234,7 @@ def run_batch(filename, *, cases, destination, expected_revision):
                                 deadline=query_deadline,
                             )
                             observed, outcome = _observations(
-                                case, report, session.context["bundle"]
+                                case, report, session.query_context["bundle"]
                             )
                             outcomes.append(outcome)
                             if observed is not None:
@@ -228,8 +248,9 @@ def run_batch(filename, *, cases, destination, expected_revision):
                         audits["after_seconds"] = time.monotonic() - after
                 # The retained source/model FDs and original native records must
                 # close successfully before a capture can claim trusted identity.
-                shared.require(
-                    shared.require_clean_revision(shared.ROOT) == operator_revision,
+                controller.require(
+                    controller.require_clean_revision(controller.ROOT)
+                    == operator_revision,
                     "batch_operator_changed",
                 )
                 fully_verified = True

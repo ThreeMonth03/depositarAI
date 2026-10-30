@@ -12,8 +12,8 @@ import unittest
 from unittest.mock import patch
 
 from search.quality import contract, evaluator
-from search.operations.deployment import shared_backend as shared
-from search.operations.deployment import shared_batch as batch
+from search.operations.deployment.candidate import controller
+from search.operations.deployment.candidate.batch import execution
 from tests.unit.quality.fixtures import turn
 
 
@@ -85,7 +85,9 @@ class BatchTests(unittest.TestCase):
                 "source_revision": "f" * 40,
                 "plan": {"manifest_sha256": MANIFEST},
                 "bundle": SimpleNamespace(
-                    bundle_id="1" * 64, condition_metadata=metadata
+                    bundle_id="1" * 64,
+                    manifest_sha256=MANIFEST,
+                    condition_metadata=metadata,
                 ),
             },
             inputs=SimpleNamespace(identity={"model_manifest_sha256": "2" * 64}),
@@ -96,6 +98,10 @@ class BatchTests(unittest.TestCase):
             candidate_endpoint="172.20.0.4",
             attach_record=lambda _record: None,
         )
+        self.session.query_context = self.session.context
+        self.session.query_authority = {
+            "catalog_identity": {"manifest_sha256": MANIFEST}
+        }
         self.events = []
         self.audit_failure = None
         self.exit_failure = False
@@ -121,7 +127,7 @@ class BatchTests(unittest.TestCase):
     def verify(self, *_args):
         self.events.append("audit")
         if self.audit_failure == self.events.count("audit"):
-            raise shared.SharedBackendError(
+            raise controller.SharedBackendError(
                 "shared_backend_baseline_query_audit_failed"
             )
         return {"models": [{"role": "scope", "digest": "4" * 64}]}
@@ -130,7 +136,7 @@ class BatchTests(unittest.TestCase):
         self.events.append("model_checkpoint")
 
     def remaining(self, maximum, *, deadline=None):
-        shared.require(
+        controller.require(
             deadline is None or time.monotonic() < deadline, "batch_deadline_exceeded"
         )
         return maximum
@@ -145,7 +151,9 @@ class BatchTests(unittest.TestCase):
     def probe(self, _endpoint, queries, revision, manifest, *, checkpoint, deadline):
         self.probe_calls += 1
         self.assertEqual(revision, REVISION)
-        self.assertEqual(manifest, MANIFEST)
+        self.assertEqual(
+            manifest, self.session.query_context["plan"]["manifest_sha256"]
+        )
         self.assertLess(deadline, self.session.docker.deadline)
         rows = []
         for index, _query in enumerate(queries):
@@ -181,17 +189,17 @@ class BatchTests(unittest.TestCase):
     def run_batch(self, *, expected=REVISION):
         with (
             patch.object(
-                shared, "require_clean_revision", side_effect=self.source_revision
+                controller, "require_clean_revision", side_effect=self.source_revision
             ),
-            patch.object(shared, "load_config", return_value=self.profile),
-            patch.object(shared, "current", return_value=self.record),
-            patch.object(shared, "live", side_effect=self.live),
+            patch.object(controller, "load_config", return_value=self.profile),
+            patch.object(controller, "current", return_value=self.record),
+            patch.object(controller, "live", side_effect=self.live),
             patch.object(
-                batch.product_config, "load_config", return_value=self.product
+                execution.product_config, "load_config", return_value=self.product
             ),
-            patch.object(batch.probe, "conversation", side_effect=self.probe),
+            patch.object(execution.probe, "conversation", side_effect=self.probe),
         ):
-            return batch.run_batch(
+            return execution.run_batch(
                 self.config,
                 cases=self.specfile,
                 destination=self.destination,
@@ -230,6 +238,62 @@ class BatchTests(unittest.TestCase):
             self.assertNotIn(private, serialized)
         self.assertIn("PRIVATE_QUERY", json.dumps(captured))
 
+    def test_selected_catalog_supplies_manifest_identity_and_metadata_for_shared_ids(
+        self,
+    ):
+        selected_metadata = copy.deepcopy(self.fixture[0]["source_metadata"])
+        for value in selected_metadata.values():
+            value["resource_formats"] = ["PDF"]
+        self.session.query_context = {
+            "source_revision": "7" * 40,
+            "plan": {"manifest_sha256": "8" * 64},
+            "bundle": SimpleNamespace(
+                bundle_id="9" * 64,
+                manifest_sha256="8" * 64,
+                condition_metadata=selected_metadata,
+            ),
+        }
+        self.session.query_authority = {
+            "catalog_identity": {"manifest_sha256": "8" * 64}
+        }
+        for value in self.fixture:
+            value["response"]["result"]["search"]["catalog_manifest_sha256"] = "8" * 64
+        self.assertEqual(self.run_batch()["status"], "complete")
+        identity = self.read("run.json")["identity"]
+        self.assertEqual(identity["production_revision"], "f" * 40)
+        self.assertEqual(identity["catalog_source_revision"], "7" * 40)
+        self.assertEqual(identity["catalog_manifest_sha256"], "8" * 64)
+        self.assertEqual(identity["bundle_id"], "9" * 64)
+        for value in self.read("capture.json")["cases"][0]["turns"]:
+            self.assertEqual(value["source_metadata"], selected_metadata)
+            self.assertNotEqual(
+                value["source_metadata"],
+                self.session.context["bundle"].condition_metadata,
+            )
+
+    def test_bundle_or_query_authority_from_other_catalog_is_quarantined_before_queries(
+        self,
+    ):
+        for kind in ("bundle", "authority"):
+            with self.subTest(kind=kind):
+                self.destination = self.root / kind
+                self.session.query_context = copy.deepcopy(self.session.context)
+                self.session.query_authority = {
+                    "catalog_identity": {"manifest_sha256": MANIFEST}
+                }
+                if kind == "bundle":
+                    self.session.query_context["bundle"].manifest_sha256 = "8" * 64
+                else:
+                    self.session.query_authority["catalog_identity"][
+                        "manifest_sha256"
+                    ] = "8" * 64
+                result = self.run_batch()
+                self.assertEqual(result["status"], "quarantined")
+                self.assertEqual(
+                    result["error"], "shared_backend_batch_catalog_binding_changed"
+                )
+                self.assertEqual(self.probe_calls, 0)
+
     def test_busy_stops_remaining_turns_and_cases_without_retry(self):
         self.specification["cases"].append(
             {
@@ -266,13 +330,13 @@ class BatchTests(unittest.TestCase):
 
     def test_wrong_candidate_or_occupied_slot_never_creates_capture(self):
         with self.assertRaisesRegex(
-            shared.SharedBackendError, "batch_candidate_changed"
+            controller.SharedBackendError, "batch_candidate_changed"
         ):
             self.run_batch(expected="f" * 40)
         self.assertFalse(self.destination.exists())
-        with shared.journal(self.state):
+        with controller.journal(self.state):
             with self.assertRaisesRegex(
-                shared.SharedBackendError, "shared_backend_busy"
+                controller.SharedBackendError, "shared_backend_busy"
             ):
                 self.run_batch()
         self.assertFalse(self.destination.exists())
@@ -319,8 +383,10 @@ class BatchTests(unittest.TestCase):
             "error": None,
             "session_reset": True,
         }
-        with self.assertRaisesRegex(shared.SharedBackendError, "batch_probe_invalid"):
-            batch._observations(
+        with self.assertRaisesRegex(
+            controller.SharedBackendError, "batch_probe_invalid"
+        ):
+            execution._observations(
                 self.specification["cases"][0], report, self.session.context["bundle"]
             )
 

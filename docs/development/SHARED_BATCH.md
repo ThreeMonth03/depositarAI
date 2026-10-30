@@ -4,6 +4,9 @@
 它集中執行批次前後的完整查核，保留每個案例的 runtime 查核及每輪的模型檢查。
 它不準備或啟動候選、不切換現役入口，也不重新載入模型。
 
+[`candidate/batch/`](../../search/operations/deployment/candidate/batch/execution.py)
+分別管理執行、私有檔案擷取與多輪 session probe；評分由 `search.quality` 負責。
+
 一批最多 **3 個案例、合計 8 輪**，每輪沿用產品的 512 字元與 Unicode 驗證。
 每個案例建立新的 RAM session；同一案例依序保留 session/version，結束時以
 `finally` 重設 session。批次持有既有候選的操作鎖，不能和另一個操作者共用它。
@@ -152,8 +155,11 @@ topic retention、主題相關性與人工標註各自評估。沒有提供的 b
 
 ## 新 catalog 的後續消費流程
 
-這個批次仍使用共享後端 config 已封存的現役唯讀 catalog，不能更換一個 bundle
-路徑便宣稱已驗收新 catalog。完整資料建置應使用專用、長期保留的 product state，
+這個批次使用共享後端 config 已認證並封存的所選 catalog，不能更換一個 bundle
+路徑便宣稱已驗收新 catalog。設定方式見[共享後端](SHARED_BACKEND.md)。批次的
+manifest、bundle 與 source metadata 都取自所選 catalog；production revision 仍標示
+現役 provider 的來源，另記 catalog source revision 與 query authority 摘要。
+完整資料建置應使用專用、長期保留的 product state，
 保留 catalog slots、Docker volume、query receipts 與 vector exports；後續版本沿用
 同一份 state。第一版正常建置，完成 `prepare-query` 後才有可供後續使用的 export。
 私人 A/B 實驗的 exports 不會自動成為另一個 product state 的 seed。
@@ -162,7 +168,7 @@ topic retention、主題相關性與人工標註各自評估。沒有提供的 b
 dataset、檔案與 chunk 數、usable/skipped 原因、儲存量、cache reuse 及建置耗時。
 參考 [catalog cache 契約](CATALOG_CACHE.md)。
 
-新 catalog 的 consumer 需另行實作與驗收：各自認證原、新 catalog 的 core runtime、
-query-only 權限與 client lease，並保留同一組 GPU 身分與 request policy。之後才可
-對新 manifest 執行品質批次。API、BFF、TLS 及前端 backend binding 的切換與回退
+consumer 會各自認證原、新 catalog 的 core runtime、query-only 權限與 client lease，
+並保留同一組 GPU 身分與 request policy。對新 manifest 執行品質批次後，仍須獨立
+判斷搜尋品質。API、BFF、TLS 及前端 backend binding 的切換與回退
 屬於另一個部署步驟；驗收期間保留原 state、volume、入口與指標。

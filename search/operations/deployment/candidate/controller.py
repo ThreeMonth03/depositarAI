@@ -23,9 +23,7 @@ import tempfile
 import time
 
 from search.operations import config as product_config, lifecycle
-from search.operations.catalog import client_lease, execution
-from search.operations.catalog import commands as catalog_commands
-from search.catalog.bundle import CatalogBundle
+from search.operations.catalog import execution
 from search.operations.deployment import (
     composition,
     image_authority,
@@ -35,19 +33,22 @@ from search.operations.deployment import (
     private_api_tls,
     source_bundle,
 )
-from search.operations.deployment.release import controller, probe, runtime
-from search.operations.deployment.shared_request_policy import (
-    SharedRequestPolicyError,
-    validate_shared_request_policy,
-)
-from search.operations.deployment.shared_backend_probe import SharedBackendProbeError
+from search.operations.deployment.release import controller as release_controller
+from search.operations.deployment.release import probe as release_probe
+from search.operations.deployment.release import runtime
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 from search.operations.state import StateStore, locked_state
 from search.serialization import strict_json
+from . import catalog
+from .policy import (
+    SharedRequestPolicyError,
+    validate_shared_request_policy,
+)
+from .probe import SharedBackendProbeError
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 FIELDS = {
     "schema_version",
     "state_root",
@@ -57,42 +58,6 @@ FIELDS = {
 }
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 ROLES = frozenset({"web", "conversation-api", "filtered-embedding"})
-
-# Validate an existing catalog with its running application's committed recipe.
-# A newer operator may require additional recipe inputs for NEW catalogs; those
-# inputs must not retroactively redefine the old application's compatibility.
-# This fixed audit invokes no lifecycle operation and makes no Docker changes.
-_CONTEXT = r"""
-import json,os,sys
-from pathlib import Path
-repo,config_file,revision=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
-sys.path.insert(0,str(repo))
-from search.operations.config import load_config
-from search.operations.state import StateStore
-from search.operations.catalog.execution import load_context
-from search.operations.shared.private_io import open_directory
-from search.operations.shared.source_identity import require_clean_revision
-assert require_clean_revision(repo)==revision
-config=load_config(config_file,repo_root=repo)
-fd=open_directory(config.state_root)
-try:
- store=StateStore(config.state_root,fd)
- context=load_context(config,store.read('index-candidate.json'),repo_root=repo)
- assert require_clean_revision(repo)==revision
- if len(sys.argv)==5:
-  from search.operations.catalog import query
-  from search.operations.shared.private_io import read_file
-  p=Path(sys.argv[4]);parent=open_directory(p.parent)
-  try:snapshot=json.loads(read_file(parent,p.name,mode=0o600,max_bytes=1024**2))
-  finally:os.close(parent)
-  assert type(snapshot) is list and len(snapshot)==3
-  authority=query.verify_authority(context,observe_runtime=lambda _:tuple(snapshot))
-  assert require_clean_revision(repo)==revision
-  print(json.dumps({'source_revision':revision,'authority':authority}))
- else:
-  print(json.dumps({'source_revision':revision,'plan':context['plan'],'compose':context['compose']}))
-finally:os.close(fd)
-"""
 
 
 class SharedBackendError(ValueError):
@@ -129,12 +94,12 @@ def load_config(filename):
         os.close(fd)
     require(
         type(value) is dict
-        and set(value) == FIELDS
+        and set(value) in (FIELDS, FIELDS | {"catalog_config", "catalog_source"})
         and type(value["schema_version"]) is int
         and value["schema_version"] == 1,
         "config_invalid",
     )
-    for key in FIELDS - {"schema_version"}:
+    for key in set(value) - {"schema_version"}:
         value[key] = path(value[key])
     root = value["state_root"]
     require(
@@ -144,22 +109,36 @@ def load_config(filename):
     require(
         all(
             root != value[k] and root not in value[k].parents
-            for k in ("production_config", "production_source", "tls_plan")
+            for k in set(value) - {"schema_version", "state_root"}
         ),
         "state_overlaps_inputs",
     )
     prod = product_config.load_config(
         value["production_config"], repo_root=value["production_source"]
     )
-    for p in (
-        prod.state_root,
-        prod.api_model_root,
-        prod.embedding_model_root,
-        prod.reranker_model_root,
-    ):
+    products = [prod]
+    if "catalog_config" in value:
+        products.append(
+            product_config.load_config(
+                value["catalog_config"], repo_root=value["catalog_source"]
+            )
+        )
+    for product in products:
+        for p in (
+            product.state_root,
+            product.api_model_root,
+            product.embedding_model_root,
+            product.reranker_model_root,
+        ):
+            require(
+                root != p and root not in p.parents and p not in root.parents,
+                "state_overlaps_production",
+            )
+    if len(products) == 2:
+        a, b = (p.state_root for p in products)
         require(
-            root != p and root not in p.parents and p not in root.parents,
-            "state_overlaps_production",
+            a == b or a not in b.parents and b not in a.parents,
+            "catalog_state_overlaps_production",
         )
     return value
 
@@ -287,48 +266,11 @@ def build_root(profile, revision):
 
 
 def baseline_context(profile, config, store, revision):
-    repo = profile["production_source"]
-    result = image_build._run(
-        [
-            "python3",
-            "-I",
-            "-S",
-            "-B",
-            "-c",
-            _CONTEXT,
-            str(repo),
-            str(profile["production_config"]),
-            revision,
-        ],
-        timeout=120,
-        environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+    context, _value = catalog.load_context(
+        profile["production_source"], profile["production_config"], config, store
     )
-    require(result.returncode == 0, "baseline_catalog_source_failed")
-    value = strict_json(result.stdout)
-    require(
-        type(value) is dict
-        and set(value) == {"source_revision", "plan", "compose"}
-        and value["source_revision"] == revision,
-        "baseline_catalog_source_invalid",
-    )
-    controller._same(value["plan"], store.read("index-candidate.json"))
-    plan = value["plan"]
-    composition._catalog(config, plan, revision)
-    root = Path(plan["work_root"])
-    controller._same(value["compose"], execution.read_record(root, "compose.json"))
-    require(require_clean_revision(repo) == revision, "production_source_changed")
-    return {
-        "plan": plan,
-        "bundle": CatalogBundle.load(
-            Path(plan["bundle_path"]), expected_manifest_sha256=plan["manifest_sha256"]
-        ),
-        "root": root,
-        "data": Path(plan["data_root"]),
-        "compose": value["compose"],
-        "repo": repo,
-        "runner": catalog_commands.default_runner(repo),
-        "source_revision": revision,
-    }
+    require(context["source_revision"] == revision, "production_source_changed")
+    return context
 
 
 @contextmanager
@@ -349,7 +291,7 @@ def live(profile, record=None):
             ExitStack() as stack,
         ):
             context = baseline_context(profile, config, store, revision)
-            inputs = controller._runtime_inputs(
+            inputs = release_controller._runtime_inputs(
                 stack,
                 config,
                 store,
@@ -368,16 +310,24 @@ def live(profile, record=None):
             name = inputs.host.compose["name"].removeprefix("depositar-ai-")
             slot = private_io.open_child_directory(parent, name)
             stack.callback(os.close, slot)
-            completed = controller._load_completed(slot, inputs)
-            controller._same(store.read("release-candidate.json"), completed)
+            completed = release_controller._load_completed(slot, inputs)
+            release_controller._same(store.read("release-candidate.json"), completed)
             session = Session(profile, config, store, context, inputs, completed)
-            yield session
-            inputs.refresh()
-            controller._verify_records(
-                config, parent, slot, name, inputs, controller.FILES
+            session.baseline_catalog, session.query_catalog = catalog.select(
+                profile, stack, config, store, session.native, inputs.key
             )
-            controller._same(image_build._record(slot, "complete.json"), completed)
-            controller._same(store.read("release-candidate.json"), completed)
+            session.query_context = session.query_catalog.context
+            session.query_authority = session.query_catalog.authority
+            yield session
+            session.query_catalog.refresh()
+            inputs.refresh()
+            release_controller._verify_records(
+                config, parent, slot, name, inputs, release_controller.FILES
+            )
+            release_controller._same(
+                image_build._record(slot, "complete.json"), completed
+            )
+            release_controller._same(store.read("release-candidate.json"), completed)
             require(
                 require_clean_revision(repo) == revision, "production_source_changed"
             )
@@ -416,62 +366,54 @@ class Session:
         self.last_candidate = None
 
     def snapshot(self):
-        groups, networks = self.native.collect(clients=True)
-        if self.candidate is not None:
-            compose = self.candidate.compose
-            ids, names = controller.runtime_docker.project_inventory(
-                self.docker, compose["name"]
+        projects = [
+            (
+                binding.context["plan"]["project"],
+                {binding.context["plan"]["project"] + "_search_backend"},
             )
+            for binding in self.catalogs()
+        ]
+        projects.append(
+            (
+                self.native.inference_compose["name"],
+                {v["name"] for v in self.native.inference_compose["networks"].values()},
+            )
+        )
+        for host in (self.native, self.candidate):
+            if host is not None:
+                projects.append(
+                    (
+                        host.compose["name"],
+                        {host.compose["networks"]["website"]["name"]},
+                    )
+                )
+        groups, networks = catalog.collect(self.docker, projects)
+        if self.candidate is not None:
             require(
-                set(ids) == set(self.record["container_ids"].values())
-                and names == {compose["networks"]["website"]["name"]},
+                {row["Id"] for row in groups[self.candidate.compose["name"]]}
+                == set(self.record["container_ids"].values()),
                 "candidate_inventory_changed",
             )
-            groups[compose["name"]] = image_build._json(
-                self.docker.call(["inspect", *sorted(ids)])
-            )
-            website = compose["networks"]["website"]["name"]
-            row = image_build._json(self.docker.call(["network", "inspect", website]))
-            require(type(row) is list and len(row) == 1, "candidate_network_changed")
-            networks[website] = row[0]
         return groups, networks
+
+    def catalogs(self):
+        return [self.baseline_catalog] + (
+            [self.query_catalog]
+            if self.query_catalog is not self.baseline_catalog
+            else []
+        )
 
     def observe(self, _context=None):
         groups, networks = self.snapshot()
-        catalog = groups[self.context["plan"]["project"]]
-        execution.validate_storage_mounts(
-            execution.require_storage(self.context), catalog
-        )
-        catalog_network = networks[self.context["plan"]["project"] + "_search_backend"]
         clients = [evidence(self.native, groups, networks)]
         if self.candidate is not None:
             clients.append(evidence(self.candidate, groups, networks))
-        leased = client_lease.validate_leased_runtime(
-            self.context["plan"],
-            self.context["compose"],
-            self.native.catalog_images,
-            catalog,
-            catalog_network,
-            self.native.lease,
-            core_image_inspections=self.native.catalog_inspections,
-            **{
-                k: v
-                for k, v in clients[0].items()
-                if k not in {"lease", "catalog_network"}
-            },
-            shared_clients=clients,
-        )
-        catalog_proof = {
-            "container_ids": leased["catalog_container_ids"],
-            "network_id": leased["catalog_network_id"],
+        self.catalog_snapshots = {
+            binding.context["plan"]["project"]: catalog.observe(
+                binding, groups, networks, clients
+            )
+            for binding in self.catalogs()
         }
-        controller._same(
-            catalog_proof,
-            {
-                k: self.native.authority["runtime"][k]
-                for k in ("container_ids", "network_id")
-            },
-        )
         gpu = inference_runtime.validate_shared_runtime(
             self.native.inference_compose,
             self.native.inference_images,
@@ -493,17 +435,19 @@ class Session:
                 groups[own["name"]],
                 [networks[v["name"]] for v in own["networks"].values()],
                 host.lease,
-                catalog_identity=self.native.authority["catalog_identity"],
+                catalog_identity=host.authority["catalog_identity"],
                 image_proof=host.image_proof,
                 image_environment=host.images["conversation-api"]["Config"]["Env"],
-                catalog_network=catalog_network,
+                catalog_network=networks[
+                    host.context["plan"]["project"] + "_search_backend"
+                ],
                 shared_clients=clients,
             )
             if host is self.native:
                 self.native.last = (gpu, proof)
             else:
                 if self.record.get("runtime") is not None:
-                    controller._same(
+                    release_controller._same(
                         proof,
                         self.record["runtime"],
                         "shared_backend_candidate_runtime_changed",
@@ -517,62 +461,37 @@ class Session:
                 self.candidate_endpoint = web["NetworkSettings"]["Networks"][
                     own["networks"]["website"]["name"]
                 ]["IPAddress"]
-        controller._same(
-            controller._completed_receipt(self.inputs.identity, self.native.last[1]),
+        release_controller._same(
+            release_controller._completed_receipt(
+                self.inputs.identity, self.native.last[1]
+            ),
             self.completed,
         )
-        return catalog_proof, catalog, catalog_network
+        return self.catalog_snapshots[self.context["plan"]["project"]]
 
     def verify(self, policy, expected_compute=None):
-        snapshot = self.observe()
-        # Query/vector receipt semantics belong to the sealed live data recipe.
-        # The new operator independently validates actual shared peers on both
-        # sides of that audit; the audit receives the FULL authenticated snapshot.
-        with tempfile.TemporaryDirectory(prefix="shared-catalog-audit-") as directory:
-            fd = private_io.open_directory(Path(directory))
-            try:
-                private_io.write_json(
-                    fd, "snapshot.json", list(snapshot), max_bytes=1024**2
-                )
-            finally:
-                os.close(fd)
-            repo = self.profile["production_source"]
-            revision = self.context["source_revision"]
-            require(
-                require_clean_revision(repo) == revision, "production_source_changed"
-            )
-            result = image_build._run(
-                [
-                    "python3",
-                    "-I",
-                    "-S",
-                    "-B",
-                    "-c",
-                    _CONTEXT,
-                    str(repo),
-                    str(self.profile["production_config"]),
-                    revision,
-                    str(Path(directory) / "snapshot.json"),
-                ],
+        self.observe()
+        snapshots = self.catalog_snapshots
+        for binding in self.catalogs():
+            binding.audit(
+                snapshots[binding.context["plan"]["project"]],
                 timeout=self.remaining(180),
-                environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
             )
-            require(result.returncode == 0, "baseline_query_audit_failed")
-            value = strict_json(result.stdout)
-            require(
-                type(value) is dict
-                and set(value) == {"source_revision", "authority"}
-                and value["source_revision"] == revision,
-                "baseline_query_audit_invalid",
-            )
-            controller._same(value["authority"], self.inputs.authority)
-        after = self.observe()
+        self.observe()
         from search.operations.catalog.connection import snapshot_peers
 
-        controller._same(
-            snapshot_peers(self.context, self.inputs.authority["runtime"], snapshot),
-            snapshot_peers(self.context, self.inputs.authority["runtime"], after),
-        )
+        for binding in self.catalogs():
+            project = binding.context["plan"]["project"]
+            release_controller._same(
+                snapshot_peers(
+                    binding.context, binding.authority["runtime"], snapshots[project]
+                ),
+                snapshot_peers(
+                    binding.context,
+                    binding.authority["runtime"],
+                    self.catalog_snapshots[project],
+                ),
+            )
         return self.check_models(policy, expected_compute)
 
     def remaining(self, maximum, *, deadline=None):
@@ -585,7 +504,7 @@ class Session:
 
     def check_models(self, policy, expected_compute=None, *, deadline=None):
         """Bounded ownership/residency checkpoint, without scanning the catalog."""
-        from .shared_backend_probe import verify_residency
+        from .probe import verify_residency
 
         def tls_runner(argv, **kwargs):
             return image_build._run(
@@ -675,20 +594,43 @@ class Session:
         policy = validate_shared_request_policy(
             self.profile["production_source"], source
         )
-        controller._same(policy, record["policy"])
+        release_controller._same(policy, record["policy"])
+        release_controller._same(
+            catalog.query_profile(source),
+            self.query_context["query_profile"],
+            "shared_backend_catalog_query_profile_changed",
+        )
+        release_controller._same(
+            {
+                key: self.query_context["query_profile"][key]
+                for key in ("MODEL", "MODEL_DIGEST", "DIMENSIONS")
+            },
+            {
+                key: self.context["query_profile"][key]
+                for key in ("MODEL", "MODEL_DIGEST", "DIMENSIONS")
+            },
+            "shared_backend_catalog_embedding_provider_changed",
+        )
+        if record["phase"] != "preparing":
+            require("catalog_binding" in record, "catalog_selection_missing")
+            release_controller._same(
+                record["catalog_binding"],
+                self.query_catalog.identity(),
+                "shared_backend_catalog_selection_changed",
+            )
         config = replace(
             self.config, state_root=build_root(self.profile, record["revision"])
         )
         with locked_state(config, create=False) as store:
             plan = source_bundle.committed_source_plan(source, record["revision"])
             authority = image_authority.read_completed_images(config, store, plan)
-            images = controller._images(self.docker, plan, authority)
+            images = release_controller._images(self.docker, plan, authority)
         images["filtered-embedding"] = self.native.inference_images["scope-model"]
         plans = composition.render_composition(
-            self.config,
-            self.context["plan"],
+            self.query_catalog.config,
+            self.query_context["plan"],
             composition.QueryBindingPaths.for_catalog(
-                self.config, self.context["plan"]
+                self.query_catalog.config, self.query_context["plan"]
             ),
             record["revision"],
             uid=os.geteuid(),
@@ -698,7 +640,7 @@ class Session:
         gpu = copy.deepcopy(plans["inference"])
         for role, value in self.native.inference_images.items():
             gpu["services"][role]["image"] = value["Id"]
-        controller._same(
+        release_controller._same(
             gpu, self.native.inference_compose, "shared_backend_model_recipe_changed"
         )
         compose = copy.deepcopy(plans["release"])
@@ -717,7 +659,7 @@ class Session:
 
     def attach_record(self, record):
         compose, images, proof = self.candidate_inputs(record)
-        controller._same(compose, record["compose"])
+        release_controller._same(compose, record["compose"])
         require(
             record["baseline_receipt_sha256"] == digest(self.completed),
             "live_release_changed",
@@ -730,6 +672,10 @@ class Session:
             images,
             proof,
         )
+        candidate.context = self.query_context
+        candidate.authority = self.query_authority
+        candidate.catalog_images = self.query_catalog.images
+        candidate.catalog_inspections = self.query_catalog.inspections
         candidate.lease = record["lease"]
         self.candidate, self.record = candidate, record
 
@@ -771,7 +717,7 @@ def prepare(profile, store, source):
         compose, _images, _proof = session.candidate_inputs(record)
         require(
             not any(
-                controller.runtime_docker.project_inventory(
+                release_controller.runtime_docker.project_inventory(
                     session.docker, compose["name"]
                 )
             ),
@@ -780,12 +726,17 @@ def prepare(profile, store, source):
         record.update(
             {
                 "compose": compose,
+                "catalog_binding": session.query_catalog.identity(),
                 "baseline_receipt_sha256": digest(session.completed),
                 "model_file_identity_sha256": session.inputs.model_file_identity_sha256,
                 "compute_sha256": session.compute_sha256,
                 "network_id": None,
                 "external_network_ids": {
-                    v["name"]: session.native.lease["network_ids"][v["name"]]
+                    v["name"]: (
+                        session.query_authority["runtime"]["network_id"]
+                        if key == "catalog"
+                        else session.native.lease["network_ids"][v["name"]]
+                    )
                     for key, v in compose["networks"].items()
                     if key != "website"
                 },
@@ -803,7 +754,9 @@ def prepare(profile, store, source):
 
 def candidate_rows(docker, record, compose_file):
     compose = record["compose"]
-    ids, names = controller.runtime_docker.project_inventory(docker, compose["name"])
+    ids, names = release_controller.runtime_docker.project_inventory(
+        docker, compose["name"]
+    )
     require(
         names <= {compose["networks"]["website"]["name"]}, "candidate_inventory_changed"
     )
@@ -897,14 +850,14 @@ def start(profile, store, record):
             return summary(record)
         session.verify(record["policy"]["policy"], record["compute_sha256"])
         compose, images, api_proof = session.candidate_inputs(record)
-        controller._same(compose, record["compose"])
+        release_controller._same(compose, record["compose"])
         require(
             record["baseline_receipt_sha256"] == digest(session.completed),
             "live_release_changed",
         )
         require(
             not any(
-                controller.runtime_docker.project_inventory(
+                release_controller.runtime_docker.project_inventory(
                     session.docker, compose["name"]
                 )
             ),
@@ -949,7 +902,17 @@ def start(profile, store, record):
                 [*prefix, "start", "--wait", "--wait-timeout", "180"], timeout=210
             )
             groups, networks = session.native.collect(clients=True)
-            ids, _ = controller.runtime_docker.project_inventory(
+            catalog_name = compose["networks"]["catalog"]["name"]
+            if catalog_name not in networks:
+                observed = image_build._json(
+                    session.docker.call(["network", "inspect", catalog_name])
+                )
+                require(
+                    type(observed) is list and len(observed) == 1,
+                    "catalog_network_changed",
+                )
+                networks[catalog_name] = observed[0]
+            ids, _ = release_controller.runtime_docker.project_inventory(
                 session.docker, compose["name"]
             )
             rows = image_build._json(session.docker.call(["inspect", *sorted(ids)]))
@@ -963,7 +926,7 @@ def start(profile, store, record):
                 if r["Id"] == record["container_ids"]["conversation-api"]
             )
             record["lease"] = {
-                **session.native.authority["catalog_identity"],
+                **session.query_authority["catalog_identity"],
                 "lease_schema": 1,
                 "phase": "private_clients",
                 "release_project": compose["name"],
@@ -980,7 +943,7 @@ def start(profile, store, record):
             save(store, record, "starting")
             session.attach_record(record)
             session.verify(record["policy"]["policy"], record["compute_sha256"])
-            ready = probe.verify_private_release(
+            ready = release_probe.verify_private_release(
                 session.docker,
                 record["container_ids"],
                 revision=record["revision"],
@@ -1109,7 +1072,7 @@ def operate(filename, operation, *, source=None, text=None):
             session.attach_record(record)
             session.verify(record["policy"]["policy"], record["compute_sha256"])
             if operation == "query":
-                from .shared_backend_probe import query as run_query
+                from .probe import query as run_query
 
                 try:
                     result = run_query(
@@ -1140,8 +1103,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.operation == "batch":
-            from .shared_batch import run_batch
-            from .shared_batch_capture import SharedBatchCaptureError
+            from .batch.execution import run_batch
+            from .batch.capture import SharedBatchCaptureError
 
             try:
                 value = run_batch(
@@ -1167,6 +1130,7 @@ def main(argv=None):
         SharedBackendError,
         SharedBackendProbeError,
         SharedRequestPolicyError,
+        catalog.SharedCatalogError,
     ) as error:
         print(json.dumps({"error": str(error)}))
         return 1

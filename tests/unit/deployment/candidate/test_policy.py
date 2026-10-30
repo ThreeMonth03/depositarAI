@@ -5,10 +5,10 @@ import shutil
 import tempfile
 import unittest
 
-from search.operations.deployment import shared_request_policy as policy
+from search.operations.deployment.candidate import policy
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 class SharedRequestPolicyTests(unittest.TestCase):

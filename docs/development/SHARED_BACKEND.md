@@ -1,11 +1,14 @@
 # 共用現役後端的私有開發候選
 
 這個 operator 流程讓一個已審查的候選 release，與現役 release 共用既有的
-唯讀 catalog/index、scope/planner 模型與 reranker。候選保有自己的 CPU API、
-BFF、filtered embedding 與 website network；現役入口不切換。
+scope/planner 模型與 reranker，並可查現役或另一份已準備好的唯讀 catalog/index。
+候選保有自己的 CPU API、BFF、filtered embedding 與 website network；現役入口不切換。
+
+操作協調與 catalog 權限由 [`candidate/`](../../search/operations/deployment/candidate/controller.py)
+管理；有界案例執行見[批次流程](SHARED_BATCH.md)。
 
 ```text
-operator CLI → 候選 BFF → 候選 API ─┬→ 現役 catalog/index（既有 query-only 權限）
+operator CLI → 候選 BFF → 候選 API ─┬→ 已封存 catalog/index（自己的 query-only 權限）
                                  ├→ 現役 scope／planner（相同 request policy）
 現役入口 → 現役 API ────────────────┴→ 現役 reranker
 ```
@@ -41,6 +44,28 @@ release receipt；只有新版 operator checkout 仍不足以驗證舊 catalog�
 }
 ```
 
+若要查另一份 catalog，在同一設定中成對加入：
+
+```json
+{
+  "catalog_config": "/absolute/private/catalog-workspace/product.json",
+  "catalog_source": "/absolute/frozen-catalog-source"
+}
+```
+
+省略這兩個欄位便使用現役 catalog。指定時，catalog 必須已在獨立、長期保留的
+product state 完成正常 `prepare-secrets` 與 `prepare-query`；operator 不建立資料、
+複製秘密、認領服務或補造 inference/release 收據。`catalog_source` 必須是乾淨的
+committed checkout，能以自己的封存配方重驗 catalog。新 catalog 的模型目錄與 GPU
+設定須沿用現役 provider；候選的 embedding 名稱、manifest、維度與 index projection
+版本須符合所選 catalog，且 embedding 身分符合 provider。另選 catalog 要求目前
+明確封存的 native chunk 配方；不在這個流程遷移舊資料。
+
+操作期間同時保留原、新 product/catalog 鎖，分別核對兩份 source、core runtime、
+volume、query-only 權限及完整 peers。候選登記後不能直接改設定換 catalog；先 stop
+再重新 prepare。原 API、catalog、GPU provider 與入口不切換；stop 只清候選 CPU
+資源及其 source/build cache，保留兩份 catalog 的 state、volume 與 query 證據。
+
 候選來源必須是乾淨、已提交的 Git checkout。從包含此 operator 的已審查版本執行：
 
 ```bash
@@ -73,9 +98,9 @@ prepare/start 中斷或失敗時，可先查 `status`，再以 `stop` 清理已�
 
 既有 catalog 的資料配方屬於建立它的應用程式版本。新版 operator 可能為新 catalog
 增加 recipe inputs，因此不能用新版 `DATA_FILES` 清單重新定義已封存 catalog 的身分。
-本流程從指定的 production source 執行固定、唯讀的 context/query audit，核對原版
+本流程從各 catalog 指定的 source 執行固定、唯讀的 context/query audit，核對原版
 sealed recipe、catalog 記錄、Compose 與 query authority；不呼叫舊版 lifecycle 命令。
-production source 在 audit 前後都必須保持原 revision 與乾淨狀態。
+每份 source 在 audit 前後都必須保持原 revision 與乾淨狀態。
 
 原版 audit 收到完整、已驗證的 runtime snapshot；新版 operator 在 audit 前後另行
 驗證完整雙 client、immutable images、mounts、resources、network IDs 與精確 peers。
