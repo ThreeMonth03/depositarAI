@@ -17,6 +17,17 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
+unittest_timing=()
+if python3 -c '
+import sys
+supported = sys.version_info >= (3, 12)
+print("CI_TIMING interpreter=host python=%s durations=%s shared_fixtures=unknown residual=unknown" % (
+    ".".join(map(str, sys.version_info[:3])), "25" if supported else "unavailable"))
+raise SystemExit(0 if supported else 1)
+'; then
+  unittest_timing=(--durations 25)
+fi
+
 shell_files=(
   scripts/search-ci.sh
   scripts/ci/install-compose.sh
@@ -39,7 +50,8 @@ docker run --rm --network none \
   koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb \
   -x "${shell_files[@]}"
 
-python3 -m unittest -v \
+phase_started=$SECONDS
+python3 -m unittest -v "${unittest_timing[@]}" \
   search.tests.test_catalog_bundle \
   search.tests.test_retrieval_results \
   search.tests.test_scope \
@@ -184,7 +196,9 @@ python3 -m unittest -v \
   tests.test_search_image_hardening \
   tests.test_search_runtime_helpers \
   tests.test_validate_catalog_compose
+printf 'CI_PHASE phase=host-unit seconds=%s exit=0\n' "$((SECONDS - phase_started))"
 
+phase_started=$SECONDS
 python3 - <<'PY'
 from pathlib import Path
 
@@ -201,7 +215,9 @@ for path in sorted(set(files)):
     compile(path.read_text(encoding="utf-8"), str(path), "exec")
 print("Search Python syntax checks passed.")
 PY
+printf 'CI_PHASE phase=python-syntax seconds=%s exit=0\n' "$((SECONDS - phase_started))"
 
+phase_started=$SECONDS
 normalized_cpu_config="$(mktemp)"
 trap 'rm -f -- "$normalized_cpu_config"' EXIT HUP INT TERM
 docker compose \
@@ -209,6 +225,9 @@ docker compose \
   --file deploy/compose/compose.catalog.yaml \
   config --format json >"$normalized_cpu_config"
 python3 scripts/validate_catalog_compose.py <"$normalized_cpu_config"
+printf 'CI_PHASE phase=catalog-config seconds=%s exit=0\n' "$((SECONDS - phase_started))"
 
 echo "Search-only CI checks passed."
+phase_started=$SECONDS
 ./scripts/test-search-api.sh
+printf 'CI_PHASE phase=api seconds=%s exit=0\n' "$((SECONDS - phase_started))"

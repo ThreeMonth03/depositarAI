@@ -80,6 +80,18 @@ CI_TOTAL seconds=... exit=...
 `CI_TOTAL` 是 script 的時間，不含 workflow checkout、cache 或 runner 準備。
 先比相同 suite 的總時間，再找最長的前景 phase；平行 jobs 不相加當成使用者等待。
 
+Python 3.12 以上的 host unittest 及固定 Python 3.13 測試映像使用
+`--durations 25`，列出每次 invocation 最慢的至多25個案例。host 先輸出
+`CI_TIMING` 的實際 Python 版本與支援情形；較舊的受支援 host 保留原命令。
+映像 interpreter 版本依該次來源的 Dockerfile pin 確認，不更換執行環境。
+案例 duration 包含個別 cleanup，不代表完整 class/module fixture 成本；
+`shared_fixtures=unknown residual=unknown` 保留尚未拆分的時間。
+
+核心 script 在原順序的成功邊界輸出 `host-unit`、`python-syntax`、
+`catalog-config`、`api` phases。某階段失敗時沿用原退出與清理行為，
+未完成的 phase 不補零或列為成功，從失敗 step 與最後完成的 marker 定位。
+計時報告不改測試選取、順序、fixture、skip 或驗收結果。
+
 Playwright image 缺少時會背景下載，與前景工作重疊。`browser-image` 記下載時間，
 `browser-image-wait` 才是 browser 仍被下載阻塞的時間，兩者不能重複加總。
 已有 pinned image 時下載 phase 為零；下載失敗或逾時仍會令 gate 失敗。
