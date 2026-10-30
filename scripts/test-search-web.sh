@@ -3,19 +3,37 @@ set -euo pipefail
 suite=all
 if [[ "$#" != 0 ]]; then
   if [[ "$#" != 2 || "$1" != --suite ]]; then
-    echo 'Usage: test-search-web.sh [--suite {all|oss|browser}]' >&2
+    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|browser}]' >&2
     exit 64
   fi
   suite="$2"
 fi
 case "$suite" in
-  all|oss|browser) ;;
+  all|oss|oss-policy|oss-gateway|browser) ;;
   *)
-    echo 'Usage: test-search-web.sh [--suite {all|oss|browser}]' >&2
+    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|browser}]' >&2
     exit 64
     ;;
 esac
 printf 'CI_SUITE suite=%s\n' "$suite"
+oss_policy_modules=(
+  tests.integration.public_entry.test_identity_adapter
+  tests.integration.public_entry.test_antibot_runtime
+  tests.integration.public_entry.test_runtime
+  tests.integration.test_gpu_local_volume
+)
+oss_gateway_modules=(
+  tests.integration.public_entry.test_antibot_gateway
+  tests.integration.public_entry.test_identity_gateway
+  tests.integration.public_entry.test_updates
+  tests.integration.public_entry.test_remote_backend
+  tests.integration.test_private_api_tls_runtime
+)
+case "$suite" in
+  oss-policy) oss_modules=("${oss_policy_modules[@]}") ;;
+  oss-gateway) oss_modules=("${oss_gateway_modules[@]}") ;;
+  *) oss_modules=("${oss_policy_modules[@]}" "${oss_gateway_modules[@]}") ;;
+esac
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 ci_name="depositar-web-ci-$$"
@@ -129,12 +147,12 @@ if [[ -n "$tested_images_file" ]]; then
   python3 scripts/ci/frontend-release.py capture --output "$tested_images_pending"
 fi
 bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
-if [[ "$suite" != browser ]]; then
+if [[ "$suite" == all || "$suite" == oss || "$suite" == oss-policy ]]; then
   begin_phase intranet-entry-runtime
   DEPOSITAR_TEST_INTRANET_WEB_RUNTIME=1 \
     python3 -m unittest tests.integration.test_intranet_web_runtime -v
 fi
-if [[ "$suite" != oss ]]; then
+if [[ "$suite" == all || "$suite" == browser ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.
   if ! docker image inspect "$browser_image" >/dev/null 2>&1; then
     timeout --kill-after=5s 180s bash -s -- "$browser_image" <<'BROWSER_PULL' &
@@ -167,17 +185,9 @@ for image in (APISIX_IMAGE, REDIS_IMAGE, NGINX_BASE, ANUBIS_IMAGE):
 PY
   begin_phase public-entry-runtime
   DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 DEPOSITAR_TEST_REMOTE_BACKEND_RUNTIME=1 DEPOSITAR_TEST_GPU_LOCAL_VOLUME_RUNTIME=1 \
-    python3 -m unittest tests.integration.public_entry.test_identity_adapter \
-      tests.integration.public_entry.test_antibot_runtime \
-      tests.integration.public_entry.test_antibot_gateway \
-      tests.integration.public_entry.test_runtime \
-      tests.integration.public_entry.test_identity_gateway \
-      tests.integration.public_entry.test_updates \
-      tests.integration.public_entry.test_remote_backend \
-      tests.integration.test_private_api_tls_runtime \
-      tests.integration.test_gpu_local_volume -v
+    python3 -m unittest "${oss_modules[@]}" -v
 fi
-if [[ "$suite" != oss ]]; then
+if [[ "$suite" == all || "$suite" == browser ]]; then
   begin_phase gateway-bootstrap
   bootstrap_image_id="$(docker image inspect --format '{{.Id}}' depositar-search-web-nginx:ci)"
   DEPOSITAR_TEST_GATEWAY_IMAGE="$bootstrap_image_id" \
@@ -223,5 +233,7 @@ fi
 case "$suite" in
   all) echo 'Website unit/contract, build, OSS, native bootstrap and real HTTP browser checks passed.' ;;
   oss) echo 'Website unit/contract, build and OSS runtime checks passed.' ;;
+  oss-policy) echo 'Website unit/contract, build and OSS policy runtime checks passed.' ;;
+  oss-gateway) echo 'Website unit/contract, build and OSS gateway runtime checks passed.' ;;
   browser) echo 'Website unit/contract, build, native bootstrap and real HTTP browser checks passed.' ;;
 esac

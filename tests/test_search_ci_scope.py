@@ -362,7 +362,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 self.scope.JOBS, self.scope.changed_jobs(environment, cwd=directory)
             )
 
-    def test_workflow_keeps_four_checks_and_the_complete_validate_gate(self):
+    def test_workflow_keeps_required_checks_and_the_complete_validate_gate(self):
         source = (ROOT / ".github/workflows/ci.yml").read_text()
         jobs = {
             match[1]: match[2]
@@ -372,12 +372,18 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 re.S,
             )
         }
-        website_jobs = {"private-website-oss", "private-website-browser"}
+        website_jobs = {
+            "private-website-oss-policy",
+            "private-website-oss-gateway",
+            "private-website-browser",
+        }
         self.assertEqual({"validate", *self.scope.JOBS, *website_jobs}, set(jobs))
         self.assertIn("run: make search-ci", jobs["validate"])
         self.assertNotIn("if:", jobs["validate"])
         for name in sorted(website_jobs):
             gate = "private-website"
+            self.assertIn("runs-on: ubuntu-24.04", jobs[name])
+            self.assertNotIn("needs:", jobs[name])
             self.assertIn("fetch-depth: 2", jobs[name])
             self.assertIn(f"scripts/ci/changed-scope.py {gate}", jobs[name])
             self.assertIn(
@@ -386,7 +392,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             self.assertIn("CI_HEAD_SHA: ${{ github.sha }}", jobs[name])
             self.assertIn("if: steps.scope.outputs.run != 'false'", jobs[name])
             self.assertIn("Report unaffected gate", jobs[name])
-        for suite in ("oss", "browser"):
+        for suite in ("oss-policy", "oss-gateway", "browser"):
             job = jobs["private-website-" + suite]
             self.assertIn("run: bash scripts/test-search-web.sh --suite " + suite, job)
             self.assertIn("id: website", job)
@@ -399,7 +405,8 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 self.assertIn(field + ": ${{ " + value + " }}", job)
         aggregate = jobs["private-website"]
         self.assertIn(
-            "needs: [private-website-oss, private-website-browser]", aggregate
+            "needs: [private-website-oss-policy, private-website-oss-gateway, private-website-browser]",
+            aggregate,
         )
         self.assertIn("if: always()", aggregate)
         self.assertNotIn("run: bash scripts/test-search-web.sh", aggregate)
@@ -414,7 +421,11 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 re.S,
             )
         )
-        for name in ("private-website-oss", "private-website-browser"):
+        for name in (
+            "private-website-oss-policy",
+            "private-website-oss-gateway",
+            "private-website-browser",
+        ):
             job = jobs[name]
             for action in ("restore", "save"):
                 self.assertIn(
@@ -434,7 +445,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 job,
             )
             self.assertIn("success() && steps.scope.outputs.run != 'false'", job)
-        self.assertEqual(4, source.count("continue-on-error: true"))
+        self.assertEqual(6, source.count("continue-on-error: true"))
         self.assertNotIn("path: web/node_modules", source)
         self.assertNotRegex(
             source, r"if:.*cache-hit.*\n.*run: bash scripts/test-search-web"
@@ -611,7 +622,87 @@ class SearchCIStyleInvocationTests(unittest.TestCase):
 class WebsiteBrowserPullInvocationTests(unittest.TestCase):
     """Exercise the shell lifecycle with fake clients and a real GNU timeout."""
 
-    def run_website_gate(self, mode: str, *, suite=None, arguments=None):
+    def runtime_ids(self, names):
+        pending = [unittest.defaultTestLoader.loadTestsFromNames(names)]
+        result = []
+        while pending:
+            case = pending.pop()
+            if isinstance(case, unittest.TestSuite):
+                pending.extend(case)
+            else:
+                result.append(case.id())
+        return result
+
+    def test_oss_groups_partition_original_runtime_cases_exactly_once(self):
+        original = {
+            "public_entry.test_identity_adapter.IdentityAdapterRuntimeTests."
+            "test_real_lua_identity_and_bounded_quota_response",
+            "public_entry.test_antibot_runtime.AntibotRuntimeTests."
+            "test_real_challenge_gate_keeps_json_and_post_boundaries_across_restart",
+            "public_entry.test_antibot_gateway.AntibotGatewayTests."
+            "test_anonymous_and_oidc_admission_use_challenge_gate_and_durable_quotas",
+            "public_entry.test_runtime.PublicEntryConcurrencyTests."
+            "test_authenticated_bursts_keep_account_global_and_session_caps",
+            "public_entry.test_runtime.PublicEntryMixedAccessTests."
+            "test_guest_identity_pool_reservation_login_and_durable_quotas",
+            "public_entry.test_runtime.PublicEntryMixedConcurrencyTests."
+            "test_parallel_guests_cannot_consume_reserved_user_pool",
+            "public_entry.test_runtime.PublicEntryRuntimeTests."
+            "test_real_oidc_account_quotas_restart_and_fail_closed",
+            "public_entry.test_identity_gateway.IdentityGatewayTests."
+            "test_tamper_login_account_switch_and_logout_keep_session_ownership",
+            "public_entry.test_updates.PublicEntryUpdatesRuntimeTests."
+            "test_pair_update_manual_rollback_and_failed_frontend_preserve_quotas",
+            "public_entry.test_remote_backend.RemoteBackendTests."
+            "test_version_only_preflight_tls_identity_and_real_quota_routes",
+            "test_private_api_tls_runtime.IsolatedReleaseTlsRuntimeTests."
+            "test_tls_auth_routes_netns_stop_and_ip_reuse_do_not_leak_credentials",
+            "test_private_api_tls_runtime.PrivateApiTlsRuntimeTests."
+            "test_tls_auth_routes_netns_stop_and_ip_reuse_do_not_leak_credentials",
+            "test_gpu_local_volume.LocalVolumeMetadataRuntimeTests."
+            "test_real_local_volume_metadata_and_container_shape_without_gpu_probe",
+        }
+        original = {"tests.integration." + suffix for suffix in original}
+        selected = {}
+        for suite in ("all", "oss", "oss-policy", "oss-gateway"):
+            with self.subTest(suite=suite):
+                result, calls, running = self.run_website_gate("cold", suite=suite)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertFalse(running)
+                invocation = [
+                    args
+                    for kind, args in calls
+                    if kind == "python"
+                    and any(
+                        item.startswith("tests.integration.public_entry.")
+                        for item in args
+                    )
+                ]
+                self.assertEqual(1, len(invocation))
+                names = invocation[0][2:-1]
+                selected[suite] = self.runtime_ids(names)
+                self.assertEqual(len(selected[suite]), len(set(selected[suite])))
+        policy_modules = {
+            "tests.integration.public_entry.test_identity_adapter",
+            "tests.integration.public_entry.test_antibot_runtime",
+            "tests.integration.public_entry.test_runtime",
+            "tests.integration.test_gpu_local_volume",
+        }
+        policy = {name for name in original if name.rsplit(".", 2)[0] in policy_modules}
+        self.assertEqual(original, set(selected["all"]))
+        self.assertEqual(original, set(selected["oss"]))
+        self.assertEqual(policy, set(selected["oss-policy"]))
+        self.assertEqual(original - policy, set(selected["oss-gateway"]))
+        self.assertEqual(7, len(selected["oss-policy"]))
+        self.assertEqual(6, len(selected["oss-gateway"]))
+        self.assertFalse(set(selected["oss-policy"]) & set(selected["oss-gateway"]))
+        self.assertEqual(
+            original, set(selected["oss-policy"]) | set(selected["oss-gateway"])
+        )
+
+    def run_website_gate(
+        self, mode: str, *, suite=None, arguments=None, environment=None
+    ):
         with tempfile.TemporaryDirectory(prefix="depositar-web-pull-") as raw:
             temporary = Path(raw)
             log = temporary / "calls.jsonl"
@@ -663,11 +754,11 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 common + "record('python')\n"
                 "if mode == 'contract-failure' and 'tests.test_search_web_deploy' in arguments:\n"
                 "    sys.exit(17)\n"
-                "is_oss = 'tests.integration.public_entry.test_runtime' in arguments\n"
+                "is_oss = any(item.startswith('tests.integration.public_entry.') for item in arguments)\n"
                 "is_bootstrap = 'tests.unit.deployment.gateway.test_activation.NativeBootstrapTests' in arguments\n"
                 "if is_oss or (suite == 'browser' and is_bootstrap):\n"
                 "    (root / 'work-started').touch()\n"
-                "    if suite != 'oss' and mode != 'cached':\n"
+                "    if suite in {'all', 'browser'} and mode != 'cached':\n"
                 "        deadline = time.monotonic() + 3\n"
                 "        while not (root / 'pull-pid').exists():\n"
                 "            if time.monotonic() > deadline: sys.exit(24)\n"
@@ -692,9 +783,10 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             )
             for executable in (fake_docker, fake_python, fake_timeout):
                 executable.chmod(0o700)
-            environment = dict(os.environ)
-            environment.update(
-                PATH=str(temporary) + os.pathsep + environment.get("PATH", ""),
+            client_environment = dict(os.environ)
+            client_environment.update(environment or {})
+            client_environment.update(
+                PATH=str(temporary) + os.pathsep + client_environment.get("PATH", ""),
                 CI_NPM_CACHE=str(temporary / "npm"),
                 DEPOSITAR_WEB_CI_TEST_ROOT=str(temporary),
                 DEPOSITAR_WEB_CI_TEST_MODE=mode,
@@ -705,7 +797,7 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "scripts/test-search-web.sh", *arguments],
                 cwd=ROOT,
-                env=environment,
+                env=client_environment,
                 capture_output=True,
                 text=True,
                 timeout=8,
@@ -850,7 +942,7 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "browser-image-wait",
             "browser",
         }
-        for suite in ("oss", "browser"):
+        for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
             with self.subTest(suite=suite):
                 result, calls, running = self.run_website_gate("cold", suite=suite)
                 self.assertEqual(0, result.returncode, result.stderr)
@@ -904,20 +996,21 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 ]
                 self.assertEqual(expected_builds, builds)
                 self.assertEqual(
-                    suite == "oss",
+                    suite != "browser",
                     any(
-                        "tests.integration.public_entry.test_runtime" in args
+                        item.startswith("tests.integration.public_entry.")
                         for args in python
+                        for item in args
                     ),
                 )
                 self.assertEqual(
-                    1 if suite == "oss" else 0,
+                    1 if suite in {"oss", "oss-policy"} else 0,
                     sum(
                         "tests.integration.test_intranet_web_runtime" in args
                         for args in python
                     ),
                 )
-                self.assertEqual(suite == "oss", ["-"] in python)
+                self.assertEqual(suite != "browser", ["-"] in python)
                 self.assertEqual(
                     suite == "browser",
                     any(
@@ -953,13 +1046,16 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 phases = re.findall(
                     r"(?m)^CI_PHASE phase=([a-z-]+) seconds=\d+ exit=0$", result.stdout
                 )
-                expected = common_phases | (
-                    oss_phases if suite == "oss" else browser_phases
-                )
+                if suite == "browser":
+                    expected = common_phases | browser_phases
+                else:
+                    expected = common_phases | oss_phases
+                    if suite == "oss-gateway":
+                        expected -= {"intranet-entry-runtime"}
                 self.assertEqual(expected, set(phases))
                 self.assertEqual(len(expected), len(phases))
-                if suite == "oss":
-                    self.assertIn("OSS runtime checks passed.", result.stdout)
+                if suite != "browser":
+                    self.assertIn("runtime checks passed.", result.stdout)
                     self.assertNotIn("browser checks passed.", result.stdout)
                 else:
                     self.assertIn("real HTTP browser checks passed.", result.stdout)
@@ -982,8 +1078,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 self.assertFalse(running)
                 self.assertEqual([], calls)
 
-    def test_both_suites_propagate_contract_and_style_failures_before_runtime(self):
-        for suite in ("oss", "browser"):
+    def test_all_suites_propagate_contract_and_style_failures_before_runtime(self):
+        for suite in ("all", "oss", "oss-policy", "oss-gateway", "browser"):
             for mode, status, phase in (
                 ("contract-failure", 17, "contracts"),
                 ("style-failure", 26, "python-style"),
@@ -997,14 +1093,45 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     )
                     self.assertFalse(
                         any(
-                            "tests.integration.public_entry.test_runtime" in args
+                            item.startswith("tests.integration.public_entry.")
                             for _, args in calls
+                            for item in args
                         )
                     )
                     self.assertRegex(
                         result.stdout,
                         rf"CI_PHASE phase={phase} seconds=\d+ exit={status}\n",
                     )
+
+    def test_oss_group_failures_keep_the_runtime_exit_code(self):
+        for suite in ("oss", "oss-policy", "oss-gateway"):
+            with self.subTest(suite=suite):
+                result, calls, running = self.run_website_gate(
+                    "early-failure", suite=suite
+                )
+                self.assertEqual(19, result.returncode, result.stderr)
+                self.assertFalse(running)
+                self.assertFalse(any(kind == "timeout" for kind, _ in calls))
+                self.assertRegex(
+                    result.stdout,
+                    r"CI_PHASE phase=public-entry-runtime seconds=\d+ exit=19\n",
+                )
+                self.assertRegex(result.stdout, r"CI_TOTAL seconds=\d+ exit=19\n")
+
+    def test_partial_suites_cannot_emit_a_complete_tested_image_receipt(self):
+        for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
+            with self.subTest(suite=suite):
+                result, calls, running = self.run_website_gate(
+                    "cold",
+                    suite=suite,
+                    environment={
+                        "CI_FRONTEND_TESTED_IMAGES_FILE": "/unused-complete-receipt.json"
+                    },
+                )
+                self.assertEqual(64, result.returncode, result.stderr)
+                self.assertFalse(running)
+                self.assertEqual([], calls)
+                self.assertIn("receipt requires suite=all", result.stderr)
 
     def test_browser_only_pull_failures_propagate_and_clean_the_fixture(self):
         for mode, status in (
