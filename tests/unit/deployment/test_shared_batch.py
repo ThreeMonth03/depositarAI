@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -209,6 +210,12 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.events.count("model_checkpoint"), 3)
         self.assertEqual(self.events[-1], "live_exit")
         captured = self.read("capture.json")
+        self.assertEqual(
+            self.read("run.json")["artifacts"]["capture"]["sha256"],
+            hashlib.sha256(
+                (self.destination / "capture.json").read_bytes()
+            ).hexdigest(),
+        )
         self.assertEqual(quality.evaluate(captured)["status"], "passed")
         replies = captured["cases"][0]["turns"]
         self.assertEqual([row["response"]["version"] for row in replies], [1, 2, 3])

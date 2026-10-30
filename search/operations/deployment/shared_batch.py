@@ -280,16 +280,21 @@ def run_batch(filename, *, cases, destination, expected_revision):
             }
             # Raw observations and case IDs stay only in the explicit capture.
             # A partial capture is not proof the requested suite completed.
-            sink.write_json(
+            captured_artifact = sink.write_json(
                 "capture.json",
                 {"schema_version": 1, "cases": captured},
                 max_bytes=MAX_CAPTURE_BYTES,
             )
-            sink.write_json(
+            outcomes_artifact = sink.write_json(
                 "outcomes.json",
                 {"schema_version": 1, "cases": outcomes},
                 max_bytes=MAX_CAPTURE_BYTES,
             )
+            receipt["artifacts"] = {
+                "capture": captured_artifact,
+                "outcomes": outcomes_artifact,
+            }
+            receipt["operator_seconds"] = time.monotonic() - started
             sink.write_json("run.json", receipt, max_bytes=64 * 1024)
     # capture_run performs its own final FD/path checks and publishes last.
     return {key: value for key, value in receipt.items() if key != "identity"}

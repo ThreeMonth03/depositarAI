@@ -132,8 +132,10 @@ checkpoint。回應內原有 `timing_ms` 保留原值，描述 API 提供的階�
 `operator_seconds` 與 `audit_timing` 另外描述批次執行及完整查核成本，不能把它們
 當成模型推論或使用者搜尋 latency。
 
-先確認 `run.json` 為 `complete` 且 `identity_verified` 為 `true`，再交給資料／
-搜尋品質維護者檢視或使用離線工具：
+先確認 `run.json` 為 `complete` 且 `identity_verified` 為 `true`，並核對
+`artifacts` 中的 `capture`／`outcomes` 檔名、bytes 與 SHA256。它們綁定本次實際
+發佈的檔案；人工修改預期或回應後，原收據就不能再作為該檔案的證據。
+核對後再交給資料／搜尋品質維護者檢視或使用離線工具：
 
 ```bash
 python3 scripts/check_search_quality.py \
