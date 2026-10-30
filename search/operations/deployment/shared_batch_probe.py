@@ -250,7 +250,9 @@ def conversation(
             "input_invalid",
         )
         try:
-            queries = [checked_query(text) for text in queries]
+            queries = list(queries)
+            for text in queries:
+                checked_query(text)  # Validate without changing the plan's raw text.
         except (ValueError, TypeError):
             raise _Failure("shared_batch_input_invalid") from None
         _require(

@@ -9,6 +9,7 @@ from collections.abc import Mapping
 import re
 import time
 
+from scripts.check_search_quality import plan_digest
 from search.operations import config as product_config
 from . import shared_backend as shared
 from . import shared_batch_capture as capture
@@ -265,7 +266,7 @@ def run_batch(filename, *, cases, destination, expected_revision):
                 "error": error,
                 "identity_verified": fully_verified,
                 "identity": identity,
-                "cases_sha256": shared.digest(specification),
+                "plan_sha256": plan_digest(specification),
                 "requested_cases": len(specification["cases"]),
                 "requested_turns": sum(len(c["turns"]) for c in specification["cases"]),
                 "completed_cases": sum(c["status"] == "complete" for c in outcomes),

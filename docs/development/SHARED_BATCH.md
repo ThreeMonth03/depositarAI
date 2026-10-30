@@ -16,6 +16,7 @@
 
 案例沿用 [離線正確性工具](SEARCH_QUALITY.md) 的 `id`、ordered `turns` 與
 `expected` 語意；執行前不需要填入尚未取得的 `response` 或 `source_metadata`。
+批次直接重用該工具的 `validate_cases` 驗證，不另訂一套預期條件格式。
 案例與預期條件由資料／搜尋品質維護者核對，批次不產生 gold labels 或評分。
 
 ```json
@@ -47,6 +48,22 @@
 }
 ```
 
+`expected` 必填 `time`、`formats`、`retain_topic`，另可加入以下欄位：
+
+| 欄位 | 用途 |
+|---|---|
+| `status` | 預設 `ok`；另可指定 `clarification_required` 或 `rejected`。 |
+| `reason` | 預設 `none`。澄清／拒絕須明確指定該狀態接受的產品原因，例如 `ambiguous_time`／`off_topic`。完整清單沿用離線工具的 `OUTCOMES`。 |
+| `topic_changed` | 預設 `false`；第二輪起可設為 `true`，表示成功搜尋應換成不同主題，不能同時要求 `retain_topic`。 |
+
+第一輪的 `retain_topic` 與 `topic_changed` 都須為 `false`；澄清／拒絕不能要求
+`topic_changed`。預期狀態屬於品質斷言，仍保存實際回應供離線工具判定，不因預期
+澄清／拒絕而跳過該輪或停止對話。
+
+`query` 驗證通過後，計畫、HTTP 請求與 capture 都保留原始字串，包括前後空白、
+換行及全形字元；不能用 trim、Unicode 正規化或改寫後的文字替換固定計畫。
+JSON 的縮排與 key 順序不影響計畫摘要，查詢字串本身的變更則會改變摘要。
+
 將輸入存成操作帳號所有的 `0600` 檔案，其直接父目錄使用 `0700`。
 `--capture` 指向**尚不存在**的新私有目錄；不要使用 repository、共享候選 state、
 production state、模型或來源目錄及其子目錄。
@@ -62,6 +79,25 @@ python3 scripts/share_search_backend.py \
 
 `--expected-revision` 必須與目前登記的 running 候選完全一致。命令不會為了執行
 案例而接管別人的候選、更新映像、切換 catalog 或重試搜尋。
+
+## 固定題組分批
+
+[固定查詢集](../../tests/fixtures/search-quality.json) 可以超過單批的 3 個案例或
+合計 8 輪。先凍結完整計畫並以離線工具驗證，再複製成 Git 外的私有子計畫，
+每批選取完整案例，保留原有 case ID、案例與輪次順序、原始 query 及 expected。
+不要把同一案例拆到兩個 session，也不要刪輪、改預期或縮短查詢來符合單批上限。
+若單一案例本身超過 8 輪，須由品質維護者重新審核計畫，不能直接拆成獨立對話。
+
+每個子計畫各用新的 `--capture` 目錄執行。`run.json.plan_sha256` 由現有
+`quality.plan_digest` 計算，綁定**這一批子計畫**的 case ID、原始查詢、預期條件及
+順序；不是案例檔案的原始 bytes SHA、capture 摘要或完整固定題組的摘要。
+完整計畫的 `plan_sha256` 另外由離線工具的 `--plan` 取得；各批子計畫摘要通常
+不同，應與完整計畫及拆批對應一起保存。
+
+跨批彙整與評分由資料／搜尋品質維護者（agent2）處理：核對各批已驗證的來源、
+catalog、模型與 request policy 身分，再以凍結的完整計畫核對案例、輪次及查詢／
+預期。漏跑案例或尾端輪次須保留在完整分母中，不能只加總各批成功項目或直接
+平均百分比；失敗或隔離的批次也不能從執行紀錄中消失。此命令不自動合併或評分。
 
 ## 查核與失敗邊界
 
@@ -89,7 +125,7 @@ capture 只寫入明確指定的私有位置；正常 stdout 與操作摘要不�
 |---|---|
 | `capture.json` | 原查詢、預期條件、完整 BFF response，以及按實際回傳 ID 從同一 catalog bundle 取得的 condition metadata。 |
 | `outcomes.json` | 各案例／輪次狀態、固定錯誤碼、session reset 與耗時；未執行項目標示 `not_run`。 |
-| `run.json` | 批次狀態、已驗來源／catalog／模型／request policy 身分、完成數與查核耗時。 |
+| `run.json` | 批次狀態、`plan_sha256`、已驗來源／catalog／模型／request policy 身分、完成數與查核耗時。 |
 
 `request_seconds` 只量一次 `/api/turn` HTTP 請求；`wall_seconds` 包含該輪前置
 checkpoint。回應內原有 `timing_ms` 保留原值，描述 API 提供的階段耗時。
@@ -101,8 +137,12 @@ checkpoint。回應內原有 `timing_ms` 保留原值，描述 API 提供的階�
 
 ```bash
 python3 scripts/check_search_quality.py \
+  --plan /absolute/private/quality/cases.json \
   --input /absolute/private/quality/run-001/capture.json
 ```
+
+這裡的 `--plan` 是該批凍結的子計畫，避免改寫預期或漏掉輪次後仍被當成完整。
+單批報告不代表整套固定題組已完成；完整題組仍需依上節規則核對與彙整。
 
 `complete` 表示這次有界收集完成，不表示搜尋品質通過。資料缺日期、條件標籤、
 topic retention、主題相關性與人工標註各自評估。沒有提供的 branch/RRF/reranker

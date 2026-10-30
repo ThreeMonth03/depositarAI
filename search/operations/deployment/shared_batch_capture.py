@@ -9,10 +9,8 @@ import re
 import stat
 import uuid
 
-from search.api.retrieval.metadata import bounded_text
+from scripts.check_search_quality import validate_cases
 from search.operations.shared import private_io
-from search.planning.contract import checked_query
-from search.planning.predicates import validate_conditions
 from search.serialization import strict_json
 
 
@@ -110,64 +108,18 @@ def _outside_git(fds):
 
 
 def _cases(value):
+    validate_cases(value)
     _require(
-        type(value) is dict
-        and set(value) == {"schema_version", "cases"}
-        and type(value["schema_version"]) is int
-        and value["schema_version"] == 1
-        and type(value["cases"]) is list
-        and 1 <= len(value["cases"]) <= 3,
+        len(value["cases"]) <= 3
+        and sum(len(case["turns"]) for case in value["cases"]) <= 8,
         "cases_invalid",
     )
-    seen, count, cases = set(), 0, []
-    for case in value["cases"]:
-        _require(
-            type(case) is dict
-            and set(case) == {"id", "turns"}
-            and bounded_text(case["id"], 128)
-            and bool(case["id"])
-            and case["id"] not in seen
-            and type(case["turns"]) is list
-            and 1 <= len(case["turns"]) <= 8,
-            "cases_invalid",
-        )
-        seen.add(case["id"])
-        turns = []
-        for number, turn in enumerate(case["turns"]):
-            _require(
-                type(turn) is dict
-                and set(turn) == {"query", "expected"}
-                and type(turn["expected"]) is dict
-                and set(turn["expected"]) == {"time", "formats", "retain_topic"},
-                "cases_invalid",
-            )
-            expected = turn["expected"]
-            _require(
-                type(expected["retain_topic"]) is bool
-                and (number != 0 or expected["retain_topic"] is False)
-                and type(expected["formats"]) is list,
-                "cases_invalid",
-            )
-            conditions = {}
-            if expected["time"] is not None:
-                conditions["time"] = expected["time"]
-            if expected["formats"]:
-                conditions["formats"] = expected["formats"]
-            validate_conditions(conditions)
-            turns.append(
-                {
-                    "query": checked_query(turn["query"]),
-                    "expected": copy.deepcopy(expected),
-                }
-            )
-        count += len(turns)
-        _require(count <= 8, "cases_invalid")
-        cases.append({"id": case["id"], "turns": turns})
-    return {"schema_version": 1, "cases": cases}
+    # The shared plan digest binds raw query text, expectations and turn order.
+    return copy.deepcopy(value)
 
 
 def load_cases(path):
-    """Read one private spec; return detached JSON data with normalized queries."""
+    """Read a private bounded plan, preserving raw queries and expectations."""
     directories = None
     try:
         path = _path(path)

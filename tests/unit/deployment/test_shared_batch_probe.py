@@ -163,6 +163,29 @@ class FakeHTTP:
 
 
 class ConversationTests(unittest.TestCase):
+    def test_raw_whitespace_and_fullwidth_query_are_sent_exactly_after_validation(self):
+        queries = ["  找　氣候 ＣＳＶ 資料  ", "\t我要２０２４年的\n"]
+        original = list(queries)
+        http = FakeHTTP(
+            [
+                (200, session()),
+                (200, response(1)),
+                (200, response(2)),
+                (200, {"status": "cleared"}),
+            ]
+        )
+        report = http.run(queries)
+        self.assertEqual(report["status"], "complete")
+        turns = [row for row in http.calls if row["path"] == "/api/turn"]
+        self.assertEqual([json.loads(row["body"])["query"] for row in turns], original)
+        self.assertEqual(queries, original)
+        self.assertTrue(report["session_reset"])
+
+        invalid = FakeHTTP([])
+        report = invalid.run([queries[0], "　\u200bＣＳＶ　"])
+        self.assertEqual(report["error"], "shared_batch_input_invalid")
+        self.assertEqual(invalid.calls, [])
+
     def test_ordered_turns_preserve_actual_context_timing_cards_and_versions(self):
         values = [response(index) for index in range(1, 4)]
         events = []

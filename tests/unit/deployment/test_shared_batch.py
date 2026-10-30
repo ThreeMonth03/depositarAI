@@ -204,6 +204,7 @@ class BatchTests(unittest.TestCase):
         result = self.run_batch()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["completed_turns"], 3)
+        self.assertEqual(result["plan_sha256"], quality.plan_digest(self.specification))
         self.assertEqual(self.events.count("audit"), 2)
         self.assertEqual(self.events.count("model_checkpoint"), 3)
         self.assertEqual(self.events[-1], "live_exit")

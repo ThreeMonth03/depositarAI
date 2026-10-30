@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from scripts.check_search_quality import plan_digest
 from search.operations.deployment import shared_batch_capture as capture
 
 
@@ -68,13 +69,19 @@ class CaptureTests(unittest.TestCase):
                 sink.write_json("run.json", {"status": "completed"})
                 mutation(sink)
 
-    def test_unicode_ids_normalized_query_and_detached_json(self):
+    def test_unicode_ids_raw_query_digest_and_detached_json(self):
         value = cases()
         value["cases"][0]["turns"][0]["query"] = "  找　ＣＳＶ\n 資料  "
         self.write_cases(value)
         actual = capture.load_cases(self.input)
         self.assertEqual(actual["cases"][0]["id"], "氣候資料")
-        self.assertEqual(actual["cases"][0]["turns"][0]["query"], "找 CSV 資料")
+        self.assertEqual(
+            actual["cases"][0]["turns"][0]["query"], "  找　ＣＳＶ\n 資料  "
+        )
+        self.assertEqual(plan_digest(actual), plan_digest(value))
+        normalized = copy.deepcopy(value)
+        normalized["cases"][0]["turns"][0]["query"] = "找 CSV 資料"
+        self.assertNotEqual(plan_digest(actual), plan_digest(normalized))
         actual["cases"][0]["turns"][1]["expected"]["formats"].append("PDF")
         self.assertEqual(
             capture.load_cases(self.input)["cases"][0]["turns"][1]["expected"][
@@ -82,6 +89,48 @@ class CaptureTests(unittest.TestCase):
             ],
             ["CSV"],
         )
+
+    def test_optional_outcome_and_topic_change_plans_preserve_exact_semantics(self):
+        for status, reason in (
+            ("clarification_required", "ambiguous_time"),
+            ("clarification_required", "missing_topic"),
+            ("rejected", "unsafe"),
+            ("rejected", "off_topic"),
+        ):
+            with self.subTest(status=status, reason=reason):
+                value = cases()
+                expected = value["cases"][0]["turns"][0]["expected"]
+                expected.update(status=status, reason=reason, topic_changed=False)
+                self.write_cases(value)
+                self.assertEqual(capture.load_cases(self.input), value)
+        value = cases()
+        value["cases"][0]["turns"][1]["expected"].update(
+            status="ok", reason="none", retain_topic=False, topic_changed=True
+        )
+        self.write_cases(value)
+        self.assertEqual(capture.load_cases(self.input), value)
+        self.assertEqual(
+            plan_digest(capture.load_cases(self.input)), plan_digest(value)
+        )
+
+    def test_malformed_outcomes_and_topic_changes_use_shared_validator(self):
+        invalid = (
+            {"status": "clarification_required"},
+            {"status": "rejected", "reason": "ambiguous_time"},
+            {"status": "ok", "reason": "unsafe"},
+            {"status": "refused", "reason": "unsafe"},
+            {"reason": "private-malformed-reason"},
+            {"reason": ["unsafe"]},
+            {"topic_changed": 1},
+            {"topic_changed": True},
+        )
+        for fields in invalid:
+            with self.subTest(fields=fields):
+                value = cases()
+                value["cases"][0]["turns"][0]["expected"].update(fields)
+                self.write_cases(value)
+                error = self.rejected(capture.load_cases, self.input)
+                self.assertNotIn("private-malformed-reason", str(error))
 
     def test_predicates_preserve_date_precision_and_absent_constraints(self):
         for time in (
