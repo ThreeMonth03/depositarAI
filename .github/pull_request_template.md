@@ -1,7 +1,9 @@
 ## Issue
 
 <!-- Link the delivered Issue, including a sub-issue when applicable.
-Use Related to #123 for partial work; Closes #123 only if merge completes it.
+Use Related to #123 for partial work. If merge completes all required outcomes,
+put Closes #123 on its own line in this section, one directive per line.
+Never embed closing directives in other prose, including negated statements.
 The sub-issue itself must link its parent. -->
 
 ## Motivation

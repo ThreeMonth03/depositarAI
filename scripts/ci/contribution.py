@@ -38,6 +38,25 @@ PLACEHOLDERS = {
 REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}\Z")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s<>()]+")
+MARKDOWN_LINK = re.compile(r"!?\[[^\[\]\n]*\]\(([^()\[\]\n]*)\)")
+CLOSING_KEYWORD = r"(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)"
+ISSUE_NUMBER = r"[1-9][0-9]*(?!\w)"
+GITHUB_ISSUE = (
+    r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/" + ISSUE_NUMBER
+)
+ISSUE_SYNTAX = (
+    rf"(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#{ISSUE_NUMBER}|{GITHUB_ISSUE})"
+)
+CLOSING = re.compile(
+    rf"(?<!\w){CLOSING_KEYWORD}\b:?\s*"
+    rf"(?P<target>{ISSUE_SYNTAX}|<{GITHUB_ISSUE}>|{MARKDOWN_LINK.pattern})",
+    re.IGNORECASE,
+)
+EXPLICIT_CLOSING = re.compile(
+    r"[ ]{0,3}"
+    + rf"{CLOSING_KEYWORD}:?[ \t]+(?:#{ISSUE_NUMBER}|{GITHUB_ISSUE})\.?[ \t]*",
+    re.IGNORECASE,
+)
 
 
 def _visible(line, comment):
@@ -60,6 +79,7 @@ def _visible(line, comment):
 
 def _sections(body, level):
     sections, current, fence, comment, duplicate = {}, None, None, False, False
+    prose = []
     for raw in body.splitlines():
         if fence is not None:
             marker = FENCE.fullmatch(raw)
@@ -83,6 +103,7 @@ def _sections(body, level):
         if len(line) - len(title) <= 3 and title.startswith(
             (prefix + " ", prefix + "\t")
         ):
+            prose.append((None, line))
             title = title[len(prefix) :].strip()
             without_hashes = title.rstrip("#")
             if without_hashes and without_hashes[-1].isspace():
@@ -90,11 +111,14 @@ def _sections(body, level):
             current = title.casefold()
             duplicate = duplicate or current in sections
             sections.setdefault(current, ([], []))
-        elif current is not None:
-            sections[current][0].append(line)
+        else:
             if not line.startswith(("    ", "\t")):
-                sections[current][1].append(line)
-    return sections, duplicate
+                prose.append((current, line))
+            if current is not None:
+                sections[current][0].append(line)
+                if not line.startswith(("    ", "\t")):
+                    sections[current][1].append(line)
+    return sections, duplicate, prose
 
 
 def _field(lines):
@@ -151,13 +175,60 @@ def _references(lines, repository):
                 record(target[0])
         return " "
 
-    text = re.sub(r"!?\[[^\[\]\n]*\]\(([^()\[\]\n]*)\)", markdown, text)
+    text = MARKDOWN_LINK.sub(markdown, text)
     text = re.sub(r"\[[^\[\]\n]*\]\[[^\[\]\n]*\]", " ", text)
     for match in URL.finditer(text):
         record(match[0])
     text = URL.sub(" ", text)
     references.update(re.findall(r"(?<![\w/#])#([1-9][0-9]*)(?!\w)", text))
     return references
+
+
+def _closing_line(line):
+    # Only definite same-line code spans hide hazards. An unmatched or escaped
+    # opener is literal; pairing across Markdown blocks could hide real prose.
+    runs = list(re.finditer(r"`+", line))
+    following, latest = {}, {}
+    for index in range(len(runs) - 1, -1, -1):
+        length = len(runs[index][0])
+        if length in latest:
+            following[index] = latest[length]
+        latest[length] = index
+    parts, position, index = [], 0, 0
+    while index < len(runs):
+        opener = runs[index].start()
+        before = opener - 1
+        while before >= 0 and line[before] == "\\":
+            before -= 1
+        if (opener - before - 1) % 2 or index not in following:
+            index += 1
+            continue
+        end = runs[following[index]].end()
+        parts.extend((line[position:opener], " " * (end - opener)))
+        position, index = end, following[index] + 1
+    parts.append(line[position:])
+    return "".join(parts)
+
+
+def _invalid_closing(prose, repository):
+    text = "\n".join(_closing_line(line) for _, line in prose)
+    row = offset = 0
+    for match in CLOSING.finditer(text):
+        if not re.search(
+            r"(?:#|/issues/)" + ISSUE_NUMBER, match["target"], re.IGNORECASE
+        ):
+            continue
+        while match.start() >= offset + len(prose[row][1]) + 1:
+            offset += len(prose[row][1]) + 1
+            row += 1
+        section, line = prose[row]
+        if (
+            section != "issue"
+            or EXPLICIT_CLOSING.fullmatch(line) is None
+            or not _references([line], repository)
+        ):
+            return True
+    return False
 
 
 def _validate(body, repository, kind):
@@ -175,8 +246,10 @@ def _validate(body, repository, kind):
     except UnicodeError:
         return ["body_invalid"], {}
     names = PR_SECTIONS if kind == "pr" else ISSUE_SECTIONS
-    sections, duplicate = _sections(body, 2 if kind == "pr" else 3)
+    sections, duplicate, prose = _sections(body, 2 if kind == "pr" else 3)
     issues = [kind + "_duplicate_section"] if duplicate else []
+    if kind == "pr" and _invalid_closing(prose, repository):
+        issues.append("pr_closing_directive_invalid")
     for name, code in names.items():
         content = sections.get(name, ([], []))[0]
         if not _nonempty(content) and not (

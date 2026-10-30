@@ -56,6 +56,16 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for Issue, sub-issue and PR examples,
 - Before merging, the coordinator checks the original objective, current plan,
   actual diff, dependencies and evidence. A template or green format check alone
   does not establish correctness. Recheck affected criteria after changes.
+- Map every required Plan outcome to an acceptance criterion and actual evidence.
+  Record unfinished, retained, superseded or moved work with its reason and any
+  replacement Issue. Moving work does not fulfill an unchanged requirement;
+  keep it open unless an explicit replan preserves and resolves the objective.
+- Perform required before-steps in order. If one was missed, record the omission
+  and actual follow-up; never check it retroactively as though it preceded work.
+- Before merging, read GitHub's actual `closingIssuesReferences` or Development
+  planned closures. Match every target to the PR Issue section's explicit close
+  list and completed acceptance. Fix unintended closures in the body and fetch
+  the planned list again before merging.
 - Keep clean logical commits. Squash failed-CI repairs and exploratory fixups
   before merging, rerun required CI on the final PR head after rewriting history,
   and use squash merge for delivery. Earlier green checks do not cover a new SHA.
@@ -68,7 +78,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for Issue, sub-issue and PR examples,
   it, link the replacement and retain unfinished requirements there.
 - Use `Closes #123` only when merging completes that Issue; otherwise use
   `Related to #123` and close it after the remaining acceptance. Source merge is
-  not deployment completion.
+  not deployment completion. Put each closing directive on its own positive line
+  in the PR's Issue section; never embed one in prose, including a negation.
+- After merging, fetch the PR, Issue, required children and required CI results
+  again. Verify actual merge/source identities, states and remaining outcomes
+  before reporting completion. Automatic closure and metadata checks do not
+  prove semantic acceptance.
 - After delivery, verify completion and PR merge, then remove the work item's
   owned experimental worktrees and both local and remote task branches. Preserve
   frozen operational source, source-bound receipts, data, models and indexes.
