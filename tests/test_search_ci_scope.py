@@ -51,7 +51,7 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.deployment.release.test_host",
             "tests.unit.deployment.release.test_controller",
             "tests.unit.deployment.release.test_probe",
-            "tests.unit.deployment.gateway.test_probe",
+            "tests.unit.deployment.gateway.test_probe_script",
             "tests.unit.deployment.gateway.test_probe_runtime",
             "tests.unit.deployment.gateway.test_activation",
             "tests.unit.operations.test_bounded_http",

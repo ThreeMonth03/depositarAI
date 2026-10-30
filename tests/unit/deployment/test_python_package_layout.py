@@ -59,9 +59,6 @@ MODULE_MOVES = {
     "search/operations/deployment/gateway_activation.py": (
         "search/operations/deployment/gateway/activation.py"
     ),
-    "search/operations/deployment/gateway_probe.py": (
-        "search/operations/deployment/gateway/probe.py"
-    ),
     "search/operations/deployment/gateway_probe_runtime.py": (
         "search/operations/deployment/gateway/probe_runtime.py"
     ),
@@ -117,7 +114,9 @@ MODULE_MOVES = {
     "search/api/worker_io.py": "search/api/shared/worker_io.py",
 }
 
-RETIRED_API_PATHS = (
+RETIRED_PATHS = (
+    "search/operations/deployment/gateway_probe.py",
+    "search/operations/deployment/gateway/probe.py",
     "search/customer_service_fess.py",
     "search/api/retrieval/fess.py",
     "search/api/app.py",
@@ -150,8 +149,8 @@ class PythonPackageLayoutTests(unittest.TestCase):
                 old_source = ROOT / old
                 self.assertFalse(old_source.exists() or old_source.is_symlink(), old)
 
-    def test_retired_apps_have_no_forwarding_files_or_packages(self):
-        for relative in RETIRED_API_PATHS:
+    def test_retired_entries_have_no_forwarding_files_or_packages(self):
+        for relative in RETIRED_PATHS:
             with self.subTest(path=relative):
                 path = ROOT / relative
                 self.assertFalse(path.exists() or path.is_symlink(), relative)

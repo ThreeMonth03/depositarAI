@@ -149,7 +149,7 @@ python3 -m unittest -v \
   tests.unit.deployment.release.test_host \
   tests.unit.deployment.release.test_controller \
   tests.unit.deployment.release.test_probe \
-  tests.unit.deployment.gateway.test_probe \
+  tests.unit.deployment.gateway.test_probe_script \
   tests.unit.deployment.gateway.test_probe_runtime \
   tests.unit.deployment.test_product_package \
   tests.unit.deployment.test_product_restore \
