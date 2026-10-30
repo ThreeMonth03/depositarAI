@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 SPEC = importlib.util.spec_from_file_location(
     "frontend_release_publisher", ROOT / "scripts/ci/frontend-release.py"
 )
@@ -24,7 +24,7 @@ SPEC.loader.exec_module(publisher)
 REVISION = "a" * 40
 MANIFESTS = {"web": "sha256:" + "b" * 64, "web-nginx": "sha256:" + "c" * 64}
 CONFIGS = {"web": "sha256:" + "d" * 64, "web-nginx": "sha256:" + "e" * 64}
-SHARED = "search.operations.deployment.frontend_artifact"
+SHARED = "search.operations.deployment.frontend.artifact"
 
 
 class PublisherTests(unittest.TestCase):

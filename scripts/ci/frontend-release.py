@@ -84,7 +84,7 @@ def _write_new(path, value):
 
 
 def _inspect(role, revision, *, release_tag=False):
-    from search.operations.deployment.frontend_policy import validate_image_labels
+    from search.operations.deployment.frontend.policy import validate_image_labels
 
     tag = revision if release_tag else "ci"
     reference = f"depositar-search-{role}:{tag}"
@@ -161,7 +161,7 @@ def _tested_images(path, revision):
 
 
 def export(tested_images, output):
-    from search.operations.deployment.frontend_artifact import (
+    from search.operations.deployment.frontend.artifact import (
         describe_archive,
         validate_manifest,
     )
@@ -227,7 +227,7 @@ def export(tested_images, output):
 
 
 def verify(directory, *, signed=False):
-    from search.operations.deployment.frontend_artifact import (
+    from search.operations.deployment.frontend.artifact import (
         load_manifest,
         validate_archive,
     )

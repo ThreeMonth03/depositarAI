@@ -6,6 +6,6 @@ import sys
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from search.operations.deployment.frontend_delivery import main
+    from search.operations.deployment.frontend.delivery import main
 
     raise SystemExit(main())

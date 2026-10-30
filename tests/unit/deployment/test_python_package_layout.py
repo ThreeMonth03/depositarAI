@@ -23,6 +23,7 @@ PACKAGE_PATHS = (
     "search/operations",
     "search/operations/catalog",
     "search/operations/deployment",
+    "search/operations/deployment/frontend",
     "search/operations/deployment/gateway",
     "search/operations/deployment/release",
     "search/operations/deployment/public_entry",
@@ -35,6 +36,21 @@ PACKAGE_PATHS = (
     "search/api/shared",
 )
 MODULE_MOVES = {
+    "search/operations/deployment/frontend_artifact.py": (
+        "search/operations/deployment/frontend/artifact.py"
+    ),
+    "search/operations/deployment/frontend_check.py": (
+        "search/operations/deployment/frontend/check.py"
+    ),
+    "search/operations/deployment/frontend_delivery.py": (
+        "search/operations/deployment/frontend/delivery.py"
+    ),
+    "search/operations/deployment/frontend_policy.py": (
+        "search/operations/deployment/frontend/policy.py"
+    ),
+    "search/operations/deployment/intranet_access.py": (
+        "search/operations/deployment/frontend/access.py"
+    ),
     "search/customer_service.py": "search/api/retrieval/results.py",
     "search/customer_service_ollama.py": "search/scope.py",
     "search/operations/deployment/gateway.py": (

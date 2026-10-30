@@ -153,14 +153,10 @@ def validate(config, *, intranet=False, prepare=False):
     ):
         raise ValueError("remote frontend receives only its API key and optional CA")
     if intranet:
-        from search.operations.deployment.intranet_access import (
-            intranet_settings,
-            prepare_access,
-            verify_access,
-        )
+        from . import access
 
-        intranet_settings(config)
+        access.intranet_settings(config)
         if prepare:
-            prepare_access(config)
+            access.prepare_access(config)
         else:
-            verify_access(config)
+            access.verify_access(config)

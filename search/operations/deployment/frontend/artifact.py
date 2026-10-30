@@ -26,10 +26,11 @@ from urllib.request import (
     build_opener,
 )
 
-from search.operations.deployment import frontend_policy, image_build
+from search.operations.deployment import image_build
 from search.operations.shared.bounded_http import AbortableConnection
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
+from . import policy
 
 
 WORKFLOW = ".github/workflows/frontend-release.yml"
@@ -267,9 +268,7 @@ def describe_archive(path, revision, role):
                     and config.get("architecture") == "amd64",
                     "archive_invalid",
                 )
-                frontend_policy.validate_image_labels(
-                    config["config"]["Labels"], revision, role
-                )
+                policy.validate_image_labels(config["config"]["Labels"], revision, role)
                 layers = image["layers"]
                 _require(
                     type(layers) is list and 0 < len(layers) <= 128, "archive_invalid"

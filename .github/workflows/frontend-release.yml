@@ -74,7 +74,7 @@ jobs:
       - name: Validate product policy and publisher
         run: |
           make search-ci
-          python3 -B -m unittest tests.unit.deployment.test_frontend_release_publisher -v
+          python3 -B -m unittest tests.unit.deployment.frontend.test_publisher -v
       - name: Build and test the frontend images once
         env:
           CI_FRONTEND_TESTED_IMAGES_FILE: ${{ runner.temp }}/frontend-tested-images.json

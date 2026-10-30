@@ -7,7 +7,7 @@ import sys
 
 
 def validate(config, *, intranet=False, prepare=False):
-    from search.operations.deployment.frontend_policy import (
+    from search.operations.deployment.frontend.policy import (
         validate as validate_compose,
     )
 

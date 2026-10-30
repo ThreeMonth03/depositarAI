@@ -15,7 +15,8 @@ import sys
 
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.serialization import strict_json
-from .. import frontend_check, image_build
+from .. import image_build
+from ..frontend import check
 from . import profile as public_entry
 
 
@@ -196,9 +197,9 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
     if compose_file is None:
         source = (
             "import sys\nsys.path.insert(0, "
-            + repr(str(frontend_check.ROOT))
+            + repr(str(check.ROOT))
             + ")\n"
-            + frontend_check._probe_source(
+            + check._probe_source(
                 key_file=str(paths[API_KEY_TARGET]),
                 contract_version=CONVERSATION_CONTRACT_VERSION,
             )
@@ -225,9 +226,7 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
             "-s",
             "-B",
             "-c",
-            frontend_check._probe_source(
-                contract_version=CONVERSATION_CONTRACT_VERSION
-            ),
+            check._probe_source(contract_version=CONVERSATION_CONTRACT_VERSION),
         ]
         # Use the same operator-selected daemon/context as the surrounding
         # lifecycle commands, including rootless Docker. Never change daemons
