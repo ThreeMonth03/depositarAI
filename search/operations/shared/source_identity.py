@@ -22,6 +22,7 @@ SOURCE_PATHS = (
     "scripts/validate_catalog_compose.py",
     "scripts/validate_search_web.py",
     "scripts/prepare_search_models.py",
+    "scripts/search_jobs.py",
 )
 
 

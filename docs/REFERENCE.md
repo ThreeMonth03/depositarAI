@@ -13,6 +13,7 @@
 | 模型與檢索服務 | [私有 runtime](development/PRIVATE_RUNTIME.md) |
 | Catalog 重用與 metadata 比較 | [Catalog cache](development/CATALOG_CACHE.md)、[Sync 與候選索引](development/PRODUCT_LIFECYCLE.md#metadata-與候選索引) |
 | CSV／PDF 離線擷取與快取 | [資源摘要](development/RESOURCE_PROFILES.md) |
+| Agent 共用單機工作排程 | [私有工作佇列](development/JOB_QUEUE.md) |
 | 向量續跑與失敗恢復 | [Vector passes](development/VECTOR_PASSES.md)、[Token 清理](CATALOG_CLEANUP_RECOVERY.md) |
 | 產品包及來源交接 | [Product restore](development/PRODUCT_RESTORE.md)、[Source package](development/SOURCE_PACKAGE.md) |
 | 模型與索引保存 | [儲存及復原](MODEL_STORAGE_AND_RECOVERY.md) |

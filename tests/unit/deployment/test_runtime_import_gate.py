@@ -238,6 +238,10 @@ class RuntimeImportGateTests(unittest.TestCase):
             "operations/documents/__init__.py",
             "operations/documents/batches.py",
             "operations/documents/sets.py",
+            "operations/jobs/__init__.py",
+            "operations/jobs/queue.py",
+            "operations/jobs/pueue.py",
+            "operations/jobs/sources.py",
         ):
             with (
                 self.subTest(relative=relative),

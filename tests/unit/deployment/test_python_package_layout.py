@@ -31,6 +31,7 @@ PACKAGE_PATHS = (
     "search/operations/deployment/public_entry",
     "search/operations/metadata",
     "search/operations/documents",
+    "search/operations/jobs",
     "search/operations/shared",
     "search/api",
     "search/api/conversation",
