@@ -121,7 +121,8 @@ def _observations(case, report, bundle):
     )
 
 
-def _identity(session, record, resident, operator_revision):
+def runtime_identity(session, record, resident, operator_revision):
+    """Bind the complete batch target after the retained session's full audit."""
     context = session.query_context
     controller.require(
         context["bundle"].manifest_sha256
@@ -148,12 +149,20 @@ def _identity(session, record, resident, operator_revision):
     }
 
 
-def run_batch(filename, *, cases, destination, expected_revision):
+def run_batch(
+    filename, *, cases, destination, expected_revision, expected_identity_sha256=None
+):
     """Execute only the explicitly selected running candidate, never prepare it."""
     controller.require(
         type(expected_revision) is str
         and controller.HEX40.fullmatch(expected_revision),
         "batch_revision_invalid",
+    )
+    controller.require(
+        expected_identity_sha256 is None
+        or type(expected_identity_sha256) is str
+        and controller.source_bundle.DIGEST.fullmatch(expected_identity_sha256),
+        "batch_identity_invalid",
     )
     operator_revision = controller.require_clean_revision(controller.ROOT)
     profile = controller.load_config(filename)
@@ -199,7 +208,9 @@ def run_batch(filename, *, cases, destination, expected_revision):
                     before = time.monotonic()
                     resident = session.verify(policy, record["compute_sha256"])
                     audits["before_seconds"] = time.monotonic() - before
-                    identity = _identity(session, record, resident, operator_revision)
+                    identity = runtime_identity(
+                        session, record, resident, operator_revision
+                    )
                     endpoint = session.candidate_endpoint
                     query_deadline = session.docker.deadline - FINAL_AUDIT_RESERVE
 
@@ -212,6 +223,11 @@ def run_batch(filename, *, cases, destination, expected_revision):
                         session.remaining(1, deadline=query_deadline)
 
                     try:
+                        controller.require(
+                            expected_identity_sha256 is None
+                            or controller.digest(identity) == expected_identity_sha256,
+                            "batch_identity_changed",
+                        )
                         for case in specification["cases"]:
                             sink.verify()
                             controller.require(
