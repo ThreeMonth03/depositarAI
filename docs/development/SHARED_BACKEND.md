@@ -138,3 +138,7 @@ probe 的內嵌腳本僅使用 Python stdlib，現役舊映像不需安裝新的
 此流程不呼叫模型暖機，也不使用 `verify_private_release(search=True)` 代替單次查詢。
 start 的 readiness 檢查使用 `search=False`；status 與 query 的駐留檢查只做 GET。
 檢查通過表示當下 runtime、駐留與這次操作可用，不代表搜尋品質或公眾入口已驗收。
+
+需要保存少量、多輪案例供離線品質檢視時，使用
+[有界搜尋批次](SHARED_BATCH.md)。它沿用同一份候選設定與操作鎖，將 raw
+queries、responses 與來源 metadata 只寫入明確選取的新私有 capture。
