@@ -72,12 +72,6 @@ def _inventory(descriptor):
     return names, identities
 
 
-def _read(descriptor, name):
-    # Share the bounded duplicate-free/canonical private receipt parser rather
-    # than maintaining another subtly different JSON/file-safety implementation.
-    return image_build._record(descriptor, name)
-
-
 def _source_stage(
     parent_fd, parent, plan, *, repo_root, source_runner, source_revision
 ):
@@ -94,17 +88,19 @@ def _source_stage(
         if not {name, started, complete} <= associated:
             raise ImageStagingError("image_staging_partial_source_state")
         _equal(
-            _read(parent_fd, started), identity, "image_staging_source_intent_changed"
+            image_build._record(parent_fd, started),
+            identity,
+            "image_staging_source_intent_changed",
         )
         _equal(
-            _read(parent_fd, complete),
+            image_build._record(parent_fd, complete),
             {**identity, "status": "source_staged"},
             "image_staging_source_receipt_changed",
         )
         root_fd = private_io.open_child_directory(parent_fd, name)
         try:
             _equal(
-                _read(root_fd, "manifest.json"),
+                image_build._record(root_fd, "manifest.json"),
                 plan,
                 "image_staging_committed_manifest_changed",
             )
@@ -258,7 +254,7 @@ def stage_product_images(
         complete = slot.name + ".image-complete.json"
         if complete in os.listdir(parent_fd):
             _equal(
-                _read(parent_fd, complete),
+                image_build._record(parent_fd, complete),
                 candidate,
                 "image_staging_completed_images_changed",
             )
@@ -270,17 +266,17 @@ def stage_product_images(
         # Recheck persisted source and image receipts before publishing the
         # product pointer; a later role/runner must not silently alter evidence.
         _equal(
-            _read(parent_fd, slot.name + ".stage-started.json"),
+            image_build._record(parent_fd, slot.name + ".stage-started.json"),
             identity,
             "image_staging_source_intent_changed",
         )
         _equal(
-            _read(parent_fd, slot.name + ".stage-complete.json"),
+            image_build._record(parent_fd, slot.name + ".stage-complete.json"),
             {**identity, "status": "source_staged"},
             "image_staging_source_receipt_changed",
         )
         _equal(
-            _read(parent_fd, complete),
+            image_build._record(parent_fd, complete),
             candidate,
             "image_staging_completed_images_changed",
         )
