@@ -20,7 +20,7 @@ from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 ERROR_CODES = frozenset(
     "product_restore_" + code
     for code in (

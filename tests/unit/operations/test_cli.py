@@ -131,7 +131,7 @@ class CLIStartupTests(unittest.TestCase):
             sys.meta_path.insert(0, BlockImports(('search.operations.lifecycle',
                 'search.operations.deployment.public_entry.updates',
                 'search.operations.deployment.public_entry.preflight',
-                'search.operations.deployment.product_restore',
+                'search.operations.deployment.payload.restore',
                 'search.operations.catalog', 'search.catalog', 'search.api')))
             from search.operations import cli
             from search.operations.deployment.public_entry import host

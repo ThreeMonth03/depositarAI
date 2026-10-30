@@ -40,7 +40,7 @@ for name in (
     "search.operations.deployment.release",
     "search.operations.deployment.gateway",
     "search.operations.deployment.gateway.activation",
-    "search.operations.deployment.packaging",
+    "search.operations.deployment.payload",
     "search.operations.deployment.inference_runtime",
     "search.operations.deployment.gpu_ownership",
     "search.operations.doctor", "search.reranker.model",

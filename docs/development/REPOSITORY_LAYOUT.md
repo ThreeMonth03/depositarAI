@@ -40,6 +40,7 @@ depositarAI/
 │   │   ├── cli.py             產品命令參數、dispatch 與安全診斷
 │   │   ├── catalog/           索引、匯入、投影、向量與 leases
 │   │   ├── deployment/        映像、模型、release、gateway、入口與打包
+│   │   │   ├── payload/       完整產品素材收集與離線還原工作流
 │   │   │   ├── images/        映像建置、產品 staging 與完成證據
 │   │   │   ├── candidate/     共用模型的 CPU 候選與獨立 catalog 權限
 │   │   │   │   └── batch/    有界多輪查詢、私有擷取與 session probes

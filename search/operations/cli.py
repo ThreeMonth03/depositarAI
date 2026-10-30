@@ -188,9 +188,9 @@ def _operator_error_code(error, command):
         codes = lifecycle.UP_PRIVATE_ERROR_CODES
     elif (
         command == "restore-product"
-        and owner == "search.operations.deployment.product_restore"
+        and owner == "search.operations.deployment.payload.restore"
     ):
-        from search.operations.deployment import product_restore
+        from search.operations.deployment.payload import restore as product_restore
 
         if error_type is not product_restore.ProductRestoreError:
             return None
@@ -716,7 +716,7 @@ def main(argv=None):
             )
             return 1 if report.get("status") == "deployment_failed" else 0
         if options.command == "restore-product":
-            from search.operations.deployment import product_restore
+            from search.operations.deployment.payload import restore as product_restore
 
             report = product_restore.restore_product(
                 options.package,
