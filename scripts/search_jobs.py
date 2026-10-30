@@ -17,7 +17,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("submit").add_argument("--request", required=True)
     commands.add_parser("status").add_argument("--job")
-    for name in ("result", "cancel", "execute"):
+    for name in ("result", "cancel", "execute", "archive"):
         commands.add_parser(name).add_argument("--job", required=True)
     arguments = parser.parse_args(argv)
     try:
@@ -32,6 +32,10 @@ def main(argv=None):
             value = queue.result(registry, arguments.job)
         elif arguments.operation == "cancel":
             value = queue.cancel(registry, arguments.job)
+        elif arguments.operation == "archive":
+            from search.operations.jobs.archive import archive
+
+            value = archive(registry, arguments.job)
         else:
             value = queue.execute(registry, arguments.job)
     except JobError as error:
