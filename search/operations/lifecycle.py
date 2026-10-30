@@ -805,6 +805,22 @@ def _prepare_query_locked(
         return result
 
 
+def vector_inputs(config: ProductConfig, *, repo_root=ROOT, runner=None):
+    """Read the selected catalog's static vector inputs under both locks."""
+    from search.operations.catalog import vectors
+
+    source_revision = revision(repo_root)
+    with locked_state(config) as store:
+        _require_revision(source_revision, repo_root)
+        candidate = _candidate(store)
+        plan = _index_plan(
+            store, candidate, source_revision, repo_root=repo_root, runner=runner
+        )
+        report = vectors.inputs(config, plan, repo_root=repo_root, runner=runner)
+        _require_revision(source_revision, repo_root)
+        return report
+
+
 def build_vectors(
     config: ProductConfig,
     *,
@@ -812,6 +828,7 @@ def build_vectors(
     runner=None,
     max_passes=16,
     wall_seconds=7200,
+    expected_inputs_sha256=None,
 ):
     """Build/resume only proven clean isolated vectors; never activate a site."""
     source_revision = revision(repo_root)
@@ -824,11 +841,20 @@ def build_vectors(
             runner=runner,
             max_passes=max_passes,
             wall_seconds=wall_seconds,
+            expected_inputs_sha256=expected_inputs_sha256,
         )
 
 
 def _vectors_locked(
-    config, store, source_revision, *, repo_root, runner, max_passes, wall_seconds
+    config,
+    store,
+    source_revision,
+    *,
+    repo_root,
+    runner,
+    max_passes,
+    wall_seconds,
+    expected_inputs_sha256=None,
 ):
     from search.operations.catalog import vectors
 
@@ -845,6 +871,7 @@ def _vectors_locked(
             runner=runner,
             max_passes=max_passes,
             wall_seconds=wall_seconds,
+            expected_inputs_sha256=expected_inputs_sha256,
         )
         _require_revision(source_revision, repo_root)
         _validate_vector_outcome(result, candidate, plan["revision"])

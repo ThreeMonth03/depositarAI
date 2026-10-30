@@ -115,6 +115,8 @@ python3 -m unittest -v \
   tests.unit.catalog.test_module_boundaries \
   tests.unit.catalog.test_safe_inputs \
   tests.unit.catalog.test_vectors \
+  tests.unit.catalog.test_vector_inputs \
+  tests.unit.operations.test_vector_inputs \
   tests.unit.catalog.test_chunks \
   tests.unit.catalog.test_reuse \
   tests.unit.catalog.test_projection \

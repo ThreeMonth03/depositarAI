@@ -1302,7 +1302,10 @@ class ProductLifecycleTests(unittest.TestCase):
                         ),
                     )
                 build.assert_called_once_with(
-                    self.config, max_passes=2, wall_seconds=4800
+                    self.config,
+                    max_passes=2,
+                    wall_seconds=4800,
+                    expected_inputs_sha256=None,
                 )
 
     def stage_index_plan(self):
@@ -1571,7 +1574,17 @@ class ProductLifecycleTests(unittest.TestCase):
             step("import")
             return {"status": "completed"}
 
-        def build(config, plan, *, repo_root, runner, max_passes, wall_seconds):
+        def build(
+            config,
+            plan,
+            *,
+            repo_root,
+            runner,
+            max_passes,
+            wall_seconds,
+            expected_inputs_sha256=None,
+        ):
+            self.assertIsNone(expected_inputs_sha256)
             step("vectors")
             bundle = CatalogBundle.load(
                 Path(plan["bundle_path"]),
