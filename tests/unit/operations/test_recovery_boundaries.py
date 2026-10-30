@@ -116,7 +116,18 @@ class RecoveryBoundaryTests(unittest.TestCase):
             raise ValueError("fake admin failure")
         return {"status": "completed", "operation": operation}
 
-    def vectors(self, config, plan, **kwargs):
+    def vectors(
+        self,
+        config,
+        plan,
+        *,
+        repo_root,
+        runner,
+        max_passes,
+        wall_seconds,
+        expected_inputs_sha256=None,
+    ):
+        self.assertIsNone(expected_inputs_sha256)
         self.assert_locked()
         bundle = CatalogBundle.load(
             Path(plan["bundle_path"]),

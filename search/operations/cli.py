@@ -69,6 +69,9 @@ _RELEASE_CODES = frozenset(
 
 _CATALOG_RUNTIME_CODES = frozenset(
     {
+        "catalog_admin_image_evidence_missing",
+        "catalog_vector_expected_inputs_invalid",
+        "catalog_vector_inputs_changed",
         "catalog_admin_inventory_conflict",
         "catalog_admin_deadline_exceeded",
         "catalog_admin_authentication_failed",
@@ -457,12 +460,17 @@ def parser():
     commands.add_parser(
         "reconcile-index", help="explicitly check full inventory; never retry import"
     )
+    commands.add_parser(
+        "vector-inputs",
+        help="read the selected catalog's static vector-input digest without work",
+    )
     vectors = commands.add_parser(
         "build-vectors",
         help="bounded CPU vector passes with clean checkpoints; no activation",
     )
     vectors.add_argument("--max-passes", type=int, default=16)
     vectors.add_argument("--wall-seconds", type=int, default=7200)
+    vectors.add_argument("--expected-inputs-sha256")
     for command, description in (
         (
             "stage-catalog",
@@ -575,9 +583,14 @@ def _runtime_report(options):
                 else {"catalog_revision": options.catalog_revision}
             ),
         )
+    elif options.command == "vector-inputs":
+        report = lifecycle.vector_inputs(config)
     elif options.command == "build-vectors":
         report = lifecycle.build_vectors(
-            config, max_passes=options.max_passes, wall_seconds=options.wall_seconds
+            config,
+            max_passes=options.max_passes,
+            wall_seconds=options.wall_seconds,
+            expected_inputs_sha256=options.expected_inputs_sha256,
         )
     elif options.command == "start-index" and options.prebuilt_images is not None:
         report = lifecycle.start_index(

@@ -216,8 +216,17 @@ class PrivateUpTests(unittest.TestCase):
         return {"status": "completed"}
 
     def build_vectors(
-        self, config, plan, *, repo_root, runner, max_passes, wall_seconds
+        self,
+        config,
+        plan,
+        *,
+        repo_root,
+        runner,
+        max_passes,
+        wall_seconds,
+        expected_inputs_sha256=None,
     ):
+        self.assertIsNone(expected_inputs_sha256)
         self.step("build-vectors", config=config)
         self.assertEqual(plan, self.catalog)
         self.options_seen["vectors"] = (max_passes, wall_seconds)

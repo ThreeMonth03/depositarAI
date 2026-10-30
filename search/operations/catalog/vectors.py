@@ -59,6 +59,41 @@ def _recipe(context):
     }
 
 
+def _input_identity(context):
+    """Read authenticated static inputs while the caller holds the catalog lock."""
+    runtime, images = execution.require_runtime(context)
+    image_record = execution.read_record(context["root"], "images.json")
+    if (
+        type(image_record) is not dict
+        or image_record.get("images") != images
+        or execution.digest_record(image_record) != runtime["images_sha256"]
+    ):
+        raise RuntimeError("catalog_vector_inputs_changed")
+    return {
+        "source_revision": context["source_revision"],
+        "plan": context["plan"],
+        "recipe": _recipe(context),
+        "images": image_record,
+        "admin_image": administration._admin_image(context, read_only=True),
+        "runtime": runtime,
+    }
+
+
+def inputs(config, plan, *, repo_root, runner=None):
+    """Report static-input identity without model hashing or catalog writes."""
+    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    with execution.operation_lock(context):
+        identity = _input_identity(context)
+        return {
+            "inputs_sha256": execution.digest_record(identity),
+            "source_revision": context["source_revision"],
+            "catalog_revision": context["plan"]["revision"],
+            "bundle_id": context["bundle"].bundle_id,
+            "manifest_sha256": context["plan"]["manifest_sha256"],
+            "read_only": True,
+        }
+
+
 def _journal_identity(identity):
     return {
         "schema_version": 1,
@@ -450,6 +485,7 @@ def build(
     max_passes=16,
     wall_seconds=7200,
     clock=time.monotonic,
+    expected_inputs_sha256=None,
 ):
     """Resume only proven clean passes, bounded by count and invocation time."""
     if (
@@ -459,10 +495,22 @@ def build(
         or not HELPER_TIMEOUT <= wall_seconds <= 36000
     ):
         raise RuntimeError("catalog_vector_budget_invalid")
+    if expected_inputs_sha256 is not None and (
+        type(expected_inputs_sha256) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", expected_inputs_sha256) is None
+    ):
+        raise RuntimeError("catalog_vector_expected_inputs_invalid")
     context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
     expires = clock() + wall_seconds
     with execution.operation_lock(context):
-        execution.require_runtime(context)
+        image = None
+        if expected_inputs_sha256 is None:
+            execution.require_runtime(context)
+        else:
+            identity = _input_identity(context)
+            if execution.digest_record(identity) != expected_inputs_sha256:
+                raise RuntimeError("catalog_vector_inputs_changed")
+            image = identity["admin_image"]
         from search.operations.doctor import _embedding_model
 
         _embedding_model(context["data"] / "ollama/models", deep=True)
@@ -471,7 +519,8 @@ def build(
         _, pending, _ = administration._admin_records(context)
         if pending:
             raise RuntimeError("catalog_vector_import_requires_reconcile")
-        image = administration._admin_image(context)
+        if image is None:
+            image = administration._admin_image(context)
         root, recipe_hash, ordinal, previous = _history(
             context, image, _recipe(context)
         )

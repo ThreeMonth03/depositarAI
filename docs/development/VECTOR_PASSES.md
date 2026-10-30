@@ -41,6 +41,32 @@ python3 scripts/depositarai.py --config /absolute/private/product.json build-vec
   --max-passes 2 --wall-seconds 4800
 ```
 
+排隊或交接前可先固定目前的輸入身分：
+
+```bash
+python3 scripts/depositarai.py --config /absolute/private/product.json vector-inputs
+```
+
+保存回傳的 `inputs_sha256`。這個唯讀命令在 product/catalog locks 內重驗
+已準備的 catalog、runtime 及既有 admin image，不建立映像、不建立或推進 vector
+history，也不把進度納入摘要。不做模型內容雜湊，也不需要先執行一輪。
+輸出只含摘要，不含私有收據原文。
+缺少前置映像或 runtime 證據時先完成正常準備，不由此命令補建。
+
+```bash
+python3 scripts/depositarai.py --config /absolute/private/product.json build-vectors \
+  --expected-inputs-sha256 填入查得的64碼小寫SHA256 \
+  --max-passes 1 --wall-seconds 3600
+```
+
+提供預期摘要時，工具在相同兩把鎖內比對執行來源、完整 plan、固定 recipe、
+catalog/admin 映像及 runtime 收據，通過後才檢查模型內容或執行向量工作。
+候選換成另一份有效 catalog，或同 plan 的映像／runtime 身分重封存，都須重新查明
+並明確取得新摘要；比對失敗可能留下正常的 failed operation 收據，不會啟動 helper。
+摘要不含 done/pending 或 pass 進度，因此相同輸入的正常續跑不需重新綁定。
+這不是 GPU 預約、向量完成證明或同 container 內程序重啟偵測。
+省略此選項時仍操作當下選定的 candidate；外層先查狀態再執行，不能取代鎖內比對。
+
 | 項目 | 固定／預設值 |
 |---|---|
 | embedding | IBM Granite Embedding 278M，既有 digest pin，CPU |
