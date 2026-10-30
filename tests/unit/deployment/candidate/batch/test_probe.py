@@ -9,7 +9,7 @@ import socket
 import unittest
 from unittest.mock import Mock, patch
 
-from search.operations.deployment import shared_batch_probe as probe
+from search.operations.deployment.candidate.batch import probe
 
 
 ENDPOINT = "172.24.0.7"

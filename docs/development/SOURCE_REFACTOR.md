@@ -23,6 +23,7 @@
 | 純 JSON 解析、私有 service-key 檔案讀取 | `search.serialization`、`search.secrets` |
 | 已建立 process 的雙 pipe 擷取與清理 | `search.operations.shared.bounded_process` |
 | Runtime Docker client、完成映像證據 | `search.operations.deployment.runtime_docker`、`image_authority` |
+| 共用模型候選、catalog 權限與私有批次擷取 | `search.operations.deployment.candidate` 的明確子模組；`batch.execution` 使用 `search.quality.contract` |
 | 離線 metadata 正規化、封存及 builder CLI | `search.catalog.build` 的明確子模組；入口為 `python3 -m search.catalog.build` |
 | 封存資料與精確 inventory | `search.catalog.bundle`、`inventory` |
 | 純查詢文字正規化與輸入／結果數限額 | `search.catalog.query` |

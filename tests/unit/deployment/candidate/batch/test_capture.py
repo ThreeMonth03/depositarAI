@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from search.quality.contract import plan_digest
-from search.operations.deployment import shared_batch_capture as capture
+from search.operations.deployment.candidate.batch import capture
 
 
 def cases():

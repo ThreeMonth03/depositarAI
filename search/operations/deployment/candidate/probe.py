@@ -14,7 +14,7 @@ import subprocess
 
 from search.planning.contract import checked_query
 from search.serialization import strict_json
-from .runtime_docker import InferenceError
+from ..runtime_docker import InferenceError
 
 
 CONTAINER = re.compile(r"[0-9a-f]{64}\Z")

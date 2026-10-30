@@ -396,8 +396,8 @@ class HostToolBoundaryTests(unittest.TestCase):
 
     def test_batch_quality_consumers_do_not_depend_on_script_entry_points(self):
         for relative in (
-            "search/operations/deployment/shared_batch.py",
-            "search/operations/deployment/shared_batch_capture.py",
+            "search/operations/deployment/candidate/batch/execution.py",
+            "search/operations/deployment/candidate/batch/capture.py",
         ):
             with self.subTest(source=relative):
                 self.assertEqual(

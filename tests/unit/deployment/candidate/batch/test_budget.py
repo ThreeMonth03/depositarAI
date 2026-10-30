@@ -13,7 +13,7 @@ import subprocess
 import unittest
 
 from search.operations.deployment.runtime_docker import Docker
-from tests.unit.deployment import test_shared_batch as fixtures
+from tests.unit.deployment.candidate.batch import test_execution as fixtures
 
 
 class SharedBatchBudgetTests(unittest.TestCase):
@@ -89,6 +89,15 @@ class SharedBatchBudgetTests(unittest.TestCase):
         self.assertEqual(self.docker.calls, 118)
         self.assertEqual(len(self.commands), 118)
         self.assertEqual(self.fixture.read("run.json")["status"], "complete")
+
+    def test_selected_catalog_image_inspections_fit_the_same_fixed_budget(self):
+        # A second catalog authenticates its three core images independently.
+        # Bulk snapshot collection still costs twelve commands for five projects.
+        self.consume(3)
+        result = self.fixture.run_batch()
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["completed_turns"], 8)
+        self.assertEqual(self.docker.calls, 121)
 
     def test_unexpected_command_pressure_cannot_publish_a_trusted_completion(self):
         # A caller's reduced capacity or future extra audit must fail closed.
