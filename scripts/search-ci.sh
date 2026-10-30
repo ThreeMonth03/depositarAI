@@ -99,6 +99,9 @@ python3 -m unittest -v \
   tests.unit.jobs.test_sources \
   tests.unit.jobs.test_profiles \
   tests.unit.jobs.test_execution \
+  tests.unit.jobs.test_archive \
+  tests.unit.jobs.test_archive_sources \
+  tests.unit.jobs.test_archive_integration \
   tests.unit.operations.test_resource_enrichment \
   tests.unit.operations.test_private_io \
   tests.unit.quality.test_evaluator \

@@ -72,6 +72,11 @@ queue root 與 runtime root 都使用 Git 外、目前帳號持有的專用 0700
 每件已接受工作保留送件時的 profile 定義；之後新增或修改登記不會改寫它，也不會
 取消它。queue root、operator、主機與 socket 等執行身分仍須保持一致。
 
+升級 operator 前先停止送件並處置原佇列；直接修改 `operator_revision` 或
+`operator_source` 會改變 queue identity，舊工作會拒絕由新的 registry 驗證。
+保留原 registry、來源及結果的查詢環境，確認沒有待辦或未釐清的工作後，才規劃
+新執行環境。封存不會遷移 queue identity，也不能靠改寫舊 request／receipt 升級。
+
 Pueue 使用 queue root 下的 `pueue.yml`，內容必須符合程式產生的固定模板：
 Unix socket 位於 `runtime_root/depositarai-heavy.socket`，資料與紀錄位於
 queue root 下，shell 固定為 `/bin/sh -c`，不設 callback 或環境 hook，並啟用
@@ -283,6 +288,32 @@ Pueue 的佇列狀態不是操作或清理證據。runner 在開始前保存 dur
 目前沒有通用 force-clear、重試或一鍵復原入口；主控須檢查原本的資源/helper 證據。
 保留仍被工作引用的來源與結果。清理只限已確認屬於自己、且不再被引用的工作資產，
 不能用整機 prune 或只按檔案年齡刪除。
+
+## 封存完成工作
+
+當佇列沒有排隊、執行或未知工作，且原生清理已有完整證據時，可封存一件
+`completed`、`checkpoint`、`partial` 或尚未開始就取消的工作：
+
+```sh
+python3 -I -S -B scripts/search_jobs.py archive --job JOB_ID
+python3 -I -S -B scripts/search_jobs.py result --job JOB_ID
+```
+
+封存先核對完整輸入、結果與 artifact，保存並還原驗證 Git bundle，才移除該件
+已完成的 Pueue entry 與乾淨、受控的 source worktree。原始來源、catalog、模型、
+索引及 profile state 不會被清理。原 request／result bytes 保留於
+`archive/JOB_ID`；同 revision 的來源 bundle 保存在 `archive-sources`。
+未封存工作上限為128件，已封存紀錄不佔此名額。批次清理及自動保存政策由維護者決定。
+
+讀取舊 ID 會重新核對封存 manifest、原始證據與來源 bundle，仍需要原 Git repository、
+保留的 operator source 及可寫的私有暫存空間；不需要 Pueue daemon。
+這份封存不是獨立於原主機的完整備份。
+
+中斷會留下 `archive-intent.json` 並阻止新送件及執行。先查明原工作的 task、
+source 與 artifact 狀態，再以相同 job ID 重跑封存，從已記錄步驟核對後續做。
+不確定時保持紀錄，不能手刪 intent、prune 或強制回收；同 ID 同時出現在 active
+與 archive 位置也會拒絕讀取。原本的 `active.json` 保留，讓後續工作核對上一件的
+完成證據。
 
 ## 權限與操作範圍
 

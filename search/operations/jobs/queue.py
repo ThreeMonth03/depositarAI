@@ -211,9 +211,33 @@ def locked(root, name):
 
 def job_root(registry, identifier):
     require(type(identifier) is str and JOB_ID.fullmatch(identifier), "id_invalid")
-    root = Path(registry["root"]) / "jobs" / identifier
-    os.close(private_io.open_directory(root))
-    return root
+    locations = []
+    for name in ("jobs", "archive"):
+        parent = Path(registry["root"]) / name
+        try:
+            fd = private_io.open_directory(parent)
+        except FileNotFoundError:
+            continue
+        try:
+            try:
+                os.stat(identifier, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            directory = parent / identifier
+            os.close(private_io.open_directory(directory))
+            private_io.verify_directory(fd, parent)
+            locations.append((name, directory))
+        finally:
+            os.close(fd)
+    if not locations:
+        raise FileNotFoundError("job_not_found")
+    require(len(locations) == 1, "archive_duplicate_job")
+    name, directory = locations[0]
+    if name == "archive":
+        from .archive import verify_archived
+
+        verify_archived(registry, identifier, directory)
+    return directory
 
 
 def launcher(registry, identifier):

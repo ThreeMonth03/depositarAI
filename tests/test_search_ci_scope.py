@@ -60,6 +60,9 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.jobs.test_sources",
             "tests.unit.jobs.test_profiles",
             "tests.unit.jobs.test_execution",
+            "tests.unit.jobs.test_archive",
+            "tests.unit.jobs.test_archive_sources",
+            "tests.unit.jobs.test_archive_integration",
             "tests.integration.test_product_compose",
         ):
             with self.subTest(module=module):

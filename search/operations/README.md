@@ -19,6 +19,7 @@ prerequisites, side effects and incomplete installer boundaries.
 | [metadata/](metadata/sync.py) | Public source acquisition, bounded sync and metadata cache |
 | [documents/](documents/controller.py) | Selected CSV/PDF acquisition, private content/profile caches and isolated Fess extraction; no catalog activation |
 | [jobs/queue.py](jobs/queue.py), [profiles.py](jobs/profiles.py), [execution.py](jobs/execution.py) | Private Pueue submission and durable job state, frozen fixed profiles, and native command/evidence adapters; domain commands retain their locks and runtime authority |
+| [jobs/archive.py](jobs/archive.py), [sources.py](jobs/sources.py) | Archive one verified idle job and preserve a verified Git bundle before removing its owned source worktree; archived IDs retain their original evidence |
 | [metadata/storage.py](metadata/storage.py) | Metadata/catalog private receipt IO, with the existing 4 MiB record limit and `SyncError` contract |
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |
 | [catalog/commands.py](catalog/commands.py) | Catalog text-command runner and stdout validation; command selection and runtime authority stay with callers |
