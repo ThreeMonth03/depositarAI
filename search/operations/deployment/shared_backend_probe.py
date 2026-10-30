@@ -300,15 +300,17 @@ def _expected(policy):
         raise SharedBackendProbeError("shared_backend_probe_invalid") from None
 
 
-def verify_residency(docker, api_container_id, policy):
+def verify_residency(docker, api_container_id, policy, *, timeout=RESIDENCY_SECONDS):
     """GET existing model residency; never load, warm, generate or stop models."""
+    if type(timeout) not in {int, float} or not 0 < timeout <= RESIDENCY_SECONDS:
+        raise SharedBackendProbeError("shared_backend_probe_invalid")
     expected = _expected(policy)
     value = _invoke(
         docker,
         api_container_id,
         _RESIDENCY_SCRIPT,
         [json.dumps(expected, sort_keys=True)],
-        timeout=RESIDENCY_SECONDS,
+        timeout=timeout,
         maximum=4096,
         failure="residency_failed",
     )
