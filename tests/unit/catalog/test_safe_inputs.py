@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from search.catalog.build import policy, storage
 
-from search.operations.metadata import sync as catalog_sync
+from search.operations.metadata import storage as metadata_storage, sync as catalog_sync
 
 
 class CatalogSafeInputTests(unittest.TestCase):
@@ -46,8 +46,8 @@ class CatalogSafeInputTests(unittest.TestCase):
 
     def test_cache_reader_refuses_fifo_without_waiting_for_a_writer(self):
         with patch.object(os, "open", side_effect=self.guarded_open):
-            with self.assertRaises(catalog_sync.SyncError):
-                catalog_sync._file_bytes(
+            with self.assertRaises(metadata_storage.SyncError):
+                metadata_storage.file_bytes(
                     self.directory_fd, self.fifo.name, mode=0o600, limit=4096
                 )
 
@@ -80,7 +80,7 @@ class CatalogSafeInputTests(unittest.TestCase):
         )
         self.assertEqual(
             b"public metadata\n",
-            catalog_sync._file_bytes(
+            metadata_storage.file_bytes(
                 self.directory_fd, regular.name, mode=0o400, limit=4096
             ),
         )

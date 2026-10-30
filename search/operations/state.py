@@ -49,14 +49,6 @@ class ActivationOutcomeError(ValueError):
         self.active_changed = active_changed
 
 
-def _canonical(value):
-    return private_io.canonical(value)
-
-
-def _identity(info):
-    return private_io.identity(info)
-
-
 def _owned_file(info):
     if (
         not stat.S_ISREG(info.st_mode)
@@ -65,10 +57,6 @@ def _owned_file(info):
         or info.st_nlink != 1
     ):
         raise ValueError("product_state_file_unsafe")
-
-
-def _directory(path: Path, *, create=False):
-    return private_io.open_directory(path, create=create)
 
 
 class StateStore:
@@ -130,7 +118,9 @@ def _marker(config):
     return {
         "schema_version": 1,
         "kind": "depositar-ai-product",
-        "configuration_sha256": hashlib.sha256(_canonical(identity)).hexdigest(),
+        "configuration_sha256": hashlib.sha256(
+            private_io.canonical(identity)
+        ).hexdigest(),
     }
 
 
@@ -186,7 +176,7 @@ def operation_receipts(store):
 @contextmanager
 def locked_state(config: ProductConfig, *, create=False):
     """Reject unmarked nonempty directories and concurrent product operations."""
-    root_fd = _directory(config.state_root, create=create)
+    root_fd = private_io.open_directory(config.state_root, create=create)
     lock_fd = None
     try:
         try:
@@ -210,7 +200,7 @@ def locked_state(config: ProductConfig, *, create=False):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("product_operation_busy") from None
-        if _identity(before) != _identity(
+        if private_io.identity(before) != private_io.identity(
             os.stat("operations.lock", dir_fd=root_fd, follow_symlinks=False)
         ):
             raise ValueError("product_state_lock_changed")

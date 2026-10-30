@@ -10,9 +10,9 @@ import stat
 from search.catalog.bundle import CatalogBundle
 from search.operations.config import ProductConfig
 from search.operations.metadata import sync as catalog_sync
+from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 from search.operations.state import (
-    _directory,
     locked_state,
     operation,
     operation_receipts,
@@ -146,7 +146,7 @@ def _sync_locked(
     _require_revision(source_revision, repo_root)
     with operation(store, "sync", source_revision) as outcome:
         cache = config.state_root / "cache"
-        os.close(_directory(cache, create=True))
+        os.close(private_io.open_directory(cache, create=True))
         comparison = "provided" if baseline is not None else "none"
         if baseline is None:
             try:

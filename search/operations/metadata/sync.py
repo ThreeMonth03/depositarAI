@@ -26,17 +26,7 @@ from search.catalog.build import (
     storage as build_storage,
 )
 from search.catalog.bundle import MAX_MANIFEST_BYTES, CatalogBundle
-from search.operations.metadata import source
-from search.operations.metadata.storage import (
-    MAX_RECORD_BYTES as MAX_RECORD_BYTES,
-    SyncError as SyncError,
-    real_path as _real_path,
-    same_file as _same_file,
-    file_bytes as _file_bytes,
-    read_record as _json_record,
-    write_record as _write_record,
-    private_directory as _private_directory,
-)
+from search.operations.metadata import source, storage
 from search.operations.shared import private_io
 
 
@@ -58,14 +48,16 @@ def _verify_cache_directories(root, root_fd, folders, run_id, run_fd):
             private_io.verify_directory(descriptor, root / name)
         private_io.verify_directory(run_fd, root / "runs" / run_id)
     except ValueError as error:
-        raise SyncError("metadata cache directory changed during sync") from error
+        raise storage.SyncError(
+            "metadata cache directory changed during sync"
+        ) from error
 
 
 @contextmanager
 def _locked_cache(root):
-    root = _real_path(root)
+    root = storage.real_path(root)
     if root in (Path("/"), Path.home(), ROOT):
-        raise SyncError("use a dedicated private cache directory")
+        raise storage.SyncError("use a dedicated private cache directory")
     root_fd = private_io.open_directory(root)
     lock_fd = None
     folders = {}
@@ -80,34 +72,38 @@ def _locked_cache(root):
             or info.st_nlink != 1
             or stat.S_IMODE(info.st_mode) != 0o600
         ):
-            raise SyncError("unsafe metadata sync lock")
+            raise storage.SyncError("unsafe metadata sync lock")
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise SyncError("another metadata sync is running") from None
-        if not _same_file(
+            raise storage.SyncError("another metadata sync is running") from None
+        if not storage.same_file(
             info, os.stat(".sync.lock", dir_fd=root_fd, follow_symlinks=False)
         ):
-            raise SyncError("metadata sync lock changed while being opened")
+            raise storage.SyncError("metadata sync lock changed while being opened")
         try:
-            marker = _json_record(root_fd, "cache.json")
+            marker = storage.read_record(root_fd, "cache.json")
         except FileNotFoundError:
             if set(os.listdir(root_fd)) != {".sync.lock"}:
-                raise SyncError("unmarked cache is not empty; inspect it before reuse")
+                raise storage.SyncError(
+                    "unmarked cache is not empty; inspect it before reuse"
+                )
             for name in ("snapshots", "bundles", "runs"):
-                folders[name] = _private_directory(root_fd, name, create=True)
-            _write_record(root_fd, "cache.json", MARKER)
+                folders[name] = storage.private_directory(root_fd, name, create=True)
+            storage.write_record(root_fd, "cache.json", MARKER)
         else:
             if (
                 type(marker) is not dict
                 or marker != MARKER
                 or type(marker.get("schema_version")) is not int
             ):
-                raise SyncError("invalid public metadata cache marker")
+                raise storage.SyncError("invalid public metadata cache marker")
             for name in ("snapshots", "bundles", "runs"):
-                folders[name] = _private_directory(root_fd, name)
+                folders[name] = storage.private_directory(root_fd, name)
         if len(os.listdir(folders["runs"])) >= MAX_RUNS:
-            raise SyncError("metadata cache run limit reached; archive evidence first")
+            raise storage.SyncError(
+                "metadata cache run limit reached; archive evidence first"
+            )
         yield root, root_fd, folders
     finally:
         for fd in folders.values():
@@ -121,9 +117,11 @@ def _baseline(value):
     if value is None:
         return None
     if not isinstance(value, tuple) or len(value) != 2:
-        raise SyncError("baseline must be (bundle_path, manifest_sha256)")
+        raise storage.SyncError("baseline must be (bundle_path, manifest_sha256)")
     path, manifest = value
-    return CatalogBundle.load(_real_path(path), expected_manifest_sha256=manifest)
+    return CatalogBundle.load(
+        storage.real_path(path), expected_manifest_sha256=manifest
+    )
 
 
 def compare(before, after):
@@ -172,7 +170,7 @@ def compare(before, after):
 
 
 def _verified_latest(root, root_fd, folders):
-    value = _json_record(root_fd, "latest.json")
+    value = storage.read_record(root_fd, "latest.json")
     fields = {
         "schema_version",
         "endpoint",
@@ -203,12 +201,12 @@ def _verified_latest(root, root_fd, folders):
         or type(value["document_count"]) is not int
         or not 1 <= value["document_count"] <= policy.MAX_ROWS
     ):
-        raise SyncError("invalid latest metadata cache pointer")
-    run_fd = _private_directory(folders["runs"], value["run_id"])
+        raise storage.SyncError("invalid latest metadata cache pointer")
+    run_fd = storage.private_directory(folders["runs"], value["run_id"])
     try:
         if "failure.json" in os.listdir(run_fd):
-            raise SyncError("latest metadata run is quarantined")
-        receipt = _json_record(run_fd, "result.json")
+            raise storage.SyncError("latest metadata run is quarantined")
+        receipt = storage.read_record(run_fd, "result.json")
         for key in (
             "snapshot_sha256",
             "bundle_id",
@@ -218,43 +216,45 @@ def _verified_latest(root, root_fd, folders):
             "document_count",
         ):
             if receipt.get(key) != value[key]:
-                raise SyncError("latest pointer does not match its immutable receipt")
+                raise storage.SyncError(
+                    "latest pointer does not match its immutable receipt"
+                )
     finally:
         os.close(run_fd)
     snapshot = root / "snapshots" / ("sha256-" + value["snapshot_sha256"] + ".jsonl.gz")
-    raw = _file_bytes(
+    raw = storage.file_bytes(
         folders["snapshots"],
         snapshot.name,
         mode=0o400,
         limit=policy.MAX_COMPRESSED_BYTES,
     )
     if hashlib.sha256(raw).hexdigest() != value["snapshot_sha256"]:
-        raise SyncError("cached metadata snapshot digest mismatch")
+        raise storage.SyncError("cached metadata snapshot digest mismatch")
     bundle_path = root / "bundles" / ("sha256-" + value["bundle_id"])
     catalog = CatalogBundle.load(
         bundle_path, expected_manifest_sha256=value["manifest_sha256"]
     )
     bundle_fd = private_io.open_directory(bundle_path, mode=0o500)
     try:
-        manifest_raw = _file_bytes(
+        manifest_raw = storage.file_bytes(
             bundle_fd, "bundle-manifest.json", mode=0o400, limit=MAX_MANIFEST_BYTES
         )
     finally:
         os.close(bundle_fd)
     if hashlib.sha256(manifest_raw).hexdigest() != value["manifest_sha256"]:
-        raise SyncError("cached bundle manifest changed after verification")
+        raise storage.SyncError("cached bundle manifest changed after verification")
     manifest = source.strict_json(manifest_raw)
     if (
         manifest["artifacts"]["source.jsonl.gz"]["sha256"] != value["snapshot_sha256"]
         or len(catalog.documents) != value["document_count"]
     ):
-        raise SyncError("cached snapshot and sealed bundle identities disagree")
+        raise storage.SyncError("cached snapshot and sealed bundle identities disagree")
     return value, snapshot, bundle_path, catalog
 
 
 def _check_deadline(deadline):
     if time.monotonic() >= deadline:
-        raise SyncError("metadata sync deadline exceeded")
+        raise storage.SyncError("metadata sync deadline exceeded")
 
 
 def sync(
@@ -281,9 +281,13 @@ def sync(
         or profile_files
         and profile_set is not None
     ):
-        raise SyncError("TTL, force or profile selection is outside its bounded policy")
+        raise storage.SyncError(
+            "TTL, force or profile selection is outside its bounded policy"
+        )
     if snapshot is not None and fetch is not None:
-        raise SyncError("offline snapshot and network fetch are mutually exclusive")
+        raise storage.SyncError(
+            "offline snapshot and network fetch are mutually exclusive"
+        )
     before = _baseline(
         baseline
     )  # Refuse bad active identity before any network request.
@@ -291,9 +295,9 @@ def sync(
     deadline = started + source.DEADLINE_SECONDS
     with _locked_cache(cache_root) as (root, root_fd, folders):
         run_id = uuid.uuid4().hex
-        run_fd = _private_directory(folders["runs"], run_id, create=True)
+        run_fd = storage.private_directory(folders["runs"], run_id, create=True)
         try:
-            _write_record(
+            storage.write_record(
                 run_fd, "started.json", {"schema_version": 1, "run_id": run_id}
             )
             cache_hit, built, latest = False, None, None
@@ -304,17 +308,21 @@ def sync(
                     )
                 except FileNotFoundError:
                     if "latest.json" in os.listdir(root_fd):
-                        raise SyncError("latest metadata cache is incomplete") from None
+                        raise storage.SyncError(
+                            "latest metadata cache is incomplete"
+                        ) from None
                 if latest is not None:
                     age = time.time() - latest["fetched_at"]
                     if age < 0:
-                        raise SyncError("cached metadata timestamp is in the future")
+                        raise storage.SyncError(
+                            "cached metadata timestamp is in the future"
+                        )
                     cache_hit = age <= ttl_seconds
             if not cache_hit:
                 records = (
                     source.stable_download(deadline, fetch)
                     if snapshot is None
-                    else snapshots.load_source(str(_real_path(snapshot)))
+                    else snapshots.load_source(str(storage.real_path(snapshot)))
                 )
                 _check_deadline(deadline)
                 _verify_cache_directories(root, root_fd, folders, run_id, run_fd)
@@ -326,13 +334,15 @@ def sync(
                     key=lambda pair: pair[0],
                 )
                 if len({identifier for identifier, _ in ordered}) != len(ordered):
-                    raise SyncError("metadata snapshot contains duplicate dataset IDs")
+                    raise storage.SyncError(
+                        "metadata snapshot contains duplicate dataset IDs"
+                    )
                 rows = [item for _, item in ordered]
                 if any(
                     len(source.canonical(item) + b"\n") > policy.MAX_LINE_BYTES
                     for item in rows
                 ):
-                    raise SyncError("metadata snapshot exceeds its line limit")
+                    raise storage.SyncError("metadata snapshot exceeds its line limit")
                 build_storage.write_gzip_jsonl(run_fd, "snapshot.jsonl.gz", rows)
                 incoming = root / "runs" / run_id / "snapshot.jsonl.gz"
                 built = builder.build_bundle(incoming, root / "bundles")
@@ -340,7 +350,7 @@ def sync(
                 catalog = CatalogBundle.load(
                     bundle_path, expected_manifest_sha256=built["manifest_sha256"]
                 )
-                raw = _file_bytes(
+                raw = storage.file_bytes(
                     run_fd,
                     "snapshot.jsonl.gz",
                     mode=0o400,
@@ -359,14 +369,14 @@ def sync(
                         follow_symlinks=False,
                     )
                 except FileExistsError:
-                    existing = _file_bytes(
+                    existing = storage.file_bytes(
                         folders["snapshots"],
                         snapshot_path.name,
                         mode=0o400,
                         limit=policy.MAX_COMPRESSED_BYTES,
                     )
                     if hashlib.sha256(existing).hexdigest() != snapshot_sha:
-                        raise SyncError(
+                        raise storage.SyncError(
                             "existing immutable metadata snapshot is corrupted"
                         )
                 os.unlink("snapshot.jsonl.gz", dir_fd=run_fd)
@@ -457,11 +467,11 @@ def sync(
                 "models_called": False,
                 "resource_profiles": profile_report,
             }
-            _write_record(run_fd, "result.json", report)
-            _write_record(root_fd, "latest.json", latest, replace=True)
+            storage.write_record(run_fd, "result.json", report)
+            storage.write_record(root_fd, "latest.json", latest, replace=True)
             return report
         except Exception as error:
-            _write_record(
+            storage.write_record(
                 run_fd,
                 "failure.json",
                 {
