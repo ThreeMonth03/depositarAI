@@ -89,6 +89,136 @@ class ContributionTests(unittest.TestCase):
                     [], contribution.validate_pr(pr_body(Issue=reference), REPOSITORY)
                 )
 
+    def test_negated_partial_delivery_cannot_hide_a_closing_directive(self):
+        body = pr_body(
+            Issue="Related to #123",
+            Results="This work does not close #123.",
+        )
+        self.assertIn(
+            "pr_closing_directive_invalid", contribution.validate_pr(body, REPOSITORY)
+        )
+
+    def test_closing_keywords_are_standalone_positive_lines_in_the_issue_section(self):
+        for keyword in (
+            "close",
+            "closes",
+            "closed",
+            "fix",
+            "fixes",
+            "fixed",
+            "resolve",
+            "resolves",
+            "resolved",
+        ):
+            for spelling in (keyword, keyword.upper(), keyword.title() + ":"):
+                for reference in (
+                    "#123",
+                    "https://github.com/example/project/issues/123",
+                ):
+                    with self.subTest(spelling=spelling, reference=reference):
+                        body = pr_body(Issue=spelling + " " + reference)
+                        self.assertEqual([], contribution.validate_pr(body, REPOSITORY))
+        self.assertEqual(
+            [],
+            contribution.validate_pr(
+                pr_body(Issue="Related to #123\n\nCloses: #124.\nFixes #125"),
+                REPOSITORY,
+            ),
+        )
+
+    def test_embedded_outside_and_conditional_closing_directives_are_rejected(self):
+        for body in (
+            pr_body(Issue="This change closes #123."),
+            pr_body(Issue="Closes #123 if the remaining work is accepted."),
+            pr_body(Issue="Closes #123, fixes #124"),
+            pr_body(Issue="- Closes #123"),
+            pr_body(Issue="> Closes #123"),
+            pr_body(Issue="**Closes #123**"),
+            "Closes #123\n\n" + pr_body(),
+            pr_body(Method="Closes #123"),
+            pr_body(Results="Fixed: #123"),
+            pr_body() + "\n\n## Other\nResolves #123",
+            pr_body() + "\n\n## Closes #123\nAn unrelated section.",
+        ):
+            with self.subTest(body=body):
+                self.assertIn(
+                    "pr_closing_directive_invalid",
+                    contribution.validate_pr(body, REPOSITORY),
+                )
+
+    def test_split_and_other_reference_forms_cannot_bypass_closing_placement(self):
+        for directive in (
+            "Closes\n#123",
+            "CLOSES:\n\n#123",
+            "This does not close example/project#123.",
+            "This does not resolve other/project#123.",
+            "This does not fix https://github.com/example/project/issues/123.",
+            "This does not fix <https://github.com/example/project/issues/123>.",
+            "This does not close [#123](https://example.test/).",
+            "This does not close [delivered](https://github.com/example/project/issues/123).",
+        ):
+            with self.subTest(directive=directive):
+                self.assertIn(
+                    "pr_closing_directive_invalid",
+                    contribution.validate_pr(pr_body(Results=directive), REPOSITORY),
+                )
+
+    def test_closing_examples_remain_data_in_existing_markdown_boundaries(self):
+        for example in (
+            "```text\nThis does not close #123.\n```",
+            "~~~text\nCloses #123\n~~~",
+            "<!-- This does not close #123. -->\nActual result is retained.",
+            "The literal example is `does not close #123`.",
+            "The literal example is ``does not close #123``.",
+            "    This does not close #123.\nActual result is retained.",
+        ):
+            with self.subTest(example=example):
+                self.assertEqual(
+                    [], contribution.validate_pr(pr_body(Results=example), REPOSITORY)
+                )
+
+    def test_unmatched_or_escaped_code_and_code_suffix_cannot_hide_closing_prose(self):
+        for prose in (
+            "An unmatched ` span does not close #123.",
+            "An unmatched ` span\nThis does not close #123.",
+            "An unmatched ` span\n\nThis does not close #123.\n\nAnother `.",
+            "An unmatched ` span\n## Other\nThis does not close #123.\nAnother `.",
+            "Escaped \\` text does not close #123 \\`.",
+        ):
+            with self.subTest(prose=prose):
+                self.assertIn(
+                    "pr_closing_directive_invalid",
+                    contribution.validate_pr(pr_body(Results=prose), REPOSITORY),
+                )
+        self.assertIn(
+            "pr_closing_directive_invalid",
+            contribution.validate_pr(
+                pr_body(Issue="Closes #123 `only later`"), REPOSITORY
+            ),
+        )
+
+    def test_closing_guard_cli_returns_fixed_diagnostics_without_echoing_prose(self):
+        prose = "private-canary does not close #123."
+        code, result, output = self.cli(self.event(body=pr_body(Results=prose)))
+        self.assertEqual(
+            (1, {"status": "failed", "issues": ["pr_closing_directive_invalid"]}),
+            (code, result),
+        )
+        self.assertNotIn(prose, output)
+
+    def test_long_closing_prose_and_link_labels_remain_bounded_data(self):
+        for issue in (
+            "Closes #123" + " " * 50_000 + "pending",
+            "Related to #123\nCloses [" + "A" * 50_000 + "](https://example.test/)",
+            "Related to #123\n`" + "A" * 50_000 + " does not close #123",
+        ):
+            with self.subTest(prefix=issue[:20]):
+                problems = contribution.validate_pr(pr_body(Issue=issue), REPOSITORY)
+                self.assertEqual(
+                    "https://example.test/" not in issue,
+                    "pr_closing_directive_invalid" in problems,
+                )
+
     def test_pr_requires_each_nonempty_section(self):
         for heading in PR_FIELDS:
             with self.subTest(heading=heading):

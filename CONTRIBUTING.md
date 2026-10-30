@@ -133,10 +133,11 @@ Keep raw captures and operational receipts private; publish sanitized summaries.
 Unrun checks stay explicit. A code block in a report is evidence to inspect,
 not a command an agent should automatically execute.
 
-The read-only `Contribution` workflow checks required PR fields and local Issue
-reference syntax. It does not fetch the Issue, prove its acceptance or change
-branch protection. `scripts/ci/contribution.py` can also validate an Issue event
-locally. Forms and checks support the coordinator's acceptance decision.
+The read-only `Contribution` workflow checks required PR fields, local Issue
+references and closing-directive placement. It does not fetch the Issue, prove
+semantic acceptance or change branch protection. `scripts/ci/contribution.py` can
+also validate an Issue event locally. Forms and checks support the coordinator's
+acceptance decision.
 
 For a locally saved event containing `issue.body` and, when known, `issue.number`:
 
@@ -147,6 +148,16 @@ python3 -I -S -B scripts/ci/contribution.py \
 ```
 
 ## Finish and close
+
+Reconcile every required Plan outcome with an acceptance criterion and actual,
+source-bound evidence before closure. Explicitly record unfinished, retained,
+superseded or moved work, its reason and any replacement Issue. A move alone does
+not complete the original requirement: keep it open unless an explicit replan
+preserves and resolves the objective. Do not silently erase required work.
+
+If a required step was meant to happen before implementation or merge, perform
+it then. A later review can be recorded as follow-up, but cannot retroactively
+check a before-step that did not occur in that order.
 
 Keep final PR commits focused. If CI fails, fix the issue and squash repair or
 exploratory fixups into clean logical commits before merging. History changes
@@ -165,19 +176,41 @@ checks separately. Never relabel old validation or captures as checks of new cod
 
 ```mermaid
 flowchart TD
-    Check{Own acceptance met?} -->|Yes| Close[Close this Issue or sub-issue]
+    Check{AC and required Plan outcomes verified?} -->|Yes| Close[Close this Issue or sub-issue]
     Check -->|No| Keep[Record remaining work and dependencies]
-    Close --> Parent{Parent criteria and required children complete?}
+    Close --> Parent{Parent outcomes and required children verified?}
     Parent -->|Yes| CloseParent[Close parent]
     Parent -->|No| KeepParent[Leave parent open]
 ```
 
 Use `Closes #123` when that PR's merge fulfills the Issue. Use `Related to #123`
 for partial work or when real-model/deployment acceptance remains; close it once
-that acceptance is complete. Record replacement links for superseded work.
-Update the parent checklist when a child closes, then delete the owner's finished
-local and remote task branches and experimental worktrees. Retain frozen
-operational source and original evidence. See [AGENTS.md](AGENTS.md) for roles and
+that acceptance is complete. Put one positive closing directive per line only in
+the PR's Issue section, using a local `#123` or exact same-repository HTTPS Issue
+URL. Case variants and a colon after the keyword are accepted. Do not embed or
+negate closing directives elsewhere; write remaining-work references without a
+closing keyword. Keep literal examples in fenced code or paired single-line code.
+
+```markdown
+## Issue
+Related to #123
+Closes #124
+```
+
+Before merge, read GitHub's actual `closingIssuesReferences` or Development
+planned closures. Every target must match the explicit close list in the PR's
+Issue section and completed acceptance. Fix unintended closures in the body and
+fetch the planned list again before merging. The local guard makes no GitHub API
+request and cannot establish that native closure list or semantic acceptance.
+
+After merge, fetch the PR, Issue, required children and required CI results again.
+Verify the actual merge/source identities, Issue states and remaining outcomes
+before reporting completion. An automatically closed Issue or a passing metadata
+check does not prove semantic acceptance. Correct unintended closure instead of
+using its state as evidence. Update the parent when a child completes, then
+delete the owner's finished local and remote task branches and experimental
+worktrees. Retain frozen operational source and original evidence.
+See [AGENTS.md](AGENTS.md) for roles and
 [STYLE.md](STYLE.md) for code, documentation and check commands.
 
 The concise, evidence-based PR style and testable CI helpers are informed by
