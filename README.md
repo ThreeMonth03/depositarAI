@@ -21,7 +21,7 @@
 | 了解產品與使用方式 | [產品手冊](docs/guide/index.md)、[搜尋指南](docs/guide/using-search.md) |
 | 在自己的主機執行 | [部署與維運](docs/guide/operations.md) |
 | 了解各元件如何合作 | [系統架構](docs/guide/architecture.md) |
-| 修改程式或文件 | [參與開發](docs/guide/development.md) |
+| 修改程式或文件 | [參與開發](docs/guide/development.md)、[Issue 與 PR 協作](CONTRIBUTING.md) |
 
 網站與搜尋後端可分開部署；後端經由受限的私有連線提供 API。試用網址由維運者
 提供。自行部署使用單一[產品設定範本](deploy/env/product.example.json)，
