@@ -502,7 +502,21 @@ class Session:
             if host is self.native:
                 self.native.last = (gpu, proof)
             else:
+                if self.record.get("runtime") is not None:
+                    controller._same(
+                        proof,
+                        self.record["runtime"],
+                        "shared_backend_candidate_runtime_changed",
+                    )
                 self.last_candidate = proof
+                web = next(
+                    row
+                    for row in groups[own["name"]]
+                    if row["Id"] == self.record["container_ids"]["web"]
+                )
+                self.candidate_endpoint = web["NetworkSettings"]["Networks"][
+                    own["networks"]["website"]["name"]
+                ]["IPAddress"]
         controller._same(
             controller._completed_receipt(self.inputs.identity, self.native.last[1]),
             self.completed,
@@ -510,8 +524,6 @@ class Session:
         return catalog_proof, catalog, catalog_network
 
     def verify(self, policy, expected_compute=None):
-        from .shared_backend_probe import verify_residency
-
         snapshot = self.observe()
         # Query/vector receipt semantics belong to the sealed live data recipe.
         # The new operator independently validates actual shared peers on both
@@ -542,7 +554,7 @@ class Session:
                     revision,
                     str(Path(directory) / "snapshot.json"),
                 ],
-                timeout=180,
+                timeout=self.remaining(180),
                 environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
             )
             require(result.returncode == 0, "baseline_query_audit_failed")
@@ -561,7 +573,42 @@ class Session:
             snapshot_peers(self.context, self.inputs.authority["runtime"], snapshot),
             snapshot_peers(self.context, self.inputs.authority["runtime"], after),
         )
-        cpu = private_api_tls.gpu_ownership_proofs(self.profile["tls_plan"])
+        return self.check_models(policy, expected_compute)
+
+    def remaining(self, maximum, *, deadline=None):
+        limit = self.docker.deadline
+        if deadline is not None:
+            limit = min(limit, deadline)
+        left = limit - time.monotonic()
+        require(left > 0, "batch_deadline_exceeded")
+        return min(maximum, left)
+
+    def check_models(self, policy, expected_compute=None, *, deadline=None):
+        """Bounded ownership/residency checkpoint, without scanning the catalog."""
+        from .shared_backend_probe import verify_residency
+
+        def tls_runner(argv, **kwargs):
+            return image_build._run(
+                argv,
+                timeout=self.remaining(kwargs["timeout"], deadline=deadline),
+                environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            )
+
+        def gpu_runner(argv, *, timeout, max_bytes):
+            return inference.gpu_ownership.bounded_runner(
+                argv,
+                timeout=self.remaining(timeout, deadline=deadline),
+                max_bytes=max_bytes,
+            )
+
+        require(
+            require_clean_revision(self.profile["production_source"])
+            == self.context["source_revision"],
+            "production_source_changed",
+        )
+        cpu = private_api_tls.gpu_ownership_proofs(
+            self.profile["tls_plan"], runner=tls_runner
+        )
         inference._gpu(
             self.config,
             inference_runtime.ownership_proofs(
@@ -569,11 +616,14 @@ class Session:
                 self.native.last[0],
                 self.native.inference_images,
             ),
-            None,
+            gpu_runner,
             cpu_proofs=cpu,
         )
         resident = verify_residency(
-            self.docker, self.native.lease["api_container_id"], policy
+            self.docker,
+            self.native.lease["api_container_id"],
+            policy,
+            timeout=self.remaining(20, deadline=deadline),
         )
         result = image_build._run(
             [
@@ -581,7 +631,7 @@ class Session:
                 "--query-compute-apps=gpu_uuid,pid",
                 "--format=csv,noheader,nounits",
             ],
-            timeout=15,
+            timeout=self.remaining(15, deadline=deadline),
             environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
         )
         require(result.returncode == 0, "compute_snapshot_failed")
@@ -613,6 +663,7 @@ class Session:
             expected_compute is None or self.compute_sha256 == expected_compute,
             "model_process_changed",
         )
+        self.remaining(1, deadline=deadline)
         return resident
 
     def candidate_inputs(self, record):
@@ -1082,14 +1133,33 @@ def main(argv=None):
     commands.add_parser("status")
     commands.add_parser("stop")
     commands.add_parser("query").add_argument("--query", required=True)
+    batch = commands.add_parser("batch")
+    batch.add_argument("--cases", required=True)
+    batch.add_argument("--capture", required=True)
+    batch.add_argument("--expected-revision", required=True)
     args = parser.parse_args(argv)
     try:
-        value = operate(
-            args.config,
-            args.operation,
-            source=getattr(args, "source", None),
-            text=getattr(args, "query", None),
-        )
+        if args.operation == "batch":
+            from .shared_batch import run_batch
+            from .shared_batch_capture import SharedBatchCaptureError
+
+            try:
+                value = run_batch(
+                    args.config,
+                    cases=args.cases,
+                    destination=args.capture,
+                    expected_revision=args.expected_revision,
+                )
+            except SharedBatchCaptureError as error:
+                print(json.dumps({"error": str(error)}))
+                return 1
+        else:
+            value = operate(
+                args.config,
+                args.operation,
+                source=getattr(args, "source", None),
+                text=getattr(args, "query", None),
+            )
     except KeyboardInterrupt:
         print('{"error":"shared_backend_interrupted"}')
         return 130
@@ -1112,4 +1182,11 @@ def main(argv=None):
         print('{"error":"shared_backend_failed"}')
         return 1
     print(json.dumps(value, sort_keys=True, ensure_ascii=False))
+    if args.operation == "batch" and value["status"] != "complete":
+        return (
+            130
+            if value["error"]
+            in {"shared_backend_interrupted", "shared_batch_interrupted"}
+            else 1
+        )
     return 0

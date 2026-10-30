@@ -133,6 +133,10 @@ python3 -m unittest -v \
   tests.unit.deployment.test_shared_request_policy \
   tests.unit.deployment.test_shared_backend_probe \
   tests.unit.deployment.test_shared_backend \
+  tests.unit.deployment.test_shared_batch_capture \
+  tests.unit.deployment.test_shared_batch_probe \
+  tests.unit.deployment.test_shared_batch \
+  tests.unit.deployment.test_shared_batch_budget \
   tests.unit.deployment.test_image_authority \
   tests.unit.deployment.test_runtime_docker \
   tests.unit.deployment.test_inference_runtime \
