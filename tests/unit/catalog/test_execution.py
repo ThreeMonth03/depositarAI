@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from search.operations.catalog import backend, execution
+from search.operations.catalog import commands, execution
 from tests.unit.catalog.test_module_boundaries import (
     dependencies,
     imported_module,
@@ -93,7 +93,7 @@ class CatalogExecutionTests(unittest.TestCase):
             path = Path(directory) / "iid"
             path.touch(mode=0o600)
             script = "import os,sys; p=sys.argv[1]; os.unlink(p); fd=os.open(p, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o644); os.write(fd, b'sha256:example'); os.close(fd); print(oct(os.stat(p).st_mode & 0o777))"
-            outcome = backend._runner(Path(directory))(
+            outcome = commands.default_runner(Path(directory))(
                 [sys.executable, "-c", script, str(path)], timeout=10
             )
             self.assertEqual(0, outcome.returncode)

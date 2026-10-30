@@ -16,15 +16,15 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class CatalogCommandTests(unittest.TestCase):
-    def test_backend_facade_preserves_functions_error_and_shared_source_limit(self):
+    def test_backend_preserves_command_policy_and_error_identity(self):
         from search.operations.catalog import backend
 
-        self.assertIs(backend._runner, commands.default_runner)
         self.assertIs(backend._command, commands.command_output)
-        self.assertIs(backend.BackendError, commands.BackendError)
-        self.assertIs(backend.MAX_OUTPUT_BYTES, commands.MAX_OUTPUT_BYTES)
         self.assertEqual(4 * 1024**2, commands.MAX_OUTPUT_BYTES)
         self.assertEqual("BackendError", commands.BackendError.__name__)
+        self.assertEqual(
+            "search.operations.catalog.commands", commands.BackendError.__module__
+        )
         self.assertEqual(
             (commands.BackendError,), backend.IncompatibleCatalog.__bases__
         )

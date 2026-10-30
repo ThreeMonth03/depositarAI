@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from search.catalog.build import builder
 from search.catalog.errors import CatalogError
-from search.operations.catalog import backend
+from search.operations.catalog import backend, commands
 from search.operations.config import GPUConfig, ProductConfig
 from tests.test_validate_catalog_compose import (
     CATALOG_ROOT,
@@ -326,7 +326,7 @@ class CatalogBackendTests(unittest.TestCase):
         )
 
     def test_readonly_load_never_creates_a_missing_slot(self):
-        with self.assertRaisesRegex(backend.BackendError, "must be prepared"):
+        with self.assertRaisesRegex(commands.BackendError, "must be prepared"):
             self.load_prepared()
         self.assertFalse((self.config.state_root / "catalogs").exists())
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
@@ -338,15 +338,15 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
         staged = Path(prepared["tooling_root"]) / backend.STAGED_FILES[0]
         staged.write_bytes(staged.read_bytes() + b"# unsealed\n")
-        with self.assertRaisesRegex(backend.BackendError, "source changed"):
+        with self.assertRaisesRegex(commands.BackendError, "source changed"):
             self.load_prepared()
 
     def test_readonly_load_cannot_reuse_a_quarantined_slot(self):
         self.fail_bootstrap = True
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             self.prepare()
         self.calls.clear()
-        with self.assertRaisesRegex(backend.BackendError, "quarantined"):
+        with self.assertRaisesRegex(commands.BackendError, "quarantined"):
             self.load_prepared()
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
@@ -358,7 +358,7 @@ class CatalogBackendTests(unittest.TestCase):
         secret = directory / "secrets/fess_initial_admin_password"
         secret.write_text("f" * 64 + "\n")
         with self.assertRaisesRegex(
-            backend.BackendError, "security material digest mismatch"
+            commands.BackendError, "security material digest mismatch"
         ):
             self.load_prepared()
         self.assertEqual(original_manifest, manifest.read_bytes())
@@ -373,7 +373,7 @@ class CatalogBackendTests(unittest.TestCase):
         path.write_text("different role bindings\n")
         path.chmod(0o400)
         with self.assertRaisesRegex(
-            backend.BackendError, "security material digest mismatch"
+            commands.BackendError, "security material digest mismatch"
         ):
             self.load_prepared()
 
@@ -385,13 +385,13 @@ class CatalogBackendTests(unittest.TestCase):
         path.unlink()
         os.mkfifo(path, 0o400)
         with self.assertRaisesRegex(
-            backend.BackendError, "security material is unsafe"
+            commands.BackendError, "security material is unsafe"
         ):
             self.load_prepared()
         path.unlink()
         path.symlink_to(data / "opensearch/config/root-ca.pem")
         with self.assertRaisesRegex(
-            backend.BackendError, "security material is unsafe"
+            commands.BackendError, "security material is unsafe"
         ):
             self.load_prepared()
         path.unlink()
@@ -401,7 +401,7 @@ class CatalogBackendTests(unittest.TestCase):
         extra.write_text("not a reviewed secret\n")
         extra.chmod(0o600)
         with self.assertRaisesRegex(
-            backend.BackendError, "security material is unsafe"
+            commands.BackendError, "security material is unsafe"
         ):
             self.load_prepared()
 
@@ -549,7 +549,7 @@ class CatalogBackendTests(unittest.TestCase):
         for path in ("relative", "/tmp/source/../other", "/tmp//source", True):
             with (
                 self.subTest(path=path),
-                self.assertRaisesRegex(backend.BackendError, "build root"),
+                self.assertRaisesRegex(commands.BackendError, "build root"),
             ):
                 backend.validate_compose(compose, **arguments, sealed_build_root=path)
         changed = copy.deepcopy(compose)
@@ -643,7 +643,7 @@ class CatalogBackendTests(unittest.TestCase):
         self.complete_hint(first)
         self.missing_history = True
         self.calls.clear()
-        with self.assertRaises(backend.BackendError) as error:
+        with self.assertRaises(commands.BackendError) as error:
             self.prepare(revision="b" * 40)
         self.assertNotIsInstance(error.exception, backend.IncompatibleCatalog)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
@@ -669,7 +669,7 @@ class CatalogBackendTests(unittest.TestCase):
         self.complete_hint(first)
         self.unreadable_origin_files.add("search/catalog/embedding.py")
         self.calls.clear()
-        with self.assertRaises(backend.BackendError) as error:
+        with self.assertRaises(commands.BackendError) as error:
             self.prepare(revision="b" * 40)
         self.assertNotIsInstance(error.exception, backend.IncompatibleCatalog)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
@@ -684,27 +684,27 @@ class CatalogBackendTests(unittest.TestCase):
         path.chmod(0o400)
         self.calls.clear()
         with self.assertRaisesRegex(
-            backend.BackendError, "security material digest mismatch"
+            commands.BackendError, "security material digest mismatch"
         ):
             self.prepare(revision="b" * 40)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
     def test_dirty_bootstrap_source_fails_before_any_slot_is_created(self):
         self.dirty_source = "scripts/bootstrap-catalog.sh"
-        with self.assertRaisesRegex(backend.BackendError, "commit"):
+        with self.assertRaisesRegex(commands.BackendError, "commit"):
             self.prepare()
         self.assertFalse((self.config.state_root / "catalogs").exists())
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
     def test_dirty_build_source_fails_before_bootstrap(self):
         self.dirty_source = "deploy/docker/opensearch/Dockerfile"
-        with self.assertRaisesRegex(backend.BackendError, "commit"):
+        with self.assertRaisesRegex(commands.BackendError, "commit"):
             self.prepare()
         self.assertFalse((self.config.state_root / "catalogs").exists())
 
     def test_bootstrap_failure_is_quarantined_and_cannot_be_reused(self):
         self.fail_bootstrap = True
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             self.prepare()
         slot = next((self.config.state_root / "catalogs").iterdir())
         failure = json.loads((slot / "failure.json").read_text())
@@ -718,12 +718,12 @@ class CatalogBackendTests(unittest.TestCase):
             json.loads((slot / "hash-image.json").read_text())["image_id"],
         )
         self.fail_bootstrap = False
-        with self.assertRaisesRegex(backend.BackendError, "quarantined"):
+        with self.assertRaisesRegex(commands.BackendError, "quarantined"):
             self.prepare()
 
     def test_failed_hash_build_is_quarantined_without_bootstrap(self):
         self.fail_hash_build = True
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             self.prepare()
         slot = next((self.config.state_root / "catalogs").iterdir())
         failure = json.loads((slot / "failure.json").read_text())
@@ -744,7 +744,7 @@ class CatalogBackendTests(unittest.TestCase):
         ):
             with self.subTest(mutation=mutation):
                 self.hash_metadata_mutation = mutation
-                with self.assertRaisesRegex(backend.BackendError, "provenance"):
+                with self.assertRaisesRegex(commands.BackendError, "provenance"):
                     self.prepare(revision=f"{number:012x}" + "0" * 28)
                 self.assertTrue(all(argv[0] != "bash" for argv, _ in self.calls))
                 self.assertTrue(
@@ -756,7 +756,7 @@ class CatalogBackendTests(unittest.TestCase):
 
     def test_sealed_hash_build_context_is_checked_again_after_build(self):
         self.hash_context_mutation = True
-        with self.assertRaisesRegex(backend.BackendError, "source changed"):
+        with self.assertRaisesRegex(commands.BackendError, "source changed"):
             self.prepare()
         self.assertTrue(all(argv[0] != "bash" for argv, _ in self.calls))
 
@@ -774,21 +774,21 @@ class CatalogBackendTests(unittest.TestCase):
         result = self.prepare()
         path = Path(result["tooling_root"]) / backend.STAGED_FILES[0]
         path.write_bytes(path.read_bytes() + b"\n# mutated\n")
-        with self.assertRaisesRegex(backend.BackendError, "source changed"):
+        with self.assertRaisesRegex(commands.BackendError, "source changed"):
             self.prepare()
 
     def test_repeat_checks_sealed_build_sources_too(self):
         result = self.prepare()
         path = Path(result["tooling_root"]) / backend.BUILD_FILES[0]
         path.write_bytes(path.read_bytes() + b"\n# mutated\n")
-        with self.assertRaisesRegex(backend.BackendError, "source changed"):
+        with self.assertRaisesRegex(commands.BackendError, "source changed"):
             self.prepare()
 
     def test_sealed_environment_cannot_be_rewritten(self):
         result = self.prepare()
         path = Path(result["tooling_root"]) / ".env.catalog"
         path.write_bytes(path.read_bytes() + b"SECRET=not-allowed\n")
-        with self.assertRaisesRegex(backend.BackendError, "environment changed"):
+        with self.assertRaisesRegex(commands.BackendError, "environment changed"):
             self.prepare()
 
     def test_compose_digest_and_plan_identity_are_verified(self):
@@ -797,7 +797,7 @@ class CatalogBackendTests(unittest.TestCase):
         compose = json.loads(compose_path.read_text())
         compose["services"]["fess-search"]["ports"] = ["8080:8080"]
         compose_path.write_text(json.dumps(compose))
-        with self.assertRaisesRegex(backend.BackendError, "digest mismatch"):
+        with self.assertRaisesRegex(commands.BackendError, "digest mismatch"):
             self.prepare()
 
     def test_plan_schema_requires_exact_integer_not_boolean(self):
@@ -809,7 +809,7 @@ class CatalogBackendTests(unittest.TestCase):
             path.write_text(json.dumps(altered))
             with (
                 self.subTest(name=name),
-                self.assertRaisesRegex(backend.BackendError, "identity mismatch"),
+                self.assertRaisesRegex(commands.BackendError, "identity mismatch"),
             ):
                 self.prepare()
 
@@ -842,7 +842,7 @@ class CatalogBackendTests(unittest.TestCase):
         for revision in ("main", "a" * 39, "A" * 40, True):
             with (
                 self.subTest(revision=revision),
-                self.assertRaises(backend.BackendError),
+                self.assertRaises(commands.BackendError),
             ):
                 self.prepare(revision=revision)
         with self.assertRaises(CatalogError):
@@ -862,7 +862,7 @@ class CatalogBackendTests(unittest.TestCase):
         for number in range(backend.MAX_SLOTS):
             (slots / f"retained-{number}").mkdir(mode=0o700)
         before = set(slots.iterdir())
-        with self.assertRaisesRegex(backend.BackendError, "limit"):
+        with self.assertRaisesRegex(commands.BackendError, "limit"):
             self.prepare()
         self.assertEqual(before, set(slots.iterdir()))
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
@@ -920,19 +920,19 @@ class CatalogBackendTests(unittest.TestCase):
             return real_open(name, flags, *args, **kwargs)
 
         with patch.object(os, "open", side_effect=guarded_open):
-            with self.assertRaisesRegex(backend.BackendError, "unsafe"):
+            with self.assertRaisesRegex(commands.BackendError, "unsafe"):
                 backend._source_bytes(path)
 
     def test_repository_sources_refuse_links_and_writable_files(self):
         path = self.root / "repository-source"
         path.write_bytes(b"sealed source\n")
         path.chmod(0o666)
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             backend._source_bytes(path)
         path.chmod(0o600)
         linked = self.root / "hardlink"
         os.link(path, linked)
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             backend._source_bytes(path)
         linked.unlink()
         linked.symlink_to(path)

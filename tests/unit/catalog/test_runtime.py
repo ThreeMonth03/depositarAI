@@ -15,7 +15,7 @@ from unittest.mock import patch
 from search.catalog.bundle import CatalogBundle
 from search.catalog.errors import BundleError
 from search.catalog import errors as catalog
-from search.operations.catalog import backend, commands, execution, runtime
+from search.operations.catalog import commands, execution, runtime
 from search.operations.catalog.administration import _admin_failure_diagnostic
 from search.operations.catalog.policy import (
     _duration,
@@ -642,7 +642,7 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.fixture.original_sources[(REVISION, relative)] = (
             ROOT / relative
         ).read_text() + "\n# Different catalog recipe\n"
-        with self.assertRaisesRegex(backend.BackendError, "recipe changed"):
+        with self.assertRaisesRegex(commands.BackendError, "recipe changed"):
             self.start()
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
 
@@ -881,7 +881,7 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_failed_volume_initialization_quarantines_start_without_retry(self):
         self.volume.fail_initialize = True
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             self.start()
         self.assertTrue((self.root / "volume-started.json").exists())
         self.assertTrue((self.root / "start-failure.json").exists())
@@ -1031,7 +1031,7 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_failed_admin_image_stage_cannot_retry_or_be_bypassed_by_start(self):
         self.build_failure_service = "catalog-admin"
-        with self.assertRaisesRegex(backend.BackendError, "command failed"):
+        with self.assertRaisesRegex(commands.BackendError, "command failed"):
             self.stage_images()
         self.assertTrue((self.root / "image-stage-started.json").exists())
         self.assertTrue((self.root / "images.json").exists())
@@ -1133,7 +1133,7 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.calls.clear()
         fess = staged["images"]["fess-search"]
         original = self.images.pop(fess["reference"])
-        with self.assertRaisesRegex(backend.BackendError, "command failed"):
+        with self.assertRaisesRegex(commands.BackendError, "command failed"):
             self.stage_images()
         self.images[fess["reference"]] = original
         admin = staged["admin_image"]
@@ -1180,7 +1180,7 @@ class CatalogRuntimeTests(unittest.TestCase):
         prebuilt = self.prebuilt_receipt()
         reference = prebuilt["images"]["fess-search"]["reference"]
         del self.images[reference]
-        with self.assertRaisesRegex(backend.BackendError, "command failed"):
+        with self.assertRaisesRegex(commands.BackendError, "command failed"):
             self.start(prebuilt_images=prebuilt)
         self.assertFalse((self.root / "start-started.json").exists())
         self.assertFalse((self.root / "start-failure.json").exists())
