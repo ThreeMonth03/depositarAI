@@ -6,6 +6,7 @@ from pathlib import Path
 import unittest
 
 from search.quality import contract, evaluator
+from search.api.conversation.calendar import calendar_text
 from search.tests.fixtures import IDS, condition_document
 from tests.unit.quality.fixtures import capture, non_search, plan_for, turn
 
@@ -233,6 +234,82 @@ class SearchQualityTests(unittest.TestCase):
 
 
 class QualityPlanTests(unittest.TestCase):
+    def test_calendar_clarifications_use_the_existing_product_reasons(self):
+        for query, reason in (
+            ("改查2040年2月30日", "invalid_date"),
+            ("2041-02-29", "invalid_date"),
+            ("2040-13-01", "invalid_date"),
+            ("111年", "ambiguous_era"),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(reason, calendar_text(query).reason)
+                value = non_search("clarification_required", reason)
+                value["query"] = query
+                captured = capture(value)
+                plan = plan_for(captured)
+                self.assertEqual(plan, contract.validate_cases(plan))
+                self.assertEqual("passed", evaluator.evaluate(captured, plan)["status"])
+
+    def test_invalid_date_clarification_preserves_state_before_valid_repair(self):
+        first = turn(None)
+        invalid = non_search(
+            "clarification_required",
+            "invalid_date",
+            version=2,
+            state=first["response"]["result"]["state"],
+            retain_topic=True,
+        )
+        invalid["query"] = "改查2040年2月30日"
+        repair = turn(
+            {"start": "2040-02-29", "end": "2040-02-29"},
+            version=3,
+            retain_topic=True,
+            source=condition_document("2040", "2040"),
+        )
+        repair["query"] = "2040年2月29日"
+        captured = capture(first, invalid, repair)
+        result = evaluator.evaluate(captured, plan_for(captured))
+        self.assertEqual("passed", result["status"])
+        self.assertEqual(3, result["summary"]["passed_turn_count"])
+
+    def test_ambiguous_and_invalid_dates_cannot_substitute_reason_values(self):
+        for expected, actual in (
+            ("invalid_date", "ambiguous_time"),
+            ("ambiguous_time", "invalid_date"),
+        ):
+            with self.subTest(expected=expected, actual=actual):
+                value = non_search("clarification_required", expected)
+                value["response"]["result"]["reason"] = actual
+                result = evaluator.evaluate(capture(value))
+                self.assertEqual("failed", result["status"])
+                self.assertIn(
+                    "reason_mismatch", result["cases"][0]["turns"][0]["issues"]
+                )
+
+    def test_revised_date_expectation_needs_a_new_plan_and_fresh_capture(self):
+        old_capture = capture(non_search("clarification_required", "ambiguous_time"))
+        old_capture["cases"][0]["turns"][0]["query"] = "2040-02-30"
+        old_plan = plan_for(old_capture)
+        revised_plan = copy.deepcopy(old_plan)
+        revised_plan["cases"][0]["turns"][0]["expected"]["reason"] = "invalid_date"
+        before = copy.deepcopy(old_capture)
+        self.assertNotEqual(
+            contract.plan_digest(old_plan), contract.plan_digest(revised_plan)
+        )
+        with self.assertRaisesRegex(ValueError, "query or expectation differs"):
+            evaluator.evaluate(old_capture, revised_plan)
+        self.assertEqual(before, old_capture)
+
+    def test_current_invalid_date_case_uses_calendar_reason(self):
+        path = Path(__file__).resolve().parents[2] / "fixtures/search-quality.json"
+        plan = json.loads(path.read_text())
+        case = next(
+            case for case in plan["cases"] if case["id"] == "invalid-date-then-repair"
+        )
+        invalid = case["turns"][1]
+        self.assertEqual("invalid_date", calendar_text(invalid["query"]).reason)
+        self.assertEqual("invalid_date", invalid["expected"]["reason"])
+
     def test_success_with_unapplied_lunar_time_requires_an_explicit_oracle(self):
         for time in (None, {"start": "2024", "end": "2024"}):
             with self.subTest(civil_time=time):
@@ -500,6 +577,11 @@ class QualityPlanTests(unittest.TestCase):
             {"reason": "unsafe"},
             {"status": "clarification_required"},
             {"status": "clarification_required", "reason": "unsafe"},
+            {"status": "clarification_required", "reason": "unknown_reason"},
+            {"status": "ok", "reason": "invalid_date"},
+            {"status": "rejected", "reason": "invalid_date"},
+            {"status": "ok", "reason": "ambiguous_era"},
+            {"status": "rejected", "reason": "ambiguous_era"},
             {"status": "rejected", "reason": "ambiguous_time"},
             {"status": "rejected", "reason": 1},
             {"retain_topic": 1},
@@ -544,7 +626,7 @@ class QualityPlanTests(unittest.TestCase):
         self.assertEqual({"ok", "clarification_required", "rejected"}, outcomes)
         self.assertRegex(contract.plan_digest(plan), r"^[0-9a-f]{64}$")
         self.assertEqual(
-            "0e2438ada5c5f72a8dbb49bab1faa96cc4cb74ccd8b29303a8ffa8907a01435b",
+            "946f04a2c4e5cdf283e7a10c78ed19ad4030e34dd4e2fcef82684e5a8f8a8d21",
             contract.plan_digest(plan),
         )
 

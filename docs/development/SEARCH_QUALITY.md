@@ -31,6 +31,8 @@ python3 scripts/check_search_quality.py \
 失敗結果，尚未執行的輪次留缺；不要悄悄重試或把後續輪次往前遞補。跨版本比較
 使用相同計畫摘要、catalog manifest、模型及 request policy，並另外保留來源版本。
 人工判讀後可以修正不合理的預期，但須更換計畫摘要、重跑兩邊，不能只修改一邊。
+更新現行案例檔後，既有擷取仍須搭配當時保存的計畫；新的計畫摘要需要重新擷取。
+不能改寫舊擷取中的 `expected`，將原有結果套到修正後的預期。
 
 也可以只核對一份自行擷取的回應：
 
@@ -42,6 +44,40 @@ JSON 報告寫到 stdout。退出碼 `0` 表示計畫格式有效或回應檢查
 `1` 表示有不符或無法核對項目，
 `2` 表示輸入格式錯誤。每個 issue 都需要按回應、來源資料與部署版本定位，不能
 只因一項失敗就斷言是搜尋演算法有 bug。
+
+## 合併多批擷取
+
+`scripts/check_search_batches.py` 先核對各批收據，再使用同一套 evaluator 評估完整
+題組。輸入為完整 plan、各批原始 subplan，以及包含 `run.json`、`capture.json`、
+`outcomes.json` 的私有目錄；一個 case 的完整對話只能屬於一批。
+
+```bash
+python3 scripts/check_search_batches.py \
+  --plan /private/full-plan.json \
+  --batch /private/batch-a.json /private/capture-a \
+  --batch /private/batch-b.json /private/capture-b \
+  --output /private/quality-report.json
+```
+
+輸入及輸出目錄須為目前使用者擁有的 `0700` 目錄，輸入檔須為 `0600`，路徑使用
+絕對路徑。輸出必須是新檔，工具不覆寫既有報告。一般 stdout 僅含狀態、摘要與計畫
+digest；詳細報告含 case、卡片與來源身分，寫入指定的 `0600` 檔案，勿提交 Git。
+
+工具核對檔案 bytes／SHA256、實際 query／expected、outcomes 計數、來源／catalog／
+模型／policy 的完整身分，以及回應的 revision／manifest。預設採第一份身分已驗證
+的收據作為 baseline；也可用 `--baseline /private/identity.json` 明確指定完整身分。
+摘要與私有檔案權限無法證明收據作者身分；仍須由受控擷取流程保存證據。
+
+| 批次證據 | 評估方式 |
+|---|---|
+| `complete` 且 `identity_verified: true` | 納入 evaluator；品質斷言可以通過或失敗。 |
+| `failed`、`quarantined` 或未提供的批次 | 整批不採用卡片，保留完整題組分母；即使部分查詢成功也不當成有效證據。 |
+| 混用身分、改寫計畫、重複 case、缺檔或 hash 不符 | 拒絕輸入，不產生可用報告。 |
+
+`evidence_missing_turn_count` 計算缺少可信證據的輪數，
+`quality_failed_turn_count` 只計算可信回應的斷言失敗，避免把執行失敗歸因於模型。
+報告狀態為 `passed`／`failed`／`incomplete`；退出碼分別為 `0`／`1`／`1`，
+拒絕輸入為 `2`。沒有提供的批次可以留缺；已提供的批次則必須帶齊固定三個檔案。
 
 ## 準備輸入
 
@@ -65,6 +101,9 @@ JSON 報告寫到 stdout。退出碼 `0` 表示計畫格式有效或回應檢查
 | `status` | 預設 `ok`；另可指定 `clarification_required` 或 `rejected`。 |
 | `reason` | 預設 `none`，核對回應原因。澄清／拒絕必填，且必須是該狀態的產品原因，例如 `ambiguous_time`／`off_topic`。 |
 | `topic_changed` | 預設 `false`；明確新搜尋可設為 `true`，要求主題異於上一個已提交主題，不能與 `retain_topic` 同時使用。 |
+
+不存在的日期使用 `invalid_date`，短年份未標示紀年使用 `ambiguous_era`，時間條件不夠
+明確使用 `ambiguous_time`。這些澄清原因分別核對，不能互相替代。
 
 成功搜尋要求非空主題。澄清／拒絕允許新 session 的空主題，但整份搜尋 state
 必須等於上次已提交的 state，`search` 必須為 `null`，`source_metadata` 為 `{}`。
@@ -140,5 +179,6 @@ revision 與 manifest，避免把不同部署或快照混成同一個對話基�
 CPU 回歸測試：
 
 ```bash
-python3 -m unittest tests.unit.quality.test_evaluator tests.unit.quality.test_cli -v
+python3 -m unittest tests.unit.quality.test_evaluator tests.unit.quality.test_cli \
+  tests.unit.quality.test_batches tests.unit.quality.test_batches_cli -v
 ```

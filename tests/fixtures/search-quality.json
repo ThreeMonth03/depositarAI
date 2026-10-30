@@ -257,7 +257,7 @@
             "formats": [],
             "retain_topic": true,
             "status": "clarification_required",
-            "reason": "ambiguous_time"
+            "reason": "invalid_date"
           }
         },
         {
