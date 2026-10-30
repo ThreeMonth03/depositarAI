@@ -234,6 +234,72 @@ class SearchQualityTests(unittest.TestCase):
 
 
 class QualityPlanTests(unittest.TestCase):
+    def test_unknown_time_fields_cannot_be_normalized_out_of_an_oracle(self):
+        for field in ("calendar", "updated_since", "unexpected"):
+            with self.subTest(field=field):
+                value = capture(turn({"start": "2024", "end": "2024"}))
+                expected = value["cases"][0]["turns"][0]["expected"]
+                expected["time"] = expected["time"] | {field: "unsupported"}
+                with self.assertRaises(ValueError):
+                    contract.validate_cases(plan_for(value))
+                with self.assertRaises(ValueError):
+                    evaluator.evaluate(value)
+
+    def test_unknown_actual_time_fields_fail_state_and_search_assertions(self):
+        for field in ("state", "parsed_conditions", "applied_conditions"):
+            with self.subTest(field=field):
+                value = capture(turn({"start": "2024", "end": "2024"}))
+                plan = plan_for(value)
+                result = value["cases"][0]["turns"][0]["response"]["result"]
+                target = (
+                    result["state"] if field == "state" else result["search"][field]
+                )
+                target["time"] = target["time"] | {"calendar": "unsupported"}
+                report = evaluator.evaluate(value, plan)
+                self.assertEqual("failed", report["status"])
+                self.assertIn(
+                    "state_conditions_invalid"
+                    if field == "state"
+                    else field + "_invalid",
+                    report["cases"][0]["turns"][0]["issues"],
+                )
+
+    def test_supported_time_semantics_and_outer_expectations_still_pass(self):
+        value = capture(turn({"start": "2024", "end": "2024"}))
+        row = value["cases"][0]["turns"][0]
+        row["expected"].update(status="ok", reason="none", topic_changed=False)
+        semantics = {
+            "field": "data_coverage",
+            "relation": "overlaps",
+            "endpoints": "inclusive",
+        }
+        row["expected"]["time"] = row["expected"]["time"] | semantics
+        result = row["response"]["result"]
+        for target in (
+            result["state"],
+            result["search"]["parsed_conditions"],
+            result["search"]["applied_conditions"],
+        ):
+            target["time"] = target["time"] | semantics
+        self.assertEqual("passed", evaluator.evaluate(value, plan_for(value))["status"])
+
+    def test_malformed_or_unsupported_temporal_semantics_remain_invalid(self):
+        for interval in (
+            True,
+            [],
+            "2024",
+            {"start": "2024"},
+            {"start": "2024", "end": "2024", "field": "metadata_modified"},
+            {"start": "2024", "end": "2024", "relation": "contains"},
+            {"start": "2024", "end": "2024", "endpoints": "exclusive"},
+            {"start": "2024-02-30", "end": "2024-02-30"},
+        ):
+            with self.subTest(interval=interval):
+                value = capture(turn({"start": "2024", "end": "2024"}))
+                value["cases"][0]["turns"][0]["expected"]["time"] = interval
+                with self.assertRaises(ValueError):
+                    contract.validate_cases(plan_for(value))
+
     def test_calendar_clarifications_use_the_existing_product_reasons(self):
         for query, reason in (
             ("改查2040年2月30日", "invalid_date"),

@@ -33,6 +33,8 @@ def conditions(value):
         interval = value["time"]
         if type(interval) is not dict or not {"start", "end"} <= set(interval):
             raise ValueError("time fields missing")
+        if set(interval) - {"start", "end", "field", "relation", "endpoints"}:
+            raise ValueError("unsupported temporal fields")
         for key, expected in (
             ("field", "data_coverage"),
             ("relation", "overlaps"),
