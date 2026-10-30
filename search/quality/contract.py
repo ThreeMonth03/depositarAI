@@ -11,7 +11,9 @@ from search.planning.predicates import validate_conditions
 OUTCOMES = {
     "ok": {"none"},
     "clarification_required": {
+        "ambiguous_era",
         "ambiguous_time",
+        "invalid_date",
         "missing_topic",
         "unsupported_condition",
         "location_not_supported",

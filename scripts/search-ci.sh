@@ -99,6 +99,8 @@ python3 -m unittest -v \
   tests.unit.operations.test_private_io \
   tests.unit.quality.test_evaluator \
   tests.unit.quality.test_cli \
+  tests.unit.quality.test_batches \
+  tests.unit.quality.test_batches_cli \
   tests.unit.operations.test_demo_connection \
   tests.unit.operations.test_bounded_process \
   tests.unit.operations.test_model_source \
