@@ -60,6 +60,7 @@ for relative in (
     "quality",
     "operations/catalog",
     "operations/documents",
+    "operations/jobs",
     "operations/metadata",
     "operations/cli.py",
     "catalog/build",
@@ -136,6 +137,7 @@ for name, module in loaded.items():
         or relative.startswith("catalog/build/")
         or relative.startswith("operations/catalog/")
         or relative.startswith("operations/documents/")
+        or relative.startswith("operations/jobs/")
         or relative.startswith("operations/metadata/")
     ), "offline implementation loaded: " + name
 
