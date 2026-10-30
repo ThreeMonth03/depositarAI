@@ -231,7 +231,37 @@ class RetrievalResultTests(unittest.TestCase):
 
     def test_retrieval_text_must_be_safe_utf8_nfkc_without_controls(self):
         query = "臺灣資料"
-        for text in ("bad\ud800", "fullwidth，comma", "left\u202eright"):
+        for text in ("臺灣氣候資料", "Café", "資料 🌦"):
+            source = report(query, count=1)
+            source["results"][0]["title"] = text
+            with self.subTest(text=text):
+                self.assertEqual(
+                    ValidatedSearch.from_report(
+                        query, source, conditions={}, manifest_sha256="b" * 64
+                    ).cards()[0]["title"],
+                    text,
+                )
+        prohibited = (
+            "bad\ud800",
+            "fullwidth，comma",
+            "left\x00right",
+            "zero\u200bwidth",
+        )
+        bidi = (
+            0x061C,
+            0x200E,
+            0x200F,
+            0x202A,
+            0x202B,
+            0x202C,
+            0x202D,
+            0x202E,
+            0x2066,
+            0x2067,
+            0x2068,
+            0x2069,
+        )
+        for text in (*prohibited, *(f"left{chr(code)}right" for code in bidi)):
             malformed = report(query)
             malformed["results"][0]["title"] = text
             with self.subTest(text=repr(text)), self.assertRaises(ResultError):

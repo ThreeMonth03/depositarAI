@@ -221,7 +221,7 @@ def search(payload, settings):
     by_id = client.by_id
     results = []
     for hit in fused:
-        row = {k: json.loads(json.dumps(by_id[hit.id][k])) for k in METADATA_FIELDS}
+        row = {k: _json_wire_copy(by_id[hit.id][k]) for k in METADATA_FIELDS}
         metadata = bundle.condition_metadata[hit.id]
         row.update(
             resource_context=_json_wire_copy(by_id[hit.id]["resource_context"]),
