@@ -19,6 +19,7 @@ PACKAGE_PATHS = (
     "search/http",
     "search/transport",
     "search/catalog",
+    "search/quality",
     "search/operations",
     "search/operations/catalog",
     "search/operations/deployment",

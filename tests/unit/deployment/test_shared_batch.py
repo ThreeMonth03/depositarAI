@@ -11,10 +11,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from scripts import check_search_quality as quality
+from search.quality import contract, evaluator
 from search.operations.deployment import shared_backend as shared
 from search.operations.deployment import shared_batch as batch
-from tests.unit.operations.test_search_quality import turn
+from tests.unit.quality.fixtures import turn
 
 
 REVISION = "a" * 40
@@ -205,7 +205,9 @@ class BatchTests(unittest.TestCase):
         result = self.run_batch()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["completed_turns"], 3)
-        self.assertEqual(result["plan_sha256"], quality.plan_digest(self.specification))
+        self.assertEqual(
+            result["plan_sha256"], contract.plan_digest(self.specification)
+        )
         self.assertEqual(self.events.count("audit"), 2)
         self.assertEqual(self.events.count("model_checkpoint"), 3)
         self.assertEqual(self.events[-1], "live_exit")
@@ -216,7 +218,7 @@ class BatchTests(unittest.TestCase):
                 (self.destination / "capture.json").read_bytes()
             ).hexdigest(),
         )
-        self.assertEqual(quality.evaluate(captured)["status"], "passed")
+        self.assertEqual(evaluator.evaluate(captured)["status"], "passed")
         replies = captured["cases"][0]["turns"]
         self.assertEqual([row["response"]["version"] for row in replies], [1, 2, 3])
         self.assertEqual(

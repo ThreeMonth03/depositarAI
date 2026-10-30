@@ -194,7 +194,7 @@ class RuntimeImportGateTests(unittest.TestCase):
                 self.assertEqual(code, result.returncode)
                 self.assertEqual(previous_calls + 1, len(self.calls()))
 
-    def test_copied_offline_resource_code_is_rejected_without_importing_it(self):
+    def test_copied_offline_code_is_rejected_without_importing_it(self):
         _, tree = self.payload("conversation")
         guard = next(
             statement
@@ -208,11 +208,16 @@ class RuntimeImportGateTests(unittest.TestCase):
             ast.Module(body=[guard], type_ignores=[]), "runtime-import-policy", "exec"
         )
         search_root = self.root / "image/search"
-        documents = search_root / "operations/documents"
-        documents.mkdir(parents=True)
-        with self.assertRaisesRegex(AssertionError, "offline code in runtime image"):
-            exec(program, {"search_root": search_root})
-        documents.rmdir()
+        search_root.mkdir(parents=True)
+        for relative in ("operations/documents", "quality"):
+            path = search_root / relative
+            path.mkdir(parents=True)
+            with (
+                self.subTest(relative=relative),
+                self.assertRaisesRegex(AssertionError, "offline code in runtime image"),
+            ):
+                exec(program, {"search_root": search_root})
+            path.rmdir()
         (search_root / "operations/shared").mkdir()
         exec(program, {"search_root": search_root})
 

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 import re
 import time
 
-from scripts.check_search_quality import plan_digest
+from search.quality.contract import plan_digest
 from search.operations import config as product_config
 from . import shared_backend as shared
 from . import shared_batch_capture as capture

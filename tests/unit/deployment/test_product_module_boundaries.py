@@ -373,6 +373,40 @@ class ProductModuleBoundaryTests(unittest.TestCase):
 
 
 class HostToolBoundaryTests(unittest.TestCase):
+    def test_quality_domain_is_independent_of_cli_operators_and_model_execution(self):
+        paths = sorted((ROOT / "search/quality").glob("*.py"))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(source=str(path.relative_to(ROOT))):
+                self.assertEqual(
+                    [],
+                    forbidden_dependencies(
+                        source_dependencies(path),
+                        (
+                            "scripts",
+                            "search.operations",
+                            "search.evaluation",
+                            "subprocess",
+                            "torch",
+                            "transformers",
+                            "haystack",
+                        ),
+                    ),
+                )
+
+    def test_batch_quality_consumers_do_not_depend_on_script_entry_points(self):
+        for relative in (
+            "search/operations/deployment/shared_batch.py",
+            "search/operations/deployment/shared_batch_capture.py",
+        ):
+            with self.subTest(source=relative):
+                self.assertEqual(
+                    [],
+                    forbidden_dependencies(
+                        source_dependencies(ROOT / relative), ("scripts",)
+                    ),
+                )
+
     def test_host_json_consumers_do_not_import_api_configuration(self):
         for relative in (
             "scripts/depositarai.py",

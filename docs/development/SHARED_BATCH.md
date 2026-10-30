@@ -16,7 +16,7 @@
 
 案例沿用 [離線正確性工具](SEARCH_QUALITY.md) 的 `id`、ordered `turns` 與
 `expected` 語意；執行前不需要填入尚未取得的 `response` 或 `source_metadata`。
-批次直接重用該工具的 `validate_cases` 驗證，不另訂一套預期條件格式。
+批次直接重用 `search.quality.contract.validate_cases`，不另訂一套預期條件格式。
 案例與預期條件由資料／搜尋品質維護者核對，批次不產生 gold labels 或評分。
 
 ```json
@@ -89,7 +89,7 @@ python3 scripts/share_search_backend.py \
 若單一案例本身超過 8 輪，須由品質維護者重新審核計畫，不能直接拆成獨立對話。
 
 每個子計畫各用新的 `--capture` 目錄執行。`run.json.plan_sha256` 由現有
-`quality.plan_digest` 計算，綁定**這一批子計畫**的 case ID、原始查詢、預期條件及
+`search.quality.contract.plan_digest` 計算，綁定**這一批子計畫**的 case ID、原始查詢、預期條件及
 順序；不是案例檔案的原始 bytes SHA、capture 摘要或完整固定題組的摘要。
 完整計畫的 `plan_sha256` 另外由離線工具的 `--plan` 取得；各批子計畫摘要通常
 不同，應與完整計畫及拆批對應一起保存。
