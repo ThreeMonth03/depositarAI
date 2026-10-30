@@ -97,6 +97,8 @@ python3 -m unittest -v \
   tests.unit.operations.test_document_sets \
   tests.unit.jobs.test_queue \
   tests.unit.jobs.test_sources \
+  tests.unit.jobs.test_profiles \
+  tests.unit.jobs.test_execution \
   tests.unit.operations.test_resource_enrichment \
   tests.unit.operations.test_private_io \
   tests.unit.quality.test_evaluator \

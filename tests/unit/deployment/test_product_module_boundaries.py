@@ -54,6 +54,7 @@ OPERATOR_NAMESPACES = (
     "search.operations.catalog",
     "search.operations.deployment",
     "search.operations.documents",
+    "search.operations.jobs",
     "search.operations.metadata",
     "search.operations.lifecycle",
 )
@@ -203,12 +204,14 @@ class ProductModuleBoundaryTests(unittest.TestCase):
         self.assertEqual([], forbidden_dependencies(found, OPERATOR_NAMESPACES))
         self.assertEqual([], forbidden_dependencies(found, ("search.api.engine",)))
 
-    def test_request_handlers_cannot_import_resource_batching_directly_or_lazily(self):
+    def test_request_handlers_cannot_import_operator_jobs_directly_or_lazily(self):
         for source in (
             "import search.operations.documents.batches",
             "from search.operations import documents",
             "from ...operations.documents import batches",
             "def later():\n    from ...operations.documents import controller",
+            "from ...operations.jobs import queue",
+            "def later():\n    from ...operations.jobs import execution",
         ):
             with self.subTest(source=source):
                 found = dependencies(ast.parse(source), "search.api.shared")

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -13,8 +14,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from search.operations.jobs import pueue, queue
+from search.operations.jobs import execution, pueue, queue
 from search.operations.shared import private_io
+from search.quality.contract import plan_digest
+from tests.unit.quality.fixtures import capture, turn
+from tests.unit.quality.test_batches import encoded, make_record, rewrite
 
 
 class FakePueue:
@@ -162,6 +166,69 @@ class QueueTests(unittest.TestCase):
         )
         self.transport.tasks[task_id]["status"] = {"Running": {}}
 
+    def typed_profiles(self):
+        config = self.directory / "native-config.json"
+        queue.write(config, {"state_root": str(self.directory / "native-state")})
+        config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
+        record = make_record(capture(turn(None)))
+        run = json.loads(record["files"]["run.json"])
+        run["operator_revision"] = "a" * 40
+        run["identity"]["operator_revision"] = "a" * 40
+        rewrite(record, run=run)
+        cases = self.directory / "native-cases.json"
+        cases.write_bytes(encoded(record["plan"]))
+        cases.chmod(0o600)
+        quality = {
+            "type": "quality-batch",
+            "config": str(config),
+            "config_sha256": config_sha,
+            "source_revision": "a" * 40,
+            "candidate_revision": "a" * 40,
+            "cases": str(cases),
+            "cases_sha256": hashlib.sha256(cases.read_bytes()).hexdigest(),
+            "plan_sha256": plan_digest(record["plan"]),
+            "expected_identity_sha256": queue.digest(run["identity"]),
+        }
+        vector = {
+            "type": "vector-pass",
+            "config": str(config),
+            "config_sha256": config_sha,
+            "source_revision": "a" * 40,
+            "catalog_revision": "b" * 40,
+            "bundle_id": "1" * 64,
+            "manifest_sha256": "b" * 64,
+            "expected_inputs_sha256": "2" * 64,
+        }
+        report = {
+            "schema_version": 1,
+            "status": "checkpoint",
+            "revision": "b" * 40,
+            "bundle_id": "1" * 64,
+            "manifest_sha256": "b" * 64,
+            "active_changed": False,
+            "runtime_verified": True,
+            "host_cleanup_verified": True,
+            "document_count": 10,
+            "done_count": 4,
+            "pending_count": 6,
+            "completed_passes": 1,
+            "passes_this_invocation": 1,
+            "recipe_sha256": "3" * 64,
+        }
+        return quality, vector, record, report
+
+    def submit_profile(self, name):
+        return queue.submit(
+            self.registry,
+            {
+                "schema_version": 1,
+                "issue": 68,
+                "profile": name,
+                "source": str(self.source),
+                "revision": "a" * 40,
+            },
+        )["job_id"]
+
     def test_snapshot_survives_caller_edit_and_checkpoint_is_clean(self):
         identifier = self.submit()
         self.program.write_text("raise RuntimeError('caller changed after enqueue')\n")
@@ -198,9 +265,19 @@ class QueueTests(unittest.TestCase):
                     "profile_count": 10000,
                     "failed_count": failed,
                 }
-                queue._operation_result(value, code, self.profile)
+                execution.verify(
+                    value,
+                    code,
+                    self.root,
+                    {"revision": "a" * 40, "profile_definition": self.profile},
+                )
         with self.assertRaisesRegex(pueue.JobError, "operation_result_unverified"):
-            queue._operation_result(self.report, 0, self.profile)
+            execution.verify(
+                self.report,
+                0,
+                self.root,
+                {"revision": "a" * 40, "profile_definition": self.profile},
+            )
 
     def test_plan_drift_blocks_before_resource_process(self):
         identifier = self.submit()
@@ -240,6 +317,171 @@ class QueueTests(unittest.TestCase):
             with self.assertRaisesRegex(pueue.JobError, "job_blocked"):
                 queue.execute(self.registry, identifier)
         self.assertFalse((self.root / "active.json").exists())
+
+    def test_lock_proof_comes_from_held_fd_after_named_file_replacement(self):
+        named = self.root / "proof.lock"
+        retained = self.root / "retained.lock"
+        with queue.locked(self.root, named.name) as proof:
+            self.assertIsInstance(proof, tuple)
+            self.assertEqual(proof, private_io.identity(named.lstat()))
+            named.rename(retained)
+            queue.write(named, {"replacement": True})
+            self.assertNotEqual(proof[:2], private_io.identity(named.lstat())[:2])
+            self.assertEqual(proof[:2], private_io.identity(retained.lstat())[:2])
+            fd = os.open(retained, os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+
+    def test_archive_intent_refuses_submit_and_execute_without_clearing_it(self):
+        identifier = self.submit()
+        self.start(identifier)
+        intent = self.root / "archive-intent.json"
+        intent.symlink_to(self.directory / "missing-intent")
+        for action in (self.submit, lambda: queue.execute(self.registry, identifier)):
+            with self.assertRaisesRegex(
+                pueue.JobError, "job_archive_recovery_required"
+            ):
+                action()
+            self.assertTrue(intent.is_symlink())
+        self.assertFalse((self.root / "active.json").exists())
+
+    def test_mixed_types_share_the_same_runner_and_verified_inventory(self):
+        quality, vector, record, vector_report = self.typed_profiles()
+        self.registry["profiles"].update(quality=quality, vector=vector)
+        identifiers = [
+            self.submit(),
+            self.submit_profile("quality"),
+            self.submit_profile("vector"),
+        ]
+        original = queue.read(
+            queue.job_root(self.registry, identifiers[1]) / "quality-cases.json",
+            raw=True,
+        )
+        Path(quality["cases"]).unlink()
+        Path(quality["cases"]).symlink_to(self.directory / "missing-caller-cases")
+        Path(quality["config"]).write_bytes(b"caller replaced config\n")
+
+        def native(argv, **options):
+            if "batch" in argv:
+                destination = Path(argv[argv.index("--capture") + 1])
+                destination.mkdir(mode=0o700)
+                fd = private_io.open_directory(destination)
+                try:
+                    for name, raw in record["files"].items():
+                        private_io.write_file(fd, name, raw, max_bytes=8 * 1024**2)
+                finally:
+                    os.close(fd)
+                value = {
+                    k: v
+                    for k, v in json.loads(record["files"]["run.json"]).items()
+                    if k != "identity"
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, private_io.canonical(value), b""
+                )
+            if "build-vectors" in argv:
+                self.assertEqual(
+                    argv[argv.index("--expected-inputs-sha256") + 1],
+                    vector["expected_inputs_sha256"],
+                )
+                return subprocess.CompletedProcess(
+                    argv, 2, private_io.canonical(vector_report), b""
+                )
+            return self.command(argv, **options)
+
+        with patch.object(queue, "command", side_effect=native):
+            for identifier, expected in zip(
+                identifiers, ("checkpoint", "completed", "checkpoint")
+            ):
+                self.start(identifier)
+                result = queue.execute(self.registry, identifier)
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(
+                    queue.result(self.registry, identifier)["status"], expected
+                )
+                self.assertEqual(
+                    queue.read(self.root / "active.json"),
+                    {"job_id": identifier, "status": "clean"},
+                )
+                self.assertTrue(queue.verified_evidence(self.registry, identifier))
+                task_id = str(
+                    queue.read(
+                        queue.job_root(self.registry, identifier) / "queue.json"
+                    )["task_id"]
+                )
+                self.transport.tasks[task_id]["status"] = {
+                    "Done": {"result": "Success"}
+                }
+        inventory = queue.verified_evidence(self.registry, identifiers[1])
+        self.assertTrue(
+            {
+                "native-config.json",
+                "quality-cases.json",
+                "capture/run.json",
+                "capture/capture.json",
+                "capture/outcomes.json",
+            }
+            <= inventory.keys()
+        )
+        self.assertFalse(any(name.startswith("source/") for name in inventory))
+        self.assertEqual(
+            queue.read(
+                queue.job_root(self.registry, identifiers[1]) / "quality-cases.json",
+                raw=True,
+            ),
+            original,
+        )
+        operation = (
+            queue.job_root(self.registry, identifiers[1]) / "capture/outcomes.json"
+        )
+        operation.write_bytes(b"{}\n")
+        with self.assertRaises(ValueError):
+            queue.verified_evidence(self.registry, identifiers[1])
+
+    def test_typed_wrong_source_is_refused_before_freezing_or_enqueuing(self):
+        quality, vector, _, _ = self.typed_profiles()
+        for profile in (quality, vector):
+            with self.subTest(profile=profile["type"]):
+                self.registry["profiles"]["wrong-source"] = {
+                    **profile,
+                    "source_revision": "c" * 40,
+                }
+                with self.assertRaisesRegex(pueue.JobError, "profile_source_changed"):
+                    self.submit_profile("wrong-source")
+                self.assertEqual(self.transport.calls, [])
+
+    def test_native_timeout_and_interrupt_keep_uncertainty_for_each_typed_job(self):
+        quality, vector, _, _ = self.typed_profiles()
+        for profile, error in (
+            (quality, pueue.JobError("job_command_timeout")),
+            (vector, KeyboardInterrupt()),
+        ):
+            with self.subTest(profile=profile["type"]):
+                root = self.directory / ("queue-" + profile["type"])
+                root.mkdir(mode=0o700)
+                self.registry["root"] = str(root)
+                self.registry["profiles"] = {"typed": profile}
+                self.transport.tasks.clear()
+                identifier = self.submit_profile("typed")
+                self.start(identifier)
+                with patch.object(queue, "command", side_effect=error):
+                    with self.assertRaisesRegex(
+                        pueue.JobError, "job_recovery_required"
+                    ):
+                        queue.execute(self.registry, identifier)
+                self.assertEqual(
+                    queue.read(root / "active.json"),
+                    {"job_id": identifier, "status": "running"},
+                )
+                self.assertEqual(
+                    queue.result(self.registry, identifier)["status"],
+                    "recovery_required",
+                )
+                with self.assertRaisesRegex(pueue.JobError, "result_unverified"):
+                    queue.verified_evidence(self.registry, identifier)
 
     def test_cancel_only_queued_and_never_sends_signal(self):
         first, second = self.submit(), self.submit()

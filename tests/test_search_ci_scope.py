@@ -56,6 +56,10 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.deployment.gateway.test_activation",
             "tests.unit.operations.test_bounded_http",
             "tests.unit.operations.test_cli",
+            "tests.unit.jobs.test_queue",
+            "tests.unit.jobs.test_sources",
+            "tests.unit.jobs.test_profiles",
+            "tests.unit.jobs.test_execution",
             "tests.integration.test_product_compose",
         ):
             with self.subTest(module=module):
