@@ -61,6 +61,7 @@ python3 -m unittest -v \
   tests.test_search_ci_scope \
   tests.unit.deployment.test_ci_compose_install \
   tests.unit.deployment.test_ci_workflows \
+  tests.unit.deployment.test_contribution \
   tests.unit.deployment.test_repository_layout \
   tests.unit.deployment.test_runtime_dependencies \
   tests.unit.deployment.test_private_api_tls \
