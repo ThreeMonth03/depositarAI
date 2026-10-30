@@ -13,6 +13,7 @@
 | Django／DRF 設定、非同步 HTTP 與服務生命週期 | `search/http/` | `search/tests/test_http_application.py` |
 | 多輪搜尋、時間與曆法 | `search/api/conversation/`、`search/planning/` | `search/tests/test_conversation*.py` |
 | OpenSearch 條件檢索、Haystack RRF 與重排 | `search/api/retrieval/` | `search/tests/` 的 retrieval 案例 |
+| 離線品質計畫契約與回應核對 | `search/quality/` | `tests/unit/quality/` |
 | API 共用設定、admission 與 worker 邊界 | `search/api/shared/` | `search/tests/` 的 API／worker 案例 |
 | 離線 metadata 正規化與 bundle 建置 | `search/catalog/build/` | `search/tests/` 的 bundle 案例 |
 | 封存資料、embedding 配方、Fess 管理與匯入／向量 | `search/catalog/` | `search/tests/` 的 catalog 案例 |

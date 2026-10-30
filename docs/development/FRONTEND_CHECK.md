@@ -32,7 +32,7 @@ revision，可以與現役 frontend revision 不同。
 ## 同一套部署政策
 
 checker 與 `validate_search_web.py` 共用
-[`frontend_policy`](../../search/operations/deployment/frontend_policy.py)，核對完整
+[`frontend/policy.py`](../../search/operations/deployment/frontend/policy.py)，核對完整
 Compose 的 origin、project、位址／port、mount、資源與網路邊界。
 
 - `intranet-http` 使用 `depositar-search-intranet`、指定 RFC1918 IPv4 與專用 port。
@@ -77,7 +77,7 @@ revision、catalog manifest 與整數 contract4 全部吻合。API key 只在 BF
 CPU fixture 與安全回歸：
 
 ```bash
-python3 -m unittest tests.unit.deployment.test_frontend_check -v
+python3 -m unittest tests.unit.deployment.frontend.test_check -v
 ```
 
 定時執行同一 checker，見[前端健康檢查排程](FRONTEND_MONITORING.md)。現役部署只使用

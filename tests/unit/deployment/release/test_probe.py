@@ -730,6 +730,28 @@ class WebControlFlowTests(unittest.TestCase):
         value = execute(probe._WEB_SCRIPT, fixture, modules=self.modules)
         return value, fixture
 
+    def test_direct_bff_keeps_8000_target_and_settings_gate_before_http(self):
+        report, fixture = self.run_script()
+        self.assertEqual(report["code"], "ready")
+        self.assertEqual(len(fixture.calls), 9)
+        self.assertTrue(
+            all(
+                request.url.startswith("http://127.0.0.1:8000/")
+                for request, _, _ in fixture.calls
+            )
+        )
+        self.assertFalse(
+            any(request.url.endswith("8000/") for request, _, _ in fixture.calls)
+        )
+        settings = self.modules["search.web.upstream"].WebSettings
+        settings.from_environment = lambda: SimpleNamespace(
+            revision="f" * 40, origin="http://127.0.0.1:18083"
+        )
+        blocked = ScriptFixture([])
+        report = execute(probe._WEB_SCRIPT, blocked, modules=self.modules)
+        self.assertEqual(report["code"], "web_probe_failed")
+        self.assertEqual(blocked.calls, [])
+
     def test_two_http_turns_without_legacy_fields_chain_versions_and_reset(self):
         for result in self.results:
             self.assertTrue(

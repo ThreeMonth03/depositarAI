@@ -29,6 +29,7 @@ depositarAI/
 │   ├── catalog/               封存資料、embedding 配方、Fess admin、匯入與向量工作
 │   │   └── build/             離線 metadata 正規化、封存及 builder CLI
 │   ├── planning/              條件、日期、clock 與模型規劃
+│   ├── quality/               離線品質計畫契約與回應核對，不操作服務
 │   ├── scope.py               搜尋用途分類
 │   ├── model_policy.py        固定模型身分與 request 限額
 │   ├── transport/             有界 HTTP transport
@@ -39,6 +40,7 @@ depositarAI/
 │   │   ├── cli.py             產品命令參數、dispatch 與安全診斷
 │   │   ├── catalog/           索引、匯入、投影、向量與 leases
 │   │   ├── deployment/        映像、模型、release、gateway、入口與打包
+│   │   │   ├── frontend/      拆機 CPU 前端素材、政策、檢查與發版
 │   │   │   ├── gateway/       路由準備、啟用及 probes
 │   │   │   ├── release/       CPU release 協調、runtime 與 probe
 │   │   │   └── public_entry/  OIDC、配額與入口生命週期
@@ -48,7 +50,7 @@ depositarAI/
 ├── scripts/                   薄產品 CLI、模型準備及設定檢查工具
 │   └── ci/                    可獨立執行的 CI helpers
 ├── tests/
-│   ├── unit/                  operations、catalog、deployment 政策與失敗案例
+│   ├── unit/                  quality、operations、catalog、deployment 政策與失敗案例
 │   └── integration/           隔離 Compose／真實 OSS 案例
 ├── .github/workflows/         CI、文件建置與原始碼打包
 └── docs/

@@ -19,14 +19,14 @@ from urllib.parse import urlsplit
 
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
-from . import frontend_policy
 from search.operations.shared.bounded_http import AbortableConnection
-from .intranet_access import ACCESS_TARGET, intranet_settings
-from .public_entry import profile
-from .runtime_docker import Docker
+from ..public_entry import profile
+from ..runtime_docker import Docker
+from . import access
+from . import policy
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -64,7 +64,7 @@ def load_config(path):
     )
     _require(
         type(value["deployment_mode"]) is str
-        and value["deployment_mode"] in frontend_policy.PROJECTS,
+        and value["deployment_mode"] in policy.PROJECTS,
         "config_invalid",
     )
     _require(
@@ -91,7 +91,7 @@ def load_config(path):
 
 def _policy(composition, config):
     try:
-        frontend_policy.validate(
+        policy.validate(
             composition, intranet=config["deployment_mode"] == "intranet-http"
         )
     except (ValueError, KeyError, TypeError, OSError):
@@ -103,7 +103,7 @@ def _compose(client, config):
     command = [
         "compose",
         "--project-name",
-        frontend_policy.PROJECTS[mode],
+        policy.PROJECTS[mode],
         "--env-file",
         config["frontend_env_file"],
         "-f",
@@ -170,9 +170,9 @@ def _descriptor(value, manifest):
 
 def _admission(client, runtime, composition, config):
     if config["deployment_mode"] == "intranet-http":
-        _, _, rules = intranet_settings(composition)
+        _, _, rules = access.intranet_settings(composition)
         raw = client.call(
-            ["exec", runtime["web-nginx"]["container_id"], "cat", ACCESS_TARGET],
+            ["exec", runtime["web-nginx"]["container_id"], "cat", access.ACCESS_TARGET],
             timeout=5,
         )
         _require(raw == rules.encode("ascii"), "admission_changed")
@@ -199,9 +199,7 @@ def inspect_frontend_image(client, reference, manifest, revision, role):
         }
     _descriptor(descriptor, manifest)
     try:
-        frontend_policy.validate_image_labels(
-            image["Config"].get("Labels"), revision, role
-        )
+        policy.validate_image_labels(image["Config"].get("Labels"), revision, role)
     except ValueError:
         raise FrontendCheckError("frontend_check_image_changed") from None
     return image

@@ -12,9 +12,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from search.operations.deployment import frontend_check as check
-from search.operations.deployment import frontend_delivery as delivery
-from tests.unit.deployment.test_frontend_check import (
+from search.operations.deployment.frontend import check
+from search.operations.deployment.frontend import delivery
+from tests.unit.deployment.frontend.test_check import (
     API,
     CATALOG,
     FRONT,
@@ -224,11 +224,11 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(check, "_homepage", return_value=2).start()
         self.fetch = patch(
-            "search.operations.deployment.frontend_artifact.fetch_release",
+            "search.operations.deployment.frontend.artifact.fetch_release",
             side_effect=self.fetch_release,
         ).start()
         patch(
-            "search.operations.deployment.frontend_artifact.validate_archive",
+            "search.operations.deployment.frontend.artifact.validate_archive",
             side_effect=self.validate_archive,
         ).start()
 

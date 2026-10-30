@@ -4,6 +4,10 @@
 日期與條件判定，不呼叫 HTTP、模型或 Docker，也不建立索引。適合在修改對話、
 metadata 或排序程式前，保存同一組查詢的可重跑基準。
 
+共用的計畫驗證、條件正規化與 digest 位於 `search.quality.contract`，
+回應核對位於 `search.quality.evaluator.evaluate`。CLI 只負責有界檔案讀取、
+參數與 JSON／退出碼；批次工具直接使用 domain 契約，不依賴 CLI 模組。
+
 ## 固定查詢集
 
 [search-quality.json](../../tests/fixtures/search-quality.json) 是可重複使用的案例計畫，
@@ -136,5 +140,5 @@ revision 與 manifest，避免把不同部署或快照混成同一個對話基�
 CPU 回歸測試：
 
 ```bash
-python3 -m unittest tests.unit.operations.test_search_quality -v
+python3 -m unittest tests.unit.quality.test_evaluator tests.unit.quality.test_cli -v
 ```

@@ -20,9 +20,9 @@ import uuid
 from search.operations.shared import private_io
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
-from . import frontend_check as check
-from . import frontend_policy
-from .runtime_docker import Docker
+from ..runtime_docker import Docker
+from . import check
+from . import policy
 
 
 REPOSITORY = "ThreeMonth03/depositarAI"
@@ -203,9 +203,7 @@ def _native(composition, profile, nonce):
         service["image"] = _locator(profile["frontend_revision"], role)
         if nonce is not None:
             service.setdefault("labels", {})[TRANSACTION_LABEL] = nonce
-    frontend_policy.validate(
-        value, intranet=profile["deployment_mode"] == "intranet-http"
-    )
+    policy.validate(value, intranet=profile["deployment_mode"] == "intranet-http")
     return value
 
 
@@ -597,7 +595,7 @@ class Delivery:
             if self.state.read("state.json") is None:
                 self.state.write("state.json", saved)
             return _summary("unchanged", saved)
-        from .frontend_artifact import fetch_release, validate_archive
+        from . import artifact
 
         # A failed provenance check must happen before any Docker command.
         with tempfile.TemporaryDirectory(
@@ -605,7 +603,7 @@ class Delivery:
         ) as directory:
             destination = Path(directory)
             try:
-                manifest = fetch_release(
+                manifest = artifact.fetch_release(
                     revision,
                     self.config["repository"],
                     destination,
@@ -635,7 +633,9 @@ class Delivery:
             self.profile(profile)
             for role in ROLES:
                 entry = manifest["images"][role]
-                validate_archive(destination / entry["archive"], entry, revision, role)
+                artifact.validate_archive(
+                    destination / entry["archive"], entry, revision, role
+                )
             for role in ROLES:
                 entry = manifest["images"][role]
                 archive = destination / entry["archive"]

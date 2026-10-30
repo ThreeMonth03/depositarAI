@@ -91,7 +91,7 @@ for action in check format; do
       search/api/conversation/contract.py search/api/conversation/engine.py search/api/conversation/worker.py \
       search/api/conversation/calendar.py search/tests/test_conversation_calendar.py \
       search/api/conversation/time.py search/tests/test_conversation_time.py \
-      search/operations/deployment/intranet_access.py \
+      search/operations/deployment/frontend/access.py \
       search/tests/test_conversation.py search/tests/test_search_web.py search/tests/test_search_web_identity.py search/tests/web_fixture.py
 done
 for action in check format; do

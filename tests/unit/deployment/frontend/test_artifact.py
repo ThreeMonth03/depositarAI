@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from search.operations.deployment import frontend_artifact as artifact
+from search.operations.deployment.frontend import artifact
 from search.operations.shared.bounded_http import AbortableConnection
 
 

@@ -342,6 +342,9 @@ class IndexPipelineTests(unittest.TestCase):
         row["resource_context"] = (
             MappingProxyType({**context, "columns": tuple(context["columns"])}),
         )
+        for field in ("tags", "groups", "resource_formats"):
+            row[field] = tuple(row[field])
+        row = MappingProxyType(row)
         bundle = SimpleNamespace(
             manifest_sha256="b" * 64,
             condition_metadata={row["dataset_id"]: condition_document("2020", "2025")},
@@ -392,5 +395,16 @@ class IndexPipelineTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     ["opensearch-bm25", "opensearch-knn"], found.rows[0]["searchers"]
+                )
+                self.assertEqual(found.cards()[0]["resource_context"], [context])
+                observed = result["results"][0]
+                for field in ("tags", "groups", "resource_formats"):
+                    self.assertIs(type(observed[field]), list)
+                    self.assertEqual(observed[field], list(row[field]))
+                    observed[field].append("changed after retrieval")
+                    self.assertEqual(tuple(observed[field][:-1]), row[field])
+                observed["resource_context"][0]["columns"].clear()
+                self.assertEqual(
+                    row["resource_context"][0]["columns"], tuple(context["columns"])
                 )
                 self.assertEqual(found.cards()[0]["resource_context"], [context])

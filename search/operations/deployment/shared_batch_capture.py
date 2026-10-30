@@ -9,7 +9,7 @@ import re
 import stat
 import uuid
 
-from scripts.check_search_quality import validate_cases
+from search.quality.contract import validate_cases
 from search.operations.shared import private_io
 from search.serialization import strict_json
 

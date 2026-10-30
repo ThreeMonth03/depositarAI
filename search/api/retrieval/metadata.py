@@ -6,25 +6,6 @@ import unicodedata
 from search.planning.predicates import date_bounds
 
 
-_BIDI_CONTROLS = frozenset(
-    chr(value)
-    for value in (
-        0x061C,
-        0x200E,
-        0x200F,
-        0x202A,
-        0x202B,
-        0x202C,
-        0x202D,
-        0x202E,
-        0x2066,
-        0x2067,
-        0x2068,
-        0x2069,
-    )
-)
-
-
 def bounded_text(value: Any, maximum: int) -> bool:
     if type(value) is not str or len(value) > maximum:
         return False
@@ -35,7 +16,6 @@ def bounded_text(value: Any, maximum: int) -> bool:
     return (
         encoded.decode("utf-8", "strict") == value
         and unicodedata.normalize("NFKC", value) == value
-        and not any(character in _BIDI_CONTROLS for character in value)
         and not any(
             unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
         )

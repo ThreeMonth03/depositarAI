@@ -626,44 +626,5 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.assertEqual(self.docker.calls, 12)
 
 
-class FixedImageScriptTests(unittest.TestCase):
-    def test_shared_script_preserves_strict_two_turn_refinement_reset_without_ops_import(
-        self,
-    ):
-        contract = private.WebControlFlowTests()
-        contract.setUp()
-        contract.token, contract.replacement = "T" * 43, "R" * 43
-        fixture = private.ScriptFixture(contract.responses(include_assets=True))
-        output = io.StringIO()
-        with (
-            mock.patch.dict(sys.modules, contract.modules),
-            mock.patch("search.transport.http.UrllibTransport", return_value=fixture),
-            mock.patch(
-                "sys.argv",
-                ["probe", private.REVISION, private.BUNDLE, private.MANIFEST],
-            ),
-            mock.patch.object(probe.time, "monotonic", return_value=1.0),
-            redirect_stdout(output),
-        ):
-            exec(probe.SCRIPT, {})
-        result = private.probe._web(
-            private.probe._json(output.getvalue().encode()),
-            private.REVISION,
-            private.BUNDLE,
-            private.MANIFEST,
-        )
-        self.assertEqual(result["code"], "ready")
-        self.assertEqual(len(fixture.calls), 10)
-        self.assertNotIn("search.operations", probe.SCRIPT)
-        self.assertIn(private.probe._WEB_ACCEPTANCE_SCRIPT, probe.SCRIPT)
-        self.assertIn(private.probe._STATIC_ACCEPTANCE_SCRIPT, probe.SCRIPT)
-        self.assertTrue(probe.SCRIPT.startswith(private.probe._COMMON_SCRIPT))
-        for request, timeout, maximum in fixture.calls:
-            self.assertTrue(request.url.startswith("http://127.0.0.1:18083/"))
-            self.assertEqual(dict(request.headers)["Origin"], "http://127.0.0.1:18083")
-            self.assertLessEqual(timeout, 130)
-            self.assertEqual(maximum, 256 * 1024)
-
-
 if __name__ == "__main__":
     unittest.main()

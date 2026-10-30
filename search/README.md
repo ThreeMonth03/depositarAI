@@ -10,6 +10,7 @@ owns the command contracts; this page explains where implementation belongs.
 | `web/` | CPU BFF: browser origin, temporary session ownership, version fencing and the private API client |
 | `http/` | Shared Django/DRF settings, async views and ASGI lifecycle; independent of search and operator domains |
 | `planning/` | Validated conditions, request clock, deterministic dates and model planning |
+| `quality/` | Pure ordered-plan contracts and offline captured-response evaluation, shared by CLI and batch tools |
 | [catalog/](catalog/README.md) | Offline metadata builds, sealed bundle validation, embedding profile, Fess administration, imports and vector work |
 | [scope.py](scope.py) | Classify whether an input belongs to dataset search |
 | [model_policy.py](model_policy.py) | Pinned scope/planner model identities and fixed request limits |
@@ -34,7 +35,8 @@ Package initializers contain documentation. Import shared HTTP interfaces from
 `search.transport.http`. The secret reader performs file IO only when explicitly
 called.
 
-`search/tests/` covers search, API, BFF and planning behavior. Operator policy and
+`search/tests/` covers search, API, BFF and planning behavior. Offline quality tests
+live in `tests/unit/quality/`. Operator policy and
 failure tests live in `tests/unit/{operations,catalog,deployment}/`; isolated OSS
 runtime cases live in `tests/integration/`, and browser behavior in `web/tests/`.
 See [API source](api/README.md), [catalog source](catalog/README.md) and

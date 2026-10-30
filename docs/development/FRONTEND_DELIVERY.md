@@ -99,7 +99,7 @@ Docker image cache 的清理屬於主機維護，這個命令不執行全域 pru
 ## CPU 回歸
 
 ```sh
-python3 -m unittest tests.unit.deployment.test_frontend_delivery -v
+python3 -m unittest tests.unit.deployment.frontend.test_delivery -v
 ```
 
 測試以假的下載／Docker 邊界搭配真正的 checker，涵蓋壞 attestation、API 配對失敗、

@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.check_search_quality import plan_digest
+from search.quality.contract import plan_digest
 from search.operations.deployment import shared_batch_capture as capture
 
 

@@ -22,9 +22,10 @@ prerequisites, side effects and incomplete installer boundaries.
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |
 | [catalog/commands.py](catalog/commands.py) | Catalog text-command runner and stdout validation; command selection and runtime authority stay with callers |
 | [deployment/](deployment/composition.py) | Images/models, private release, gateway activation, product packages and offline restore |
+| [frontend/](deployment/frontend/delivery.py) | Standalone CPU website artifacts, admission policy, authenticated checks and delivery/rollback transactions |
 | [release/controller.py](deployment/release/controller.py), [runtime.py](deployment/release/runtime.py), [probe.py](deployment/release/probe.py) | Private CPU release startup and completed-release verification; startup owns model and HTTP acceptance |
 | [gateway/preparation.py](deployment/gateway/preparation.py), [activation.py](deployment/gateway/activation.py) | Verify completed release authority without restarting services or repeating model acceptance; prepare routes and verify the routed website at first activation |
-| [gateway/runtime.py](deployment/gateway/runtime.py), [probe.py](deployment/gateway/probe.py), [probe_runtime.py](deployment/gateway/probe_runtime.py) | Routing profile and bounded loopback HTTP acceptance; probes do not grant routing authority |
+| [gateway/runtime.py](deployment/gateway/runtime.py), [probe_runtime.py](deployment/gateway/probe_runtime.py) | Routing profile and bounded loopback HTTP acceptance; probes do not grant routing authority |
 | [deployment/runtime_docker.py](deployment/runtime_docker.py) | Shared local Docker client with fixed CLI environment, command/output accounting, client guards and bounded project container/network inventories; controllers retain runtime authority |
 | [deployment/process_identity.py](deployment/process_identity.py) | Pure process-start digest shared by inference, CPU release and gateway proofs; callers validate snapshots and own restart and acceptance policy |
 | [deployment/image_authority.py](deployment/image_authority.py) | Read and authenticate completed source/image evidence against the caller's source plan; no runtime mutation or GPU/model policy |
@@ -87,6 +88,8 @@ cases live in [integration/public_entry/](../../tests/integration/public_entry/)
 Gateway and private-release unit tests likewise live in
 [deployment/gateway/](../../tests/unit/deployment/gateway/) and
 [deployment/release/](../../tests/unit/deployment/release/).
+Standalone frontend unit tests live in
+[deployment/frontend/](../../tests/unit/deployment/frontend/).
 
 Follow [private runtime](../../docs/development/PRIVATE_RUNTIME.md),
 [catalog reuse](../../docs/development/CATALOG_CACHE.md),

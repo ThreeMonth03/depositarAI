@@ -16,9 +16,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from search.operations.deployment import frontend_check as check
-from search.operations.deployment import frontend_policy
-from search.operations.deployment.intranet_access import ACCESS_TARGET, prepare_access
+from search.operations.deployment.frontend import check
+from search.operations.deployment.frontend import policy
+from search.operations.deployment.frontend.access import ACCESS_TARGET, prepare_access
 
 
 FRONT = "1" * 40
@@ -38,7 +38,7 @@ PROOF = {
 class Runner:
     def __init__(self, root, *, mode="private"):
         self.mode = mode
-        self.project = frontend_policy.PROJECTS[mode]
+        self.project = policy.PROJECTS[mode]
         self.mounted_acl = None
         address, port = (
             ("10.20.30.40", "18082")

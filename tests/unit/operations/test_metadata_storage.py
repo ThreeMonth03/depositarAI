@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from search.catalog.build.policy import BundleError
-from search.operations.metadata import storage, sync
+from search.operations.metadata import storage
 from search.operations.shared import private_io
 
 
@@ -31,20 +31,7 @@ class MetadataStorageTests(unittest.TestCase):
         path.chmod(mode)
         return path
 
-    def test_sync_exports_the_same_storage_objects_and_error_name(self):
-        aliases = {
-            "_real_path": "real_path",
-            "_same_file": "same_file",
-            "_file_bytes": "file_bytes",
-            "_json_record": "read_record",
-            "_write_record": "write_record",
-            "_private_directory": "private_directory",
-            "SyncError": "SyncError",
-            "MAX_RECORD_BYTES": "MAX_RECORD_BYTES",
-        }
-        for legacy, canonical in aliases.items():
-            with self.subTest(name=legacy):
-                self.assertIs(getattr(sync, legacy), getattr(storage, canonical))
+    def test_storage_error_name_and_record_limit(self):
         self.assertEqual("SyncError", storage.SyncError.__name__)
         self.assertEqual(4 * 1024**2, storage.MAX_RECORD_BYTES)
 

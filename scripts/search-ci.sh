@@ -65,10 +65,10 @@ python3 -m unittest -v \
   tests.unit.deployment.test_repository_layout \
   tests.unit.deployment.test_runtime_dependencies \
   tests.unit.deployment.test_private_api_tls \
-  tests.unit.deployment.test_frontend_check \
-  tests.unit.deployment.test_frontend_artifact \
-  tests.unit.deployment.test_frontend_delivery \
-  tests.unit.deployment.test_frontend_release_publisher \
+  tests.unit.deployment.frontend.test_check \
+  tests.unit.deployment.frontend.test_artifact \
+  tests.unit.deployment.frontend.test_delivery \
+  tests.unit.deployment.frontend.test_publisher \
   tests.unit.deployment.test_python_package_layout \
   tests.unit.deployment.test_product_module_boundaries \
   tests.unit.deployment.test_runtime_import_gate \
@@ -97,7 +97,8 @@ python3 -m unittest -v \
   tests.unit.operations.test_document_sets \
   tests.unit.operations.test_resource_enrichment \
   tests.unit.operations.test_private_io \
-  tests.unit.operations.test_search_quality \
+  tests.unit.quality.test_evaluator \
+  tests.unit.quality.test_cli \
   tests.unit.operations.test_demo_connection \
   tests.unit.operations.test_bounded_process \
   tests.unit.operations.test_model_source \
@@ -148,7 +149,7 @@ python3 -m unittest -v \
   tests.unit.deployment.release.test_host \
   tests.unit.deployment.release.test_controller \
   tests.unit.deployment.release.test_probe \
-  tests.unit.deployment.gateway.test_probe \
+  tests.unit.deployment.gateway.test_probe_script \
   tests.unit.deployment.gateway.test_probe_runtime \
   tests.unit.deployment.test_product_package \
   tests.unit.deployment.test_product_restore \

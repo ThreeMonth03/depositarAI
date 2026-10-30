@@ -19,9 +19,11 @@ PACKAGE_PATHS = (
     "search/http",
     "search/transport",
     "search/catalog",
+    "search/quality",
     "search/operations",
     "search/operations/catalog",
     "search/operations/deployment",
+    "search/operations/deployment/frontend",
     "search/operations/deployment/gateway",
     "search/operations/deployment/release",
     "search/operations/deployment/public_entry",
@@ -34,6 +36,21 @@ PACKAGE_PATHS = (
     "search/api/shared",
 )
 MODULE_MOVES = {
+    "search/operations/deployment/frontend_artifact.py": (
+        "search/operations/deployment/frontend/artifact.py"
+    ),
+    "search/operations/deployment/frontend_check.py": (
+        "search/operations/deployment/frontend/check.py"
+    ),
+    "search/operations/deployment/frontend_delivery.py": (
+        "search/operations/deployment/frontend/delivery.py"
+    ),
+    "search/operations/deployment/frontend_policy.py": (
+        "search/operations/deployment/frontend/policy.py"
+    ),
+    "search/operations/deployment/intranet_access.py": (
+        "search/operations/deployment/frontend/access.py"
+    ),
     "search/customer_service.py": "search/api/retrieval/results.py",
     "search/customer_service_ollama.py": "search/scope.py",
     "search/operations/deployment/gateway.py": (
@@ -41,9 +58,6 @@ MODULE_MOVES = {
     ),
     "search/operations/deployment/gateway_activation.py": (
         "search/operations/deployment/gateway/activation.py"
-    ),
-    "search/operations/deployment/gateway_probe.py": (
-        "search/operations/deployment/gateway/probe.py"
     ),
     "search/operations/deployment/gateway_probe_runtime.py": (
         "search/operations/deployment/gateway/probe_runtime.py"
@@ -100,7 +114,9 @@ MODULE_MOVES = {
     "search/api/worker_io.py": "search/api/shared/worker_io.py",
 }
 
-RETIRED_API_PATHS = (
+RETIRED_PATHS = (
+    "search/operations/deployment/gateway_probe.py",
+    "search/operations/deployment/gateway/probe.py",
     "search/customer_service_fess.py",
     "search/api/retrieval/fess.py",
     "search/api/app.py",
@@ -133,8 +149,8 @@ class PythonPackageLayoutTests(unittest.TestCase):
                 old_source = ROOT / old
                 self.assertFalse(old_source.exists() or old_source.is_symlink(), old)
 
-    def test_retired_apps_have_no_forwarding_files_or_packages(self):
-        for relative in RETIRED_API_PATHS:
+    def test_retired_entries_have_no_forwarding_files_or_packages(self):
+        for relative in RETIRED_PATHS:
             with self.subTest(path=relative):
                 path = ROOT / relative
                 self.assertFalse(path.exists() or path.is_symlink(), relative)

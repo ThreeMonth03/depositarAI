@@ -1,135 +1,23 @@
-"""Offline correctness checks keep metadata uncertainty separate from relevance."""
+"""Keep source uncertainty, conversation state and plan identity distinct."""
 
-from contextlib import redirect_stdout
 import copy
-import io
 import json
 from pathlib import Path
-import tempfile
 import unittest
 
-from scripts import check_search_quality as quality
-from search.api.retrieval.engine import public_conditions
-from search.api.retrieval.results import ValidatedSearch
-from search.planning.predicates import classify, project
-from search.tests.fixtures import IDS, condition_document, report
-
-
-def turn(time, *, version=1, formats=None, source=None, retain_topic=False):
-    formats = formats or []
-    source = source or condition_document("2020", "2025", formats=["CSV", "PDF"])
-    conditions = {}
-    if time is not None:
-        conditions["time"] = time
-    if formats:
-        conditions["formats"] = formats
-    card = ValidatedSearch.from_report(
-        "氣候",
-        report("氣候", count=1, conditions=conditions),
-        conditions=conditions,
-        manifest_sha256="b" * 64,
-    ).cards()[0]
-    projected = project(source)
-    label = classify(projected, conditions) if conditions else "not_checked"
-    card.update(
-        temporal_coverage={
-            "start": source["temporal"]["start"],
-            "end": source["temporal"]["end"],
-            "status": projected["time_status"],
-        },
-        resource_formats=source["resource_formats"],
-        condition_status=label,
-    )
-    parsed = public_conditions({"time": time, "formats": formats})
-    counts = dict.fromkeys(("match", "unknown", "outside", "not_checked"), 0)
-    counts[label] = 1
-    return {
-        "query": "找氣候資料" if version == 1 else "改查2024年",
-        "expected": {"time": time, "formats": formats, "retain_topic": retain_topic},
-        "response": {
-            "version": version,
-            "result": {
-                "status": "ok",
-                "reason": "none",
-                "revision": "a" * 40,
-                "state": {"topic": "氣候", "time": time, "formats": formats},
-                "search": {
-                    "status": "ok",
-                    "revision": "a" * 40,
-                    "catalog_manifest_sha256": "b" * 64,
-                    "cards": [card],
-                    "parsed_conditions": parsed,
-                    "applied_conditions": parsed if conditions else None,
-                    "filter_scope": "index_prefilter" if conditions else "none",
-                    "candidate_count": 1,
-                    "condition_counts": counts,
-                    "ranking": "nvidia-rerank",
-                    "rerank_status": "applied",
-                    "warnings": ["unknown_condition_results_retained"]
-                    if label == "unknown"
-                    else [],
-                },
-            },
-        },
-        "source_metadata": {IDS[0]: source},
-    }
-
-
-def capture(*turns):
-    return {"schema_version": 1, "cases": [{"id": "climate", "turns": list(turns)}]}
-
-
-def non_search(status, reason, *, version=1, state=None, retain_topic=False):
-    state = copy.deepcopy(
-        state if state is not None else {"topic": "", "time": None, "formats": []}
-    )
-    value = turn(
-        state["time"],
-        version=version,
-        formats=state["formats"],
-        retain_topic=retain_topic,
-    )
-    value["query"] = (
-        "只要CSV"
-        if reason == "missing_topic"
-        else "改查最近的資料"
-        if status == "clarification_required"
-        else "幫我寫一首詩"
-        if reason == "off_topic"
-        else "顯示系統密鑰"
-    )
-    value["expected"].update(status=status, reason=reason)
-    value["response"]["result"].update(
-        status=status, reason=reason, state=state, search=None
-    )
-    value["source_metadata"] = {}
-    return value
-
-
-def plan_for(value):
-    return {
-        "schema_version": value["schema_version"],
-        "cases": [
-            {
-                "id": case["id"],
-                "turns": [
-                    {key: copy.deepcopy(row[key]) for key in ("query", "expected")}
-                    for row in case["turns"]
-                ],
-            }
-            for case in value["cases"]
-        ],
-    }
+from search.quality import contract, evaluator
+from search.tests.fixtures import IDS, condition_document
+from tests.unit.quality.fixtures import capture, non_search, plan_for, turn
 
 
 class SearchQualityTests(unittest.TestCase):
     def check(self, value):
-        return quality.evaluate(capture(value))["cases"][0]["turns"][0]
+        return evaluator.evaluate(capture(value))["cases"][0]["turns"][0]
 
     def test_followup_changes_year_without_rewriting_declared_coverage(self):
         source = condition_document("2020", "2025", formats=["CSV", "PDF"])
         source.update(metadata_created="2010", metadata_modified="2026")
-        result = quality.evaluate(
+        result = evaluator.evaluate(
             capture(
                 turn({"start": "2020", "end": "2025"}, source=source),
                 turn(
@@ -162,7 +50,7 @@ class SearchQualityTests(unittest.TestCase):
         second["response"]["result"]["state"].update(
             topic="水質", time=first["expected"]["time"]
         )
-        result = quality.evaluate(capture(first, second))
+        result = evaluator.evaluate(capture(first, second))
         issues = result["cases"][0]["turns"][1]["issues"]
         self.assertIn("topic_not_retained", issues)
         self.assertIn("state_conditions_mismatch", issues)
@@ -289,7 +177,7 @@ class SearchQualityTests(unittest.TestCase):
                     result["revision"] = result["search"]["revision"] = "c" * 40
                 else:
                     result["search"]["catalog_manifest_sha256"] = "d" * 64
-                report_value = quality.evaluate(capture(first, second))
+                report_value = evaluator.evaluate(capture(first, second))
                 self.assertIn(
                     "case_identity_changed",
                     report_value["cases"][0]["turns"][1]["issues"],
@@ -301,7 +189,7 @@ class SearchQualityTests(unittest.TestCase):
             "catalog_manifest_sha256"
         ] = "c" * 64
         independent["cases"].append(another)
-        self.assertEqual(quality.evaluate(independent)["status"], "passed")
+        self.assertEqual(evaluator.evaluate(independent)["status"], "passed")
 
     def test_unconditioned_search_and_equivalent_date_precision(self):
         self.assertEqual(self.check(turn(None))["issues"], [])
@@ -334,32 +222,6 @@ class SearchQualityTests(unittest.TestCase):
         value["source_metadata"][IDS[0]]["resource_formats"] = "CSV"
         self.assertIn("source_metadata_invalid", self.check(value)["issues"])
 
-    def test_cli_returns_structured_exit_codes_without_echoing_unselected_data(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "capture.json"
-            value = capture(turn({"start": "2024", "end": "2024"}))
-            value["cases"][0]["turns"][0]["response"]["token"] = (
-                "private-token-do-not-print"
-            )
-            for status in ("passed", "failed", "invalid_input"):
-                if status == "failed":
-                    value["cases"][0]["turns"][0]["response"]["result"]["state"][
-                        "topic"
-                    ] = ""
-                path.write_text(
-                    json.dumps(value)
-                    if status != "invalid_input"
-                    else '{"schema_version":1,"schema_version":1}'
-                )
-                output = io.StringIO()
-                with redirect_stdout(output):
-                    code = quality.main(["--input", str(path)])
-                self.assertEqual(
-                    code, {"passed": 0, "failed": 1, "invalid_input": 2}[status]
-                )
-                self.assertEqual(json.loads(output.getvalue())["status"], status)
-                self.assertNotIn("private-token-do-not-print", output.getvalue())
-
     def test_capture_bounds_and_first_turn_retention_are_not_silent_passes(self):
         for value in (
             {"schema_version": True, "cases": []},
@@ -367,7 +229,7 @@ class SearchQualityTests(unittest.TestCase):
             {"schema_version": 1, "cases": []},
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                quality.evaluate(value)
+                evaluator.evaluate(value)
 
 
 class QualityPlanTests(unittest.TestCase):
@@ -379,7 +241,7 @@ class QualityPlanTests(unittest.TestCase):
                     "calendar": "lunar",
                     "text": "農曆112年",
                 }
-                result = quality.evaluate(capture(value))
+                result = evaluator.evaluate(capture(value))
                 self.assertEqual("failed", result["status"])
                 issues = result["cases"][0]["turns"][0]["issues"]
                 self.assertIn("unapplied_time_not_evaluated", issues)
@@ -388,7 +250,7 @@ class QualityPlanTests(unittest.TestCase):
     def test_outer_ok_cannot_hide_nested_unavailable_search(self):
         value = turn(None)
         value["response"]["result"]["search"]["status"] = "unavailable"
-        result = quality.evaluate(capture(value))
+        result = evaluator.evaluate(capture(value))
         self.assertEqual("failed", result["status"])
         self.assertIn("search_not_ok", result["cases"][0]["turns"][0]["issues"])
 
@@ -396,7 +258,7 @@ class QualityPlanTests(unittest.TestCase):
         value = turn(None)
         self.assertNotIn("reason", value["expected"])
         value["response"]["result"]["reason"] = "unsafe"
-        result = quality.evaluate(capture(value))
+        result = evaluator.evaluate(capture(value))
         self.assertEqual("failed", result["status"])
         self.assertIn("reason_mismatch", result["cases"][0]["turns"][0]["issues"])
 
@@ -422,7 +284,7 @@ class QualityPlanTests(unittest.TestCase):
                 retain_topic=True,
             ),
         )
-        result = quality.evaluate(value, plan_for(value))
+        result = evaluator.evaluate(value, plan_for(value))
         self.assertEqual("passed", result["status"])
         self.assertEqual(
             ["ok", "clarification_required", "rejected", "ok"],
@@ -436,7 +298,7 @@ class QualityPlanTests(unittest.TestCase):
         ):
             with self.subTest(status=status):
                 value = capture(non_search(status, reason), turn(None, version=2))
-                result = quality.evaluate(value, plan_for(value))
+                result = evaluator.evaluate(value, plan_for(value))
                 self.assertEqual("passed", result["status"])
                 self.assertEqual([], result["cases"][0]["turns"][0]["cards"])
                 self.assertNotIn(
@@ -474,7 +336,7 @@ class QualityPlanTests(unittest.TestCase):
                     value = capture(first, second, third)
                     plan = plan_for(value)
                     second["response"]["result"]["state"][field] = wrong
-                    result = quality.evaluate(value, plan)
+                    result = evaluator.evaluate(value, plan)
                     reports = result["cases"][0]["turns"]
                     self.assertIn("non_search_state_changed", reports[1]["issues"])
                     self.assertEqual([], reports[2]["issues"])
@@ -490,7 +352,7 @@ class QualityPlanTests(unittest.TestCase):
                     ]["search"]
                 else:
                     value[field] = positive[field]
-                result = quality.evaluate(capture(value))
+                result = evaluator.evaluate(capture(value))
                 self.assertIn(
                     "unexpected_" + field, result["cases"][0]["turns"][0]["issues"]
                 )
@@ -512,7 +374,7 @@ class QualityPlanTests(unittest.TestCase):
                     else value["response"]["result"]
                 )
                 target[field] = wrong
-                result = quality.evaluate(capture(value))
+                result = evaluator.evaluate(capture(value))
                 self.assertIn(issue, result["cases"][0]["turns"][0]["issues"])
 
     def test_non_search_revision_change_is_detected_between_successful_turns(self):
@@ -526,7 +388,7 @@ class QualityPlanTests(unittest.TestCase):
         )
         second["response"]["result"]["revision"] = "c" * 40
         third = turn(None, version=3, retain_topic=True)
-        result = quality.evaluate(capture(first, second, third))
+        result = evaluator.evaluate(capture(first, second, third))
         self.assertIn("case_identity_changed", result["cases"][0]["turns"][1]["issues"])
         self.assertEqual([], result["cases"][0]["turns"][2]["issues"])
 
@@ -536,7 +398,7 @@ class QualityPlanTests(unittest.TestCase):
         another["id"] = "separate-session"
         planned["cases"].append(another)
         plan = plan_for(planned)
-        result = quality.evaluate({"schema_version": 1, "cases": []}, plan)
+        result = evaluator.evaluate({"schema_version": 1, "cases": []}, plan)
         self.assertEqual("failed", result["status"])
         self.assertEqual(
             ["climate", "separate-session"], [row["id"] for row in result["cases"]]
@@ -544,13 +406,13 @@ class QualityPlanTests(unittest.TestCase):
         reports = [row for case in result["cases"] for row in case["turns"]]
         self.assertEqual(3, len(reports))
         self.assertTrue(all(row["issues"] == ["turn_not_captured"] for row in reports))
-        self.assertEqual(quality.plan_digest(plan), result["plan_sha256"])
+        self.assertEqual(contract.plan_digest(plan), result["plan_sha256"])
 
     def test_missing_last_turn_is_a_failed_planned_turn_not_a_smaller_success(self):
         value = capture(turn(None), turn(None, version=2, retain_topic=True))
         plan = plan_for(value)
         value["cases"][0]["turns"].pop()
-        result = quality.evaluate(value, plan)
+        result = evaluator.evaluate(value, plan)
         self.assertEqual("failed", result["status"])
         self.assertEqual([], result["cases"][0]["turns"][0]["issues"])
         self.assertEqual(
@@ -562,8 +424,8 @@ class QualityPlanTests(unittest.TestCase):
         plan = plan_for(value)
         value["cases"][0]["turns"].clear()
         with self.assertRaises(ValueError):
-            quality.evaluate(value)
-        result = quality.evaluate(value, plan)
+            evaluator.evaluate(value)
+        result = evaluator.evaluate(value, plan)
         self.assertEqual("failed", result["status"])
         self.assertEqual(
             ["turn_not_captured"], result["cases"][0]["turns"][0]["issues"]
@@ -588,7 +450,7 @@ class QualityPlanTests(unittest.TestCase):
                 else:
                     value["cases"][0]["turns"].append(turn(None, version=2))
                 with self.assertRaises(ValueError):
-                    quality.evaluate(value, plan)
+                    evaluator.evaluate(value, plan)
 
     def test_plan_digest_ignores_json_layout_but_binds_query_and_turn_order(self):
         plan = plan_for(capture(turn(None), turn(None, version=2)))
@@ -596,12 +458,12 @@ class QualityPlanTests(unittest.TestCase):
         reordered = json.loads(
             json.dumps(plan, ensure_ascii=False, sort_keys=True, indent=4)
         )
-        self.assertEqual(quality.plan_digest(plan), quality.plan_digest(reordered))
+        self.assertEqual(contract.plan_digest(plan), contract.plan_digest(reordered))
         changed = copy.deepcopy(plan)
         changed["cases"][0]["turns"][0]["query"] += "，研究用"
-        self.assertNotEqual(quality.plan_digest(plan), quality.plan_digest(changed))
+        self.assertNotEqual(contract.plan_digest(plan), contract.plan_digest(changed))
         reordered["cases"][0]["turns"].reverse()
-        self.assertNotEqual(quality.plan_digest(plan), quality.plan_digest(reordered))
+        self.assertNotEqual(contract.plan_digest(plan), contract.plan_digest(reordered))
         self.assertEqual(before, plan)
 
     def test_topic_changed_requires_a_new_topic_and_rejects_conflicting_expectations(
@@ -612,10 +474,10 @@ class QualityPlanTests(unittest.TestCase):
         second["query"] = "改找河川資料"
         second["expected"]["topic_changed"] = True
         value = capture(first, second)
-        result = quality.evaluate(value, plan_for(value))
+        result = evaluator.evaluate(value, plan_for(value))
         self.assertIn("topic_not_changed", result["cases"][0]["turns"][1]["issues"])
         second["response"]["result"]["state"]["topic"] = "河川"
-        self.assertEqual("passed", quality.evaluate(value, plan_for(value))["status"])
+        self.assertEqual("passed", evaluator.evaluate(value, plan_for(value))["status"])
         for conflict in ("first_turn", "retain_topic", "non_search"):
             with self.subTest(conflict=conflict):
                 if conflict == "first_turn":
@@ -629,7 +491,7 @@ class QualityPlanTests(unittest.TestCase):
                     else:
                         expected.update(status="rejected", reason="unsafe")
                 with self.assertRaises(ValueError):
-                    quality.validate_cases(invalid)
+                    contract.validate_cases(invalid)
 
     def test_invalid_outcome_expectations_and_boolean_flags_are_rejected(self):
         for fields in (
@@ -648,7 +510,7 @@ class QualityPlanTests(unittest.TestCase):
                 plan = plan_for(capture(turn(None)))
                 plan["cases"][0]["turns"][0]["expected"].update(fields)
                 with self.assertRaises(ValueError):
-                    quality.validate_cases(plan)
+                    contract.validate_cases(plan)
 
     def test_production_query_validation_accepts_punctuation_and_preserves_raw_binding(
         self,
@@ -657,66 +519,34 @@ class QualityPlanTests(unittest.TestCase):
         raw_query = "  找  氣候資料，  類型不限  "
         value["cases"][0]["turns"][0]["query"] = raw_query
         plan = plan_for(value)
-        self.assertEqual(plan, quality.validate_cases(plan))
+        self.assertEqual(plan, contract.validate_cases(plan))
         self.assertEqual(raw_query, plan["cases"][0]["turns"][0]["query"])
-        self.assertEqual("passed", quality.evaluate(value, plan)["status"])
+        self.assertEqual("passed", evaluator.evaluate(value, plan)["status"])
         value["cases"][0]["turns"][0]["query"] = "找 氣候資料, 類型不限"
         with self.assertRaises(ValueError):
-            quality.evaluate(value, plan)
+            evaluator.evaluate(value, plan)
         for invisible in ("\u200b", "\u202e", "\x00", "\ud800"):
             with self.subTest(invisible=repr(invisible)):
                 invalid = copy.deepcopy(plan)
                 invalid["cases"][0]["turns"][0]["query"] = "找" + invisible + "氣候資料"
                 with self.assertRaises(ValueError):
-                    quality.validate_cases(invalid)
+                    contract.validate_cases(invalid)
 
     def test_canonical_case_plan_validates_with_all_supported_outcomes(self):
         path = Path(__file__).resolve().parents[2] / "fixtures/search-quality.json"
         plan = json.loads(path.read_text())
-        self.assertEqual(plan, quality.validate_cases(plan))
+        self.assertEqual(plan, contract.validate_cases(plan))
         outcomes = {
             row["expected"].get("status", "ok")
             for case in plan["cases"]
             for row in case["turns"]
         }
         self.assertEqual({"ok", "clarification_required", "rejected"}, outcomes)
-        self.assertRegex(quality.plan_digest(plan), r"^[0-9a-f]{64}$")
-
-    def test_cli_plan_validation_and_bound_capture_have_distinct_failure_codes(self):
-        value = capture(turn(None))
-        value["cases"][0]["turns"][0]["query"] = "找氣候資料，勿輸出測試字串"
-        plan = plan_for(value)
-        with tempfile.TemporaryDirectory() as directory:
-            plan_path, capture_path = (
-                Path(directory) / name for name in ("plan.json", "capture.json")
-            )
-            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2))
-            output = io.StringIO()
-            with redirect_stdout(output):
-                code = quality.main(["--plan", str(plan_path)])
-            summary = json.loads(output.getvalue())
-            self.assertEqual(0, code)
-            self.assertEqual("plan_valid", summary["status"])
-            self.assertEqual((1, 1), (summary["case_count"], summary["turn_count"]))
-            self.assertEqual(quality.plan_digest(plan), summary["plan_sha256"])
-            self.assertNotIn("勿輸出測試字串", output.getvalue())
-            for expected_code, captured in (
-                (0, value),
-                (1, {"schema_version": 1, "cases": []}),
-                (2, capture(turn(None))),
-            ):
-                with self.subTest(expected_code=expected_code):
-                    capture_path.write_text(json.dumps(captured, ensure_ascii=False))
-                    output = io.StringIO()
-                    with redirect_stdout(output):
-                        code = quality.main(
-                            ["--input", str(capture_path), "--plan", str(plan_path)]
-                        )
-                    self.assertEqual(expected_code, code)
-                    self.assertEqual(
-                        {0: "passed", 1: "failed", 2: "invalid_input"}[code],
-                        json.loads(output.getvalue())["status"],
-                    )
+        self.assertRegex(contract.plan_digest(plan), r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            "0e2438ada5c5f72a8dbb49bab1faa96cc4cb74ccd8b29303a8ffa8907a01435b",
+            contract.plan_digest(plan),
+        )
 
 
 if __name__ == "__main__":

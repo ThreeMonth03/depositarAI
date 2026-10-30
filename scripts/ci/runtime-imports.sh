@@ -57,6 +57,7 @@ assert not any(Path("/dev").glob("nvidia*")), "GPU exposed to CPU-only import pr
 assert search_root.is_dir() and not search_root.is_symlink(), "missing image package"
 for relative in (
     "evaluation",
+    "quality",
     "operations/catalog",
     "operations/documents",
     "operations/metadata",
