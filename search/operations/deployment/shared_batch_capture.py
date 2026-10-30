@@ -199,6 +199,23 @@ class _Capture:
                     and private_io.identity(info) == entry["identity"],
                     "output_changed",
                 )
+                raw = private_io.read_file(
+                    self._fd, name, mode=0o600, max_bytes=entry["maximum"]
+                )
+                # Timestamp resolution cannot establish content integrity.
+                _require(
+                    len(raw) == entry["bytes"]
+                    and hashlib.sha256(raw).hexdigest() == entry["sha256"]
+                    and private_io.identity(
+                        os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+                    )
+                    == entry["identity"],
+                    "output_changed",
+                )
+            self.parents.verify()
+            private_io.verify_directory(self._fd, self.destination)
+            _outside_git([*self.parents.fds, self._fd])
+            _require(set(os.listdir(self._fd)) == set(records), "output_changed")
         except SharedBatchCaptureError:
             raise
         except (OSError, ValueError, TypeError):
@@ -261,6 +278,12 @@ class _Capture:
             self.published[name] = entry
             os.unlink(temporary, dir_fd=self._fd)
             del self.pending[name]
+            final_identity = private_io.identity(
+                os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+            )
+            # Linking changes ctime; pin it before reading the final content.
+            _require(final_identity[:-1] == entry["identity"][:-1], "output_changed")
+            entry["identity"] = final_identity
             final = private_io.read_file(
                 self._fd, name, mode=0o600, max_bytes=entry["maximum"]
             )
@@ -269,12 +292,6 @@ class _Capture:
                 and hashlib.sha256(final).hexdigest() == entry["sha256"],
                 "output_changed",
             )
-            final_identity = private_io.identity(
-                os.stat(name, dir_fd=self._fd, follow_symlinks=False)
-            )
-            # Linking changes ctime; every other original file property is pinned.
-            _require(final_identity[:-1] == entry["identity"][:-1], "output_changed")
-            entry["identity"] = final_identity
             os.fsync(self._fd)
             self.verify()
         self.verify()
