@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from search.operations.catalog import backend, execution, volume_policy, volumes
+from search.operations.catalog import commands, execution, volume_policy, volumes
 from tests.unit.catalog import volume_fixtures
 from tests.unit.catalog.volume_fixtures import IMAGE, CatalogVolumeFixture
 
@@ -90,7 +90,7 @@ class CatalogVolumeTests(unittest.TestCase):
     def test_failed_initialization_preserves_intent_and_never_retries_or_deletes(self):
         self.fixture.start_intent()
         self.fixture.fail_initialize = True
-        with self.assertRaises(backend.BackendError):
+        with self.assertRaises(commands.BackendError):
             volumes.ensure(self.fixture.context)
         self.assertTrue((self.fixture.root / "volume-started.json").exists())
         self.assertFalse((self.fixture.root / "volume.json").exists())
