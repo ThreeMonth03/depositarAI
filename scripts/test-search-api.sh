@@ -18,7 +18,7 @@ for lint_action in check format; do
 done
 docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /source \
   --mount "type=bind,src=$project_dir,dst=/source,readonly" \
-  depositar-search-api:ci python -m unittest -v \
+  depositar-search-api:ci python -m unittest -v --durations 25 \
     tests.unit.deployment.test_python_unused_gate
 docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /source \
   --mount "type=bind,src=$project_dir,dst=/source,readonly" \
@@ -30,7 +30,7 @@ docker run --rm --network none --read-only --cap-drop ALL \
   --mount "type=bind,src=$project_dir/search/tests,dst=/app/search/tests,readonly" \
   --mount "type=bind,src=$project_dir/search/catalog/build,dst=/app/search/catalog/build,readonly" \
   --mount "type=bind,src=$project_dir/search/web,dst=/app/search/web,readonly" \
-  depositar-search-api:ci python -m unittest \
+  depositar-search-api:ci python -m unittest --durations 25 \
     search.tests.test_http_application \
     search.tests.test_conversation_boundary search.tests.test_retrieval \
     search.tests.test_conversation_retrieval search.tests.test_model_transport \

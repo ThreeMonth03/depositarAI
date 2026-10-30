@@ -687,6 +687,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 ]
                 self.assertEqual(1, len(invocation))
                 names = invocation[0][2:-1]
+                if names[:2] == ["--durations", "25"]:
+                    names = names[2:]
                 selected[suite] = self.runtime_ids(names)
                 self.assertEqual(len(selected[suite]), len(set(selected[suite])))
         policy_modules = {
@@ -759,6 +761,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             fake_python = temporary / "python3"
             fake_python.write_text(
                 common + "record('python')\n"
+                "if arguments[:1] == ['-c'] and 'supported = sys.version_info' in arguments[1]:\n"
+                "    sys.exit(0 if os.environ.get('DEPOSITAR_TEST_DURATION_SUPPORT') == '1' else 1)\n"
                 "if mode == 'contract-failure' and 'tests.test_search_web_deploy' in arguments:\n"
                 "    sys.exit(17)\n"
                 "is_oss = any(item.startswith('tests.integration.public_entry.') for item in arguments)\n"
@@ -831,6 +835,33 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                         break
                     time.sleep(min(0.01, remaining))
             return result, calls, running
+
+    def test_timing_capability_changes_only_the_reporting_option(self):
+        commands = {}
+        for supported in (False, True):
+            with self.subTest(supported=supported):
+                result, calls, running = self.run_website_gate(
+                    "cached",
+                    suite="oss-gateway",
+                    environment={
+                        "DEPOSITAR_TEST_DURATION_SUPPORT": str(int(supported))
+                    },
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertFalse(running)
+                invocations = [
+                    args
+                    for kind, args in calls
+                    if kind == "python" and args[:2] == ["-m", "unittest"]
+                ]
+                self.assertEqual(2, len(invocations))
+                for args in invocations:
+                    options = args[2:4]
+                    self.assertEqual(supported, options == ["--durations", "25"])
+                commands[supported] = invocations
+        self.assertEqual(
+            commands[False], [args[:2] + args[4:] for args in commands[True]]
+        )
 
     def test_cold_pull_overlaps_oss_but_finishes_before_the_browser(self):
         result, calls, running = self.run_website_gate("cold")

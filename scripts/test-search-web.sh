@@ -83,7 +83,17 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-python3 -m unittest tests.test_search_web_deploy -v
+unittest_timing=()
+if python3 -c '
+import sys
+supported = sys.version_info >= (3, 12)
+print("CI_TIMING interpreter=host python=%s durations=%s shared_fixtures=unknown residual=unknown" % (
+    ".".join(map(str, sys.version_info[:3])), "25" if supported else "unavailable"))
+raise SystemExit(0 if supported else 1)
+'; then
+  unittest_timing=(--durations 25)
+fi
+python3 -m unittest "${unittest_timing[@]}" tests.test_search_web_deploy -v
 docker compose --env-file deploy/env/.env.search-web.example -f deploy/compose/compose.search-web.yaml \
   config --format json | python3 scripts/validate_search_web.py
 node_image='node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8'
@@ -97,7 +107,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /app \
   --mount "type=bind,src=$project_dir/search/tests,dst=/app/search/tests,readonly" \
   --mount "type=bind,src=$project_dir/search/web,dst=/app/search/web,readonly" \
   --mount "type=bind,src=$project_dir/search/catalog/build,dst=/app/search/catalog/build,readonly" \
-  depositar-search-api:ci python -m unittest search.tests.test_http_application search.tests.test_conversation search.tests.test_conversation_calendar search.tests.test_conversation_time search.tests.test_search_web search.tests.test_search_web_identity search.tests.test_worker_io -v
+  depositar-search-api:ci python -m unittest --durations 25 search.tests.test_http_application search.tests.test_conversation search.tests.test_conversation_calendar search.tests.test_conversation_time search.tests.test_search_web search.tests.test_search_web_identity search.tests.test_worker_io -v
 begin_phase python-style
 for action in check format; do
   options=(--no-cache)
@@ -150,7 +160,7 @@ bash scripts/ci/runtime-imports.sh depositar-search-web:ci web
 if [[ "$suite" == all || "$suite" == oss || "$suite" == oss-policy ]]; then
   begin_phase intranet-entry-runtime
   DEPOSITAR_TEST_INTRANET_WEB_RUNTIME=1 \
-    python3 -m unittest tests.integration.test_intranet_web_runtime -v
+    python3 -m unittest "${unittest_timing[@]}" tests.integration.test_intranet_web_runtime -v
 fi
 if [[ "$suite" == all || "$suite" == browser ]]; then
   # Download bytes before the sequential browser phase; all overlaps the OSS suite.
@@ -185,13 +195,13 @@ for image in (APISIX_IMAGE, REDIS_IMAGE, NGINX_BASE, ANUBIS_IMAGE):
 PY
   begin_phase public-entry-runtime
   DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME=1 DEPOSITAR_TEST_PRIVATE_API_TLS_RUNTIME=1 DEPOSITAR_TEST_ANTIBOT_RUNTIME=1 DEPOSITAR_TEST_REMOTE_BACKEND_RUNTIME=1 DEPOSITAR_TEST_GPU_LOCAL_VOLUME_RUNTIME=1 \
-    python3 -m unittest "${oss_modules[@]}" -v
+    python3 -m unittest "${unittest_timing[@]}" "${oss_modules[@]}" -v
 fi
 if [[ "$suite" == all || "$suite" == browser ]]; then
   begin_phase gateway-bootstrap
   bootstrap_image_id="$(docker image inspect --format '{{.Id}}' depositar-search-web-nginx:ci)"
   DEPOSITAR_TEST_GATEWAY_IMAGE="$bootstrap_image_id" \
-    python3 -B -m unittest tests.unit.deployment.gateway.test_activation.NativeBootstrapTests -v
+    python3 -B -m unittest "${unittest_timing[@]}" tests.unit.deployment.gateway.test_activation.NativeBootstrapTests -v
   begin_phase browser-fixture
   browser_fixture_started=1
   docker network create --internal "$ci_name" >/dev/null
