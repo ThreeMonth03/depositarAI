@@ -26,7 +26,7 @@ from urllib.request import (
     build_opener,
 )
 
-from search.operations.deployment import image_build
+from search.operations.deployment.images import build as image_build
 from search.operations.shared.bounded_http import AbortableConnection
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION

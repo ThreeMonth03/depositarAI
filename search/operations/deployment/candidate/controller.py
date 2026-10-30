@@ -26,13 +26,13 @@ from search.operations import config as product_config, lifecycle
 from search.operations.catalog import execution
 from search.operations.deployment import (
     composition,
-    image_authority,
-    image_build,
     inference,
     inference_runtime,
     private_api_tls,
     source_bundle,
 )
+from search.operations.deployment.images import authority as image_authority
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import controller as release_controller
 from search.operations.deployment.release import probe as release_probe
 from search.operations.deployment.release import runtime

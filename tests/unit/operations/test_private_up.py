@@ -25,9 +25,9 @@ from search.operations.deployment import (
     composition,
     credentials,
     first_activation,
-    image_staging,
     inference,
 )
+from search.operations.deployment.images import staging as image_staging
 from search.operations.deployment.gateway import activation, preparation
 from search.operations.deployment.release import controller as release
 from search.operations.metadata import sync as metadata_sync

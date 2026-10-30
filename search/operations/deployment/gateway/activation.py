@@ -22,17 +22,15 @@ import uuid
 
 from search.operations.catalog import execution, query
 from search.operations.config import ProductConfig
-from search.operations.deployment import (
-    composition,
-    image_authority as image_evidence,
-    credentials,
-)
+from search.operations.deployment import composition, credentials
+from search.operations.deployment.images import authority as image_evidence
 from search.operations.deployment.gateway import (
     preparation as gateway,
     probe_runtime as gateway_probe_runtime,
     runtime as gateway_runtime,
 )
-from search.operations.deployment import image_build, inference, inference_runtime
+from search.operations.deployment import inference, inference_runtime
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import (
     controller as release,
     probe as release_probe,

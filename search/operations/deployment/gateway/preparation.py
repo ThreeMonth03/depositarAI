@@ -18,12 +18,11 @@ import tempfile
 import time
 
 from search.operations.config import ProductConfig
-from search.operations.deployment import (
-    composition,
-    image_authority as image_evidence,
-)
+from search.operations.deployment import composition
+from search.operations.deployment.images import authority as image_evidence
 from search.operations.deployment.gateway import runtime as gateway_runtime
-from search.operations.deployment import image_build, inference
+from search.operations.deployment import inference
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import (
     controller as release,
     runtime as release_runtime,

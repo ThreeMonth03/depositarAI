@@ -13,9 +13,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from search.operations.deployment import image_build as build, source_bundle
+from search.operations.deployment import source_bundle
+from search.operations.deployment.images import build
 from search.operations.shared import private_io
-from tests.unit.deployment.image_fixtures import (
+from tests.unit.deployment.images.fixtures import (
     FakeDocker as FakeDocker,
     fixture_sources as fixture_sources,
     fixture_tree as fixture_tree,

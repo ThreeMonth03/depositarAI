@@ -11,7 +11,7 @@ import re
 import subprocess
 import time
 
-from search.operations.deployment import image_build
+from search.operations.deployment.images import build as image_build
 
 
 MAX_COMMANDS = 64

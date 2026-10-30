@@ -131,9 +131,9 @@ python3 -m unittest -v \
   tests.unit.deployment.test_composition \
   tests.unit.deployment.test_gpu_ownership \
   tests.unit.deployment.test_source_bundle \
-  tests.unit.deployment.test_image_build \
-  tests.unit.deployment.test_image_staging \
-  tests.unit.deployment.test_image_fixtures \
+  tests.unit.deployment.images.test_build \
+  tests.unit.deployment.images.test_staging \
+  tests.unit.deployment.images.test_fixtures \
   tests.unit.deployment.test_credentials \
   tests.unit.deployment.test_inference \
   tests.unit.deployment.test_resident_models \
@@ -145,7 +145,7 @@ python3 -m unittest -v \
   tests.unit.deployment.candidate.batch.test_probe \
   tests.unit.deployment.candidate.batch.test_execution \
   tests.unit.deployment.candidate.batch.test_budget \
-  tests.unit.deployment.test_image_authority \
+  tests.unit.deployment.images.test_authority \
   tests.unit.deployment.test_runtime_docker \
   tests.unit.deployment.test_inference_runtime \
   tests.unit.deployment.test_process_identity \

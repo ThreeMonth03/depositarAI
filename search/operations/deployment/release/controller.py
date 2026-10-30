@@ -24,12 +24,12 @@ from search.operations.catalog import client_lease, execution, policy, query
 from search.operations.config import ProductConfig
 from search.operations.deployment import (
     composition,
-    image_authority as image_evidence,
     credentials,
-    image_build,
     inference,
     inference_runtime,
 )
+from search.operations.deployment.images import authority as image_evidence
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import (
     probe as release_probe,
     runtime as release_runtime,

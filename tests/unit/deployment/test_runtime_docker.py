@@ -7,7 +7,8 @@ import sys
 import unittest
 from unittest import mock
 
-from search.operations.deployment import image_build, inference, runtime_docker
+from search.operations.deployment import inference, runtime_docker
+from search.operations.deployment.images import build as image_build
 
 
 ROOT = Path(__file__).resolve().parents[3]

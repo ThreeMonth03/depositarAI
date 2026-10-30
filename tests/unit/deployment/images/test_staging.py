@@ -5,10 +5,12 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from search.operations.deployment import image_build, image_staging, source_bundle
+from search.operations.deployment import source_bundle
+from search.operations.deployment.images import build as image_build
+from search.operations.deployment.images import staging as image_staging
 from search.operations.shared import private_io
 from search.operations.state import locked_state
-from tests.unit.deployment.image_fixtures import (
+from tests.unit.deployment.images.fixtures import (
     FakeDocker as FakeDocker,
     ImageStagingFixture,
     fixture_sources as fixture_sources,

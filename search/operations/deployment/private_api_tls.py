@@ -15,12 +15,8 @@ import re
 import subprocess
 
 from search.serialization import strict_json
-from search.operations.deployment import (
-    composition,
-    gpu_ownership,
-    image_build,
-    source_bundle,
-)
+from search.operations.deployment import composition, gpu_ownership, source_bundle
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.public_entry import preflight, profile
 from search.operations.shared import private_io
 

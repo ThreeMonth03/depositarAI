@@ -15,7 +15,7 @@ import re
 import time
 
 from search.operations.catalog import policy
-from search.operations.deployment import image_build
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.release import probe as release_probe
 from search.operations.deployment import source_bundle
 from search.operations.shared import private_io

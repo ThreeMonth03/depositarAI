@@ -11,7 +11,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from search.operations.deployment.candidate import probe
-from search.operations.deployment import image_build, runtime_docker
+from search.operations.deployment import runtime_docker
+from search.operations.deployment.images import build as image_build
 
 
 CONTAINER = "a" * 64

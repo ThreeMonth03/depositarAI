@@ -17,7 +17,7 @@ from unittest import mock
 from search.operations.deployment import source_bundle as bundle
 from search.operations.deployment.release import probe
 from search.operations.shared import private_io
-from tests.unit.deployment.image_fixtures import (
+from tests.unit.deployment.images.fixtures import (
     blob as blob,
     fixture_sources as fixture_sources,
     fixture_tree as fixture_tree,

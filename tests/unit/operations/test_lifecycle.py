@@ -309,7 +309,7 @@ class ProductLifecycleTests(unittest.TestCase):
             cli.parser().parse_args(["--config", "/config.json", "install"])
 
     def test_image_builder_runs_inside_marked_product_lock_and_receipt(self):
-        from search.operations.deployment import image_staging
+        from search.operations.deployment.images import staging as image_staging
 
         def stage(config, store, source_revision, **options):
             self.assertIs(config, self.config)

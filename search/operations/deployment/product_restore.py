@@ -15,7 +15,8 @@ import sys
 
 from scripts.ci import source_artifact
 from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME, CatalogBundle
-from search.operations.deployment import image_build, product_package, source_bundle
+from search.operations.deployment import product_package, source_bundle
+from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 
 

@@ -746,7 +746,7 @@ def _build_images_locked(
     source_runner=None,
     docker_runner=None,
 ):
-    from search.operations.deployment.image_staging import stage_product_images
+    from search.operations.deployment.images.staging import stage_product_images
 
     _require_revision(source_revision, repo_root)
     with operation(store, "build-images", source_revision):

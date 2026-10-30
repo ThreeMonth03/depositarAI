@@ -22,7 +22,7 @@
 | 有界 HTTP request／response／transport | `search.transport.http` |
 | 純 JSON 解析、私有 service-key 檔案讀取 | `search.serialization`、`search.secrets` |
 | 已建立 process 的雙 pipe 擷取與清理 | `search.operations.shared.bounded_process` |
-| Runtime Docker client、完成映像證據 | `search.operations.deployment.runtime_docker`、`image_authority` |
+| Runtime Docker client、完成映像證據 | `search.operations.deployment.runtime_docker`、`images.authority` |
 | 共用模型候選、catalog 權限與私有批次擷取 | `search.operations.deployment.candidate` 的明確子模組；`batch.execution` 使用 `search.quality.contract` |
 | 離線 metadata 正規化、封存及 builder CLI | `search.catalog.build` 的明確子模組；入口為 `python3 -m search.catalog.build` |
 | 封存資料與精確 inventory | `search.catalog.bundle`、`inventory` |
@@ -104,7 +104,7 @@ Metadata manifest 的 `builder.source_sha256` 由 `search.catalog.build.identity
 
 可重用資料放在 `search/tests/fixtures.py`，BFF doubles 放在
 `search/tests/web_support.py`；operator image 與 catalog volume fixtures 分別在
-`tests/unit/deployment/image_fixtures.py`、`tests/unit/catalog/volume_fixtures.py`。
+`tests/unit/deployment/images/fixtures.py`、`tests/unit/catalog/volume_fixtures.py`。
 由使用它的 test 管理 assertions 與 cleanup，不借用另一個 `TestCase` 當 setup。
 
 目錄規範見 [repository layout](REPOSITORY_LAYOUT.md)，日常檢查見

@@ -9,12 +9,14 @@ import subprocess
 import tempfile
 
 from search.operations.config import GPUConfig, ProductConfig
-from search.operations.deployment import image_build, image_staging, source_bundle
+from search.operations.deployment import source_bundle
+from search.operations.deployment.images import build as image_build
+from search.operations.deployment.images import staging as image_staging
 from search.operations.shared import private_io
 from search.operations.state import locked_state
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 def blob(raw):

@@ -25,12 +25,12 @@ from search.operations.config import ProductConfig
 from search.operations.deployment import (
     composition,
     gpu_ownership,
-    image_authority,
-    image_build,
     inference_runtime,
     source_bundle,
     runtime_docker,
 )
+from search.operations.deployment.images import authority as image_authority
+from search.operations.deployment.images import build as image_build
 from search.operations.deployment.runtime_docker import (
     InferenceError,
 )
