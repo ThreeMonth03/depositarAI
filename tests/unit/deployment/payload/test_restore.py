@@ -20,14 +20,15 @@ from search.catalog.build import builder, identity
 from search.catalog import embedding as embedding_policy
 from search.catalog.bundle import CatalogBundle
 from search.operations import doctor
-from search.operations.deployment import product_package, product_restore, source_bundle
+from search.operations.deployment import product_package, source_bundle
+from search.operations.deployment.payload import restore as product_restore
 from search.operations.shared import private_io
 from search.reranker import model as reranker_model
 from tests.unit.deployment.test_product_package import FakeDocker, record
 from tests.unit.operations.test_metadata_sync import dataset
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 APP_PATHS = {
     role: "fixture/" + role + ".py" for role in product_package.image_build.SERVICES
 }

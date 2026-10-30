@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.config import GPUConfig, ProductConfig
-from search.operations.deployment import packaging, product_package
+from search.operations.deployment import product_package
+from search.operations.deployment.payload import collect as packaging
 from search.operations.shared import private_io
 
 

@@ -176,7 +176,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.gateway.test_probe_script \
   tests.unit.deployment.gateway.test_probe_runtime \
   tests.unit.deployment.test_product_package \
-  tests.unit.deployment.test_product_restore \
+  tests.unit.deployment.payload.test_restore \
   tests.unit.deployment.public_entry.test_profile \
   tests.unit.deployment.public_entry.test_identity_adapter \
   tests.unit.deployment.public_entry.test_antibot \
@@ -186,7 +186,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.public_entry.test_remote \
   tests.unit.deployment.public_entry.test_remote_lifecycle \
   tests.unit.deployment.public_entry.test_updates \
-  tests.unit.deployment.test_packaging \
+  tests.unit.deployment.payload.test_collect \
   tests.unit.operations.test_bounded_http \
   tests.integration.test_product_compose \
   tests.unit.operations.test_runtime_model_policy \

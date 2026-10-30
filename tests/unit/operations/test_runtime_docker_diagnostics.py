@@ -310,7 +310,7 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                 self.assert_failure(report)
 
     def test_public_and_source_commands_do_not_gain_private_runtime_diagnostics(self):
-        from search.operations.deployment import product_restore
+        from search.operations.deployment.payload import restore as product_restore
         from search.operations.deployment.public_entry import host, updates
 
         for command, owner, action, options in (

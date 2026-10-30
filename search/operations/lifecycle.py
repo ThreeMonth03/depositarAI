@@ -677,7 +677,7 @@ def package_product(
     catalog_runner=None,
 ):
     """Scan/roundtrip source and package completed same-source product assets."""
-    from search.operations.deployment import packaging
+    from search.operations.deployment.payload import collect
 
     source_revision = revision(repo_root)
     with locked_state(config) as store:
@@ -691,7 +691,7 @@ def package_product(
                 repo_root=repo_root,
                 runner=catalog_runner,
             )
-            result = packaging.package_product(
+            result = collect.package_product(
                 config,
                 store,
                 source_revision,

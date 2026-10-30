@@ -24,6 +24,7 @@ prerequisites, side effects and incomplete installer boundaries.
 | [catalog/](catalog/execution.py) | Sealed source preparation, CPU runtime, import/reconciliation, permissions, projection, vector passes and leases |
 | [catalog/commands.py](catalog/commands.py) | Catalog text-command runner and stdout validation; command selection and runtime authority stay with callers |
 | [deployment/](deployment/composition.py) | Images/models, private release, gateway activation, product packages and offline restore |
+| [payload/](deployment/payload/collect.py) | Verified product collection and offline restore workflows; product_package.py owns their shared manifest/archive/export contract |
 | [images/](deployment/images/staging.py) | Product image staging, controlled builds and completed source/image evidence; shared COPY/source contracts remain in source_bundle.py |
 | [candidate/](deployment/candidate/controller.py), [batch/](deployment/candidate/batch/execution.py) | Shared-model CPU candidates, independently verified catalog authority and bounded private case capture |
 | [frontend/](deployment/frontend/delivery.py) | Standalone CPU website artifacts, admission policy, authenticated checks and delivery/rollback transactions |

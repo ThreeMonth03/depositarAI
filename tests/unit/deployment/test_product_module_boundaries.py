@@ -544,7 +544,7 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
                 "release",
                 "gateway",
                 "gateway.activation",
-                "packaging",
+                "payload",
                 "gpu_ownership",
             )
         ) + (
@@ -600,7 +600,7 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
             "release/controller",
             "gateway/preparation",
             "gateway/activation",
-            "packaging",
+            "payload/collect",
         ):
             relative = Path(f"search/operations/deployment/{name}.py")
             _, package = module_context(relative)

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from search.operations import cli
-from search.operations.deployment import product_restore
+from search.operations.deployment.payload import restore as product_restore
 
 
 class ProductRestoreCLITests(unittest.TestCase):

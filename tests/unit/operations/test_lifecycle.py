@@ -1388,7 +1388,7 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIsNone(lifecycle.status(self.config)["active_release"])
 
     def test_product_package_holds_lock_and_records_failure_without_activation(self):
-        from search.operations.deployment import packaging
+        from search.operations.deployment.payload import collect as packaging
 
         plan = self.stage_index_plan()
 
