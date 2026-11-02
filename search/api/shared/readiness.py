@@ -24,9 +24,9 @@ class BackendReadiness:
     checks. Optional reranker failure is reported, not silently marked healthy.
     """
 
-    def __init__(self, backend, *, clock=time.monotonic):
+    def __init__(self, backend, *, slots=None, clock=time.monotonic):
         self.backend, self.clock = backend, clock
-        self.slots = Slots(1)
+        self.slots = slots if slots is not None else Slots(1)
         self._checked, self._value = None, None
 
     async def check(self):

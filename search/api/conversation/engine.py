@@ -92,10 +92,10 @@ def literal_refinement(request):
 
 
 class ConversationEngine:
-    def __init__(self, settings, backend):
+    def __init__(self, settings, backend, *, slots=None):
         self.settings, self.backend = settings, backend
         self.search = RetrievalEngine(backend, settings)
-        self.slots = Slots(1)
+        self.slots = slots if slots is not None else Slots(1)
 
     async def turn(self, request, request_id):
         async with self.slots.claim():

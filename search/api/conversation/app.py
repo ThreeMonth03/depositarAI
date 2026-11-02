@@ -10,7 +10,7 @@ from search.http.application import application
 from search.http.views import APIView
 
 from ..shared.config import CONVERSATION_CONTRACT_VERSION, Settings
-from ..shared.admission import Busy
+from ..shared.admission import Busy, Slots
 from ..shared.backend import BackendFailure
 from ..shared.readiness import BackendReadiness
 from ..shared.middleware import BoundaryMiddleware, error_details
@@ -35,8 +35,9 @@ class PrivateView(APIView):
 def create_app(settings=None, backend=None):
     settings = settings or Settings.from_environment()
     backend = backend or ConversationBackend()
-    engine = ConversationEngine(settings, backend)
-    readiness = BackendReadiness(backend)
+    slots = Slots(1)
+    engine = ConversationEngine(settings, backend, slots=slots)
+    readiness = BackendReadiness(backend, slots=slots)
 
     class Health(PrivateView):
         http_method_names = ["get"]
