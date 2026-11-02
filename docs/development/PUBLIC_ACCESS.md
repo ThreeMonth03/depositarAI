@@ -6,8 +6,8 @@
 APISIX 原生 limit-count 與持久化 Redis；專案只實作身分與搜尋 session 的銜接、
 設定渲染及錯誤提示，不自行維護密碼、OAuth 協定或另一套額度資料庫。
 
-這個入口是另一組 CPU 服務，沿用已啟動的私有 conversation API。既有私有試用
-`127.0.0.1:18083`、模型、索引與 active release 不因準備入口而切換。
+這個入口是另一組 CPU 服務，沿用已啟動的私有 conversation API。既有私有試用、
+模型、索引與 active release 不因準備入口而切換。
 **入口準備完成或離線測試通過，都不等於已對公眾開放**：正式網域、HTTPS 憑證、上游入口
 及真實 OIDC client 仍須由部署者配置並驗收。這不是整套產品的新主機 installer。
 
@@ -100,6 +100,29 @@ Redis 使用私有 bind mount、AOF、`appendfsync always` 與 `noeviction`，�
 不可刪除 `redis-data`、執行清空資料或改用空目錄來更新入口，否則配額狀態會遺失。
 磁碟損壞、遺失及人為清空仍須有備份／復原安排；持久化不等於異地備援。
 參考 [Redis 持久化與 fsync 語意](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)。
+
+## 初期容量與過載政策
+
+初期公開建議先選 `login_required`，確認容量與入口保護後再評估 `mixed`；這是部署建議，
+不變更既有預設或範例。限速控制請求到達率，額度限制 HTTP attempt；兩者都不保證隨時有空位。
+
+| 邊界 | 現有容量與期限 |
+|---|---|
+| 啟用防爬的外層 Nginx | 每 IP 20、全站 64 個並發連線；全站 100 requests/s，burst 100 |
+| HTTP server | Web／API 各一個 worker；`--limit-concurrency` 分別為 32／16，並非 AI 工作數 |
+| BFF turn | 同一 app instance 一次一個 turn；滿載立即回 `429 busy`，不排隊 |
+| 私有 API | 同一 app instance 的 turn 與未快取／過期的 `/readyz` 共用一個 slot；忙時分別回 429／503 |
+| 健康與容量 | `/healthz` 只證明 liveness；cached readiness 不代表有空位，容量 503 不應觸發自動重啟或 GPU 修復 |
+| Body | 公開入口與 BFF 上限 4 KiB，BFF 讀取期限 5 秒；私有 API 另有 8 KiB 邊界 |
+| Turn 期限 | 私有 API 總期限 120 秒、BFF 上游總期限 125 秒；代理 read timeout 為 130 秒 |
+
+代理 read timeout 不是端到端期限。上述 app slot 與 session 狀態只在各自程序內有效，
+不協調其他 instance 或遠端 GPU 使用者；不可把增加 worker 當成擴充同一個容量池。
+這與[私有離線工作佇列](JOB_QUEUE.md)分開，公眾 turn 不送入該佇列。
+
+訪客與登入者共用池只隔離提交額度，不保留工作 slot，也沒有登入者優先、訪客只用空閒容量
+或 priority queue。訪客占用 slot 時，登入者仍可能收到 busy；通過入口計數的 busy、逾時與
+手動重試仍依前述 attempt 語意計數，不補回額度。等待提示不保證稍後可用，前端不自動重送。
 
 ## 身分、session 與惡意輸入
 
@@ -370,13 +393,29 @@ Redis 資料來重試。
 loopback HTTP 檢查不代替正式 HTTPS/OIDC 驗收。開放流量前，從真正的外網入口檢查：
 
 - 首頁、JavaScript、CSS 與圖片能載入，瀏覽器沒有 CSP 或 MIME 錯誤。
-- 訪客可用小額搜尋，個人配額用完有登入提示；登入、callback、登出與重新登入正常。
-- 訪客池耗盡仍保留登入者池；共用池耗盡不誤導使用者登入。
-- 未通過挑戰時 session／turn 回 JSON，`/verify` 能完成挑戰，原問題只在明確重試時再送出。
-- 以新來源 IP、刪除訪客 cookie 及多帳號驗證，仍不能突破配置的池與全站總量。
+- `mixed` 驗證訪客小額搜尋與個人配額用完的登入提示；`login_required` 驗證匿名及舊訪客
+  cookie 皆被拒絕。兩種模式都須驗證登入、callback、登出與重新登入正常。
+- `mixed` 驗證訪客池耗盡仍保留登入者池；共用池耗盡不誤導使用者登入。
+- 啟用 Anubis 時，未通過挑戰的 session／turn 回 JSON，`/verify` 能完成挑戰，原問題只在明確重試時再送出。
+- 兩種模式都以新來源 IP、多帳號驗證全站總量；`mixed` 另驗重建訪客 cookie 不能突破訪客池。
 - 搜尋、追問、重設與帳號間 session 隔離正常。
 - 額度用完、Redis 不可用、私有 backend 異常時，不會放行無限 AI 請求。
 - 只公開核准的 HTTPS 入口，沒有旁路可直接存取私有網站或管理介面。
+- 未啟用 Anubis 時，先核對外部 HTTPS 代理確實提供登入前全站／IP 限速、連線限制及可信
+  來源 IP；缺少任一項就不放行公開流量，不能拿 OIDC 後的 APISIX 限速代替。
+
+過載驗收先用已就緒的隔離 CPU fixture 與假上游，最多兩個合成身分、8 個 HTTP 請求、
+兩個並行請求，總截止 30 秒。這是 fixture 驗收界線，不是正式服務 SLA，也不是公開服務壓測：
+
+1. 固定候選來源與設定，記錄上述請求／時間上限、配額、資源停止門檻及監看者。用 Event 阻塞第一個 turn，
+   第二個應在兩秒內收到 busy、假上游呼叫數不增加；結束這組後才驗證解除阻塞能恢復。
+   假上游須在五秒內解除或取消，不能留下無期限等待；每個情境只跑一次。
+2. 上游逾時、取消各驗一次本地 slot 清理，已通過入口的 attempt 不退款。Redis 不可用另驗一次
+   fail-closed、假上游呼叫數不增，不宣稱故障時配額已寫入。都不自動重試；CPU 證據不代表
+   真實 GPU 已取消或正式 HTTPS／OIDC 已驗收。
+3. 真實入口／模型驗收另定總請求上限、總截止與資源門檻；busy 就停止增加請求，不提高併發。
+   遇逾時、上游結果不明、Redis 故障或 CPU／記憶體／GPU／頻寬達停止門檻，先暫停入口並調查，
+   不靠重送請求判斷是否恢復。頻寬保護與告警聯絡須由對外代理／機構上游負責。
 
 需要人工暫停時，使用目前版本的 Compose：
 
@@ -387,6 +426,10 @@ docker compose -f /absolute/private/public-entry/versions/GENERATION/compose.jso
 
 未啟用防爬時省略 `public-edge`。停止入口不刪除 Redis、Anubis 或版本資料。恢復之前先處理失敗原因；有 pending 版本時，
 優先執行人工 rollback。不要使用 `down -v`、清空 Redis 或重建空的資料目錄。
+HTTP 逾時、取消、本地 slot 釋放或停止入口，都不證明遠端 GPU 已停止或既有請求已完成。
+恢復前須由操作者確認上游狀態；不因 readiness 快取成功就重新放流量。
+`login_required` 可作為停用訪客的部署政策；已上線模式變更須另安排設定維護，
+不是只換網站映像，也沒有 guest-only 熱切換。緊急暫停沿用上述全入口停止方式。
 
 ## 程式邊界與離線驗證
 
