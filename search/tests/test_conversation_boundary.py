@@ -1,14 +1,19 @@
 """Current HTTP authentication, input bounds and safe errors with real ASGI."""
 
 import asyncio
+from contextlib import suppress
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
+import httpx
+
+from search.api.conversation import app as conversation_app
 from search.api.conversation.app import create_app
 from search.api.shared.config import Settings
+from search.api.shared.readiness import BackendReadiness
 from search.http.body import bounded_body
 from search.tests.fixtures import ConversationFixture, ConversationHTTPFixture, KEY
 
@@ -514,3 +519,146 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
                 await task
             except asyncio.CancelledError:
                 pass
+
+
+class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        key = Path(temporary.name) / "key"
+        key.write_text(KEY + "\n")
+        key.chmod(0o600)
+        settings = Settings("a" * 40, "b" * 64, Path("/catalog"), key, True, 20)
+        self.backend = ConversationFixture()
+        self.tick, self.hold, self.started = 0, None, []
+        original_call = self.backend.call
+
+        async def controlled(operation, payload, timeout):
+            self.started.append(operation)
+            if operation == self.hold:
+                self.entered.set()
+                try:
+                    await self.release.wait()
+                finally:
+                    self.cleaned.set()
+            return await original_call(operation, payload, timeout)
+
+        self.backend.call = controlled
+
+        def readiness(backend, **kwargs):
+            return BackendReadiness(backend, clock=lambda: self.tick, **kwargs)
+
+        with patch.object(conversation_app, "BackendReadiness", side_effect=readiness):
+            app = conversation_app.create_app(settings, self.backend)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers={"Authorization": "Bearer " + KEY},
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def turn(self):
+        return await self.client.post("/v1/turn", json={"query": "找氣候資料"})
+
+    async def stop_owner(self, task):
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def hold_owner(self, operation):
+        self.hold = operation
+        self.entered, self.release, self.cleaned = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        self.started.clear()
+        task = asyncio.create_task(
+            self.client.get("/readyz") if operation == "ready" else self.turn()
+        )
+        self.addAsyncCleanup(self.stop_owner, task)
+        await asyncio.wait_for(self.entered.wait(), 2)
+        return task
+
+    async def test_entire_turn_excludes_uncached_readiness_without_backend_work(self):
+        for stage in ("scope", "conversation_plan", "retrieve", "rerank"):
+            with self.subTest(stage=stage):
+                self.tick += 30
+                task = await self.hold_owner(stage)
+                before = list(self.started)
+                try:
+                    response = await asyncio.wait_for(self.client.get("/readyz"), 2)
+                    self.assertEqual(self.started, before)
+                    self.assertEqual(response.status_code, 503)
+                    self.assertEqual(response.json()["error"]["code"], "unavailable")
+                finally:
+                    self.release.set()
+                    self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
+
+    async def test_turn_excludes_expired_readiness(self):
+        self.assertEqual((await self.client.get("/readyz")).status_code, 200)
+        self.tick = 30
+        task = await self.hold_owner("scope")
+        response = await asyncio.wait_for(self.client.get("/readyz"), 2)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.started, ["scope"])
+        self.release.set()
+        self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
+        self.assertEqual((await self.client.get("/readyz")).status_code, 200)
+
+    async def test_cold_readiness_excludes_turn_before_any_backend_stage(self):
+        task = await self.hold_owner("ready")
+        response = await asyncio.wait_for(self.turn(), 2)
+        self.assertEqual(self.started, ["ready"])
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], "busy")
+        self.release.set()
+        self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
+        self.assertEqual((await self.turn()).status_code, 200)
+
+    async def test_cached_readiness_stays_cheap_and_does_not_renew_its_age(self):
+        cached = await self.client.get("/readyz")
+        self.assertEqual(cached.status_code, 200)
+        self.tick = 29
+        task = await self.hold_owner("scope")
+        response = await asyncio.wait_for(self.client.get("/readyz"), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), cached.json())
+        self.assertEqual(self.started, ["scope"])
+        self.tick = 30
+        self.assertEqual((await self.client.get("/readyz")).status_code, 503)
+        self.assertEqual(self.started, ["scope"])
+        self.release.set()
+        self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
+
+    async def test_failed_readiness_releases_capacity_for_a_turn(self):
+        self.backend.fail = "ready"
+        self.assertEqual((await self.client.get("/readyz")).status_code, 503)
+        self.backend.fail = None
+        self.assertEqual((await self.turn()).status_code, 200)
+
+    async def test_failed_turn_releases_capacity_for_readiness(self):
+        self.backend.fail = "scope"
+        with self.assertLogs("search.api.conversation.engine", level="WARNING"):
+            self.assertEqual((await self.turn()).status_code, 503)
+        self.backend.fail = None
+        self.assertEqual((await self.client.get("/readyz")).status_code, 200)
+
+    async def test_cancelled_readiness_releases_capacity_for_a_turn(self):
+        task = await self.hold_owner("ready")
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(self.cleaned.is_set())
+        self.hold = None
+        self.assertEqual((await self.turn()).status_code, 200)
+
+    async def test_cancelled_turn_releases_capacity_for_readiness(self):
+        task = await self.hold_owner("scope")
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(self.cleaned.is_set())
+        self.hold = None
+        self.assertEqual((await self.client.get("/readyz")).status_code, 200)
