@@ -164,6 +164,21 @@ bash scripts/search-web.sh down
 
 `config` 和 `up` 會先驗證完整 Compose，再產生明確允許、其餘拒絕的 Nginx
 來源規則；非機密的 CIDR 規則檔設為 `0444`，父目錄維持私有。只有容器本機健康檢查另允許 loopback。
+父目錄必須是目前帳號持有的 `0700`；完整祖先目錄只接受 root 或目前帳號持有，
+一般祖先不得讓 group／other 寫入。可信任 owner 的 sticky 祖先可容納可信任帳號
+持有的下一層目錄。Symlink、特殊檔、hardlink 或 owner／權限不符時拒絕產生／驗證政策，
+不自動修正既有權限。`0444` 讓不同 UID 的非 root 容器仍能讀取非機密規則。
+
+`up` 在 build 後及容器建立前只讀複驗政策；原生前端部署與回退也在 stop／up
+邊界重驗。政策不符時不繼續 up。原子替換 host 檔案不會熱更新正在執行的 Nginx；
+相同政策不重寫檔案，變更政策仍須正常部署並核對容器內的內容。
+
+此流程須從 Docker 主機操作可信任的本機 daemon，並在部署存續期間維持路徑保護。
+Host 檢查不會認證 remote daemon 或不同 mount／UID mapping 下的同名路徑。
+目前帳號、root 及主機／儲存管理者仍屬可信任者；檢查依賴儲存系統確實執行
+Linux POSIX 權限、ACL mask 與 sticky 語意。事後讀取 mounted file 不能證明服務
+啟動前毫無暴露，也不代表 Nginx 已重新載入政策。
+
 規則使用直接 TCP peer，不採信瀏覽器送來的 `X-Forwarded-For`。
 若網路設備改寫來源，須先核對實際路由，不要將 Docker 網段或所有來源加入白名單。
 變更 CIDR 後重新執行 `up`，讓入口重新載入規則。

@@ -492,6 +492,7 @@ class FrontendCheckTests(unittest.TestCase):
 
     def test_intranet_rejects_origin_bind_and_host_or_mounted_acl_drift(self):
         for mutation in ("origin", "bind", "host-acl", "mounted-acl", "writable-acl"):
+            (self.root / "intranet-allow.conf").unlink(missing_ok=True)
             self.runner = Runner(self.root, mode="intranet-http")
             self.config["deployment_mode"] = "intranet-http"
             self.save()

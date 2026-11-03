@@ -1,10 +1,13 @@
 """Explicit client-address admission for the standalone intranet HTTP entry."""
 
 from ipaddress import IPv4Network
+import errno
 import os
 from pathlib import Path
-import tempfile
+import uuid
 
+from search.operations.shared import private_io
+from search.operations.shared.namespace import check_directory
 from search.web.origin import validate_origin
 
 
@@ -12,6 +15,7 @@ PRIVATE_NETWORKS = tuple(
     IPv4Network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 ACCESS_TARGET = "/etc/nginx/intranet-allow.conf"
+MAX_POLICY_BYTES = 4096
 
 
 def intranet_settings(config):
@@ -57,26 +61,73 @@ def intranet_settings(config):
 def prepare_access(config):
     """Write the dedicated admission input after validating the composition."""
     _, path, rules = intranet_settings(config)
-    if not path.parent.is_dir() or path.is_symlink():
-        raise ValueError("admission parent must exist and target cannot be a symlink")
-    temporary = None
+    encoded = rules.encode("ascii")
+    check_directory(path.parent, private=True)
+    parent = private_io.open_directory(path.parent)
+    temporary = ".intranet-" + uuid.uuid4().hex
+    created = False
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="ascii", dir=path.parent, delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(rules)
+        try:
+            existing = _read_file(parent, path.name)
+        except FileNotFoundError:
+            pass
+        else:
+            if existing == encoded:
+                private_io.verify_directory(parent, path.parent)
+                return
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent,
+        )
+        created = True
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
             stream.flush()
             # CIDRs are not credentials. The bind-mounted file must also work
             # when the container's non-root UID differs from the operator's.
             os.fchmod(stream.fileno(), 0o444)
-        temporary.replace(path)
+            os.fsync(stream.fileno())
+        private_io.verify_directory(parent, path.parent)
+        os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+        created = False
+        os.fsync(parent)
+        _verify_file(parent, path, encoded)
     finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        try:
+            if created:
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(parent)
+
+
+def _read_file(parent, name):
+    try:
+        return private_io.read_file(
+            parent, name, mode=0o444, max_bytes=MAX_POLICY_BYTES
+        )
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise ValueError("admission file cannot be a symlink") from None
+        raise
+
+
+def _verify_file(parent, path, encoded):
+    actual = _read_file(parent, path.name)
+    private_io.verify_directory(parent, path.parent)
+    if actual != encoded:
+        raise ValueError("admission file differs from the approved client CIDRs")
 
 
 def verify_access(config):
     _, path, rules = intranet_settings(config)
-    if path.is_symlink() or path.stat().st_size > 4096 or path.read_text() != rules:
-        raise ValueError("admission file differs from the approved client CIDRs")
+    check_directory(path.parent, private=True)
+    parent = private_io.open_directory(path.parent)
+    try:
+        _verify_file(parent, path, rules.encode("ascii"))
+    finally:
+        os.close(parent)

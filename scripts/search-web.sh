@@ -56,6 +56,11 @@ fi
 if [[ "$command" == up || "$command" == config ]]; then
   "${compose[@]}" config --format json | python3 scripts/validate_search_web.py "${policy[@]}"
 fi
+verify_access() {
+  if [[ "$mode" == intranet-http ]]; then
+    "${compose[@]}" config --format json | python3 scripts/validate_search_web.py --intranet
+  fi
+}
 case "$command" in
   up)
     # Build committed bytes, never untracked files or a stale shared-FS snapshot.
@@ -63,12 +68,14 @@ case "$command" in
       git archive "$SOURCE_REVISION" | docker build -f "deploy/docker/$role/Dockerfile" \
         --build-arg "SOURCE_REVISION=$SOURCE_REVISION" -t "depositar-search-$role:$SOURCE_REVISION" -
     done
+    verify_access
     # Keep the website closed while its frontend and BFF change versions.
     "${compose[@]}" stop --timeout 10 web-nginx
     # A failed or interrupted health check leaves admission closed for rollback.
     trap '"${compose[@]}" stop --timeout 10 web-nginx >/dev/null 2>&1 || true' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
+    verify_access
     "${compose[@]}" up --no-build --pull never -d --wait --wait-timeout 180
     trap - EXIT INT TERM
     if [[ "$mode" == intranet-http ]]; then

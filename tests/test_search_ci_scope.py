@@ -37,6 +37,8 @@ class SearchCIScopeTests(unittest.TestCase):
         for module in (
             "search.tests.test_readiness",
             "tests.unit.deployment.test_private_api_tls",
+            "tests.unit.deployment.frontend.test_access",
+            "tests.unit.deployment.frontend.test_wrapper",
             "tests.unit.catalog.test_transport",
             "tests.unit.catalog.test_query",
             "tests.unit.catalog.test_client_lease",

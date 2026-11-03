@@ -308,6 +308,69 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.assertFalse((self.state / "intent.json").exists())
         self.assertEqual(sum("up" in c for c in self.runner.mutations()), 2)
 
+    def tamper_admission(self):
+        path = self.frontend / "intranet-allow.conf"
+        path.chmod(0o600)
+        path.write_bytes(b"allow all;\n")
+        path.chmod(0o444)
+
+    def test_admission_drift_after_image_checks_refuses_before_stop(self):
+        original = delivery.Delivery.verify_images
+
+        def tamper(instance, target):
+            original(instance, target)
+            self.tamper_admission()
+
+        with (
+            patch.object(delivery.Delivery, "verify_images", new=tamper),
+            self.assertRaisesRegex(
+                delivery.FrontendDeliveryError, "recovery_required$"
+            ),
+        ):
+            self.run_delivery()
+        self.assertFalse(
+            any("up" in call or "stop" in call for call in self.runner.mutations())
+        )
+        self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
+        self.assertTrue((self.state / "intent.json").exists())
+
+    def install_stop_tamper(self):
+        native = self.runner
+
+        def tamper(argv, **options):
+            result = native(argv, **options)
+            arguments = argv[5:]
+            if arguments[0] == "compose" and "stop" in arguments:
+                self.tamper_admission()
+            return result
+
+        self.runner = tamper
+        return native
+
+    def test_deploy_rechecks_admission_after_stop_before_up(self):
+        native = self.install_stop_tamper()
+        with self.assertRaisesRegex(
+            delivery.FrontendDeliveryError, "recovery_required$"
+        ):
+            self.run_delivery()
+        self.assertEqual(sum("up" in call for call in native.mutations()), 0)
+        self.assertEqual(sum("stop" in call for call in native.mutations()), 1)
+        self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
+
+    def test_rollback_rechecks_admission_after_stop_before_up(self):
+        self.run_delivery()
+        self.runner.calls.clear()
+        native = self.install_stop_tamper()
+        with self.assertRaisesRegex(
+            delivery.FrontendDeliveryError, "recovery_required$"
+        ):
+            self.run_delivery("rollback", None)
+        self.assertEqual(sum("up" in call for call in native.mutations()), 0)
+        self.assertEqual(sum("stop" in call for call in native.mutations()), 1)
+        self.assertEqual(
+            json.loads(self.canonical.read_text())["frontend_revision"], NEXT
+        )
+
     def test_api_contract_mismatch_refuses_before_any_cutover_or_image_import(self):
         self.runner.proof = {"error": "upstream contract mismatch"}
         with self.assertRaises(check.FrontendCheckError):

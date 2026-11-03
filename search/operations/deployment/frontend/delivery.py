@@ -445,9 +445,17 @@ class Delivery:
         ]
         self.verify_images(target)
         self.guard(intent)
+        policy.validate(
+            target["composition"],
+            intranet=target["profile"]["deployment_mode"] == "intranet-http",
+        )
         self.docker.call([*prefix, "stop", "--timeout", "10", "web-nginx"], timeout=20)
         self.guard(intent)
         self.verify_images(target)
+        policy.validate(
+            target["composition"],
+            intranet=target["profile"]["deployment_mode"] == "intranet-http",
+        )
         self.docker.call(
             [
                 *prefix,
