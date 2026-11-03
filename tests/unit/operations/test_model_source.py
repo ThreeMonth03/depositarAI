@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import hashlib
 import io
 import os
@@ -14,6 +15,54 @@ import unittest
 from unittest.mock import patch
 
 from scripts import search_model_source as model_source
+
+
+class _TrackedCloses:
+    def __init__(self, failures):
+        self.failures = failures
+        self.open_file = os.open
+        self.close_file = os.close
+        self.file_info = os.fstat
+        self.owned = {}
+        self.file_fds = {}
+        self.attempts = []
+
+    @staticmethod
+    def identity(info):
+        return info.st_dev, info.st_ino, info.st_mode
+
+    def open(self, path, flags, *args, **kwargs):
+        fd = self.open_file(path, flags, *args, **kwargs)
+        assert fd not in self.owned, "an owned FD was reused"
+        self.owned[fd] = self.identity(self.file_info(fd))
+        self.file_fds[flags] = fd
+        return fd
+
+    def close(self, fd):
+        assert fd not in self.attempts, "an owned close was retried"
+        assert self.identity(self.file_info(fd)) == self.owned[fd]
+        self.attempts.append(fd)
+        self.close_file(fd)
+        failure = self.failures.get(len(self.attempts) - 1)
+        if failure is not None:
+            raise failure
+
+    def remaining(self):
+        remaining = []
+        for fd, expected in self.owned.items():
+            try:
+                info = self.file_info(fd)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise
+            else:
+                assert self.identity(info) == expected, "FD identity changed"
+                remaining.append(fd)
+        return remaining
+
+    def release_remaining(self):
+        for fd in self.remaining():
+            self.close_file(fd)
 
 
 class SearchModelSourceTests(unittest.TestCase):
@@ -96,6 +145,192 @@ class SearchModelSourceTests(unittest.TestCase):
             options.pop("size", len(self.content)),
             **options,
         )
+
+    @contextmanager
+    def tracked_closes(self, failures):
+        trace = _TrackedCloses(failures)
+        with (
+            patch.object(model_source.os, "open", side_effect=trace.open),
+            patch.object(model_source.os, "close", side_effect=trace.close),
+        ):
+            try:
+                yield trace
+            finally:
+                trace.release_remaining()
+
+    def test_copy_close_failure_releases_all_owned_descriptors(self):
+        error = OSError(errno.EIO, "synthetic destination close failure")
+        with self.tracked_closes({0: error}) as trace:
+            with self.assertRaises(OSError) as raised:
+                self.copy()
+            self.assertIs(raised.exception, error)
+            self.assertEqual(
+                trace.remaining(), [], "copy left an owned descriptor open"
+            )
+            self.assertEqual(
+                trace.attempts[:2],
+                [
+                    trace.file_fds[model_source.WRITE_FLAGS],
+                    trace.file_fds[model_source.READ_FLAGS],
+                ],
+            )
+        self.assertEqual(self.destination.read_bytes(), self.content)
+        self.assertEqual(self.artifact.read_bytes(), self.content)
+
+    def test_root_close_failure_releases_all_owned_descriptors(self):
+        error = OSError(errno.EIO, "synthetic directory close failure")
+        with self.tracked_closes({0: error}) as trace:
+            with self.assertRaises(OSError) as raised:
+                with model_source.open_source_root(self.source) as root:
+                    root.relative_parent(self.relative)
+                    expected = list(reversed(root.descriptors))
+            self.assertIs(raised.exception, error)
+            self.assertEqual(
+                trace.remaining(), [], "root left an owned descriptor open"
+            )
+            self.assertEqual(trace.attempts, expected)
+
+    def test_copy_close_errors_follow_standard_exception_context(self):
+        for fail_count in (1, 2):
+            for body_fails in (False, True):
+                with self.subTest(closes=fail_count, body=body_fails):
+                    errors = [
+                        OSError(errno.EIO, "synthetic first close failure"),
+                        OSError(errno.ENOSPC, "synthetic last close failure"),
+                    ][:fail_count]
+                    body = RuntimeError("synthetic copy body failure")
+                    read = body if body_fails else os.read
+                    failures = dict(enumerate(errors))
+                    with (
+                        self.tracked_closes(failures) as trace,
+                        patch.object(
+                            model_source.os, "read", side_effect=read
+                        ),
+                    ):
+                        with self.assertRaises(OSError) as raised:
+                            self.copy()
+                        self.assertIs(raised.exception, errors[-1])
+                        self.assertEqual(trace.remaining(), [])
+                        if body_fails:
+                            self.assertIs(errors[0].__context__, body)
+                            self.assertIs(
+                                errors[-1].__context__,
+                                errors[-2] if fail_count == 2 else body,
+                            )
+                        else:
+                            self.assertIsNone(errors[-1].__context__)
+                    self.assertEqual(
+                        self.destination.read_bytes(),
+                        b"" if body_fails else self.content,
+                    )
+                    self.assertEqual(self.artifact.read_bytes(), self.content)
+
+    def test_root_close_errors_follow_standard_exception_context(self):
+        for fail_count in (1, 2):
+            for body_fails in (False, True):
+                with self.subTest(closes=fail_count, body=body_fails):
+                    errors = [
+                        OSError(errno.EIO, "synthetic first close failure"),
+                        OSError(errno.ENOSPC, "synthetic last close failure"),
+                    ][:fail_count]
+                    body = RuntimeError("synthetic root body failure")
+                    with self.tracked_closes(dict(enumerate(errors))) as trace:
+                        with self.assertRaises(OSError) as raised:
+                            with model_source.open_source_root(
+                                self.source
+                            ) as root:
+                                root.relative_parent(self.relative)
+                                expected = list(reversed(root.descriptors))
+                                if body_fails:
+                                    raise body
+                        self.assertIs(raised.exception, errors[-1])
+                        self.assertEqual(trace.remaining(), [])
+                        self.assertEqual(trace.attempts, expected)
+                        if body_fails:
+                            self.assertIs(errors[0].__context__, body)
+                            self.assertIs(
+                                errors[-1].__context__,
+                                errors[-2] if fail_count == 2 else body,
+                            )
+                        else:
+                            self.assertIsNone(errors[-1].__context__)
+
+    def test_private_root_owners_close_created_parents_after_failure(self):
+        for create in (False, True):
+            with self.subTest(create=create):
+                error = OSError(errno.EIO, "synthetic delegated close failure")
+                manager = (
+                    model_source.create_private_root(self.target, "new-store")
+                    if create
+                    else model_source.open_private_root(self.target)
+                )
+                with self.tracked_closes({0: error}) as trace:
+                    with self.assertRaises(OSError) as raised:
+                        with manager as root:
+                            root.relative_parent(
+                                "a/b/file" if create else "staging",
+                                private=True,
+                                create=create,
+                            )
+                            expected = list(reversed(root.descriptors))
+                    self.assertIs(raised.exception, error)
+                    self.assertEqual(trace.remaining(), [])
+                    self.assertEqual(trace.attempts, expected)
+        self.assertTrue((self.target / "new-store/a/b").is_dir())
+        self.assertEqual(self.destination.read_bytes(), b"")
+
+    def test_destination_open_failure_closes_only_acquired_file_fd(self):
+        self.destination.write_bytes(b"original staging bytes")
+        error = OSError(errno.EIO, "synthetic destination open failure")
+        with self.tracked_closes({}) as trace:
+
+            def opening(path, flags, *args, **kwargs):
+                if flags == model_source.WRITE_FLAGS:
+                    raise error
+                return trace.open(path, flags, *args, **kwargs)
+
+            with patch.object(model_source.os, "open", side_effect=opening):
+                with self.assertRaises(OSError) as raised:
+                    self.copy()
+            self.assertIs(raised.exception, error)
+            self.assertNotIn(model_source.WRITE_FLAGS, trace.file_fds)
+            self.assertEqual(
+                trace.attempts[0], trace.file_fds[model_source.READ_FLAGS]
+            )
+            self.assertEqual(trace.remaining(), [])
+        self.assertEqual(
+            self.destination.read_bytes(), b"original staging bytes"
+        )
+        self.assertEqual(self.artifact.read_bytes(), self.content)
+
+    def test_copy_close_error_keeps_the_fixed_cli_diagnostic(self):
+        error = OSError(errno.EIO, "synthetic private close details")
+        stderr = io.StringIO()
+        with (
+            self.tracked_closes({0: error}) as trace,
+            patch.object(model_source.sys, "stderr", stderr),
+        ):
+            self.assertEqual(
+                model_source.main(
+                    [
+                        "copy",
+                        "--source-root",
+                        str(self.source),
+                        "--relative",
+                        self.relative,
+                        "--destination",
+                        str(self.destination),
+                        "--sha256",
+                        self.digest,
+                        "--size",
+                        str(len(self.content)),
+                    ]
+                ),
+                1,
+            )
+            self.assertEqual(trace.remaining(), [])
+        self.assertEqual("Error: model_source_io_failed\n", stderr.getvalue())
+        self.assertEqual(self.destination.read_bytes(), self.content)
 
     def test_foreign_sticky_group_ancestor_accepts_private_pinned_source(
         self,
