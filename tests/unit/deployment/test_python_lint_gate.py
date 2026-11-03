@@ -31,6 +31,7 @@ class PythonLintGateTests(unittest.TestCase):
             "ruff.toml",
             "scripts/ci/python-lint.sh",
             "scripts/ci/python-unused.sh",
+            "scripts/ci/complexity.py",
             "search/api/requirements-test.lock",
         ):
             destination = self.root / relative
@@ -47,6 +48,9 @@ class PythonLintGateTests(unittest.TestCase):
         for relative, arguments in signatures.items():
             self.write(relative, f"def callback({arguments}):\n    pass\n")
         self.write("search/example.py", "value = 1\n")
+        self.write("search/planning/__init__.py", "")
+        self.write("search/api/retrieval/__init__.py", "")
+        self.write("search/operations/cli.py", "")
         self.environment = {
             **os.environ,
             "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
@@ -115,6 +119,31 @@ class PythonLintGateTests(unittest.TestCase):
         self.assertEqual({"search/example.py"}, changed)
         self.assertEqual("value = 1\n", (self.root / "search/example.py").read_text())
         self.assertNotIn("Python unused-code checks passed.", result.stdout)
+
+    def test_complexity_debt_is_reported_and_new_domain_debt_fails(self):
+        report = self.directory / "complexity.json"
+        self.environment["COMPLEXITY_REPORT"] = str(report)
+        source = "def choose(value):\n" + "".join(
+            f"    if value == {index}:\n        return {index}\n" for index in range(11)
+        )
+        self.write("search/legacy.py", source + "    return -1\n")
+        formatted = self.run_command("make", "format")
+        self.assertEqual(0, formatted.returncode, formatted.stderr)
+        before = self.snapshot()
+        result = self.run_command("make", "lint")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(before, self.snapshot())
+        self.assertTrue(json.loads(report.read_text()))
+
+        shutil.move(
+            self.root / "search/legacy.py", self.root / "search/planning/branch.py"
+        )
+        before = self.snapshot()
+        result = self.run_command("make", "lint")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("C901", result.stdout)
+        self.assertEqual(before, self.snapshot())
+        self.assertTrue(json.loads(report.read_text()))
 
     def test_wrong_or_missing_tool_version_refuses_before_checks(self):
         for tool, replacement in (("ruff", "0"), ("vulture", None)):
@@ -218,6 +247,9 @@ class PythonLintWorkflowTests(unittest.TestCase):
         self.assertIn(MODULE, lint)
         self.assertLess(lint.index(MODULE), lint.index("make lint"))
         self.assertIn("scripts/ci/python-lint.sh install", lint)
+        self.assertIn("tests.test_complexity", lint)
+        self.assertIn("python-complexity-${{ github.sha }}", lint)
+        self.assertIn("path: ${{ runner.temp }}/depositar-complexity.json", lint)
         self.assertIn("persist-credentials: false", lint)
         self.assertIn("needs: [lint]", validate)
         self.assertIn("if: always()", validate)

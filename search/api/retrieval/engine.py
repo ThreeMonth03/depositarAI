@@ -1,4 +1,4 @@
-"""Retrieve verified search state, filter before ranking and bound every stage."""
+"""Retrieve verified state and filter candidates before bounded ranking."""
 
 from search.catalog.query import normalize_query
 
@@ -9,7 +9,11 @@ import unicodedata
 from .results import RANKING, ValidatedSearch
 
 from search.planning.predicates import validate_conditions
-from search.reranker.contract import REQUEST_DEADLINE_S, passage, validate_order
+from search.reranker.contract import (
+    REQUEST_DEADLINE_S,
+    passage,
+    validate_order,
+)
 from ..shared.admission import Busy, Slots
 from ..shared.backend import BackendFailure, BackendTimeout
 
@@ -115,6 +119,34 @@ class RetrievalEngine:
             result["warnings"].append("unknown_condition_results_retained")
         return found
 
+    async def rerank_candidates(self, request, result, found, call):
+        """Rerank verified candidates, retaining their order on failure."""
+        if not self.settings.rerank_enabled or not found.rows:
+            return found
+        result["rerank_status"] = "fallback"
+        try:
+            async with self.rerank_slots.claim():
+                ranked = await call(
+                    "rerank",
+                    {
+                        "query": unicodedata.normalize("NFKC", request.query),
+                        "passages": [passage(row) for row in found.rows],
+                    },
+                    REQUEST_DEADLINE_S,
+                )
+            order = validate_order(ranked, len(found.rows))
+            found = ValidatedSearch(
+                tuple(found.rows[i] for i in order), found.query_sha256
+            )
+            result.update(ranking="nvidia-rerank", rerank_status="applied")
+        except BackendTimeout:
+            result["warnings"].append("rerank_timeout")
+        except Busy:
+            result["warnings"].append("rerank_busy")
+        except (BackendFailure, ValueError, TypeError):
+            result["warnings"].append("rerank_unavailable")
+        return found
+
     async def search(self, request, request_id):
         start = time.monotonic()
         result = {
@@ -173,29 +205,7 @@ class RetrievalEngine:
             result.update(status="unavailable")
             result["warnings"].append("condition_filter_unavailable")
             return finish()
-        if self.settings.rerank_enabled and found.rows:
-            result["rerank_status"] = "fallback"
-            try:
-                async with self.rerank_slots.claim():
-                    ranked = await call(
-                        "rerank",
-                        {
-                            "query": unicodedata.normalize("NFKC", request.query),
-                            "passages": [passage(row) for row in found.rows],
-                        },
-                        REQUEST_DEADLINE_S,
-                    )
-                order = validate_order(ranked, len(found.rows))
-                found = ValidatedSearch(
-                    tuple(found.rows[i] for i in order), found.query_sha256
-                )
-                result.update(ranking="nvidia-rerank", rerank_status="applied")
-            except BackendTimeout:
-                result["warnings"].append("rerank_timeout")
-            except Busy:
-                result["warnings"].append("rerank_busy")
-            except (BackendFailure, ValueError, TypeError):
-                result["warnings"].append("rerank_unavailable")
+        found = await self.rerank_candidates(request, result, found, call)
         found = ValidatedSearch(found.rows[: request.top_k], found.query_sha256)
         result["cards"] = found.cards()
         states = result.get("_condition_states", {})

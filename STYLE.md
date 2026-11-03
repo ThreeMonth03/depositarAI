@@ -44,10 +44,20 @@ bash scripts/ci/python-lint.sh install
 make lint
 ```
 
-`make lint` 只執行 Ruff check、formatter check 與既有 Vulture 規則，不改來源或
+`make lint` 執行 Ruff check、formatter check、Vulture 與分域複雜度檢查，不改來源或
 安裝套件；工具版本不符時拒絕執行。需要明確套用格式時執行 `make format`，
 再檢查 diff。兩個命令沿用已啟用環境中的同一個 `python3`，不需 Docker。
 CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆法檢查也須掛載 `ruff.toml`。
+
+`search/planning`、`search/api/retrieval` 與 `search/operations/cli.py` 的所有函式
+強制通過 McCabe 複雜度10。其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
+`python-complexity-<source SHA>` artifact；報告中的既有項目不代表通過全庫守門。
+逐域重構須依責任與失敗契約拆分，完成 review 後擴大同一個 gate，不新增分數基準或
+整批忽略規則。需要在本機保留完整報告時，明確指定 repository 外的目的地：
+
+```sh
+python3 scripts/ci/complexity.py --report /absolute/private/complexity.json
+```
 
 未使用的 import 與區域變數由 Ruff 的 `F401`、`F841` 檢查。
 `bash scripts/ci/python-unused.sh` 使用固定版本的 Vulture，阻擋信心為100的

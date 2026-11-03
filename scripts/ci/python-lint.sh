@@ -65,3 +65,10 @@ fi
 python3 -m ruff check --no-cache "${lint_roots[@]}"
 python3 -m ruff format --check --no-cache "${lint_roots[@]}"
 bash scripts/ci/python-unused.sh
+
+complexity_report=${COMPLEXITY_REPORT:-}
+if [[ -z "$complexity_report" ]]; then
+  complexity_report=$(mktemp)
+  trap 'rm -f "$complexity_report"' EXIT
+fi
+python3 -I -B scripts/ci/complexity.py --report "$complexity_report"

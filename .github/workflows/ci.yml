@@ -31,10 +31,21 @@ jobs:
       - name: Validate lint tooling behavior
         run: |
           PATH="$RUNNER_TEMP/depositar-lint/bin:$PATH" \
-            python3 -B -m unittest tests.unit.deployment.test_python_lint_gate -v
+            python3 -B -m unittest \
+              tests.unit.deployment.test_python_lint_gate tests.test_complexity -v
       - name: Check Python style and unused code
+        env:
+          COMPLEXITY_REPORT: ${{ runner.temp }}/depositar-complexity.json
         run: |
           PATH="$RUNNER_TEMP/depositar-lint/bin:$PATH" make lint
+      - name: Retain native whole-project complexity findings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-complexity-${{ github.sha }}
+          path: ${{ runner.temp }}/depositar-complexity.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   validate:
     needs: [lint]
