@@ -10,6 +10,8 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
+import sys
 import tarfile
 import tempfile
 import threading
@@ -493,6 +495,164 @@ class ReleaseTests(unittest.TestCase):
                         repository=REPOSITORY,
                         revision=REVISION,
                     )
+
+
+class VerifierTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="frontend-verifier-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.binary = self.root / "verifier"
+        certificate = {"sourceRepositoryIdentifier": str(REPOSITORY_ID)}
+        verified = [{"verificationResult": {"signature": {"certificate": certificate}}}]
+        self.binary.write_text(
+            f"#!{Path(sys.executable).resolve()}\nimport sys\n"
+            f"sys.stdout.buffer.write({encoded(verified)!r})\n"
+        )
+        self.binary.chmod(0o700)
+        self.opened, self.after_open = [], None
+        self.real_open = os.open
+
+    def tracked_open(self, path, *args, **kwargs):
+        fd = self.real_open(path, *args, **kwargs)
+        if Path(path) == self.binary or str(path) == self.binary.name:
+            self.opened.append(fd)
+            if self.after_open is not None:
+                self.after_open()
+        return fd
+
+    def verify(self, runner=None):
+        return artifact._verify_provenance(
+            self.root / "release.json",
+            self.root / "release.bundle",
+            revision=REVISION,
+            repository=REPOSITORY,
+            repository_id=REPOSITORY_ID,
+            gh_binary=self.binary,
+            runner=artifact.image_build._run if runner is None else runner,
+        )
+
+    def assert_closed(self):
+        self.assertEqual(len(self.opened), 1)
+        with self.assertRaises(OSError):
+            os.fstat(self.opened[0])
+
+    def test_protected_script_verifies_with_the_production_runner(self):
+        def run(*args, **kwargs):
+            os.fstat(self.opened[0])
+            result = artifact.image_build._run(*args, **kwargs)
+            os.fstat(self.opened[0])
+            return result
+
+        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+            self.verify(run)
+        self.assert_closed()
+
+    def test_resolved_native_tool_runs_in_the_checked_context(self):
+        native = Path(shutil.which("true", path="/usr/bin:/bin")).resolve()
+        with artifact.checked_verifier(native) as checked:
+            self.assertEqual(checked, native)
+            result = artifact.image_build._run(
+                [str(checked)], timeout=5, environment={"PATH": "/usr/bin:/bin"}
+            )
+        self.assertEqual(result.returncode, 0)
+
+    def test_writable_parent_or_higher_ancestor_prevents_dispatch(self):
+        parent = self.root / "parent"
+        leaf = parent / "bin"
+        parent.mkdir(mode=0o700)
+        leaf.mkdir(mode=0o700)
+        self.binary = self.binary.rename(leaf / "verifier")
+        for unsafe in (leaf, parent):
+            with self.subTest(directory=unsafe.name):
+                unsafe.chmod(0o770)
+                try:
+                    runner = mock.Mock()
+                    with self.assertRaisesRegex(
+                        artifact.FrontendArtifactError, "verifier_invalid"
+                    ):
+                        self.verify(runner)
+                    runner.assert_not_called()
+                finally:
+                    unsafe.chmod(0o700)
+
+    def test_symlink_and_nonexecutable_or_writable_leaf_prevent_dispatch(self):
+        for mode in (0o600, 0o720, 0o702):
+            with self.subTest(mode=oct(mode)):
+                self.binary.chmod(mode)
+                runner = mock.Mock()
+                with self.assertRaisesRegex(
+                    artifact.FrontendArtifactError, "verifier_invalid"
+                ):
+                    self.verify(runner)
+                runner.assert_not_called()
+        self.binary.chmod(0o700)
+        target = self.binary.rename(self.root / "original")
+        self.binary.symlink_to(target)
+        runner = mock.Mock()
+        with self.assertRaisesRegex(artifact.FrontendArtifactError, "verifier_invalid"):
+            self.verify(runner)
+        runner.assert_not_called()
+
+    def test_name_replacement_after_open_is_rejected_before_runner(self):
+        replacement = self.root / "replacement"
+        replacement.write_bytes(self.binary.read_bytes())
+        replacement.chmod(0o700)
+        self.after_open = lambda: replacement.replace(self.binary)
+        runner = mock.Mock()
+        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+            with self.assertRaisesRegex(
+                artifact.FrontendArtifactError, "verifier_changed"
+            ):
+                self.verify(runner)
+        runner.assert_not_called()
+        self.assert_closed()
+
+    def test_identity_change_after_execution_is_detected(self):
+        for replace in (False, True):
+            with self.subTest(replace=replace):
+
+                def run(*args, **kwargs):
+                    result = artifact.image_build._run(*args, **kwargs)
+                    if replace:
+                        replacement = self.root / "replacement"
+                        replacement.write_bytes(self.binary.read_bytes())
+                        replacement.chmod(0o700)
+                        replacement.replace(self.binary)
+                    else:
+                        with self.binary.open("a") as stream:
+                            stream.write("\n# synthetic completed-tool change\n")
+                    return result
+
+                runner = mock.Mock(side_effect=run)
+                with self.assertRaisesRegex(
+                    artifact.FrontendArtifactError, "verifier_changed"
+                ):
+                    self.verify(runner)
+                runner.assert_called_once()
+
+    def test_failed_real_tool_closes_the_descriptor(self):
+        with self.binary.open("a") as stream:
+            stream.write("\nraise SystemExit(1)\n")
+        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+            with self.assertRaisesRegex(
+                artifact.FrontendArtifactError, "provenance_invalid"
+            ):
+                self.verify()
+        self.assert_closed()
+
+    def test_runner_exception_survives_a_changed_tool_and_closes_descriptor(self):
+        error = RuntimeError("synthetic runner failure")
+
+        def fail(*_args, **_kwargs):
+            self.binary.chmod(0o600)
+            raise error
+
+        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+            with self.assertRaises(RuntimeError) as caught:
+                self.verify(fail)
+        self.assertIs(caught.exception, error)
+        self.assert_closed()
 
 
 class DownloadTests(unittest.TestCase):

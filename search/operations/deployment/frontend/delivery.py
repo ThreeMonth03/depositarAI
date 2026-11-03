@@ -55,7 +55,10 @@ def _path(value):
         "config_invalid",
     )
     path = Path(value)
-    require(path.is_absolute() and path.resolve() == path, "config_invalid")
+    try:
+        require(path.is_absolute() and path.resolve() == path, "config_invalid")
+    except RuntimeError:
+        raise FrontendDeliveryError("frontend_delivery_config_invalid") from None
     return path
 
 
@@ -96,18 +99,16 @@ def load_config(path):
         "state_overlaps_inputs",
     )
     require(value["monitor_lock_file"].name == ".check.lock", "config_invalid")
-    gh = value["gh_binary"].stat()
-    require(
-        stat.S_ISREG(gh.st_mode)
-        and gh.st_uid in (0, os.geteuid())
-        and not stat.S_IMODE(gh.st_mode) & 0o022
-        and os.access(value["gh_binary"], os.X_OK),
-        "gh_binary_unsafe",
-    )
-    # Publication replaces this mutable canonical file; frozen 0400 profiles
-    # remain suitable for the read-only checker, not the delivery transaction.
-    check.load_config(value["frontend_check_file"])
-    _read_json(value["frontend_check_file"], maximum=16384)
+    from .artifact import FrontendArtifactError, checked_verifier
+
+    try:
+        with checked_verifier(value["gh_binary"]):
+            # Publication replaces this mutable canonical file; frozen 0400
+            # profiles remain suitable only for the read-only checker.
+            check.load_config(value["frontend_check_file"])
+            _read_json(value["frontend_check_file"], maximum=16384)
+    except FrontendArtifactError:
+        raise FrontendDeliveryError("frontend_delivery_gh_binary_unsafe") from None
     return value
 
 
