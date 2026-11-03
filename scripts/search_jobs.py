@@ -12,6 +12,24 @@ from search.operations.jobs import queue
 from search.operations.jobs.pueue import JobError
 
 
+def _dispatch(registry, arguments):
+    if arguments.operation == "submit":
+        return queue.submit(registry, queue.read(arguments.request))
+    elif arguments.operation == "status" and arguments.job is None:
+        return queue.statuses(registry)
+    elif arguments.operation == "status":
+        return queue.status(registry, arguments.job)
+    elif arguments.operation == "result":
+        return queue.result(registry, arguments.job)
+    elif arguments.operation == "cancel":
+        return queue.cancel(registry, arguments.job)
+    elif arguments.operation == "archive":
+        from search.operations.jobs.archive import archive
+
+        return archive(registry, arguments.job)
+    return queue.execute(registry, arguments.job)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="operation", required=True)
@@ -22,22 +40,7 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     try:
         registry = queue.load_registry()
-        if arguments.operation == "submit":
-            value = queue.submit(registry, queue.read(arguments.request))
-        elif arguments.operation == "status" and arguments.job is None:
-            value = queue.statuses(registry)
-        elif arguments.operation == "status":
-            value = queue.status(registry, arguments.job)
-        elif arguments.operation == "result":
-            value = queue.result(registry, arguments.job)
-        elif arguments.operation == "cancel":
-            value = queue.cancel(registry, arguments.job)
-        elif arguments.operation == "archive":
-            from search.operations.jobs.archive import archive
-
-            value = archive(registry, arguments.job)
-        else:
-            value = queue.execute(registry, arguments.job)
+        value = _dispatch(registry, arguments)
     except JobError as error:
         print(json.dumps({"error": str(error)}))
         return 1

@@ -132,6 +132,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.operations.documents.test_batches \
   tests.unit.operations.documents.test_sets \
   tests.unit.jobs.test_queue \
+  tests.unit.jobs.test_cli \
   tests.unit.jobs.test_pueue \
   tests.unit.jobs.test_namespace \
   tests.unit.jobs.test_sources \
