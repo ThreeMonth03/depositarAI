@@ -700,3 +700,164 @@ class ResourceBatchCLITests(unittest.TestCase):
                     run.call_args.kwargs["profile_set"],
                 )
                 self.assertNotIn("profile_files", run.call_args.kwargs)
+
+
+class OperatorErrorOwnerTests(unittest.TestCase):
+    def owners(self):
+        from search.operations import lifecycle
+        from search.operations.catalog import access, policy, projection
+        from search.operations.deployment import inference_runtime, runtime_docker
+        from search.operations.deployment.payload import restore
+        from search.operations.deployment.public_entry import preflight, remote, updates
+        from search.operations.deployment.release import controller as release
+        from search.operations.documents import (
+            batches,
+            controller,
+            enrichment,
+            extractor,
+            sets,
+        )
+
+        return (
+            (policy.RuntimeError, "catalog_runtime_not_healthy", None),
+            (access.AccessError, "catalog_access_binding_invalid", None),
+            (projection.ProjectionError, "catalog_projection_index_changed", None),
+            (runtime_docker.InferenceError, "inference_command_failed", "up-private"),
+            (
+                inference_runtime.InferenceRuntimeError,
+                "inference_runtime_snapshot_invalid",
+                "start-inference",
+            ),
+            (release.ReleaseError, "release_acceptance_invalid", "start-release"),
+            (
+                lifecycle.UpPrivateError,
+                "product_private_existing_activation",
+                "up-private",
+            ),
+            (
+                restore.ProductRestoreError,
+                "product_restore_manifest_invalid",
+                "restore-product",
+            ),
+            (
+                preflight.PublicEntryPreflightError,
+                "public_entry_backend_plan_invalid",
+                "prepare-public-entry",
+            ),
+            (
+                remote.PublicEntryRemoteError,
+                "public_entry_remote_probe_failed",
+                "up-public-entry",
+            ),
+            (
+                updates.PublicEntryUpdateError,
+                "public_entry_runtime_changed",
+                "update-public-entry",
+            ),
+            (
+                extractor.ExtractorError,
+                "document_extractor_operator_must_be_nonroot",
+                "profile-resources",
+            ),
+            (controller.ProfileError, "document_state_busy", "profile-resources"),
+            (batches.BatchError, "document_batch_plan_changed", "profile-resources"),
+            (sets.ProfileSetError, "document_profile_set_invalid", "sync"),
+            (
+                enrichment.EnrichmentError,
+                "document_enrichment_source_mismatch",
+                "stage-catalog",
+            ),
+        )
+
+    def test_fixed_owners_keep_their_exact_class_and_command_boundaries(self):
+        from search.operations import cli
+
+        for error_type, code, command in self.owners():
+            with self.subTest(owner=error_type.__module__):
+                for allowed in (command,) if command else ("doctor", "sync"):
+                    self.assertEqual(
+                        code, cli._operator_error_code(error_type(code), allowed)
+                    )
+                if command:
+                    self.assertIsNone(
+                        cli._operator_error_code(error_type(code), "doctor")
+                    )
+
+    def test_matching_module_and_name_or_inheritance_do_not_grant_ownership(self):
+        from search.operations import cli
+
+        for error_type, code, command in self.owners():
+            for base, owner in (
+                (ValueError, error_type.__module__),
+                (error_type, error_type.__module__),
+                (error_type, "untrusted.fixture"),
+            ):
+                with self.subTest(
+                    owner=error_type.__module__, base=base, claimed=owner
+                ):
+                    forged = type(error_type.__name__, (base,), {"__module__": owner})
+                    self.assertIsNone(
+                        cli._operator_error_code(forged(code), command or "doctor")
+                    )
+
+    def test_only_one_exact_public_string_argument_can_be_a_diagnostic(self):
+        from search.operations import cli
+
+        class HostileText(str):
+            def __eq__(self, other):
+                raise AssertionError("must not compare untrusted string subclasses")
+
+            def __hash__(self):
+                raise AssertionError("must not hash untrusted string subclasses")
+
+        private = "private-error-detail-fixture"
+        for error_type, code, command in self.owners():
+            for arguments in ((), (private,), (HostileText(code),), (code, private)):
+                with self.subTest(owner=error_type.__module__, arity=len(arguments)):
+                    self.assertIsNone(
+                        cli._operator_error_code(
+                            error_type(*arguments), command or "doctor"
+                        )
+                    )
+
+    def test_unknown_or_nonexact_module_metadata_is_never_an_import_target(self):
+        import builtins
+        import importlib
+        from unittest.mock import patch
+
+        from search.operations import cli
+
+        class HostileOwner(str):
+            def __eq__(self, other):
+                raise AssertionError("must not compare untrusted module metadata")
+
+            def __hash__(self):
+                raise AssertionError("must not hash untrusted module metadata")
+
+        for owner in (
+            "untrusted.fixture.side_effect",
+            "search.operations.catalog.policy.extra",
+            None,
+            17,
+            ["search.operations.catalog.policy"],
+            HostileOwner("search.operations.catalog.policy"),
+        ):
+            foreign = type("RuntimeError", (ValueError,), {"__module__": owner})
+            error = foreign("catalog_runtime_not_healthy")
+            with (
+                self.subTest(metadata_type=type(owner).__name__),
+                patch.object(
+                    builtins,
+                    "__import__",
+                    side_effect=AssertionError("import tripwire"),
+                ) as direct,
+                patch.object(
+                    importlib,
+                    "import_module",
+                    side_effect=AssertionError("import tripwire"),
+                ) as dynamic,
+            ):
+                diagnostic = cli._operator_error_code(error, "doctor")
+            self.assertIsNone(diagnostic)
+            direct.assert_not_called()
+            dynamic.assert_not_called()
