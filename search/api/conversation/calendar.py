@@ -98,13 +98,7 @@ class CalendarText:
     lunar_date: bool = False
 
 
-def calendar_text(query):
-    query = checked_query(query)
-    # A calendar name may be the subject. Never block it or apply Gregorian
-    # arithmetic to its numbers; the planner separates topic from literal time.
-    lunar_mentioned = bool(re.search(_LUNAR, query, re.IGNORECASE))
-    if lunar_mentioned and _LUNAR_DATE.search(query):
-        return CalendarText(query, lunar_date=True)
+def _civil_matches(query):
     matches = []
     for match in _DATE.finditer(query):
         if match["year"] and not match["era"]:
@@ -119,6 +113,10 @@ def calendar_text(query):
                 continue
         if match["year"] or "-" in match["iso"] or match[0] == query:
             matches.append(match)
+    return matches
+
+
+def _short_year_clarification(query, matches):
     for match in _SHORT_YEAR.finditer(query):
         if any(
             start.start() <= match.start() < start.end() for start in matches
@@ -156,35 +154,53 @@ def calendar_text(query):
                 f"（西元{year + 1911}年）；若指西元，"
                 f"請明寫「西元{year}年」。",
             )
+    return None
+
+
+def _normalize_civil_matches(query, matches):
     replacements, dates, notices = [], [], []
+    for match in matches:
+        if match["iso"]:
+            value = match["iso"]
+        else:
+            year = number(match["year"])
+            if year < 1:
+                raise ValueError("nonpositive year")
+            roc = re.fullmatch(_ROC, match["era"] or "", re.IGNORECASE)
+            if roc:
+                year += 1911
+            value = f"{year:04d}"
+            for part in ("month", "day"):
+                if match[part]:
+                    value += f"-{number(match[part]):02d}"
+            if roc:
+                notices.append(
+                    f"{match[0]}已換算為西元 {value}；月份與日期按國曆處理。"
+                )
+            text = value + ("年" if not match["month"] else "")
+            replacements.append((match.start(), match.end(), text))
+        date_bounds(value)
+        dates.append(value)
+    normalized = query
+    for start, end, value in reversed(replacements):
+        normalized = normalized[:start] + value + normalized[end:]
+    normalized = checked_query(normalized)
+    return normalized, dates, notices
+
+
+def calendar_text(query):
+    query = checked_query(query)
+    # A calendar name may be the subject. Never block it or apply Gregorian
+    # arithmetic to its numbers; the planner separates topic from literal time.
+    lunar_mentioned = bool(re.search(_LUNAR, query, re.IGNORECASE))
+    if lunar_mentioned and _LUNAR_DATE.search(query):
+        return CalendarText(query, lunar_date=True)
+    matches = _civil_matches(query)
+    clarification = _short_year_clarification(query, matches)
+    if clarification is not None:
+        return clarification
     try:
-        for match in matches:
-            if match["iso"]:
-                value = match["iso"]
-            else:
-                year = number(match["year"])
-                if year < 1:
-                    raise ValueError("nonpositive year")
-                roc = re.fullmatch(_ROC, match["era"] or "", re.IGNORECASE)
-                if roc:
-                    year += 1911
-                value = f"{year:04d}"
-                for part in ("month", "day"):
-                    if match[part]:
-                        value += f"-{number(match[part]):02d}"
-                if roc:
-                    notices.append(
-                        f"{match[0]}已換算為西元 {value}；"
-                        "月份與日期按國曆處理。"
-                    )
-                text = value + ("年" if not match["month"] else "")
-                replacements.append((match.start(), match.end(), text))
-            date_bounds(value)
-            dates.append(value)
-        normalized = query
-        for start, end, value in reversed(replacements):
-            normalized = normalized[:start] + value + normalized[end:]
-        normalized = checked_query(normalized)
+        normalized, dates, notices = _normalize_civil_matches(query, matches)
     except ValueError:
         return CalendarText(
             query,

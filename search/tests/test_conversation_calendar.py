@@ -8,6 +8,7 @@ import unittest
 
 from search.api.shared.config import Settings
 from search.api.conversation.calendar import (
+    CalendarText,
     calendar_text,
     corrected_pending,
     number,
@@ -29,6 +30,118 @@ from search.planning.contract import checked_query
 
 
 class CalendarTextTests(unittest.TestCase):
+    def test_normalization_preserves_the_complete_result(self):
+        self.assertEqual(
+            calendar_text("  民國１１３年２月２９日的 PDF資料  "),
+            CalendarText(
+                "2024-02-29的 PDF資料",
+                notices=(
+                    "民國113年2月29日已換算為西元 2024-02-29；"
+                    "月份與日期按國曆處理。",
+                ),
+                exact="2024-02-29",
+            ),
+        )
+        self.assertEqual(
+            calendar_text("民國111年農曆文化研究"),
+            CalendarText(
+                "民國111年農曆文化研究",
+                notices=(
+                    "民國111年已換算為西元 2022；月份與日期按國曆處理。",
+                ),
+                exact="2022",
+            ),
+        )
+
+    def test_query_validation_precedes_calendar_recognition(self):
+        for query, message in (
+            (None, "query length"),
+            ("", "query length"),
+            ("資" * 513, "query length"),
+            ("農曆\u200b正月初一", "query invisible characters"),
+            ("\ud800", "query invisible characters"),
+            (" \t ", "query characters"),
+            ("民國111年\x00", "query characters"),
+        ):
+            with self.subTest(query=query):
+                with self.assertRaises(ValueError) as caught:
+                    calendar_text(query)
+                self.assertEqual(caught.exception.args, (message,))
+
+    def test_short_year_diagnostic_precedes_civil_conversion(self):
+        for query, reason, message in (
+            (
+                "民國0年及111年資料",
+                "ambiguous_era",
+                "「111年」尚未註明紀年。"
+                "若指民國111年，請回覆「民國111年」"
+                "（西元2022年）；若指西元，請明寫「西元111年」。",
+            ),
+            (
+                "民國0年及零年資料",
+                "invalid_date",
+                "年份必須有效且明確標示民國或西元，不能使用零年。",
+            ),
+            (
+                "十百年及111年資料",
+                "invalid_date",
+                "無法確認這個年份，請改用阿拉伯數字並註明民國或西元。",
+            ),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(
+                    calendar_text(query), CalendarText(query, reason, message)
+                )
+
+    def test_lunar_literal_precedes_invalid_civil_and_short_years(self):
+        for query in (
+            "農曆閏二月初一及民國0年與111年",
+            "農曆2024-13-01及十百年資料",
+        ):
+            self.assertEqual(
+                calendar_text(query), CalendarText(query, lunar_date=True)
+            )
+
+    def test_replacements_preserve_offsets_and_first_four_notices(self):
+        years = (1, 12, 111, 113, 200)
+        query = "、".join(f"民國{year}年" for year in years)
+        expected = "、".join(f"{year + 1911}年" for year in years)
+        notices = tuple(
+            f"民國{year}年已換算為西元 {year + 1911}；月份與日期按國曆處理。"
+            for year in years[:4]
+        )
+        self.assertEqual(
+            calendar_text(query), CalendarText(expected, notices=notices)
+        )
+
+    def test_normalized_query_validation_stays_a_date_clarification(self):
+        query = "民國1年" + "資" * 508
+        self.assertEqual(len(query), 512)
+        self.assertEqual(
+            calendar_text(query),
+            CalendarText(
+                query,
+                "invalid_date",
+                "日期無效或超出支援範圍，請檢查年份、月份與日期；"
+                "民國與西元請明確標示。",
+            ),
+        )
+
+    def test_partial_suffixes_do_not_widen_an_exact_year(self):
+        for suffix in ("/", "/2", "-", " 二十九日"):
+            query = "民國111年" + suffix
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    calendar_text(query),
+                    CalendarText(
+                        "2022年" + suffix,
+                        notices=(
+                            "民國111年已換算為西元 2022；"
+                            "月份與日期按國曆處理。",
+                        ),
+                    ),
+                )
+
     def test_chinese_and_arabic_numbers(self):
         for text, expected in (
             ("111", 111),

@@ -99,6 +99,7 @@ class ComplexityEntryTests(unittest.TestCase):
             + [
                 "search/planning",
                 "search/api/retrieval",
+                "search/api/conversation/calendar.py",
                 "search/operations/cli.py",
                 "search/api/shared/middleware.py",
                 "search/http",
@@ -184,6 +185,7 @@ class RealComplexityGateTests(unittest.TestCase):
             accepted_files = (
                 "search/planning/policy.py",
                 "search/api/retrieval/policy.py",
+                "search/api/conversation/calendar.py",
                 "search/operations/cli.py",
                 "search/api/shared/middleware.py",
                 "search/http/policy.py",
