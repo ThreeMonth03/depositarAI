@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import errno
 import json
 import os
 from pathlib import Path
@@ -146,6 +147,56 @@ class ProductLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "busy"):
                 with locked_state(self.config):
                     self.fail("second lock was accepted")
+
+    def test_new_lock_fsync_failure_closes_descriptors_and_preserves_intent(
+        self,
+    ):
+        self.config.state_root.mkdir(mode=0o700)
+        original_open = os.open
+        opened = []
+        failure = OSError(errno.EIO, "synthetic directory fsync failure")
+
+        def open_file(name, *arguments, **options):
+            descriptor = original_open(name, *arguments, **options)
+            if name == "operations.lock":
+                opened.append((descriptor, options["dir_fd"]))
+            return descriptor
+
+        try:
+            with (
+                patch("search.operations.state.os.open", new=open_file),
+                patch(
+                    "search.operations.state.os.fsync", side_effect=failure
+                ) as fsync,
+                self.assertRaises(OSError) as raised,
+            ):
+                with locked_state(self.config, create=True):
+                    self.fail("failed lock synchronization entered the body")
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(len(opened), 1)
+            lock_fd, root_fd = opened[0]
+            fsync.assert_called_once_with(root_fd)
+            self.assertEqual(
+                {path.name for path in self.config.state_root.iterdir()},
+                {"operations.lock"},
+            )
+            self.assertEqual(
+                (self.config.state_root / "operations.lock").read_bytes(), b""
+            )
+            for descriptor in (root_fd, lock_fd):
+                with self.subTest(descriptor=descriptor):
+                    with self.assertRaises(OSError) as closed:
+                        os.fstat(descriptor)
+                    self.assertEqual(closed.exception.errno, errno.EBADF)
+        finally:
+            # The regression must also clean up its own FD on the old code.
+            for descriptor, _ in opened:
+                try:
+                    os.fstat(descriptor)
+                except OSError as error:
+                    self.assertEqual(error.errno, errno.EBADF)
+                else:
+                    os.close(descriptor)
 
     def test_started_receipt_requires_crash_recovery(self):
         with locked_state(self.config, create=True) as store:
