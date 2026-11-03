@@ -3,6 +3,7 @@ behavior."""
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -43,6 +44,68 @@ class DocumentCacheTests(unittest.TestCase):
     def record_path(self):
         key = cache.key_for(source.source_identity(self.item))
         return self.root / ("resource-" + key + ".json")
+
+    def test_read_only_lock_neither_creates_nor_repairs_state(self):
+        with self.assertRaisesRegex(cache.CacheError, "io_failed"):
+            with cache.locked(self.root, read_only=True):
+                self.fail("missing source cannot be created")
+        self.assertFalse(self.root.exists())
+        self.root.mkdir(mode=0o700)
+        with self.assertRaisesRegex(cache.CacheError, "io_failed"):
+            with cache.locked(self.root, read_only=True):
+                self.fail("missing lock cannot be repaired")
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_read_only_lock_is_shared_and_preserves_source_bytes(self):
+        self.acquire(now=100)
+        before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+        actual_open = os.open
+        opens = []
+
+        def opened(name, flags, *args, **kwargs):
+            opens.append((name, flags))
+            return actual_open(name, flags, *args, **kwargs)
+
+        with patch.object(cache.os, "open", side_effect=opened):
+            with cache.locked(self.root, read_only=True):
+                with cache.locked(self.root, read_only=True):
+                    pass
+                with self.assertRaisesRegex(cache.CacheError, "busy"):
+                    with cache.locked(self.root):
+                        self.fail("shared readers exclude a writer")
+        lock_flags = [flags for name, flags in opens if name == ".lock"]
+        self.assertEqual(lock_flags[0] & os.O_ACCMODE, os.O_RDONLY)
+        self.assertFalse(lock_flags[0] & os.O_CREAT)
+        self.assertEqual(
+            before, {p.name: p.read_bytes() for p in self.root.iterdir()}
+        )
+
+    def test_replaced_lock_is_detected_without_repair(self):
+        self.acquire(now=100)
+        with self.assertRaisesRegex(cache.CacheError, "lock_invalid"):
+            with cache.locked(self.root, read_only=True):
+                (self.root / ".lock").rename(self.root / "old-lock")
+                replacement = self.root / ".lock"
+                replacement.write_bytes(b"")
+                replacement.chmod(0o600)
+        self.assertTrue((self.root / "old-lock").exists())
+
+    def test_body_budget_is_checked_before_body_io(self):
+        self.acquire(now=100)
+        identity = source.source_identity(self.item)
+        with cache.locked(self.root, read_only=True) as descriptor:
+            with patch.object(
+                cache.private_io, "read_file", wraps=cache.private_io.read_file
+            ) as read:
+                with self.assertRaisesRegex(cache.CacheError, "body_limit"):
+                    cache.load(
+                        descriptor,
+                        cache.key_for(identity),
+                        identity,
+                        max_body_bytes=1,
+                    )
+                names = [call.args[1] for call in read.call_args_list]
+                self.assertEqual(names, [self.record_path().name])
 
     def test_first_fetch_and_hit_preserve_body_and_original_acquisition_time(
         self,

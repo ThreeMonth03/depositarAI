@@ -5,6 +5,7 @@ extraction.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import partial
 import fcntl
 import gzip
 import hashlib
@@ -37,6 +38,7 @@ ERROR_CODES = frozenset(
         "document_state_busy",
         "document_profile_record_conflict",
         "document_extraction_cache_invalid",
+        "document_extraction_cache_missing",
         "document_extraction_content_mismatch",
         "document_extraction_policy_invalid",
         "document_state_overlaps_catalog",
@@ -150,8 +152,29 @@ def _catalog_artifact(bundle_path, manifest_sha256, name):
     return expanded
 
 
+def _verify_state_lock(descriptor, held, expected):
+    try:
+        current = os.fstat(held)
+        named = os.stat(
+            ".profiles.lock", dir_fd=descriptor, follow_symlinks=False
+        )
+    except OSError:
+        raise ProfileError("document_state_lock_invalid") from None
+    if private_io.identity(expected) != private_io.identity(
+        current
+    ) or private_io.identity(current) != private_io.identity(named):
+        raise ProfileError("document_state_lock_invalid")
+
+
 @contextmanager
-def _state(path, *, create=True, read_only=False):
+def _state(path, *, create=True, read_only=False, on_lock=None):
+    """Hold private state and optionally expose its scoped lock verifier.
+
+    The verifier checks the original/current held FD and its named entry;
+    callers must invoke it before publishing, while this context is active.
+    """
+    if on_lock is not None and not callable(on_lock):
+        raise ProfileError("document_state_lock_invalid")
     descriptor = private_io.open_directory(path, create=create)
     lock = None
     try:
@@ -179,11 +202,16 @@ def _state(path, *, create=True, read_only=False):
             lock,
             (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB,
         )
+        verify = partial(_verify_state_lock, descriptor, lock, info)
+        verify()
         private_io.verify_directory(descriptor, path)
+        if on_lock is not None:
+            on_lock(verify)
         try:
             yield descriptor
         finally:
             try:
+                verify()
                 private_io.verify_directory(descriptor, path)
             except (OSError, ValueError) as error:
                 raise ProfileError("document_state_changed") from error
@@ -227,18 +255,14 @@ def _child(descriptor, name):
         return private_io.open_child_directory(descriptor, name)
 
 
-def _extraction(
+def extraction_identity(
     acquired,
     image,
     expected_format,
     encoding,
     header_policy,
-    descriptor,
-    container_name,
 ):
-    from search.operations.documents import extractor
-
-    identity = {
+    return {
         "schema_version": 1,
         "content_sha256": acquired["sha256"],
         "image_id": image["image_id"],
@@ -247,10 +271,30 @@ def _extraction(
         "encoding": encoding,
         "header_policy": header_policy,
     }
+
+
+def _extraction(
+    acquired,
+    image,
+    expected_format,
+    encoding,
+    header_policy,
+    descriptor,
+    container_name,
+    *,
+    cache_only=False,
+):
+    from search.operations.documents import extractor
+
+    identity = extraction_identity(
+        acquired, image, expected_format, encoding, header_policy
+    )
     name = digest(identity) + ".json"
     try:
         record = _read_record(descriptor, name)
     except FileNotFoundError:
+        if cache_only:
+            raise ProfileError("document_extraction_cache_missing") from None
         result = extractor.extract(
             acquired["local_path"],
             expected_format,
@@ -278,6 +322,45 @@ def _extraction(
     if not cache_hit:
         _publish(descriptor, name, {"identity": identity, "result": result})
     return result, cache_hit
+
+
+def profile_record(
+    dataset_id,
+    resource,
+    manifest_sha256,
+    acquired,
+    result,
+    image,
+    encoding,
+    header_policy,
+):
+    """Describe verified parser output using the selected manifest."""
+    return {
+        "schema_version": 1,
+        "source": {
+            "catalog_manifest_sha256": manifest_sha256,
+            "dataset_id": dataset_id,
+            "resource_id": resource["id"],
+            "url_sha256": acquired["source_url_sha256"],
+            "content_sha256": acquired["sha256"],
+            "bytes": acquired["bytes"],
+            "acquired_at": acquired["acquired_at"],
+            "complete": True,
+        },
+        "extractor": {
+            "image_id": image["image_id"],
+            "source_sha256": image["source_sha256"],
+        },
+        "policy": {"encoding": encoding, "header_policy": header_policy},
+        "result": result,
+    }
+
+
+def publish_profile(profiles, profile):
+    """Publish a normal profile or verify identical existing bytes."""
+    profile_sha256 = digest(profile)
+    _publish(profiles, profile_sha256 + ".json", profile)
+    return profile_sha256
 
 
 def process(
@@ -309,27 +392,17 @@ def process(
         extractions,
         container_name,
     )
-    profile = {
-        "schema_version": 1,
-        "source": {
-            "catalog_manifest_sha256": manifest_sha256,
-            "dataset_id": dataset_id,
-            "resource_id": resource["id"],
-            "url_sha256": acquired["source_url_sha256"],
-            "content_sha256": acquired["sha256"],
-            "bytes": acquired["bytes"],
-            "acquired_at": acquired["acquired_at"],
-            "complete": True,
-        },
-        "extractor": {
-            "image_id": image["image_id"],
-            "source_sha256": image["source_sha256"],
-        },
-        "policy": {"encoding": encoding, "header_policy": header_policy},
-        "result": result,
-    }
-    profile_sha256 = digest(profile)
-    _publish(profiles, profile_sha256 + ".json", profile)
+    profile = profile_record(
+        dataset_id,
+        resource,
+        manifest_sha256,
+        acquired,
+        result,
+        image,
+        encoding,
+        header_policy,
+    )
+    profile_sha256 = publish_profile(profiles, profile)
     return {
         "dataset_id": dataset_id,
         "resource_id": resource["id"],

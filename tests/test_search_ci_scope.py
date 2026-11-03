@@ -61,6 +61,7 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.deployment.candidate.test_cli",
             "tests.unit.operations.test_bounded_http",
             "tests.unit.operations.test_cli",
+            "tests.unit.operations.test_document_derivation",
             "tests.unit.operations.test_namespace",
             "tests.unit.jobs.test_queue",
             "tests.unit.jobs.test_pueue",

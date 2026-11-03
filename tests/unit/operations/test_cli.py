@@ -66,6 +66,7 @@ class CLIStartupTests(unittest.TestCase):
             ([], 2),
             (["unknown"], 2),
             (["recover-public-entry"], 2),
+            (["profile-resources", "derive"], 2),
         ):
             with self.subTest(arguments=arguments):
                 report = self.run_isolated(
@@ -700,7 +701,7 @@ class ResourceBatchCLITests(unittest.TestCase):
             with self.subTest(error=type(error).__name__, command=command):
                 self.assertIsNone(cli._operator_error_code(error, command))
 
-    def invoke(self, arguments, action, result):
+    def invoke(self, arguments, action, result, *, owner=None):
         from contextlib import redirect_stdout
         import io
         from unittest.mock import patch
@@ -708,9 +709,10 @@ class ResourceBatchCLITests(unittest.TestCase):
         from search.operations import cli
         from search.operations.documents import batches
 
+        owner = batches if owner is None else owner
         output = io.StringIO()
         with (
-            patch.object(batches, action, return_value=result) as called,
+            patch.object(owner, action, return_value=result) as called,
             patch.object(
                 cli, "_runtime_report", side_effect=AssertionError("runtime")
             ),
@@ -807,6 +809,104 @@ class ResourceBatchCLITests(unittest.TestCase):
         self.assertEqual(0, code)
         called.assert_called_once_with(Path("/private/profiles"), "b" * 64)
 
+    def test_derive_forwards_frozen_identities_and_limits_without_config(self):
+        from search.operations import cli
+        from search.operations.documents import derivation
+
+        arguments = [
+            "derive",
+            "--source-bundle",
+            "/private/source-bundle",
+            "--source-state-root",
+            "/private/source-profiles",
+            "--expected-source-plan-sha256",
+            "a" * 64,
+            "--bundle",
+            "/private/target-bundle",
+            "--state-root",
+            "/private/target-profiles",
+            "--expected-plan-sha256",
+            "b" * 64,
+            "--max-resources",
+            "7",
+            "--max-bytes",
+            "4096",
+            "--wall-seconds",
+            "60",
+        ]
+        for status, expected in (
+            ("checkpoint", 2),
+            ("completed", 0),
+            ("partial", 1),
+        ):
+            with self.subTest(status=status):
+                code, called = self.invoke(
+                    arguments,
+                    "derive",
+                    {"status": status},
+                    owner=derivation,
+                )
+                self.assertEqual(expected, code)
+                called.assert_called_once_with(
+                    Path("/private/source-bundle"),
+                    Path("/private/source-profiles"),
+                    "a" * 64,
+                    Path("/private/target-bundle"),
+                    Path("/private/target-profiles"),
+                    "b" * 64,
+                    max_resources=7,
+                    max_bytes=4096,
+                    wall_seconds=60,
+                    source_root=cli.ROOT,
+                )
+
+    def test_derivation_failure_exposes_only_a_closed_diagnostic(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+        from search.operations.documents import derivation
+
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            patch.object(
+                cli,
+                "_profile_report",
+                side_effect=derivation.DerivationError(
+                    "document_derivation_cache_invalid"
+                ),
+            ),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            code = cli.main(
+                [
+                    "profile-resources",
+                    "derive",
+                    "--source-bundle",
+                    "/private/source-bundle",
+                    "--source-state-root",
+                    "/private/source-profiles",
+                    "--expected-source-plan-sha256",
+                    "a" * 64,
+                    "--bundle",
+                    "/private/target-bundle",
+                    "--state-root",
+                    "/private/target-profiles",
+                    "--expected-plan-sha256",
+                    "b" * 64,
+                ]
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("", output.getvalue())
+        report = json.loads(errors.getvalue())
+        self.assertEqual(
+            "document_derivation_cache_invalid", report["error_code"]
+        )
+        self.assertFalse(report["active_changed"])
+        self.assertNotIn("/private/", errors.getvalue())
+
     def test_profile_set_and_individual_files_are_mutually_exclusive(self):
         from contextlib import redirect_stderr
         import io
@@ -886,6 +986,7 @@ class OperatorErrorOwnerTests(unittest.TestCase):
         from search.operations.documents import (
             batches,
             controller,
+            derivation,
             enrichment,
             extractor,
             sets,
@@ -952,6 +1053,11 @@ class OperatorErrorOwnerTests(unittest.TestCase):
             (
                 batches.BatchError,
                 "document_batch_plan_changed",
+                "profile-resources",
+            ),
+            (
+                derivation.DerivationError,
+                "document_derivation_identity_changed",
                 "profile-resources",
             ),
             (sets.ProfileSetError, "document_profile_set_invalid", "sync"),
