@@ -795,6 +795,140 @@ class SearchModelSourceTests(unittest.TestCase):
             self.copy()
         self.assertEqual(self.destination.read_bytes(), self.content)
 
+    def test_new_parent_fstat_failure_keeps_child_in_cleanup_owner(self):
+        real_open, real_fstat = os.open, os.fstat
+        error = OSError(errno.EIO, "synthetic child validation failure")
+        child = None
+        failed = False
+        with model_source.create_private_root(
+            self.target, "fault-store"
+        ) as root:
+
+            def open_child(name, flags, *args, **kwargs):
+                nonlocal child
+                fd = real_open(name, flags, *args, **kwargs)
+                if name == "nested" and flags == model_source.DIRECTORY_FLAGS:
+                    child = fd
+                return fd
+
+            def fail_child(fd):
+                nonlocal failed
+                if fd == child and not failed:
+                    self.assertIn(fd, root.descriptors)
+                    failed = True
+                    raise error
+                return real_fstat(fd)
+
+            with (
+                patch.object(model_source.os, "open", side_effect=open_child),
+                patch.object(model_source.os, "fstat", side_effect=fail_child),
+                self.assertRaises(OSError) as raised,
+            ):
+                root.relative_parent("nested/file", private=True, create=True)
+            self.assertIs(raised.exception, error)
+            self.assertTrue(failed)
+            self.assertNotIn("nested", root.directory_fds)
+            self.assertFalse(any(row[2] == child for row in root.records))
+            self.assertEqual(
+                stat.S_IMODE((root.root / "nested").stat().st_mode), 0o700
+            )
+            owned = tuple(root.descriptors)
+        for fd in owned:
+            with self.subTest(fd=fd), self.assertRaises(OSError) as raised:
+                real_fstat(fd)
+            self.assertEqual(raised.exception.errno, errno.EBADF)
+
+    def test_partial_writes_keep_source_proof_before_destination_proof(self):
+        real_write, real_fsync = os.write, os.fsync
+        digest = hashlib.sha256()
+        events, writes = [], []
+        synced = False
+
+        def hexdigest():
+            events.append("digest")
+            return digest.hexdigest()
+
+        with self.shared_metadata(), self.tracked_closes({}) as trace:
+            real_fstat = os.fstat
+
+            def write_part(fd, data):
+                written = real_write(fd, data[:3])
+                writes.append(written)
+                return written
+
+            def sync_file(fd):
+                nonlocal synced
+                result = real_fsync(fd)
+                if fd == trace.file_fds.get(model_source.WRITE_FLAGS):
+                    events.append("fsync")
+                    synced = True
+                return result
+
+            def observe_file(fd):
+                if synced:
+                    if fd == trace.file_fds.get(model_source.READ_FLAGS):
+                        events.append("source")
+                    elif fd == trace.file_fds.get(model_source.WRITE_FLAGS):
+                        events.append("destination")
+                return real_fstat(fd)
+
+            with (
+                patch.object(model_source.os, "write", side_effect=write_part),
+                patch.object(model_source.os, "fsync", side_effect=sync_file),
+                patch.object(
+                    model_source.os, "fstat", side_effect=observe_file
+                ),
+                patch.object(
+                    model_source.hashlib,
+                    "sha256",
+                    return_value=SimpleNamespace(
+                        update=digest.update, hexdigest=hexdigest
+                    ),
+                ),
+            ):
+                self.copy()
+            self.assertEqual(trace.remaining(), [])
+        self.assertGreater(len(writes), 1)
+        self.assertTrue(all(0 < written <= 3 for written in writes))
+        self.assertEqual(events, ["fsync", "source", "digest", "destination"])
+        self.assertEqual(self.destination.read_bytes(), self.content)
+
+    def test_changed_source_identity_precedes_wrong_digest(self):
+        real_read = os.read
+        digest = hashlib.sha256()
+        replaced = False
+
+        def replace_source(fd, count):
+            nonlocal replaced
+            result = real_read(fd, count)
+            if not replaced:
+                replaced = True
+                self.artifact.rename(self.artifact.with_name("saved-source"))
+                self.artifact.write_bytes(self.content)
+                self.artifact.chmod(0o400)
+            return result
+
+        def unexpected_digest():
+            self.fail("digest checked before the changed source identity")
+
+        with (
+            self.shared_metadata(),
+            patch.object(model_source.os, "read", side_effect=replace_source),
+            patch.object(
+                model_source.hashlib,
+                "sha256",
+                return_value=SimpleNamespace(
+                    update=digest.update, hexdigest=unexpected_digest
+                ),
+            ),
+            self.assertRaisesRegex(
+                model_source.ModelSourceError, "^model_source_file_changed$"
+            ),
+        ):
+            self.copy(digest="0" * 64)
+        self.assertTrue(replaced)
+        self.assertEqual(self.destination.read_bytes(), self.content)
+
 
 if __name__ == "__main__":
     unittest.main()

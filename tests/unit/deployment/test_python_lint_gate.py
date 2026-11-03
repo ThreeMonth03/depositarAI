@@ -76,6 +76,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/jobs/archive.py", "")
         self.write("search/operations/metadata/sync.py", "")
         self.write("scripts/search_jobs.py", "")
+        self.write("scripts/search_model_source.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
         self.environment = {
             **os.environ,
@@ -174,6 +175,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/shared/runtime_probe.py",
             "search/operations/shared/bounded_process.py",
             "search/operations/catalog/policy.py",
+            "scripts/search_model_source.py",
             "search/operations/documents/future_policy.py",
         ):
             with self.subTest(path=relative):

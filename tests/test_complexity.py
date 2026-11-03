@@ -122,6 +122,7 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/operations/deployment/frontend/policy.py",
                 "scripts/ci",
                 "scripts/search_jobs.py",
+                "scripts/search_model_source.py",
             ],
         )
 
@@ -226,6 +227,7 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/operations/deployment/frontend/policy.py",
                 "scripts/ci/policy.py",
                 "scripts/search_jobs.py",
+                "scripts/search_model_source.py",
             )
             for relative in accepted_files:
                 path = root / relative

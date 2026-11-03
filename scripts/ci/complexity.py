@@ -35,6 +35,7 @@ GATED_PATHS = (
     "search/operations/deployment/frontend/policy.py",
     "scripts/ci",
     "scripts/search_jobs.py",
+    "scripts/search_model_source.py",
 )
 
 
