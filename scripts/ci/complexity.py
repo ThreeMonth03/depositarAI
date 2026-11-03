@@ -17,6 +17,8 @@ GATED_PATHS = (
     "search/http",
     "search/web/app.py",
     "search/tests/web_fixture.py",
+    "search/quality",
+    "search/operations/deployment/candidate/batch",
 )
 
 

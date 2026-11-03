@@ -234,6 +234,107 @@ def _turn(value, version, revision, manifest, token):
     )
 
 
+def _validate_case(
+    endpoint, queries, revision, manifest_sha256, checkpoint, deadline
+):
+    """Admit one case before IO and detach its unchanged query text."""
+    try:
+        address = ipaddress.IPv4Address(endpoint)
+    except (ValueError, TypeError):
+        raise _Failure("shared_batch_endpoint_invalid") from None
+    _require(
+        type(endpoint) is str
+        and str(address) == endpoint
+        and any(address in network for network in PRIVATE_NETWORKS),
+        "endpoint_invalid",
+    )
+    _require(
+        type(queries) is list
+        and 1 <= len(queries) <= MAX_TURNS
+        and (checkpoint is None or callable(checkpoint)),
+        "input_invalid",
+    )
+    try:
+        queries = list(queries)
+        for text in queries:
+            checked_query(text)
+    except (ValueError, TypeError):
+        raise _Failure("shared_batch_input_invalid") from None
+    _require(
+        type(revision) is str
+        and HEX40.fullmatch(revision)
+        and type(manifest_sha256) is str
+        and HEX64.fullmatch(manifest_sha256),
+        "input_invalid",
+    )
+    _require(
+        deadline is None
+        or type(deadline) in (int, float)
+        and math.isfinite(deadline),
+        "input_invalid",
+    )
+    return queries
+
+
+def _capture_turn(
+    turn,
+    text,
+    version,
+    *,
+    endpoint,
+    revision,
+    manifest_sha256,
+    token,
+    checkpoint,
+    work_end,
+    started,
+):
+    """Capture one recorded turn and retain its timings on failure."""
+    try:
+        turn_end = min(work_end, started + 125)
+        _remaining(turn_end)
+        if checkpoint is not None:
+            try:
+                _require(checkpoint() is not False, "checkpoint_failed")
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                raise _Failure("shared_batch_checkpoint_failed") from None
+        _remaining(turn_end)
+        requested = time.monotonic()
+        try:
+            value = _request(
+                endpoint,
+                "POST",
+                "/api/turn",
+                token=token,
+                deadline=turn_end,
+                payload={
+                    "query": text,
+                    "version": version,
+                    "top_k": 5,
+                    "timezone": "Asia/Taipei",
+                },
+            )
+        finally:
+            turn["request_seconds"] = round(
+                max(0.0, time.monotonic() - requested), 3
+            )
+        _turn(value, version + 1, revision, manifest_sha256, token)
+        turn.update(status="ok", response=value)
+    except _Failure as error:
+        turn["error"] = str(error)
+        raise
+    except KeyboardInterrupt:
+        turn["error"] = "shared_batch_interrupted"
+        raise
+    except Exception:
+        turn["error"] = "shared_batch_response_invalid"
+        raise _Failure("shared_batch_response_invalid") from None
+    finally:
+        turn["wall_seconds"] = round(max(0.0, time.monotonic() - started), 3)
+
+
 def conversation(
     endpoint,
     queries,
@@ -263,42 +364,8 @@ def conversation(
     token = None
     case_end = None
     try:
-        try:
-            address = ipaddress.IPv4Address(endpoint)
-        except (ValueError, TypeError):
-            raise _Failure("shared_batch_endpoint_invalid") from None
-        _require(
-            type(endpoint) is str
-            and str(address) == endpoint
-            and any(address in network for network in PRIVATE_NETWORKS),
-            "endpoint_invalid",
-        )
-        _require(
-            type(queries) is list
-            and 1 <= len(queries) <= MAX_TURNS
-            and (checkpoint is None or callable(checkpoint)),
-            "input_invalid",
-        )
-        try:
-            queries = list(queries)
-            for text in queries:
-                checked_query(
-                    text
-                )  # Validate without changing the plan's raw text.
-        except (ValueError, TypeError):
-            raise _Failure("shared_batch_input_invalid") from None
-        _require(
-            type(revision) is str
-            and HEX40.fullmatch(revision)
-            and type(manifest_sha256) is str
-            and HEX64.fullmatch(manifest_sha256),
-            "input_invalid",
-        )
-        _require(
-            deadline is None
-            or type(deadline) in (int, float)
-            and math.isfinite(deadline),
-            "input_invalid",
+        queries = _validate_case(
+            endpoint, queries, revision, manifest_sha256, checkpoint, deadline
         )
         case_end = time.monotonic() + len(queries) * 130
         if deadline is not None:
@@ -340,55 +407,18 @@ def conversation(
                 "request_seconds": 0.0,
             }
             report["turns"].append(turn)
-            try:
-                turn_end = min(work_end, started + 125)
-                _remaining(turn_end)
-                if checkpoint is not None:
-                    try:
-                        _require(
-                            checkpoint() is not False, "checkpoint_failed"
-                        )
-                    except KeyboardInterrupt:
-                        raise
-                    except Exception:
-                        raise _Failure(
-                            "shared_batch_checkpoint_failed"
-                        ) from None
-                _remaining(turn_end)
-                requested = time.monotonic()
-                try:
-                    value = _request(
-                        endpoint,
-                        "POST",
-                        "/api/turn",
-                        token=token,
-                        deadline=turn_end,
-                        payload={
-                            "query": text,
-                            "version": index,
-                            "top_k": 5,
-                            "timezone": "Asia/Taipei",
-                        },
-                    )
-                finally:
-                    turn["request_seconds"] = round(
-                        max(0.0, time.monotonic() - requested), 3
-                    )
-                _turn(value, index + 1, revision, manifest_sha256, token)
-                turn.update(status="ok", response=value)
-            except _Failure as error:
-                turn["error"] = str(error)
-                raise
-            except KeyboardInterrupt:
-                turn["error"] = "shared_batch_interrupted"
-                raise
-            except Exception:
-                turn["error"] = "shared_batch_response_invalid"
-                raise _Failure("shared_batch_response_invalid") from None
-            finally:
-                turn["wall_seconds"] = round(
-                    max(0.0, time.monotonic() - started), 3
-                )
+            _capture_turn(
+                turn,
+                text,
+                index,
+                endpoint=endpoint,
+                revision=revision,
+                manifest_sha256=manifest_sha256,
+                token=token,
+                checkpoint=checkpoint,
+                work_end=work_end,
+                started=started,
+            )
         report["status"] = "complete"
     except _Failure as error:
         report["error"] = str(error)

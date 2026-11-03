@@ -104,6 +104,8 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/http",
                 "search/web/app.py",
                 "search/tests/web_fixture.py",
+                "search/quality",
+                "search/operations/deployment/candidate/batch",
             ],
         )
 
@@ -179,6 +181,8 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/http/policy.py",
                 "search/web/app.py",
                 "search/tests/web_fixture.py",
+                "search/quality/policy.py",
+                "search/operations/deployment/candidate/batch/policy.py",
             )
             for relative in accepted_files:
                 path = root / relative

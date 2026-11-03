@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from search.quality import contract, evaluator
 from search.api.conversation.calendar import calendar_text
@@ -260,6 +261,119 @@ class SearchQualityTests(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 evaluator.evaluate(value)
+
+
+class QualityBoundaryTests(unittest.TestCase):
+    def test_card_header_issues_precede_source_failure(self):
+        value = turn(None)
+        card = value["response"]["result"]["search"]["cards"][0]
+        card.update(rank=True, title=None)
+        original = copy.deepcopy(card)
+        invalid = copy.deepcopy(value["source_metadata"])
+        invalid[IDS[0]]["resource_formats"] = "CSV"
+        for metadata, code in (
+            ({}, "source_metadata_missing"),
+            (invalid, "source_metadata_invalid"),
+        ):
+            with (
+                self.subTest(code=code),
+                patch.object(evaluator, "project") as project,
+            ):
+                issues, row = evaluator.check_card(card, metadata, {}, 1)
+            self.assertEqual(
+                issues, ["card_rank_invalid", "card_title_invalid", code]
+            )
+            self.assertIsNone(row)
+            project.assert_not_called()
+            self.assertEqual(card, original)
+
+    def test_early_returns_preserve_exact_committed_state(self):
+        previous = {"topic": "earlier", "time": None, "formats": []}
+        missing = turn(None)
+        missing["response"].pop("result")
+        unavailable = turn(None)
+        unavailable["response"]["result"]["search"]["status"] = "unavailable"
+        invalid_cards = turn(None)
+        invalid_cards["response"]["result"]["search"]["cards"] = {}
+        for value, code, observed in (
+            (missing, "response_fields_missing", False),
+            (unavailable, "search_not_ok", False),
+            (invalid_cards, "cards_invalid", True),
+        ):
+            with self.subTest(code=code):
+                report, state = evaluator.check_turn(value, 1, previous)
+                self.assertEqual(report["issues"], [code])
+                expected = (
+                    value["response"]["result"]["state"]
+                    if observed
+                    else previous
+                )
+                self.assertIs(state, expected)
+
+    def test_state_issue_order_precedes_search_early_return(self):
+        value = turn(None, version=2, retain_topic=True)
+        value["response"]["version"] = 9
+        result = value["response"]["result"]
+        result.update(revision="invalid")
+        result["state"].update(
+            topic="",
+            time={"start": "invalid", "end": None},
+            unapplied_time={"text": "農曆正月"},
+        )
+        result["search"]["status"] = "unavailable"
+        report, state = evaluator.check_turn(value, 2, None)
+        self.assertEqual(
+            report["issues"],
+            [
+                "topic_missing",
+                "topic_not_retained",
+                "session_version_mismatch",
+                "state_conditions_invalid",
+                "unapplied_time_not_evaluated",
+                "revision_invalid",
+                "search_not_ok",
+            ],
+        )
+        self.assertIsNone(state)
+
+    def test_missing_turns_stay_failed_with_unknown_evidence(self):
+        expected = {"start": "2024", "end": "2024"}
+        source = condition_document(None, None, formats=["CSV", "PDF"])
+        value = capture(
+            *(
+                turn(
+                    expected,
+                    version=version,
+                    retain_topic=version > 1,
+                    source=source,
+                )
+                for version in range(1, 5)
+            )
+        )
+        plan = plan_for(value)
+        del value["cases"][0]["turns"][2:]
+        report = evaluator.evaluate(value, plan)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(
+            report["summary"],
+            {
+                "case_count": 1,
+                "turn_count": 4,
+                "captured_turn_count": 2,
+                "passed_turn_count": 2,
+                "failed_turn_count": 2,
+            },
+        )
+        rows = report["cases"][0]["turns"]
+        self.assertEqual(rows[0]["issues"], [])
+        self.assertEqual(
+            rows[0]["information_availability"]["unknown_condition_fraction"],
+            1.0,
+        )
+        self.assertEqual(rows[2]["issues"], ["turn_not_captured"])
+        self.assertEqual(rows[3]["issues"], ["turn_not_captured"])
+        self.assertEqual(report["topical_relevance"], "not_evaluated")
+        self.assertEqual(report["plan_sha256"], contract.plan_digest(plan))
 
 
 class QualityPlanTests(unittest.TestCase):
