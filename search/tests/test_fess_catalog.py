@@ -28,6 +28,7 @@ from search.catalog.bundle import (
     RESOURCE_CONTEXT_NAME,
 )
 from search.catalog.errors import (
+    AuthenticationError,
     BundleError,
     CatalogError,
     CatalogTimeout,
@@ -1912,6 +1913,269 @@ class ResourceContextBundleTests(unittest.TestCase):
 
 
 class QueryBoundaryTests(unittest.TestCase):
+    def test_request_representation_keeps_ordered_credentials_and_identity(
+        self,
+    ):
+        cases = (
+            (
+                {"json_body": {"z": 1, "a": "中"}},
+                (
+                    ("Accept", "application/json"),
+                    ("Accept-Language", "en"),
+                    ("Content-Type", "application/json"),
+                ),
+                '{"a":"中","z":1}'.encode("utf-8"),
+            ),
+            (
+                {"form_body": {"z": "two words", "a": "中"}},
+                (
+                    ("Accept", "text/html"),
+                    ("Accept-Language", "en"),
+                    ("Content-Type", "application/x-www-form-urlencoded"),
+                ),
+                b"z=two+words&a=%E4%B8%AD",
+            ),
+            ({}, (("Accept", "text/html"), ("Accept-Language", "en")), None),
+        )
+        for arguments, prefix, expected_body in cases:
+            with self.subTest(arguments=arguments):
+                events, responses = [], []
+                transport = mock.Mock()
+                session = AdminSession(
+                    "http://127.0.0.1:8080", transport=transport
+                )
+                session._session_id, session._csrf_token = "s" * 16, "c" * 20
+                before = dict(vars(session))
+
+                def clock():
+                    events.append("clock")
+                    return 1.0
+
+                def send(request, *, timeout, max_bytes):
+                    events.append("send")
+                    self.assertEqual(timeout, 10.0)
+                    self.assertEqual(max_bytes, 32)
+                    response = HTTPResponse(
+                        200, (("Content-Length", "2"),), b"{}", request.url
+                    )
+                    responses.append(response)
+                    return response
+
+                transport.send.side_effect = send
+                result = session._request(
+                    "POST" if arguments else "GET",
+                    "/admin/accesstoken/",
+                    deadline=Deadline(11.0, clock),
+                    query=(("q", "a b"), ("q", "中")),
+                    token=TOKEN,
+                    require_session=True,
+                    csrf=True,
+                    max_bytes=32,
+                    on_dispatch=lambda: events.append("dispatch"),
+                    **arguments,
+                )
+                self.assertIs(result, responses[0])
+                self.assertEqual(vars(session), before)
+                self.assertEqual(events, ["clock", "dispatch", "send"])
+                transport.send.assert_called_once()
+                request = transport.send.call_args.args[0]
+                self.assertEqual(request.body, expected_body)
+                self.assertEqual(
+                    request.url,
+                    "http://127.0.0.1:8080/admin/accesstoken/"
+                    "?q=a+b&q=%E4%B8%AD",
+                )
+                self.assertEqual(
+                    request.headers,
+                    prefix
+                    + (
+                        ("Authorization", "Bearer " + TOKEN),
+                        ("Cookie", "JSESSIONID=" + "s" * 16),
+                        ("X-Fess-CSRF-Token", "c" * 20),
+                    ),
+                )
+
+    def test_admission_and_credentials_precede_expired_deadline(self):
+        cases = (
+            (
+                "TRACE",
+                "/forbidden",
+                {"json_body": {}, "form_body": {}},
+                None,
+                None,
+                ConfigurationError,
+                "internal request has multiple body encodings",
+            ),
+            (
+                "TRACE",
+                "/forbidden",
+                {},
+                None,
+                None,
+                ConfigurationError,
+                "internal request method is invalid",
+            ),
+            (
+                "GET",
+                "/api/admin/systeminfo",
+                {},
+                None,
+                None,
+                ConfigurationError,
+                "internal Fess endpoint is not allowlisted",
+            ),
+            (
+                "POST",
+                "/api/v2/auth/login",
+                {"token": "bad"},
+                None,
+                None,
+                AuthenticationError,
+                "ephemeral access token is malformed",
+            ),
+            (
+                "POST",
+                "/api/v2/auth/login",
+                {"token": TOKEN},
+                None,
+                None,
+                AuthenticationError,
+                "Fess session is unavailable",
+            ),
+            (
+                "POST",
+                "/api/v2/auth/login",
+                {"token": TOKEN},
+                "s" * 16,
+                None,
+                AuthenticationError,
+                "Fess CSRF state is unavailable",
+            ),
+            (
+                "POST",
+                "/api/v2/auth/login",
+                {"token": TOKEN},
+                "s" * 16,
+                "c" * 20,
+                CatalogTimeout,
+                "operation deadline expired",
+            ),
+        )
+        for method, path, arguments, sid, csrf, error, message in cases:
+            with self.subTest(message=message):
+                events = []
+                transport = mock.Mock()
+                session = FessSession(
+                    "http://127.0.0.1:8080", transport=transport
+                )
+                session._session_id, session._csrf_token = sid, csrf
+                before = dict(vars(session))
+
+                def clock():
+                    events.append("clock")
+                    return 1.0
+
+                with self.assertRaises(error) as raised:
+                    session._request(
+                        method,
+                        path,
+                        deadline=Deadline(0.0, clock),
+                        require_session=True,
+                        csrf=True,
+                        on_dispatch=lambda: events.append("dispatch"),
+                        **arguments,
+                    )
+                self.assertEqual(raised.exception.args, (message,))
+                self.assertEqual(vars(session), before)
+                self.assertEqual(
+                    events, ["clock"] if error is CatalogTimeout else []
+                )
+                transport.send.assert_not_called()
+
+    def test_response_admission_precedes_explicit_status_acceptance(self):
+        url = "http://127.0.0.1:8080/api/v2/auth/login"
+        cases = (
+            (
+                HTTPResponse(True, [], "bad", "/wrong"),
+                32,
+                (),
+                "Fess response status is malformed",
+            ),
+            (
+                HTTPResponse(200, [], b"private response fixture", url),
+                1,
+                (),
+                "Fess response exceeded its byte cap",
+            ),
+            (
+                HTTPResponse(
+                    200,
+                    (("Content-Length", "2"), ("content-length", "2")),
+                    b"{}",
+                    "/wrong",
+                ),
+                32,
+                (),
+                "Fess response has ambiguous content length",
+            ),
+            (
+                HTTPResponse(200, (), b"{}", url + "/changed"),
+                32,
+                (),
+                "Fess transport crossed the fixed origin",
+            ),
+            (
+                HTTPResponse(302, (("Location", "/login"),), b"", url),
+                32,
+                (302,),
+                "Fess redirect was not explicitly expected",
+            ),
+            (
+                HTTPResponse(429, (("Retry-After", "tomorrow"),), b"", url),
+                32,
+                (),
+                "Fess Retry-After is not a supported delta",
+            ),
+            (
+                HTTPResponse(429, (("Retry-After", "tomorrow"),), b"", url),
+                32,
+                (429,),
+                None,
+            ),
+        )
+        for response, cap, accepted, message in cases:
+            with self.subTest(message=message):
+                transport = mock.Mock()
+                transport.send.return_value = response
+                session = FessSession(
+                    "http://127.0.0.1:8080", transport=transport
+                )
+                session._session_id, session._csrf_token = "s" * 16, "c" * 20
+                before = dict(vars(session))
+                arguments = {
+                    "deadline": Deadline(10.0, lambda: 0.0),
+                    "max_bytes": cap,
+                    "accepted_http_statuses": accepted,
+                }
+                if message is None:
+                    self.assertIs(
+                        session._request(
+                            "POST", "/api/v2/auth/login", **arguments
+                        ),
+                        response,
+                    )
+                else:
+                    with self.assertRaises(ProtocolError) as raised:
+                        session._request(
+                            "POST", "/api/v2/auth/login", **arguments
+                        )
+                    self.assertEqual(raised.exception.args, (message,))
+                    self.assertNotIn(
+                        "private response fixture", str(raised.exception)
+                    )
+                self.assertEqual(vars(session), before)
+                transport.send.assert_called_once()
+
     def test_query_session_rejects_administrator_endpoints_before_dispatch(
         self,
     ):

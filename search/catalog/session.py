@@ -165,6 +165,29 @@ class FessSession:
         if method not in ("GET", "POST", "PUT", "DELETE"):
             raise ConfigurationError("internal request method is invalid")
         self._assert_allowlisted_endpoint(method, path)
+        headers, body = self._request_content(path, json_body, form_body)
+        self._append_credentials(headers, token, require_session, csrf)
+        url = self._fixed_url(path, query)
+        request = HTTPRequest(
+            method=method, url=url, headers=tuple(headers), body=body
+        )
+        timeout = deadline.remaining(self.request_timeout)
+        if on_dispatch is not None:
+            on_dispatch()
+        response = self.transport.send(
+            request,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
+        self._validate_response_bounds(response, max_bytes)
+        self._admit_response_status(
+            response, url, allow_redirect_path, accepted_http_statuses
+        )
+        return response
+
+    @staticmethod
+    def _request_content(path, json_body, form_body):
+        """Encode bounded content and ordered representation headers."""
         headers: List[Tuple[str, str]] = [("Accept", "application/json")]
         if path.startswith("/admin/"):
             # Access-token detail labels are localized by Fess.  Keep the
@@ -188,6 +211,10 @@ class FessSession:
             headers[0] = ("Accept", "text/html")
         if body is not None and len(body) > MAX_BULK_REQUEST_BYTES:
             raise ProtocolError("Fess request body exceeded its byte cap")
+        return headers, body
+
+    def _append_credentials(self, headers, token, require_session, csrf):
+        """Append valid credentials without changing session state."""
         if token is not None:
             if TOKEN_RE.fullmatch(token) is None:
                 raise AuthenticationError(
@@ -208,18 +235,10 @@ class FessSession:
             ):
                 raise AuthenticationError("Fess CSRF state is unavailable")
             headers.append(("X-Fess-CSRF-Token", self._csrf_token))
-        url = self._fixed_url(path, query)
-        request = HTTPRequest(
-            method=method, url=url, headers=tuple(headers), body=body
-        )
-        timeout = deadline.remaining(self.request_timeout)
-        if on_dispatch is not None:
-            on_dispatch()
-        response = self.transport.send(
-            request,
-            timeout=timeout,
-            max_bytes=max_bytes,
-        )
+
+    @staticmethod
+    def _validate_response_bounds(response, max_bytes):
+        """Check bounded response shape, headers and content length."""
         if not isinstance(response, HTTPResponse):
             raise ProtocolError(
                 "Fess transport returned an unsupported response"
@@ -256,6 +275,11 @@ class FessSession:
             or int(lengths[0]) != len(response.body)
         ):
             raise ProtocolError("Fess response content length is malformed")
+
+    def _admit_response_status(
+        self, response, url, allow_redirect_path, accepted_http_statuses
+    ):
+        """Check fixed origin, redirects and status without retrying."""
         try:
             parsed = urllib.parse.urlsplit(response.url)
             response_origin = (
@@ -310,7 +334,6 @@ class FessSession:
                 ProtocolError("Fess returned an unsuccessful HTTP status"),
                 cause=_HTTP_FAILURE_CAUSES.get(response.status, "http_error"),
             )
-        return response
 
     @staticmethod
     def _envelope(
