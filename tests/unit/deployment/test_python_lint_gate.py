@@ -70,6 +70,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/documents/batches.py", "")
         self.write("search/operations/documents/source.py", "")
         self.write("search/operations/documents/enrichment.py", "")
+        self.write("search/operations/documents/extractor.py", "")
         self.write("scripts/search_jobs.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
         self.environment = {

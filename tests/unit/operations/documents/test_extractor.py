@@ -2,6 +2,7 @@
 semantics."""
 
 import copy
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -9,9 +10,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from search.operations.documents import extractor
+from search.operations.documents import controller, extractor
 
 
 IMAGE = {
@@ -130,6 +131,165 @@ class FakeDocker:
 
 
 class ReportContractTests(unittest.TestCase):
+    def test_limit_boundaries_remain_usable_without_normalization(self):
+        for changes in (
+            {"text": "x" * 65536},
+            {"columns": ["x" * 512]},
+            {"columns": [""] * 256},
+            {"columns": ["x" * 512] * 16},
+            {"rows_observed": 0},
+            {"rows_observed": 10000},
+            {"rows_observed": None},
+        ):
+            with self.subTest(changes=repr(changes)[:80]):
+                value = report()
+                value.update(changes)
+                self.assertEqual(value, extractor.validate_report(value))
+        for changes in (
+            {"columns": [""] * 257},
+            {"columns": ["x" * 512] * 16 + ["x"]},
+        ):
+            with self.subTest(changes=repr(changes)[:80]):
+                value = report()
+                value.update(changes)
+                with self.assertRaisesRegex(
+                    extractor.ExtractorError,
+                    "^document_extractor_report_invalid$",
+                ):
+                    extractor.validate_report(value)
+
+    def test_report_types_reject_subclasses_as_well_as_bool_integers(self):
+        class String(str):
+            pass
+
+        class Integer(int):
+            pass
+
+        class List(list):
+            pass
+
+        class Dict(dict):
+            pass
+
+        with self.assertRaises(extractor.ExtractorError):
+            extractor.validate_report(Dict(report()))
+        for field, changed in (
+            ("schema_version", Integer(1)),
+            ("status", String("ok")),
+            ("detected_mime", String("text/csv")),
+            ("input_sha256", String("a" * 64)),
+            ("columns", List(["station"])),
+            ("columns", [String("station")]),
+            ("text", String("station")),
+            ("rows_observed", Integer(1)),
+            ("rows_observed", True),
+        ):
+            with self.subTest(field=field, type=type(changed).__name__):
+                value = report()
+                value[field] = changed
+                with self.assertRaisesRegex(
+                    extractor.ExtractorError,
+                    "^document_extractor_report_invalid$",
+                ):
+                    extractor.validate_report(value)
+
+    def test_return_copies_containers_and_preserves_input_bytes_and_order(
+        self,
+    ):
+        value = dict(reversed(list(report().items())))
+        value.update(text=" \n\u6e2c\u7ad9 ", columns=[" station "])
+        before = copy.deepcopy(value)
+        result = extractor.validate_report(value)
+        self.assertEqual(before, result)
+        self.assertEqual(list(value), list(result))
+        self.assertIsNot(value, result)
+        self.assertIsNot(value["columns"], result["columns"])
+        result["text"] = "changed"
+        result["columns"].append("changed")
+        self.assertEqual(before, value)
+
+    def test_earlier_invalid_fields_prevent_later_string_validation(self):
+        for changes, settings, expected in (
+            ({"detected_mime": "\ud800"}, {"expected_format": []}, []),
+            ({"schema_version": True, "detected_mime": "\ud800"}, {}, []),
+            (
+                {"input_sha256": "bad", "columns": ["\ud800"]},
+                {},
+                [call("text/csv", 128)],
+            ),
+            (
+                {"columns": ["\ud800"], "text": "\ud800"},
+                {},
+                [call("text/csv", 128), call("\ud800", 512)],
+            ),
+        ):
+            value = report()
+            value.update(changes)
+            with (
+                self.subTest(changes=changes, settings=settings),
+                patch.object(
+                    extractor, "_string", wraps=extractor._string
+                ) as validate_string,
+                self.assertRaisesRegex(
+                    extractor.ExtractorError,
+                    "^document_extractor_report_invalid$",
+                ),
+            ):
+                extractor.validate_report(value, **settings)
+            self.assertEqual(expected, validate_string.call_args_list)
+
+    def test_invalid_unicode_has_a_fixed_error_and_suppressed_context(self):
+        for field, changed in (
+            ("detected_mime", "\ud800"),
+            ("columns", ["\ud800"]),
+            ("text", "\ud800"),
+        ):
+            value = report()
+            value[field] = changed
+            with self.subTest(field=field):
+                with self.assertRaises(extractor.ExtractorError) as failure:
+                    extractor.validate_report(value)
+                error = failure.exception
+                self.assertEqual(
+                    "document_extractor_report_invalid", str(error)
+                )
+                self.assertIsNone(error.__cause__)
+                self.assertIsInstance(error.__context__, UnicodeEncodeError)
+                self.assertTrue(error.__suppress_context__)
+
+    def test_empty_and_error_reports_keep_their_existing_format_exemptions(
+        self,
+    ):
+        for changes, settings in (
+            ({"detected_mime": "text/plain"}, {"expected_format": "CSV"}),
+            (
+                {
+                    "status": "empty_text",
+                    "columns": [],
+                    "text": " \n",
+                    "text_truncated": True,
+                    "rows_observed": None,
+                },
+                {"expected_format": "CSV", "header_policy": "absent"},
+            ),
+            (
+                {
+                    "status": "parse_error",
+                    "detected_mime": "",
+                    "columns": [],
+                    "text": "",
+                    "rows_observed": None,
+                },
+                {"expected_format": "PDF"},
+            ),
+        ):
+            value = report()
+            value.update(changes)
+            with self.subTest(changes=changes, settings=settings):
+                self.assertEqual(
+                    value, extractor.validate_report(value, **settings)
+                )
+
     def test_cached_report_must_match_declared_format_and_header_policy(self):
         value = report()
         self.assertEqual(
@@ -520,6 +680,26 @@ class BuildIdentityTests(unittest.TestCase):
             path.write_text(filename)
             path.chmod(0o644)
 
+    def test_each_recipe_file_byte_is_part_of_the_helper_identity(self):
+        baseline = extractor.source_identity(self.root)
+        for name in (
+            "Dockerfile",
+            "Dockerfile.dockerignore",
+            "Main.java",
+            "log4j2.xml",
+        ):
+            path = self.directory / name
+            raw = path.read_bytes()
+            with self.subTest(name=name):
+                path.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+                self.assertNotEqual(
+                    baseline, extractor.source_identity(self.root)
+                )
+                path.write_bytes(raw)
+                self.assertEqual(
+                    baseline, extractor.source_identity(self.root)
+                )
+
     def test_build_uses_only_snapshotted_recipe_and_reuses_matching_image(
         self,
     ):
@@ -551,6 +731,92 @@ class BuildIdentityTests(unittest.TestCase):
         docker.exists = False
         changed = extractor.build_image(self.root, runner=docker)
         self.assertNotEqual(first["source_sha256"], changed["source_sha256"])
+
+
+class ExtractionCacheTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.root = Path(
+            self.stack.enter_context(tempfile.TemporaryDirectory())
+        )
+        self.raw = b"station,pH\nA,7.2\n"
+        self.path = self.root / "input.csv"
+        self.path.write_bytes(self.raw)
+        self.path.chmod(0o600)
+        self.acquired = {
+            "sha256": hashlib.sha256(self.raw).hexdigest(),
+            "local_path": self.path,
+        }
+        parent = self.stack.enter_context(
+            controller._state(self.root / "state")
+        )
+        self.extractions = controller._child(parent, "extractions")
+        self.stack.callback(os.close, self.extractions)
+
+    def extract(self, *, cache_only=False):
+        return controller._extraction(
+            self.acquired,
+            IMAGE,
+            "CSV",
+            "utf-8",
+            "first_record",
+            self.extractions,
+            "depositarai-extract-" + "c" * 32,
+            cache_only=cache_only,
+        )
+
+    def test_cache_hit_revalidates_without_running_or_rewriting_parser(self):
+        value = report(self.raw)
+        with patch.object(extractor, "extract", return_value=value) as parse:
+            first, hit = self.extract()
+            self.assertFalse(hit)
+            path = next((self.root / "state/extractions").iterdir())
+            before = path.read_bytes()
+            second, hit = self.extract(cache_only=True)
+        self.assertTrue(hit)
+        self.assertEqual(first, second)
+        self.assertEqual(value, second)
+        self.assertEqual(before, path.read_bytes())
+        parse.assert_called_once_with(
+            self.path,
+            "CSV",
+            "utf-8",
+            "first_record",
+            image=IMAGE,
+            container_name="depositarai-extract-" + "c" * 32,
+        )
+
+    def test_invalid_cached_report_refuses_without_parser_or_replacement(self):
+        with patch.object(extractor, "extract", return_value=report(self.raw)):
+            self.extract()
+        path = next((self.root / "state/extractions").iterdir())
+        record = json.loads(path.read_bytes())
+        record["result"]["rows_observed"] = True
+        damaged = json.dumps(record).encode()
+        path.write_bytes(damaged)
+        with (
+            patch.object(extractor, "extract") as parse,
+            self.assertRaisesRegex(
+                extractor.ExtractorError,
+                "^document_extractor_report_invalid$",
+            ),
+        ):
+            self.extract()
+        parse.assert_not_called()
+        self.assertEqual(damaged, path.read_bytes())
+
+    def test_cache_only_miss_has_no_parser_call_or_publication(self):
+        with (
+            patch.object(extractor, "extract") as parse,
+            self.assertRaisesRegex(
+                controller.ProfileError,
+                "^document_extraction_cache_missing$",
+            ),
+        ):
+            self.extract(cache_only=True)
+        parse.assert_not_called()
+        self.assertEqual([], list((self.root / "state/extractions").iterdir()))
 
 
 if __name__ == "__main__":
