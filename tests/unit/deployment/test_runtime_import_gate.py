@@ -259,6 +259,7 @@ class RuntimeImportGateTests(unittest.TestCase):
         for relative in (
             "operations/documents/__init__.py",
             "operations/documents/batches.py",
+            "operations/documents/derivation.py",
             "operations/documents/sets.py",
             "operations/jobs/__init__.py",
             "operations/jobs/queue.py",

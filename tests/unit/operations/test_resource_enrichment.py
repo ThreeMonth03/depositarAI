@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from search.catalog.bundle import CatalogBundle
+from search.catalog.build import identity
 from search.operations.documents import enrichment, sets
 from search.operations.metadata import sync as metadata_sync
 from search.operations.shared import private_io
@@ -159,6 +160,16 @@ class ResourceEnrichmentTests(unittest.TestCase):
                 row for row in bundle.documents if row["dataset_id"] == DATASET
             )["resource_context"][0]["columns"][0],
         )
+
+    def test_new_builder_manifest_still_rejects_old_profile_on_cache_hit(self):
+        path = self.publish()
+        before = path.read_bytes()
+        with patch.object(identity, "source_digest", return_value="c" * 64):
+            with self.assertRaisesRegex(
+                enrichment.EnrichmentError, "provenance_invalid"
+            ):
+                self.sync(ttl_seconds=3600, profile_files=[path])
+        self.assertEqual(path.read_bytes(), before)
 
     def test_profile_source_and_result_mismatches_fail_closed(self):
         for key, value in (

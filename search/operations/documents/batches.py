@@ -66,11 +66,11 @@ def _read(parent, name, maximum):
 
 
 @contextmanager
-def _state(path, *, create, read_only=False):
+def _state(path, *, create, read_only=False, on_lock=None):
     path = controller._external_root(path)
     try:
         with controller._state(
-            path, create=create, read_only=read_only
+            path, create=create, read_only=read_only, on_lock=on_lock
         ) as descriptor:
             yield path, descriptor
     except (OSError, ValueError) as error:

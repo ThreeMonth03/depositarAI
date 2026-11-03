@@ -19,6 +19,9 @@ GATED_PATHS = (
     "search/tests/web_fixture.py",
     "search/quality",
     "search/operations/deployment/candidate/batch",
+    "search/operations/documents/cache.py",
+    "search/operations/documents/controller.py",
+    "search/operations/documents/derivation.py",
 )
 
 

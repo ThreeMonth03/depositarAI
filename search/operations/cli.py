@@ -207,6 +207,10 @@ def _document_error_policy(owner):
         from search.operations.documents import batches
 
         return batches.BatchError, batches.ERROR_CODES
+    elif owner == "search.operations.documents.derivation":
+        from search.operations.documents import derivation
+
+        return derivation.DerivationError, derivation.ERROR_CODES
     elif owner == "search.operations.documents.sets":
         from search.operations.documents import sets
 
@@ -264,6 +268,10 @@ _ERROR_POLICIES = {
         _document_error_policy,
     ),
     "search.operations.documents.batches": (
+        frozenset({"profile-resources"}),
+        _document_error_policy,
+    ),
+    "search.operations.documents.derivation": (
         frozenset({"profile-resources"}),
         _document_error_policy,
     ),
@@ -381,7 +389,7 @@ def parser():
     restore.add_argument("--destination", type=Path, required=True)
     profiles = commands.add_parser(
         "profile-resources",
-        help="prepare, run or inspect a resumable offline CSV/PDF batch",
+        help="prepare, process, derive or inspect offline CSV/PDF profiles",
     )
     actions = profiles.add_subparsers(dest="profile_action", required=True)
     prepare = actions.add_parser(
@@ -411,6 +419,18 @@ def parser():
     run.add_argument("--expected-plan-sha256", required=True)
     run.add_argument("--max-resources", type=int, default=20)
     run.add_argument("--retry-failed", action="store_true")
+    derive = actions.add_parser(
+        "derive", help="reuse verified frozen input for a new metadata plan"
+    )
+    derive.add_argument("--source-bundle", type=Path, required=True)
+    derive.add_argument("--source-state-root", type=Path, required=True)
+    derive.add_argument("--expected-source-plan-sha256", required=True)
+    derive.add_argument("--bundle", type=Path, required=True)
+    derive.add_argument("--state-root", type=Path, required=True)
+    derive.add_argument("--expected-plan-sha256", required=True)
+    derive.add_argument("--max-resources", type=int, default=20)
+    derive.add_argument("--max-bytes", type=int, default=320 * 1024**2)
+    derive.add_argument("--wall-seconds", type=int, default=300)
     status = actions.add_parser(
         "status", help="inspect saved resource progress"
     )
@@ -793,6 +813,21 @@ def _profile_report(options):
             retry_failed=options.retry_failed,
             source_root=ROOT,
         )
+    elif options.profile_action == "derive":
+        from search.operations.documents import derivation
+
+        return derivation.derive(
+            options.source_bundle,
+            options.source_state_root,
+            options.expected_source_plan_sha256,
+            options.bundle,
+            options.state_root,
+            options.expected_plan_sha256,
+            max_resources=options.max_resources,
+            max_bytes=options.max_bytes,
+            wall_seconds=options.wall_seconds,
+            source_root=ROOT,
+        )
     return batches.status(options.state_root, options.expected_plan_sha256)
 
 
@@ -847,7 +882,7 @@ def _command_report(options):
 
 def _exit_status(options, report):
     if options.command == "profile-resources":
-        if options.profile_action == "run":
+        if options.profile_action in {"run", "derive"}:
             return {"checkpoint": 2, "partial": 1}.get(report["status"], 0)
         return 0
     if options.command in PUBLIC_COMMANDS:

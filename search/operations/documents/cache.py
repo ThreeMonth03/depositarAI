@@ -2,7 +2,8 @@
 storage.
 """
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from functools import partial
 import fcntl
 import hashlib
 import os
@@ -37,32 +38,70 @@ def key_for(identity):
     return hashlib.sha256(private_io.canonical(identity)).hexdigest()
 
 
-@contextmanager
-def locked(root):
-    """Hold the cache lock only while acquiring or checking a resource body."""
-    descriptor = lock = None
+def _verify_lock(descriptor, held, expected):
     try:
+        current = os.fstat(held)
+        named = os.stat(".lock", dir_fd=descriptor, follow_symlinks=False)
+    except OSError:
+        raise CacheError("document_cache_lock_invalid") from None
+    if private_io.identity(expected) != private_io.identity(
+        current
+    ) or private_io.identity(current) != private_io.identity(named):
+        raise CacheError("document_cache_lock_invalid")
+
+
+@contextmanager
+def _cache_lock(descriptor, read_only):
+    flags = os.O_RDONLY if read_only else os.O_RDWR | os.O_CREAT
+    lock = os.open(
+        ".lock",
+        flags | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+        dir_fd=descriptor,
+    )
+    try:
+        info = os.fstat(lock)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise CacheError("document_cache_lock_invalid")
         try:
-            descriptor = private_io.open_directory(root, create=True)
-            lock = os.open(
-                ".lock",
-                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                0o600,
-                dir_fd=descriptor,
-            )
-            info = os.fstat(lock)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.geteuid()
-                or info.st_nlink != 1
-                or stat.S_IMODE(info.st_mode) != 0o600
-            ):
-                raise CacheError("document_cache_lock_invalid")
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise CacheError("document_cache_busy") from None
+            mode = fcntl.LOCK_SH if read_only else fcntl.LOCK_EX
+            fcntl.flock(lock, mode | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise CacheError("document_cache_busy") from None
+        verify = partial(_verify_lock, descriptor, lock, info)
+        verify()
+        try:
+            yield verify
+        finally:
+            verify()
+    finally:
+        os.close(lock)
+
+
+@contextmanager
+def locked(root, *, read_only=False, on_lock=None):
+    """Lock acquisition or read frozen cache without writes.
+
+    ``on_lock`` receives a verifier bound to the actual held lock FD. It is
+    valid only inside this context and must be checked before publication.
+    """
+    if type(read_only) is not bool or (
+        on_lock is not None and not callable(on_lock)
+    ):
+        raise CacheError("document_cache_lock_invalid")
+    with ExitStack() as stack:
+        try:
+            descriptor = private_io.open_directory(root, create=not read_only)
+            stack.callback(os.close, descriptor)
+            verify = stack.enter_context(_cache_lock(descriptor, read_only))
             private_io.verify_directory(descriptor, root)
+            if on_lock is not None:
+                on_lock(verify)
         except CacheError:
             raise
         except (OSError, ValueError):
@@ -74,11 +113,6 @@ def locked(root):
                 private_io.verify_directory(descriptor, root)
             except (OSError, ValueError):
                 raise CacheError("document_cache_io_failed") from None
-    finally:
-        if lock is not None:
-            os.close(lock)
-        if descriptor is not None:
-            os.close(descriptor)
 
 
 def body_name(digest):
@@ -137,17 +171,24 @@ def _record(descriptor, key, identity):
         raise CacheError("document_cache_record_invalid") from None
 
 
-def load(descriptor, key, identity):
+def load(descriptor, key, identity, *, max_body_bytes=MAX_FILE_BYTES):
     """Return a receipt only after verifying the full cached body."""
+    if (
+        type(max_body_bytes) is not int
+        or not 1 <= max_body_bytes <= MAX_FILE_BYTES
+    ):
+        raise CacheError("document_cache_body_limit")
     try:
         record = _record(descriptor, key, identity)
         if record is None:
             return None
+        if record["bytes"] > max_body_bytes:
+            raise CacheError("document_cache_body_limit")
         raw = private_io.read_file(
             descriptor,
             body_name(record["sha256"]),
             mode=0o600,
-            max_bytes=MAX_FILE_BYTES,
+            max_bytes=max_body_bytes,
         )
         if (
             len(raw) != record["bytes"]

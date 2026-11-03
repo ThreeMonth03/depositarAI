@@ -98,6 +98,33 @@ class DocumentProfileTests(unittest.TestCase):
             json.loads(path.read_text())["source"]["content_sha256"], self.sha
         )
 
+    def test_cache_only_miss_refuses_without_parser_or_publication(self):
+        with controller._state(self.root / "state") as parent:
+            extractions = controller._child(parent, "extractions")
+            try:
+                with patch.object(extractor, "extract") as parse:
+                    with self.assertRaisesRegex(
+                        controller.ProfileError, "cache_missing"
+                    ):
+                        controller._extraction(
+                            self.acquired,
+                            IMAGE,
+                            "CSV",
+                            "utf-8",
+                            "first_record",
+                            extractions,
+                            None,
+                            cache_only=True,
+                        )
+                    parse.assert_not_called()
+                self.assertEqual(
+                    list((self.root / "state/extractions").iterdir()), []
+                )
+            finally:
+                import os
+
+                os.close(extractions)
+
     def test_root_identities_refuse_even_when_extraction_is_cached(self):
         identity_names = ("getuid", "getgid", "geteuid", "getegid")
         state = self.root / "state"

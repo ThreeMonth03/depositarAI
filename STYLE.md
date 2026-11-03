@@ -56,6 +56,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/http`、`search/api/shared/middleware.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/quality`、`search/operations/deployment/candidate/batch`。
+- `search/operations/documents/` 下的 `cache.py`、`controller.py`、`derivation.py`。
 
 其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
 `python-complexity-<source SHA>` artifact；報告中的既有項目不代表通過全庫守門。
