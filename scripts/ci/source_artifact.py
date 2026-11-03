@@ -261,28 +261,32 @@ def _verify_archive(path, tree):
             relative = name[len("depositar-ai/") :]
             if relative not in tree:
                 raise ArtifactError("source_archive_inventory_mismatch")
-            stream = archive.extractfile(member)
-            if stream is None:
-                raise ArtifactError("source_archive_entry_invalid")
-            digest = hashlib.sha1(
-                b"blob " + str(member.size).encode("ascii") + b"\x00"
-            )
-            count = 0
-            with stream:
-                while True:
-                    block = stream.read(1024 * 1024)
-                    if not block:
-                        break
-                    count += len(block)
-                    digest.update(block)
-            if count != member.size:
-                raise ArtifactError("source_archive_entry_invalid")
-            inventory[relative] = (
-                digest.hexdigest(),
-                bool(member.mode & 0o111),
-            )
+            inventory[relative] = _verify_archive_member(archive, member)
     if inventory != tree:
         raise ArtifactError("source_archive_inventory_mismatch")
+
+
+def _verify_archive_member(archive, member):
+    stream = archive.extractfile(member)
+    if stream is None:
+        raise ArtifactError("source_archive_entry_invalid")
+    digest = hashlib.sha1(
+        b"blob " + str(member.size).encode("ascii") + b"\x00"
+    )
+    count = 0
+    with stream:
+        while True:
+            block = stream.read(1024 * 1024)
+            if not block:
+                break
+            count += len(block)
+            digest.update(block)
+    if count != member.size:
+        raise ArtifactError("source_archive_entry_invalid")
+    return (
+        digest.hexdigest(),
+        bool(member.mode & 0o111),
+    )
 
 
 def _names(revision):
@@ -357,21 +361,27 @@ def _reviewed_entries(repo, revision, tree):
         _relative_name(path)
         if line > 10000000:
             raise ArtifactError("source_review_fingerprint_invalid")
-        try:
-            if (commit, path) not in source_lines:
-                _git(repo, "merge-base", "--is-ancestor", commit, revision)
-                source_lines[commit, path] = len(
-                    _git(repo, "show", commit + ":" + path).splitlines()
-                )
-            if line > source_lines[commit, path]:
-                raise ArtifactError("source_review_line_unavailable")
-        except ArtifactError as error:
-            raise ArtifactError(
-                "source_review_position_unavailable"
-            ) from error
+        _verify_reviewed_position(
+            repo, revision, commit, path, line, source_lines
+        )
         seen.add(fingerprint)
         result.append(fingerprint)
     return result, hashlib.sha256(raw).hexdigest()
+
+
+def _verify_reviewed_position(
+    repo, revision, commit, path, line, source_lines
+):
+    try:
+        if (commit, path) not in source_lines:
+            _git(repo, "merge-base", "--is-ancestor", commit, revision)
+            source_lines[commit, path] = len(
+                _git(repo, "show", commit + ":" + path).splitlines()
+            )
+        if line > source_lines[commit, path]:
+            raise ArtifactError("source_review_line_unavailable")
+    except ArtifactError as error:
+        raise ArtifactError("source_review_position_unavailable") from error
 
 
 def _scan(repo, revision, scanner, tree):

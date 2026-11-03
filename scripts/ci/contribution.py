@@ -83,9 +83,9 @@ def _visible(line, comment):
     return "".join(parts), comment
 
 
-def _sections(body, level):
-    sections, current, fence, comment, duplicate = {}, None, None, False, False
-    prose = []
+def _block_lines(body):
+    """Yield visible lines and raw fenced content without fence delimiters."""
+    fence, comment = None, False
     for raw in body.splitlines():
         if fence is not None:
             marker = FENCE.fullmatch(raw)
@@ -96,13 +96,24 @@ def _sections(body, level):
                 and not marker[2].strip()
             ):
                 fence = None
-            elif current is not None:
-                sections[current][0].append(raw)
+            else:
+                yield raw, True
             continue
         line, comment = _visible(raw, comment)
         marker = FENCE.fullmatch(line)
         if marker:
             fence = (marker[1][0], len(marker[1]))
+        else:
+            yield line, False
+
+
+def _sections(body, level):
+    sections, current, duplicate = {}, None, False
+    prose = []
+    for line, literal in _block_lines(body):
+        if literal:
+            if current is not None:
+                sections[current][0].append(line)
             continue
         title = line.lstrip(" ")
         prefix = "#" * level
