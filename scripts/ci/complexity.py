@@ -19,6 +19,7 @@ GATED_PATHS = (
     "search/operations/local_status.py",
     "search/operations/state.py",
     "search/operations/shared/runtime_probe.py",
+    "search/operations/shared/bounded_process.py",
     "search/api/shared/middleware.py",
     "search/http",
     "search/web/app.py",
