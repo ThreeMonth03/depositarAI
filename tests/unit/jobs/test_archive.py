@@ -402,6 +402,171 @@ class ArchiveTests(unittest.TestCase):
             (self.root / "archive" / identifier / "result.json").read_bytes(),
         )
 
+    def test_source_removal_preserves_proof_and_checkpoint_order(self):
+        identifier, directory = self.job()
+        events = []
+        checkpoint, source = archive._checkpoint, archive._source
+        git, write = archive._git, queue.write
+
+        def checked(registry, intent, **kwargs):
+            result = checkpoint(registry, intent, **kwargs)
+            if intent["phase"] == "removing_source":
+                self.assertEqual(kwargs, {"absent": 1})
+                self.assertNotIn("1", self.transport.tasks)
+                events.append("checkpoint")
+            return result
+
+        def verified(*args, **kwargs):
+            result = source(*args, **kwargs)
+            if kwargs.get("unlocked"):
+                events.append(
+                    "source_locked" if result[1] else "source_unlocked"
+                )
+            return result
+
+        def command(registry, *args):
+            result = git(registry, *args)
+            if args[:2] in {("worktree", "unlock"), ("worktree", "remove")}:
+                events.append(args[1])
+            return result
+
+        def saved(path, value, **kwargs):
+            if (
+                path.name == "archive-intent.json"
+                and value["phase"] == "moving"
+            ):
+                self.assertFalse((directory / "source").exists())
+                self.assertIsNone(
+                    archive._registration(self.registry, directory / "source")
+                )
+                events.append("moving")
+            return write(path, value, **kwargs)
+
+        with (
+            patch.object(archive, "_checkpoint", side_effect=checked),
+            patch.object(archive, "_source", side_effect=verified),
+            patch.object(archive, "_git", side_effect=command),
+            patch.object(queue, "write", side_effect=saved),
+        ):
+            self.assertEqual(
+                archive.archive(self.registry, identifier),
+                {"job_id": identifier, "status": "archived"},
+            )
+        self.assertEqual(
+            events,
+            [
+                "checkpoint",
+                "source_locked",
+                "checkpoint",
+                "unlock",
+                "source_unlocked",
+                "checkpoint",
+                "remove",
+                "moving",
+            ],
+        )
+        self.assertFalse(directory.exists())
+
+    def test_busy_peer_after_unlock_blocks_removal_then_recovers(self):
+        identifier, directory = self.job()
+        _, peer = self.job()
+        git, calls = archive._git, []
+
+        def command(registry, *args):
+            calls.append(args[:2])
+            result = git(registry, *args)
+            if args[:2] == ("worktree", "unlock"):
+                self.transport.tasks["2"]["status"] = {"Running": {}}
+            return result
+
+        with patch.object(archive, "_git", side_effect=command):
+            with self.assertRaisesRegex(
+                JobError, "^job_archive_recovery_required$"
+            ):
+                archive.archive(self.registry, identifier)
+            self.assertTrue((directory / "source").exists())
+            self.assertNotIn(("worktree", "remove"), calls)
+            self.assertEqual(
+                queue.read(self.root / "archive-intent.json")["phase"],
+                "removing_source",
+            )
+            self.transport.tasks["2"]["status"] = {
+                "Done": {"result": "Success"}
+            }
+            archive.archive(self.registry, identifier)
+        self.assertEqual(calls.count(("worktree", "unlock")), 1)
+        self.assertEqual(calls.count(("worktree", "remove")), 1)
+        self.assertTrue((peer / "source").exists())
+        self.assertEqual(self.transport.calls, [("remove", "1")])
+
+    def test_replaced_lock_after_unlock_keeps_source_and_recovery_blocked(
+        self,
+    ):
+        identifier, directory = self.job()
+        git, calls = archive._git, []
+
+        def command(registry, *args):
+            calls.append(args[:2])
+            result = git(registry, *args)
+            if args[:2] == ("worktree", "unlock"):
+                lock = self.root / "execution.lock"
+                lock.unlink()
+                fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.close(fd)
+            return result
+
+        with patch.object(archive, "_git", side_effect=command):
+            for _ in range(2):
+                with self.assertRaisesRegex(
+                    JobError, "^job_archive_recovery_required$"
+                ):
+                    archive.archive(self.registry, identifier)
+        self.assertTrue((directory / "source").exists())
+        self.assertTrue((self.root / "archive-intent.json").exists())
+        self.assertFalse((self.root / "archive" / identifier).exists())
+        self.assertNotIn(("worktree", "remove"), calls)
+        self.assertEqual(self.transport.calls, [("remove", "1")])
+
+    def test_interrupt_before_intent_keeps_closed_invalid_diagnostic(self):
+        identifier, directory = self.job()
+        with patch.object(
+            archive,
+            "_source",
+            side_effect=KeyboardInterrupt("private fixture"),
+        ):
+            with self.assertRaises(JobError) as caught:
+                archive.archive(self.registry, identifier)
+        self.assertEqual(caught.exception.args, ("job_archive_invalid",))
+        self.assertFalse((self.root / "archive-intent.json").exists())
+        self.assertTrue((directory / "source").exists())
+        self.assertEqual(self.transport.calls, [])
+
+    def test_interrupt_after_unlock_resumes_without_another_task_removal(self):
+        identifier, directory = self.job()
+        git = archive._git
+
+        def interrupted(registry, *args):
+            result = git(registry, *args)
+            if args[:2] == ("worktree", "unlock"):
+                raise KeyboardInterrupt("private fixture")
+            return result
+
+        with patch.object(archive, "_git", side_effect=interrupted):
+            with self.assertRaises(JobError) as caught:
+                archive.archive(self.registry, identifier)
+        self.assertEqual(
+            caught.exception.args, ("job_archive_recovery_required",)
+        )
+        self.assertTrue((directory / "source").exists())
+        self.assertEqual(
+            queue.read(self.root / "archive-intent.json")["phase"],
+            "removing_source",
+        )
+        archive.archive(self.registry, identifier)
+        self.assertFalse(directory.exists())
+        self.assertFalse((self.root / "archive-intent.json").exists())
+        self.assertEqual(self.transport.calls, [("remove", "1")])
+
     def test_prepared_intent_rejects_unrecorded_task_disappearance(
         self,
     ):
