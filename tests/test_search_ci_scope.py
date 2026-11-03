@@ -58,6 +58,7 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.operations.test_bounded_http",
             "tests.unit.operations.test_cli",
             "tests.unit.jobs.test_queue",
+            "tests.unit.jobs.test_pueue",
             "tests.unit.jobs.test_sources",
             "tests.unit.jobs.test_profiles",
             "tests.unit.jobs.test_execution",

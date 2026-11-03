@@ -398,6 +398,15 @@ def submit(registry, specification):
             {"task_id": task_id, "request_sha256": digest(request)},
         )
         transport.seal_environment(task_id)
+        state = transport.state()
+        phase = task(registry, identifier, state, task_id)
+        row = state["tasks"][str(task_id)]
+        require(
+            phase == "Stashed"
+            and row.get("group") == "heavy"
+            and row.get("envs") == ENVIRONMENT,
+            "task_release_unverified",
+        )
         transport.call("enqueue", str(task_id))
     return {
         "job_id": identifier,
