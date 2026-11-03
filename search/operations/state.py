@@ -187,6 +187,34 @@ def operation_receipts(store):
     return values
 
 
+def _admit_marker(store, config, *, create):
+    """Verify or initialize the marker using the retained state directory."""
+    try:
+        marker = store.read("product.json")
+    except FileNotFoundError:
+        if not create or set(os.listdir(store.fd)) != {"operations.lock"}:
+            raise ValueError("product_state_unmarked_nonempty") from None
+        store.write("product.json", _marker(config))
+    else:
+        if (
+            marker != _marker(config)
+            or type(marker.get("schema_version")) is not int
+        ):
+            raise ValueError("product_state_configuration_mismatch")
+
+
+def _admit_operation(store, name):
+    """Validate an operation and all prior intents before a new receipt."""
+    if name not in OPERATIONS:
+        raise ValueError("product_operation_invalid")
+    receipts = operation_receipts(store)
+    if len(receipts) >= MAX_OPERATIONS:
+        raise ValueError("product_operation_retention_limit")
+    for receipt in receipts:
+        if receipt["status"] == "started":
+            raise ValueError("product_operation_recovery_required")
+
+
 @contextmanager
 def locked_state(config: ProductConfig, *, create=False):
     """Reject unmarked nonempty directories and concurrent product
@@ -224,18 +252,7 @@ def locked_state(config: ProductConfig, *, create=False):
         ):
             raise ValueError("product_state_lock_changed")
         store = StateStore(config.state_root, root_fd)
-        try:
-            marker = store.read("product.json")
-        except FileNotFoundError:
-            if not create or set(os.listdir(root_fd)) != {"operations.lock"}:
-                raise ValueError("product_state_unmarked_nonempty") from None
-            store.write("product.json", _marker(config))
-        else:
-            if (
-                marker != _marker(config)
-                or type(marker.get("schema_version")) is not int
-            ):
-                raise ValueError("product_state_configuration_mismatch")
+        _admit_marker(store, config, create=create)
         yield store
     finally:
         if lock_fd is not None:
@@ -248,14 +265,7 @@ def operation(store: StateStore, name: str, revision: str):
     """Leave a started receipt on SIGKILL; failures never become success
     receipts.
     """
-    if name not in OPERATIONS:
-        raise ValueError("product_operation_invalid")
-    receipts = operation_receipts(store)
-    if len(receipts) >= MAX_OPERATIONS:
-        raise ValueError("product_operation_retention_limit")
-    for receipt in receipts:
-        if receipt["status"] == "started":
-            raise ValueError("product_operation_recovery_required")
+    _admit_operation(store, name)
     receipt = "op-" + uuid.uuid4().hex + ".json"
     value = {
         "schema_version": 1,

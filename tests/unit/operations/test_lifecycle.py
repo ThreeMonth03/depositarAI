@@ -15,6 +15,7 @@ from unittest.mock import patch
 from search.operations import cli
 from search.catalog import errors as catalog
 from search.operations import lifecycle
+from search.operations import state
 from search.operations.config import GPUConfig, ProductConfig
 from search.operations.state import locked_state, operation
 
@@ -215,6 +216,180 @@ class ProductLifecycleTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "recovery_required"):
             self.sync()
+
+    def test_marker_admission_preserves_create_values_and_missing_policy(self):
+        open_directory = state.private_io.open_directory
+        for index, create in enumerate((True, 1, "create", False, 0, "")):
+            config = replace(
+                self.config, state_root=self.root / f"marker-{index}"
+            )
+            if not create:
+                config.state_root.mkdir(mode=0o700)
+                (config.state_root / "operations.lock").touch(mode=0o600)
+            with (
+                self.subTest(create=create),
+                patch.object(
+                    state.private_io, "open_directory", wraps=open_directory
+                ) as opened,
+            ):
+                if create:
+                    with locked_state(config, create=create) as store:
+                        self.assertEqual(
+                            store.read("product.json"), state._marker(config)
+                        )
+                else:
+                    with self.assertRaisesRegex(
+                        ValueError, "^product_state_unmarked_nonempty$"
+                    ):
+                        with locked_state(config, create=create):
+                            self.fail("missing marker was accepted")
+                self.assertIs(opened.call_args.kwargs["create"], create)
+
+    def test_malformed_markers_are_not_replaced_or_accepted(self):
+        for index, marker in enumerate((None, [], {}, {"schema_version": 1})):
+            config = replace(
+                self.config, state_root=self.root / f"malformed-{index}"
+            )
+            with locked_state(config, create=True) as store:
+                store.write("product.json", marker, replace=True)
+            path = config.state_root / "product.json"
+            before = path.read_bytes()
+            with (
+                self.subTest(marker=marker),
+                self.assertRaisesRegex(
+                    ValueError, "^product_state_configuration_mismatch$"
+                ),
+            ):
+                with locked_state(config):
+                    self.fail("malformed marker was accepted")
+            self.assertEqual(path.read_bytes(), before)
+        with locked_state(self.config, create=True) as store:
+            marker = state._marker(self.config)
+            marker["schema_version"] = True
+            store.write("product.json", marker, replace=True)
+        with self.assertRaisesRegex(ValueError, "configuration_mismatch"):
+            with locked_state(self.config):
+                self.fail("bool schema version was accepted as an integer")
+
+    def test_operation_name_is_checked_before_history_or_intent(self):
+        with locked_state(self.config, create=True) as store:
+            for name, kind, message in (
+                ("install", ValueError, "product_operation_invalid"),
+                (None, ValueError, "product_operation_invalid"),
+                ([], TypeError, "unhashable type: 'list'"),
+            ):
+                with (
+                    self.subTest(name=name),
+                    patch.object(state, "operation_receipts") as receipts,
+                    patch.object(state.uuid, "uuid4") as identity,
+                    patch.object(store, "write") as write,
+                    self.assertRaises(kind) as raised,
+                ):
+                    with operation(store, name, REVISION):
+                        self.fail("invalid operation entered the body")
+                self.assertEqual(raised.exception.args, (message,))
+                receipts.assert_not_called()
+                identity.assert_not_called()
+                write.assert_not_called()
+
+    def test_operation_history_validation_and_retention_precede_recovery(self):
+        cases = (
+            (("started", None), "product_operation_receipt_invalid"),
+            (("started", "staged"), "product_operation_retention_limit"),
+            (("started",), "product_operation_recovery_required"),
+        )
+        for index, (statuses, expected) in enumerate(cases):
+            config = replace(
+                self.config, state_root=self.root / f"history-{index}"
+            )
+            with locked_state(config, create=True) as store:
+                for number, status in enumerate(statuses, 1):
+                    value = {
+                        "schema_version": 1,
+                        "operation": "sync",
+                        "source_revision": REVISION,
+                        "status": status,
+                        "active_changed": False,
+                    }
+                    store.write(
+                        "op-" + str(number) * 32 + ".json",
+                        [] if status is None else value,
+                    )
+                with (
+                    self.subTest(statuses=statuses),
+                    patch.object(state, "MAX_OPERATIONS", 2),
+                    patch.object(state.uuid, "uuid4") as identity,
+                    patch.object(store, "write") as write,
+                    self.assertRaisesRegex(ValueError, "^" + expected + "$"),
+                ):
+                    with operation(store, "sync", REVISION):
+                        self.fail("refused history entered the body")
+                identity.assert_not_called()
+                write.assert_not_called()
+
+    def test_uuid_and_initial_write_errors_do_not_enter_the_yield_catch(self):
+        with locked_state(self.config, create=True) as store:
+            for phase in ("uuid", "write"):
+                failure = OSError(errno.EIO, "synthetic intent failure")
+                prior = object()
+                store._activation_changed = prior
+                with (
+                    self.subTest(phase=phase),
+                    patch.object(state.uuid, "uuid4") as identity,
+                    patch.object(store, "write") as write,
+                    self.assertRaises(OSError) as raised,
+                ):
+                    identity.return_value.hex = "f" * 32
+                    if phase == "uuid":
+                        identity.side_effect = failure
+                    else:
+                        write.side_effect = failure
+                    with operation(store, "activate-gateway", REVISION):
+                        self.fail("failed intent entered the body")
+                self.assertIs(raised.exception, failure)
+                if phase == "uuid":
+                    write.assert_not_called()
+                    self.assertIs(store._activation_changed, prior)
+                else:
+                    write.assert_called_once()
+                    self.assertEqual(
+                        write.call_args.args[1]["status"], "started"
+                    )
+                    self.assertIs(store._activation_changed, False)
+
+    def test_operation_preserves_name_subclass_and_revision_identity(self):
+        class Name(str):
+            pass
+
+        name, revision = Name("sync"), object()
+        with locked_state(self.config, create=True) as store:
+            with patch.object(store, "write") as write:
+                with operation(store, name, revision) as outcome:
+                    outcome["bundle_id"] = "c" * 64
+            self.assertEqual(write.call_count, 2)
+            for call, status in zip(
+                write.call_args_list, ("started", "staged")
+            ):
+                value = call.args[1]
+                self.assertIs(value["operation"], name)
+                self.assertIs(value["source_revision"], revision)
+                self.assertEqual(value["status"], status)
+
+    def test_interruption_preserves_started_intent_and_releases_the_lock(self):
+        failure = KeyboardInterrupt("synthetic interruption")
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            with locked_state(self.config, create=True) as store:
+                with operation(store, "sync", REVISION):
+                    raise failure
+        self.assertIs(raised.exception, failure)
+        with locked_state(self.config) as store:
+            receipts = state.operation_receipts(store)
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["status"], "started")
+            self.assertNotIn("error_type", receipts[0])
+            with self.assertRaisesRegex(ValueError, "recovery_required"):
+                with operation(store, "sync", REVISION):
+                    self.fail("interrupted intent was ignored")
 
     def test_linked_private_records_are_rejected(self):
         self.sync()
