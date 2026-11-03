@@ -24,6 +24,7 @@ GATED_PATHS = (
     "search/operations/documents/derivation.py",
     "search/operations/documents/batches.py",
     "search/operations/metadata/source.py",
+    "search/operations/deployment/frontend/policy.py",
     "scripts/ci",
     "scripts/search_jobs.py",
 )
