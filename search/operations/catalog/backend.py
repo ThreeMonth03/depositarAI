@@ -18,7 +18,6 @@ import types
 from search.catalog.build import storage as build_storage
 from search.catalog.bundle import CatalogBundle
 from search.operations.catalog import commands
-from search.operations.catalog.commands import command_output as _command
 from search.operations.config import ProductConfig, validate_config
 from search.operations.metadata import source as metadata_source, storage
 from search.operations.shared import private_io
@@ -163,14 +162,14 @@ def validate_compatibility(plan, *, repo_root, revision, runner=None):
     # A readable tree may predate a newly required recipe input. That is an
     # incompatible recipe, unlike missing Git history or an unreadable blob.
     original_paths = set(
-        _command(
+        commands.command_output(
             runner,
             ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "--name-only", origin],
         ).split("\0")
     )
     for relative in (*STAGED_FILES, *BUILD_FILES, *DATA_FILES):
         current = _source_bytes(Path(repo_root) / relative)
-        committed = _command(
+        committed = commands.command_output(
             runner, ["git", "-C", str(repo_root), "show", revision + ":" + relative]
         ).encode("utf-8")
         if current != committed:
@@ -179,7 +178,7 @@ def validate_compatibility(plan, *, repo_root, revision, runner=None):
             )
         if relative not in original_paths:
             raise IncompatibleCatalog("catalog data recipe changed; rebuild required")
-        original = _command(
+        original = commands.command_output(
             runner, ["git", "-C", str(repo_root), "show", origin + ":" + relative]
         ).encode("utf-8")
         if _recipe_source(relative, original) != _recipe_source(relative, committed):
@@ -282,7 +281,7 @@ def _sealed_sources(repo_root, revision, runner):
     for relative in (*STAGED_FILES, *BUILD_FILES):
         path = storage.real_path(repo_root / relative)
         current = _source_bytes(path)
-        committed = _command(
+        committed = commands.command_output(
             runner, ["git", "-C", str(repo_root), "show", revision + ":" + relative]
         ).encode("utf-8")
         if current != committed:
@@ -473,7 +472,7 @@ def _build_hash_image(tooling, sources, revision, runner):
     _verify_staged_sources(tooling, sources)
     image = HASH_IMAGE_PREFIX + revision
     context = tooling / "deploy/docker/opensearch"
-    _command(
+    commands.command_output(
         runner,
         [
             "docker",
@@ -492,7 +491,7 @@ def _build_hash_image(tooling, sources, revision, runner):
         ],
         timeout=300,
     )
-    inspected = _command(
+    inspected = commands.command_output(
         runner,
         [
             "docker",
@@ -807,7 +806,7 @@ def _prepare_or_load(
                 },
             )
             phase = "bootstrap"
-            _command(
+            commands.command_output(
                 runner,
                 [
                     "bash",
@@ -826,7 +825,7 @@ def _prepare_or_load(
             data_fd = private_io.open_directory(data_root)
             os.close(data_fd)
             phase = "render_compose"
-            rendered = _command(
+            rendered = commands.command_output(
                 runner,
                 [
                     "docker",

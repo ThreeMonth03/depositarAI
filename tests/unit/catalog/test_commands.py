@@ -1,4 +1,4 @@
-"""Verify catalog command compatibility with harmless local Python children."""
+"""Verify catalog command policy with harmless local Python children."""
 
 import json
 import os
@@ -16,10 +16,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class CatalogCommandTests(unittest.TestCase):
-    def test_backend_preserves_command_policy_and_error_identity(self):
+    def test_command_policy_and_preparation_error_identity(self):
         from search.operations.catalog import backend
 
-        self.assertIs(backend._command, commands.command_output)
         self.assertEqual(4 * 1024**2, commands.MAX_OUTPUT_BYTES)
         self.assertEqual("BackendError", commands.BackendError.__name__)
         self.assertEqual(

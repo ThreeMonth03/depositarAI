@@ -162,15 +162,21 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
             with self.subTest(namespace=namespace):
                 self.assertFalse(imports_namespace(found, namespace))
 
-    def test_external_command_consumers_use_canonical_helpers(self):
-        # Data-bound administration/vectors deliberately retain backend aliases.
-        for name in ("execution", "runtime", "volumes"):
+    def test_command_consumers_use_canonical_helpers(self):
+        for name in (
+            "backend",
+            "execution",
+            "runtime",
+            "volumes",
+            "administration",
+            "vectors",
+        ):
             with self.subTest(consumer=name):
                 found = dependencies(name)
                 for helper in ("_runner", "_command"):
                     self.assertNotIn(PACKAGE + ".backend." + helper, found)
                 self.assertIn(PACKAGE + ".commands.command_output", found)
-                if name == "execution":
+                if name in ("backend", "execution"):
                     self.assertIn(PACKAGE + ".commands.default_runner", found)
 
     def test_shared_execution_does_not_import_its_orchestrators(self):
