@@ -84,6 +84,155 @@ def _volume_name(compose, mount):
     return name
 
 
+def _validate_execution_profile(row, config, host, state, expected):
+    """Prove one core service's resources, health, ports and environment."""
+    if (
+        config.get("User") != expected["user"]
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged")
+        or host.get("DeviceRequests")
+        or host.get("Devices")
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd")
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("AutoRemove")
+        or host.get("VolumesFrom")
+        or host.get("Init") is not True
+        or not _private_namespaces(host)
+        or host.get("NanoCpus") != int(float(expected["cpus"]) * 10**9)
+        or _memory_bytes(host.get("Memory"))
+        != _memory_bytes(expected["mem_limit"])
+        or _memory_bytes(host.get("MemorySwap"))
+        != _memory_bytes(expected["memswap_limit"])
+        or host.get("PidsLimit") != expected["pids_limit"]
+        or host.get("RestartPolicy", {}).get("Name") != expected["restart"]
+        or host.get("LogConfig", {}).get("Type")
+        != expected["logging"]["driver"]
+        or host.get("LogConfig", {}).get("Config")
+        != expected["logging"]["options"]
+        or _tmpfs(host.get("Tmpfs") or {}) != _tmpfs(expected["tmpfs"])
+        or _ulimits(host.get("Ulimits") or [])
+        != _ulimits(expected.get("ulimits", {}))
+    ):
+        raise RuntimeError("catalog_runtime_resource_policy_changed")
+    if (
+        state.get("Running") is not True
+        or state.get("Paused")
+        or state.get("OOMKilled")
+        or state.get("Health", {}).get("Status") != "healthy"
+    ):
+        raise RuntimeError("catalog_runtime_not_healthy")
+    health = config.get("Healthcheck") or {}
+    approved = expected["healthcheck"]
+    if (
+        health.get("Test") != approved["test"]
+        or health.get("Retries") != approved["retries"]
+        or any(
+            health.get(actual, 0) != _duration(approved.get(setting, "0s"))
+            for actual, setting in (
+                ("Interval", "interval"),
+                ("Timeout", "timeout"),
+                ("StartPeriod", "start_period"),
+                ("StartInterval", "start_interval"),
+            )
+        )
+    ):
+        raise RuntimeError("catalog_runtime_healthcheck_changed")
+    if any(host.get("PortBindings", {}).values()) or any(
+        row.get("NetworkSettings", {}).get("Ports", {}).values()
+    ):
+        raise RuntimeError("catalog_runtime_publishes_a_port")
+    environment = {}
+    for entry in config.get("Env") or []:
+        key, value = entry.split("=", 1)
+        if key in environment:
+            raise RuntimeError("catalog_runtime_duplicate_environment")
+        environment[key] = value
+    if any(
+        environment.get(key) != str(value)
+        for key, value in expected["environment"].items()
+    ):
+        raise RuntimeError("catalog_runtime_environment_changed")
+
+
+def _validate_mount_profile(compose, name, row, host, expected):
+    """Prove the exact mounts and named index volume options."""
+    mounts = [
+        (
+            mount.get("Type"),
+            mount.get("Name")
+            if mount.get("Type") == "volume"
+            else mount.get("Source"),
+            mount.get("Destination"),
+            mount.get("RW"),
+        )
+        for mount in row.get("Mounts") or []
+        if mount.get("Type") != "tmpfs"
+    ]
+    expected_mounts = [
+        (
+            mount["type"],
+            _volume_name(compose, mount)
+            if mount["type"] == "volume"
+            else mount["source"],
+            mount["target"],
+            not mount.get("read_only", False),
+        )
+        for mount in expected["volumes"]
+    ]
+    expected_mounts.extend(
+        (
+            "bind",
+            compose["secrets"][secret["source"]]["file"],
+            "/run/secrets/" + secret["target"],
+            False,
+        )
+        for secret in expected.get("secrets", [])
+    )
+    if len(mounts) != len(set(mounts)) or set(mounts) != set(expected_mounts):
+        raise RuntimeError("catalog_runtime_mounts_changed")
+    named_mounts = [
+        mount
+        for mount in row.get("Mounts") or []
+        if mount.get("Type") == "volume"
+    ]
+    if named_mounts:
+        if (
+            name != "opensearch-search"
+            or len(named_mounts) != 1
+            or named_mounts[0].get("Driver") != "local"
+            or named_mounts[0].get("RW") is not True
+            or type(named_mounts[0].get("Source")) is not str
+            or not Path(named_mounts[0]["Source"]).is_absolute()
+        ):
+            raise RuntimeError("catalog_runtime_volume_driver_changed")
+        host_volumes = [
+            mount
+            for mount in host.get("Mounts") or []
+            if mount.get("Type") == "volume"
+        ]
+        if (
+            len(host_volumes) != 1
+            or host_volumes[0].get("Source") != named_mounts[0]["Name"]
+            or host_volumes[0].get("Target") != "/usr/share/opensearch/data"
+            or host_volumes[0].get("ReadOnly", False) is not False
+            or host_volumes[0].get("VolumeOptions") != {"NoCopy": True}
+            or host_volumes[0].get("VolumeOptions", {}).get("NoCopy")
+            is not True
+            or not set(host_volumes[0])
+            <= {
+                "Type",
+                "Source",
+                "Target",
+                "ReadOnly",
+                "VolumeOptions",
+                "Consistency",
+            }
+            or host_volumes[0].get("Consistency", "") not in {"", "default"}
+        ):
+            raise RuntimeError("catalog_runtime_volume_options_changed")
+
+
 def validate_core_containers(plan, compose, images, containers):
     """Validate exactly three catalog services without making a peer claim.
 
@@ -117,151 +266,8 @@ def validate_core_containers(plan, compose, images, containers):
             raise RuntimeError("catalog_runtime_identity_changed")
         by_service[name] = row
         expected = compose["services"][name]
-        if (
-            config.get("User") != expected["user"]
-            or host.get("ReadonlyRootfs") is not True
-            or host.get("Privileged")
-            or host.get("DeviceRequests")
-            or host.get("Devices")
-            or host.get("CapDrop") != ["ALL"]
-            or host.get("CapAdd")
-            or host.get("SecurityOpt") != ["no-new-privileges:true"]
-            or host.get("AutoRemove")
-            or host.get("VolumesFrom")
-            or host.get("Init") is not True
-            or not _private_namespaces(host)
-            or host.get("NanoCpus") != int(float(expected["cpus"]) * 10**9)
-            or _memory_bytes(host.get("Memory"))
-            != _memory_bytes(expected["mem_limit"])
-            or _memory_bytes(host.get("MemorySwap"))
-            != _memory_bytes(expected["memswap_limit"])
-            or host.get("PidsLimit") != expected["pids_limit"]
-            or host.get("RestartPolicy", {}).get("Name") != expected["restart"]
-            or host.get("LogConfig", {}).get("Type")
-            != expected["logging"]["driver"]
-            or host.get("LogConfig", {}).get("Config")
-            != expected["logging"]["options"]
-            or _tmpfs(host.get("Tmpfs") or {}) != _tmpfs(expected["tmpfs"])
-            or _ulimits(host.get("Ulimits") or [])
-            != _ulimits(expected.get("ulimits", {}))
-        ):
-            raise RuntimeError("catalog_runtime_resource_policy_changed")
-        if (
-            state.get("Running") is not True
-            or state.get("Paused")
-            or state.get("OOMKilled")
-            or state.get("Health", {}).get("Status") != "healthy"
-        ):
-            raise RuntimeError("catalog_runtime_not_healthy")
-        health = config.get("Healthcheck") or {}
-        approved = expected["healthcheck"]
-        if (
-            health.get("Test") != approved["test"]
-            or health.get("Retries") != approved["retries"]
-            or any(
-                health.get(actual, 0) != _duration(approved.get(setting, "0s"))
-                for actual, setting in (
-                    ("Interval", "interval"),
-                    ("Timeout", "timeout"),
-                    ("StartPeriod", "start_period"),
-                    ("StartInterval", "start_interval"),
-                )
-            )
-        ):
-            raise RuntimeError("catalog_runtime_healthcheck_changed")
-        if any(host.get("PortBindings", {}).values()) or any(
-            row.get("NetworkSettings", {}).get("Ports", {}).values()
-        ):
-            raise RuntimeError("catalog_runtime_publishes_a_port")
-        environment = {}
-        for entry in config.get("Env") or []:
-            key, value = entry.split("=", 1)
-            if key in environment:
-                raise RuntimeError("catalog_runtime_duplicate_environment")
-            environment[key] = value
-        if any(
-            environment.get(key) != str(value)
-            for key, value in expected["environment"].items()
-        ):
-            raise RuntimeError("catalog_runtime_environment_changed")
-        mounts = [
-            (
-                mount.get("Type"),
-                mount.get("Name")
-                if mount.get("Type") == "volume"
-                else mount.get("Source"),
-                mount.get("Destination"),
-                mount.get("RW"),
-            )
-            for mount in row.get("Mounts") or []
-            if mount.get("Type") != "tmpfs"
-        ]
-        expected_mounts = [
-            (
-                mount["type"],
-                _volume_name(compose, mount)
-                if mount["type"] == "volume"
-                else mount["source"],
-                mount["target"],
-                not mount.get("read_only", False),
-            )
-            for mount in expected["volumes"]
-        ]
-        expected_mounts.extend(
-            (
-                "bind",
-                compose["secrets"][secret["source"]]["file"],
-                "/run/secrets/" + secret["target"],
-                False,
-            )
-            for secret in expected.get("secrets", [])
-        )
-        if len(mounts) != len(set(mounts)) or set(mounts) != set(
-            expected_mounts
-        ):
-            raise RuntimeError("catalog_runtime_mounts_changed")
-        named_mounts = [
-            mount
-            for mount in row.get("Mounts") or []
-            if mount.get("Type") == "volume"
-        ]
-        if named_mounts:
-            if (
-                name != "opensearch-search"
-                or len(named_mounts) != 1
-                or named_mounts[0].get("Driver") != "local"
-                or named_mounts[0].get("RW") is not True
-                or type(named_mounts[0].get("Source")) is not str
-                or not Path(named_mounts[0]["Source"]).is_absolute()
-            ):
-                raise RuntimeError("catalog_runtime_volume_driver_changed")
-            host_volumes = [
-                mount
-                for mount in host.get("Mounts") or []
-                if mount.get("Type") == "volume"
-            ]
-            if (
-                len(host_volumes) != 1
-                or host_volumes[0].get("Source") != named_mounts[0]["Name"]
-                or host_volumes[0].get("Target")
-                != "/usr/share/opensearch/data"
-                or host_volumes[0].get("ReadOnly", False) is not False
-                or host_volumes[0].get("VolumeOptions") != {"NoCopy": True}
-                or host_volumes[0].get("VolumeOptions", {}).get("NoCopy")
-                is not True
-                or not set(host_volumes[0])
-                <= {
-                    "Type",
-                    "Source",
-                    "Target",
-                    "ReadOnly",
-                    "VolumeOptions",
-                    "Consistency",
-                }
-                or host_volumes[0].get("Consistency", "")
-                not in {"", "default"}
-            ):
-                raise RuntimeError("catalog_runtime_volume_options_changed")
+        _validate_execution_profile(row, config, host, state, expected)
+        _validate_mount_profile(compose, name, row, host, expected)
     if set(by_service) != SERVICES:
         raise RuntimeError("catalog_runtime_service_inventory_changed")
     fess_id = by_service["fess-search"]["Id"]

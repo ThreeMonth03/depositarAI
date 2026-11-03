@@ -2346,6 +2346,199 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertEqual([], self.calls)
 
 
+class CatalogCoreProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = CatalogRuntimeTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.create_services()
+        images = {
+            row["Config"]["Labels"]["com.docker.compose.service"]: {
+                "image_id": row["Image"]
+            }
+            for row in self.fixture.containers
+        }
+        self.values = (
+            self.fixture.plan,
+            self.fixture.compose,
+            images,
+            self.fixture.containers,
+        )
+
+    def test_role_order_and_inherited_environment_are_preserved(self):
+        rows = self.values[3]
+        for row in rows:
+            row["Config"]["Env"].append("INHERITED_FIXTURE=yes")
+        before = copy.deepcopy(self.values)
+        for indices in (
+            (0, 1, 2),
+            (0, 2, 1),
+            (1, 0, 2),
+            (1, 2, 0),
+            (2, 0, 1),
+            (2, 1, 0),
+        ):
+            ordered = [rows[index] for index in indices]
+            result = validate_core_containers(*self.values[:3], ordered)
+            self.assertEqual(
+                {
+                    "fess-search": "a" * 64,
+                    "opensearch-search": "b" * 64,
+                    "ollama-embedding": "c" * 64,
+                },
+                result,
+            )
+            self.assertEqual(
+                [
+                    row["Config"]["Labels"]["com.docker.compose.service"]
+                    for row in ordered
+                ],
+                list(result),
+            )
+            self.assertEqual(before, self.values)
+
+    def test_first_failure_keeps_profile_and_cross_row_order(self):
+        named = next(
+            index
+            for index, row in enumerate(self.values[3])
+            if row["Config"]["Labels"]["com.docker.compose.service"]
+            == "opensearch-search"
+        )
+
+        def memory(rows):
+            rows[0]["HostConfig"].update(Memory=True)
+
+        def unhealthy(rows):
+            rows[0]["State"]["Health"].update(Status="unhealthy")
+
+        def port(rows):
+            rows[0]["HostConfig"].update(PortBindings={"1/tcp": [{}]})
+
+        def duplicate(rows):
+            rows[0]["Config"]["Env"].append(rows[0]["Config"]["Env"][0])
+
+        def mount(rows):
+            rows[named]["Mounts"][0].update(Destination="/unexpected")
+
+        def driver(rows):
+            next(
+                value
+                for value in rows[named]["Mounts"]
+                if value["Type"] == "volume"
+            ).update(Driver="nfs")
+
+        cases = (
+            (
+                lambda rows: rows[0]["Config"]["Labels"].update(
+                    {"com.docker.compose.project": "other"}
+                ),
+                memory,
+                "catalog_runtime_identity_changed",
+            ),
+            (memory, unhealthy, "catalog_runtime_memory_bytes_invalid"),
+            (unhealthy, port, "catalog_runtime_not_healthy"),
+            (port, duplicate, "catalog_runtime_publishes_a_port"),
+            (duplicate, mount, "catalog_runtime_duplicate_environment"),
+            (mount, driver, "catalog_runtime_mounts_changed"),
+            (
+                driver,
+                lambda rows: rows[named]["HostConfig"]["Mounts"][0].update(
+                    VolumeOptions={"NoCopy": False}
+                ),
+                "catalog_runtime_volume_driver_changed",
+            ),
+            (
+                lambda rows: rows[0]["HostConfig"].update(NetworkMode="other"),
+                lambda rows: rows[-1]["HostConfig"].update(Memory=1),
+                "catalog_runtime_resource_policy_changed",
+            ),
+        )
+        for first, second, expected in cases:
+            values = copy.deepcopy(self.values)
+            first(values[3])
+            second(values[3])
+            before = copy.deepcopy(values)
+            with self.subTest(expected=expected):
+                with self.assertRaises(runtime.RuntimeError) as caught:
+                    validate_core_containers(*values)
+                self.assertEqual((expected,), caught.exception.args)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+                self.assertEqual(before, values)
+
+    def test_environment_keeps_native_and_duplicate_error_types(self):
+        for entry, expected, args in (
+            (
+                "UNUSED=first",
+                runtime.RuntimeError,
+                ("catalog_runtime_duplicate_environment",),
+            ),
+            (
+                "MISSING_SEPARATOR",
+                ValueError,
+                ("not enough values to unpack (expected 2, got 1)",),
+            ),
+            (7, AttributeError, ("'int' object has no attribute 'split'",)),
+        ):
+            values = copy.deepcopy(self.values)
+            values[3][0]["Config"]["Env"].append(entry)
+            if entry == "UNUSED=first":
+                values[3][0]["Config"]["Env"].append("UNUSED=second")
+            with self.subTest(entry=entry):
+                with self.assertRaises(expected) as caught:
+                    validate_core_containers(*values)
+                self.assertIs(type(caught.exception), expected)
+                self.assertEqual(args, caught.exception.args)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+    def test_duplicate_mounts_and_missing_secret_binds_are_rejected(self):
+        for index, row in enumerate(self.values[3]):
+            values = copy.deepcopy(self.values)
+            values[3][index]["Mounts"].append(row["Mounts"][0])
+            with self.subTest(index=index, duplicate=True):
+                with self.assertRaisesRegex(
+                    runtime.RuntimeError, "^catalog_runtime_mounts_changed$"
+                ):
+                    validate_core_containers(*values)
+            for secret in (
+                mount
+                for mount in row["Mounts"]
+                if mount["Destination"].startswith("/run/secrets/")
+            ):
+                values = copy.deepcopy(self.values)
+                values[3][index]["Mounts"].remove(secret)
+                with self.subTest(index=index, secret=secret["Destination"]):
+                    with self.assertRaisesRegex(
+                        runtime.RuntimeError,
+                        "^catalog_runtime_mounts_changed$",
+                    ):
+                        validate_core_containers(*values)
+
+    def test_container_and_row_shapes_keep_exact_type_checks(self):
+        class Rows(list):
+            pass
+
+        class Row(dict):
+            pass
+
+        for rows in (Rows(self.values[3]), tuple(self.values[3]), []):
+            with self.subTest(container_type=type(rows)):
+                with self.assertRaisesRegex(
+                    runtime.RuntimeError,
+                    "^catalog_requires_exactly_three_services$",
+                ):
+                    validate_core_containers(*self.values[:3], rows)
+        for row in (None, Row(self.values[3][0])):
+            values = copy.deepcopy(self.values)
+            values[3][0] = row
+            with self.subTest(row_type=type(row)):
+                with self.assertRaisesRegex(
+                    runtime.RuntimeError, "^catalog_runtime_identity_changed$"
+                ):
+                    validate_core_containers(*values)
+
+
 class CatalogCanonicalResourceTests(unittest.TestCase):
     def test_bundle_target_preserves_the_strict_content_addressed_basename(
         self,
