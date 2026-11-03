@@ -130,155 +130,174 @@ _CATALOG_PROJECTION_CODES = frozenset(
 )
 
 
-def _operator_error_code(error, command):
-    error_type = type(error)
-    owner = error_type.__module__
-    if type(owner) is not str:
-        return None
+def _catalog_error_policy(owner):
     if owner == "search.operations.catalog.policy":
         from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
 
-        if error_type is not CatalogRuntimeError:
-            return None
-        codes = _CATALOG_RUNTIME_CODES
+        return CatalogRuntimeError, _CATALOG_RUNTIME_CODES
     elif owner == "search.operations.catalog.access":
         from search.operations.catalog.access import AccessError
 
-        if error_type is not AccessError:
-            return None
-        codes = _CATALOG_ACCESS_CODES
-    elif owner == "search.operations.catalog.projection":
+        return AccessError, _CATALOG_ACCESS_CODES
+    else:
         from search.operations.catalog.projection import ProjectionError
 
-        if error_type is not ProjectionError:
-            return None
-        codes = _CATALOG_PROJECTION_CODES
-    elif (
-        owner == "search.operations.deployment.runtime_docker"
-        and command in _PRIVATE_RUNTIME_COMMANDS
-    ):
+        return ProjectionError, _CATALOG_PROJECTION_CODES
+
+
+def _private_runtime_error_policy(owner):
+    if owner == "search.operations.deployment.runtime_docker":
         from search.operations.deployment.runtime_docker import InferenceError
 
-        if error_type is not InferenceError:
-            return None
-        codes = _RUNTIME_DOCKER_CODES
-    elif (
-        owner == "search.operations.deployment.inference_runtime"
-        and command in _PRIVATE_RUNTIME_COMMANDS
-    ):
+        return InferenceError, _RUNTIME_DOCKER_CODES
+    elif owner == "search.operations.deployment.inference_runtime":
         from search.operations.deployment.inference_runtime import InferenceRuntimeError
 
-        if error_type is not InferenceRuntimeError:
-            return None
-        codes = _INFERENCE_RUNTIME_CODES
-    elif (
-        owner == "search.operations.deployment.release.controller"
-        and command in _PRIVATE_RUNTIME_COMMANDS
-    ):
+        return InferenceRuntimeError, _INFERENCE_RUNTIME_CODES
+    else:
         from search.operations.deployment.release.controller import ReleaseError
 
-        if error_type is not ReleaseError:
-            return None
-        codes = _RELEASE_CODES
-    elif command == "up-private" and owner == "search.operations.lifecycle":
+        return ReleaseError, _RELEASE_CODES
+
+
+def _product_error_policy(owner):
+    if owner == "search.operations.lifecycle":
         from search.operations import lifecycle
 
-        if error_type is not lifecycle.UpPrivateError:
-            return None
-        codes = lifecycle.UP_PRIVATE_ERROR_CODES
-    elif (
-        command == "restore-product"
-        and owner == "search.operations.deployment.payload.restore"
-    ):
+        return lifecycle.UpPrivateError, lifecycle.UP_PRIVATE_ERROR_CODES
+    else:
         from search.operations.deployment.payload import restore as product_restore
 
-        if error_type is not product_restore.ProductRestoreError:
-            return None
-        codes = product_restore.ERROR_CODES
-    elif (
-        command in PUBLIC_COMMANDS
-        and owner == "search.operations.deployment.public_entry.preflight"
-    ):
+        return product_restore.ProductRestoreError, product_restore.ERROR_CODES
+
+
+def _public_entry_error_policy(owner):
+    if owner == "search.operations.deployment.public_entry.preflight":
         from search.operations.deployment.public_entry import preflight
 
-        if error_type is not preflight.PublicEntryPreflightError:
-            return None
-        codes = preflight.ERROR_CODES
-    elif (
-        command in PUBLIC_COMMANDS
-        and owner == "search.operations.deployment.public_entry.remote"
-    ):
+        return preflight.PublicEntryPreflightError, preflight.ERROR_CODES
+    elif owner == "search.operations.deployment.public_entry.remote":
         from search.operations.deployment.public_entry import remote
 
-        if error_type is not remote.PublicEntryRemoteError:
-            return None
-        codes = remote.ERROR_CODES
-    elif (
-        command in PUBLIC_COMMANDS
-        and owner == "search.operations.deployment.public_entry.updates"
-    ):
+        return remote.PublicEntryRemoteError, remote.ERROR_CODES
+    else:
         from search.operations.deployment.public_entry import updates
 
-        if error_type is not updates.PublicEntryUpdateError:
-            return None
-        codes = updates.ERROR_CODES
-    elif (
-        command == "profile-resources"
-        and owner == "search.operations.documents.extractor"
-    ):
+        return updates.PublicEntryUpdateError, updates.ERROR_CODES
+
+
+def _document_error_policy(owner):
+    if owner == "search.operations.documents.extractor":
         from search.operations.documents import extractor
 
-        if error_type is not extractor.ExtractorError:
-            return None
-        codes = extractor.ERROR_CODES
-    elif (
-        command == "profile-resources"
-        and owner == "search.operations.documents.controller"
-    ):
+        return extractor.ExtractorError, extractor.ERROR_CODES
+    elif owner == "search.operations.documents.controller":
         from search.operations.documents import controller
 
-        if error_type is not controller.ProfileError:
-            return None
-        codes = controller.ERROR_CODES
-    elif (
-        command == "profile-resources"
-        and owner == "search.operations.documents.batches"
-    ):
+        return controller.ProfileError, controller.ERROR_CODES
+    elif owner == "search.operations.documents.batches":
         from search.operations.documents import batches
 
-        if error_type is not batches.BatchError:
-            return None
-        codes = batches.ERROR_CODES
-    elif (
-        command in {"profile-resources", "sync", "stage-catalog", "up-private"}
-        and owner == "search.operations.documents.sets"
-    ):
+        return batches.BatchError, batches.ERROR_CODES
+    elif owner == "search.operations.documents.sets":
         from search.operations.documents import sets
 
-        if error_type is not sets.ProfileSetError:
-            return None
-        codes = sets.ERROR_CODES
-    elif (
-        command in {"sync", "stage-catalog", "up-private"}
-        and owner == "search.operations.documents.enrichment"
-    ):
+        return sets.ProfileSetError, sets.ERROR_CODES
+    else:
         from search.operations.documents import enrichment
 
-        if error_type is not enrichment.EnrichmentError:
-            return None
-        codes = enrichment.ERROR_CODES
-    else:
-        return None
+        return enrichment.EnrichmentError, enrichment.ERROR_CODES
+
+
+# The literal registry is authority for both owners and commands. Resolvers use
+# static imports; an exception's metadata can never select another module.
+_ERROR_POLICIES = {
+    "search.operations.catalog.policy": (None, _catalog_error_policy),
+    "search.operations.catalog.access": (None, _catalog_error_policy),
+    "search.operations.catalog.projection": (None, _catalog_error_policy),
+    "search.operations.deployment.runtime_docker": (
+        _PRIVATE_RUNTIME_COMMANDS,
+        _private_runtime_error_policy,
+    ),
+    "search.operations.deployment.inference_runtime": (
+        _PRIVATE_RUNTIME_COMMANDS,
+        _private_runtime_error_policy,
+    ),
+    "search.operations.deployment.release.controller": (
+        _PRIVATE_RUNTIME_COMMANDS,
+        _private_runtime_error_policy,
+    ),
+    "search.operations.lifecycle": (frozenset({"up-private"}), _product_error_policy),
+    "search.operations.deployment.payload.restore": (
+        frozenset({"restore-product"}),
+        _product_error_policy,
+    ),
+    "search.operations.deployment.public_entry.preflight": (
+        PUBLIC_COMMANDS,
+        _public_entry_error_policy,
+    ),
+    "search.operations.deployment.public_entry.remote": (
+        PUBLIC_COMMANDS,
+        _public_entry_error_policy,
+    ),
+    "search.operations.deployment.public_entry.updates": (
+        PUBLIC_COMMANDS,
+        _public_entry_error_policy,
+    ),
+    "search.operations.documents.extractor": (
+        frozenset({"profile-resources"}),
+        _document_error_policy,
+    ),
+    "search.operations.documents.controller": (
+        frozenset({"profile-resources"}),
+        _document_error_policy,
+    ),
+    "search.operations.documents.batches": (
+        frozenset({"profile-resources"}),
+        _document_error_policy,
+    ),
+    "search.operations.documents.sets": (
+        frozenset({"profile-resources", "sync", "stage-catalog", "up-private"}),
+        _document_error_policy,
+    ),
+    "search.operations.documents.enrichment": (
+        frozenset({"sync", "stage-catalog", "up-private"}),
+        _document_error_policy,
+    ),
+}
+
+
+def _diagnostic_argument(error):
     arguments = error.args
     if type(arguments) is not tuple or len(arguments) != 1:
         return None
     candidate = arguments[0]
-    if type(candidate) is str and candidate == "catalog_admin_diagnostic_failed":
-        from search.catalog.errors import valid_failure_record
+    return candidate if type(candidate) is str else None
 
-        if not valid_failure_record(error.__dict__.get("catalog_diagnostic")):
-            return None
-    return candidate if type(candidate) is str and candidate in codes else None
+
+def _valid_catalog_diagnostic(error, candidate):
+    if candidate != "catalog_admin_diagnostic_failed":
+        return True
+    from search.catalog.errors import valid_failure_record
+
+    return valid_failure_record(error.__dict__.get("catalog_diagnostic"))
+
+
+def _operator_error_code(error, command):
+    error_type = type(error)
+    owner = error_type.__module__
+    if type(owner) is not str or owner not in _ERROR_POLICIES:
+        return None
+    commands, resolver = _ERROR_POLICIES[owner]
+    if commands is not None and command not in commands:
+        return None
+    canonical_type, codes = resolver(owner)
+    if error_type is not canonical_type:
+        return None
+    candidate = _diagnostic_argument(error)
+    if candidate is None or not _valid_catalog_diagnostic(error, candidate):
+        return None
+    return candidate if candidate in codes else None
 
 
 def _activation_outcome(error, command):
@@ -546,6 +565,51 @@ def _prebuilt_receipt(path):
     return receipt
 
 
+def _selected_profiles(options):
+    return {
+        **({"profile_files": options.profile_file} if options.profile_file else {}),
+        **({"profile_set": options.profile_set} if options.profile_set else {}),
+    }
+
+
+def _sync_report(lifecycle, config, options):
+    if bool(options.baseline_bundle) != bool(options.baseline_manifest_sha256):
+        raise ValueError("baseline_requires_path_and_manifest")
+    baseline = (
+        (options.baseline_bundle, options.baseline_manifest_sha256)
+        if options.baseline_bundle
+        else None
+    )
+    return lifecycle.sync_metadata(
+        config,
+        snapshot=options.snapshot,
+        force=options.force,
+        baseline=baseline,
+        **_selected_profiles(options),
+    )
+
+
+def _stage_report(lifecycle, config, options):
+    stage = (
+        lifecycle.stage_catalog
+        if options.command == "stage-catalog"
+        else lifecycle.up_private
+    )
+    return stage(
+        config,
+        snapshot=options.snapshot,
+        force=options.force,
+        max_passes=options.max_passes,
+        wall_seconds=options.wall_seconds,
+        **_selected_profiles(options),
+        **(
+            {}
+            if options.catalog_revision is None
+            else {"catalog_revision": options.catalog_revision}
+        ),
+    )
+
+
 def _runtime_report(options):
     from search.operations import config as product_config
 
@@ -557,217 +621,185 @@ def _runtime_report(options):
     from search.operations import lifecycle
 
     if options.command == "sync":
-        if bool(options.baseline_bundle) != bool(options.baseline_manifest_sha256):
-            raise ValueError("baseline_requires_path_and_manifest")
-        baseline = (
-            (options.baseline_bundle, options.baseline_manifest_sha256)
-            if options.baseline_bundle
-            else None
-        )
-        report = lifecycle.sync_metadata(
-            config,
-            snapshot=options.snapshot,
-            force=options.force,
-            baseline=baseline,
-            **({"profile_files": options.profile_file} if options.profile_file else {}),
-            **({"profile_set": options.profile_set} if options.profile_set else {}),
-        )
+        return _sync_report(lifecycle, config, options)
     elif options.command in {"stage-catalog", "up-private"}:
-        stage = (
-            lifecycle.stage_catalog
-            if options.command == "stage-catalog"
-            else lifecycle.up_private
-        )
-        report = stage(
-            config,
-            snapshot=options.snapshot,
-            force=options.force,
-            max_passes=options.max_passes,
-            wall_seconds=options.wall_seconds,
-            **({"profile_files": options.profile_file} if options.profile_file else {}),
-            **({"profile_set": options.profile_set} if options.profile_set else {}),
-            **(
-                {}
-                if options.catalog_revision is None
-                else {"catalog_revision": options.catalog_revision}
-            ),
-        )
-    elif options.command == "vector-inputs":
-        report = lifecycle.vector_inputs(config)
+        return _stage_report(lifecycle, config, options)
     elif options.command == "build-vectors":
-        report = lifecycle.build_vectors(
+        return lifecycle.build_vectors(
             config,
             max_passes=options.max_passes,
             wall_seconds=options.wall_seconds,
             expected_inputs_sha256=options.expected_inputs_sha256,
         )
     elif options.command == "start-index" and options.prebuilt_images is not None:
-        report = lifecycle.start_index(
+        return lifecycle.start_index(
             config, prebuilt_images=_prebuilt_receipt(options.prebuilt_images)
         )
     elif options.command == "prepare-index" and options.catalog_revision is not None:
-        report = lifecycle.prepare_index(
+        return lifecycle.prepare_index(
             config, catalog_revision=options.catalog_revision
         )
     elif options.command == "package-product":
-        report = lifecycle.package_product(
+        return lifecycle.package_product(
             config,
             destination=options.destination,
             scanner=options.scanner,
             include_models=not options.external_models,
         )
-    elif options.command in {
-        "prepare-secrets",
-        "start-inference",
-        "start-release",
-        "prepare-gateway",
-        "activate-gateway",
-        "build-images",
-        "build-catalog-images",
-        "prepare-query",
-        "prepare-index",
-        "start-index",
-        "import-index",
-        "reconcile-index",
-    }:
-        actions = {
-            "prepare-secrets": lifecycle.prepare_secrets,
-            "start-inference": lifecycle.start_inference,
-            "start-release": lifecycle.start_release,
-            "prepare-gateway": lifecycle.prepare_gateway,
-            "activate-gateway": lifecycle.activate_gateway,
-            "build-images": lifecycle.build_images,
-            "build-catalog-images": lifecycle.build_catalog_images,
-            "prepare-query": lifecycle.prepare_query,
-            "prepare-index": lifecycle.prepare_index,
-            "start-index": lifecycle.start_index,
-            "import-index": lifecycle.import_index,
-            "reconcile-index": lifecycle.reconcile_index,
-        }
-        report = actions[options.command](config)
+    actions = {
+        "prepare-secrets": lifecycle.prepare_secrets,
+        "start-inference": lifecycle.start_inference,
+        "start-release": lifecycle.start_release,
+        "prepare-gateway": lifecycle.prepare_gateway,
+        "activate-gateway": lifecycle.activate_gateway,
+        "build-images": lifecycle.build_images,
+        "build-catalog-images": lifecycle.build_catalog_images,
+        "prepare-query": lifecycle.prepare_query,
+        "prepare-index": lifecycle.prepare_index,
+        "start-index": lifecycle.start_index,
+        "import-index": lifecycle.import_index,
+        "reconcile-index": lifecycle.reconcile_index,
+        "vector-inputs": lifecycle.vector_inputs,
+    }
+    return actions.get(options.command, lifecycle.status)(config)
+
+
+def _profile_report(options):
+    from search.operations.documents import batches
+
+    if options.profile_action == "prepare":
+        return batches.prepare(
+            options.bundle,
+            options.expected_manifest_sha256,
+            options.state_root,
+            options.resource_id_file,
+            encoding=options.encoding,
+            header_policy=options.header_policy.replace("-", "_"),
+            source_root=ROOT,
+        )
+    elif options.profile_action == "run":
+        return batches.run(
+            options.bundle,
+            options.state_root,
+            options.expected_plan_sha256,
+            max_resources=options.max_resources,
+            retry_failed=options.retry_failed,
+            source_root=ROOT,
+        )
+    return batches.status(options.state_root, options.expected_plan_sha256)
+
+
+def _public_entry_report(options):
+    extra = (
+        (options.release_compose, options.web_image, options.web_nginx_image)
+        if options.command
+        in {"prepare-public-entry", "up-public-entry", "update-public-entry"}
+        else ()
+    )
+    if options.command in {"prepare-public-entry", "up-public-entry"}:
+        from search.operations.deployment.public_entry import host
+
+        action = (
+            host.prepare_public_entry
+            if options.command == "prepare-public-entry"
+            else host.up_public_entry
+        )
     else:
-        report = lifecycle.status(config)
-    return report
+        from search.operations.deployment.public_entry import updates
+
+        action = {
+            "update-public-entry": updates.update_public_entry,
+            "rollback-public-entry": updates.rollback_public_entry,
+        }[options.command]
+    backend = (
+        {"backend_config": options.backend_config}
+        if extra and options.backend_config is not None
+        else {}
+    )
+    return action(options.entry_config, *extra, **backend)
 
 
-def main(argv=None):
-    arguments = parser()
-    options = arguments.parse_args(argv)
+def _command_report(options):
+    if options.command == "profile-resources":
+        return _profile_report(options)
+    if options.command in PUBLIC_COMMANDS:
+        return _public_entry_report(options)
+    if options.command == "restore-product":
+        from search.operations.deployment.payload import restore as product_restore
+
+        return product_restore.restore_product(
+            options.package,
+            expected_revision=options.expected_revision,
+            expected_manifest_sha256=options.expected_manifest_sha256,
+            destination=options.destination,
+        )
+    return _runtime_report(options)
+
+
+def _exit_status(options, report):
+    if options.command == "profile-resources":
+        if options.profile_action == "run":
+            return {"checkpoint": 2, "partial": 1}.get(report["status"], 0)
+        return 0
+    if options.command in PUBLIC_COMMANDS:
+        return 1 if report.get("status") == "deployment_failed" else 0
+    if options.command == "restore-product":
+        return 0
+    if report.get("status") == "checkpoint":
+        return 2
+    return 1 if report.get("status") in {"blocked", "recovery_required"} else 0
+
+
+def _validate_options(arguments, options):
     independent = {"restore-product", "profile-resources", *PUBLIC_COMMANDS}
     if options.command in independent:
         if options.config is not None:
             arguments.error(f"{options.command} does not use --config")
     elif options.config is None:
         arguments.error("--config is required for runtime commands")
+
+
+def _handled_error(error):
+    # Match the actual exception type, including when __class__ is forged.
+    if issubclass(
+        type(error),
+        (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError),
+    ):
+        return True
+    from search.catalog.errors import CatalogError
+
+    return issubclass(type(error), CatalogError)
+
+
+def _failure_report(error, command):
+    report = {
+        "schema_version": 1,
+        "status": "failed",
+        "code": "product_operation_failed",
+        "error_type": type(error).__name__,
+        "active_changed": False,
+    }
+    activation_outcome = _activation_outcome(error, command)
+    if activation_outcome is not None:
+        report.update(activation_outcome)
+    error_code = _operator_error_code(error, command)
+    if error_code is not None:
+        report["error_code"] = error_code
+        if error_code == "catalog_admin_diagnostic_failed":
+            report["catalog_diagnostic"] = error.__dict__["catalog_diagnostic"]
+    return report
+
+
+def main(argv=None):
+    arguments = parser()
+    options = arguments.parse_args(argv)
+    _validate_options(arguments, options)
     try:
-        if options.command == "profile-resources":
-            from search.operations.documents import batches
-
-            if options.profile_action == "prepare":
-                report = batches.prepare(
-                    options.bundle,
-                    options.expected_manifest_sha256,
-                    options.state_root,
-                    options.resource_id_file,
-                    encoding=options.encoding,
-                    header_policy=options.header_policy.replace("-", "_"),
-                    source_root=ROOT,
-                )
-            elif options.profile_action == "run":
-                report = batches.run(
-                    options.bundle,
-                    options.state_root,
-                    options.expected_plan_sha256,
-                    max_resources=options.max_resources,
-                    retry_failed=options.retry_failed,
-                    source_root=ROOT,
-                )
-            else:
-                report = batches.status(
-                    options.state_root, options.expected_plan_sha256
-                )
-            print(
-                json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
-            )
-            if options.profile_action == "run":
-                return {"checkpoint": 2, "partial": 1}.get(report["status"], 0)
-            return 0
-        if options.command in PUBLIC_COMMANDS:
-            extra = (
-                (options.release_compose, options.web_image, options.web_nginx_image)
-                if options.command
-                in {"prepare-public-entry", "up-public-entry", "update-public-entry"}
-                else ()
-            )
-            if options.command in {"prepare-public-entry", "up-public-entry"}:
-                from search.operations.deployment.public_entry import host
-
-                action = (
-                    host.prepare_public_entry
-                    if options.command == "prepare-public-entry"
-                    else host.up_public_entry
-                )
-            else:
-                from search.operations.deployment.public_entry import updates
-
-                action = {
-                    "update-public-entry": updates.update_public_entry,
-                    "rollback-public-entry": updates.rollback_public_entry,
-                }[options.command]
-            backend = (
-                {"backend_config": options.backend_config}
-                if extra and options.backend_config is not None
-                else {}
-            )
-            report = action(options.entry_config, *extra, **backend)
-            print(
-                json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
-            )
-            return 1 if report.get("status") == "deployment_failed" else 0
-        if options.command == "restore-product":
-            from search.operations.deployment.payload import restore as product_restore
-
-            report = product_restore.restore_product(
-                options.package,
-                expected_revision=options.expected_revision,
-                expected_manifest_sha256=options.expected_manifest_sha256,
-                destination=options.destination,
-            )
-            print(
-                json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
-            )
-            return 0
-        report = _runtime_report(options)
+        report = _command_report(options)
         print(json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False))
-        if report.get("status") == "checkpoint":
-            return 2
-        return 1 if report.get("status") in {"blocked", "recovery_required"} else 0
+        return _exit_status(options, report)
     except Exception as error:
-        # Preserve except-clause matching against the real exception type.
-        # Catalog protocol failures derive from RuntimeError; load that ancestor
-        # only for non-standard failures and propagate unrelated exceptions.
-        if not issubclass(
-            type(error),
-            (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError),
-        ):
-            from search.catalog.errors import CatalogError
-
-            if not issubclass(type(error), CatalogError):
-                raise
-        report = {
-            "schema_version": 1,
-            "status": "failed",
-            "code": "product_operation_failed",
-            "error_type": type(error).__name__,
-            "active_changed": False,
-        }
-        activation_outcome = _activation_outcome(error, options.command)
-        if activation_outcome is not None:
-            report.update(activation_outcome)
-        error_code = _operator_error_code(error, options.command)
-        if error_code is not None:
-            report["error_code"] = error_code
-            if error_code == "catalog_admin_diagnostic_failed":
-                report["catalog_diagnostic"] = error.__dict__["catalog_diagnostic"]
-        print(json.dumps(report), file=sys.stderr)
+        if not _handled_error(error):
+            raise
+        print(json.dumps(_failure_report(error, options.command)), file=sys.stderr)
         return 1
