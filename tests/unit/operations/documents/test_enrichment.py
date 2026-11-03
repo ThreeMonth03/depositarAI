@@ -112,6 +112,166 @@ class ResourceEnrichmentTests(unittest.TestCase):
             self.base["snapshot_path"],
         )
 
+    def test_invalid_deadline_precedes_selection_and_profile_reads(self):
+        for deadline in (False, True, float("nan"), float("inf"), "0", []):
+            with (
+                self.subTest(deadline=deadline),
+                patch.object(
+                    enrichment,
+                    "_references",
+                    side_effect=AssertionError("selection before admission"),
+                ),
+                self.assertRaisesRegex(
+                    enrichment.EnrichmentError,
+                    "^document_enrichment_selection_invalid$",
+                ),
+            ):
+                enrichment.load_profiles(
+                    [],
+                    self.base["bundle_path"],
+                    self.base["manifest_sha256"],
+                    self.base["snapshot_path"],
+                    deadline=deadline,
+                )
+
+    def test_set_source_mismatch_precedes_snapshot_and_member_reads(self):
+        references = self.many_profiles(1)
+        path = self.publish_set(references, source_sha256="f" * 64)
+        with (
+            patch.object(
+                enrichment.snapshot,
+                "load_source",
+                side_effect=AssertionError("snapshot before source proof"),
+            ),
+            patch.object(
+                enrichment,
+                "_read_profile",
+                side_effect=AssertionError("member before source proof"),
+            ),
+            self.assertRaisesRegex(
+                enrichment.EnrichmentError,
+                "^document_enrichment_source_mismatch$",
+            ),
+        ):
+            self.load_set(path)
+
+    def test_failure_only_set_still_checks_dataset_alignment(self):
+        references = self.many_profiles(1)
+        failure = {
+            "dataset_id": "f" * 8 + "-1111-4111-8111-111111111111",
+            "resource_id": references[0]["resource_id"],
+            "code": "document_source_failed",
+        }
+        path = self.publish_set([], [failure])
+        with (
+            patch.object(
+                enrichment,
+                "_read_profile",
+                side_effect=AssertionError("failure needs no profile read"),
+            ),
+            self.assertRaisesRegex(
+                enrichment.EnrichmentError,
+                "^document_enrichment_source_mismatch$",
+            ),
+        ):
+            self.load_set(path)
+
+    def test_content_digest_mismatch_precedes_absent_header_skip(self):
+        profile = deepcopy(self.profile)
+        profile["policy"]["header_policy"] = "absent"
+        profile["result"]["columns"] = []
+        profile["source"]["content_sha256"] = "c" * 64
+        path = self.publish(profile)
+        with (
+            patch.object(
+                enrichment.normalize,
+                "resource_profile_content",
+                side_effect=AssertionError("projection before content proof"),
+            ),
+            self.assertRaisesRegex(
+                enrichment.EnrichmentError,
+                "^document_enrichment_content_mismatch$",
+            ),
+        ):
+            self.load([path])
+
+    def test_result_contract_errors_preserve_the_original_cause(self):
+        path = self.publish()
+        for error in (
+            ValueError("fixture-result"),
+            TypeError("fixture-result"),
+        ):
+            with (
+                self.subTest(kind=type(error).__name__),
+                patch.object(
+                    enrichment.extractor,
+                    "validate_report",
+                    side_effect=error,
+                ),
+                self.assertRaisesRegex(
+                    enrichment.EnrichmentError,
+                    "^document_enrichment_result_invalid$",
+                ) as caught,
+            ):
+                self.load([path])
+            self.assertIs(caught.exception.__cause__, error)
+            self.assertEqual(("fixture-result",), error.args)
+
+    def test_explicit_files_are_authenticated_twice_before_consumption(self):
+        path = self.publish()
+        events = []
+        original_read = enrichment._read_profile
+        original_validate = enrichment.extractor.validate_report
+
+        def read(profile_path):
+            events.append("read")
+            return original_read(profile_path)
+
+        def consume(*args, **kwargs):
+            events.append("consume")
+            return original_validate(*args, **kwargs)
+
+        with (
+            patch.object(enrichment, "_read_profile", side_effect=read),
+            patch.object(
+                enrichment.extractor, "validate_report", side_effect=consume
+            ),
+        ):
+            _, report = self.load([path])
+        self.assertEqual(["read", "read", "consume"], events)
+        self.assertEqual(1, report["included_count"])
+
+    def test_report_selection_order_differs_from_sorted_context_inventory(
+        self,
+    ):
+        references = self.many_profiles(3, dataset_groups=1)
+        paths = [
+            self.profiles / (row["profile_sha256"] + ".json")
+            for row in reversed(references)
+        ]
+        contexts, report = self.load(paths)
+        expected = [row["resource_id"] for row in references]
+        entries = next(iter(contexts.values()))
+        self.assertEqual(
+            expected, [row["context"]["resource_id"] for row in entries]
+        )
+        self.assertEqual(
+            list(reversed(expected)),
+            [row["resource_id"] for row in report["resources"]],
+        )
+        self.assertEqual(
+            (3, 3, 0, 0),
+            tuple(
+                report[key]
+                for key in (
+                    "selected_count",
+                    "included_count",
+                    "skipped_count",
+                    "failed_count",
+                )
+            ),
+        )
+
     def test_import_binds_provenance_and_uses_headers_without_row_values(self):
         path = self.publish()
         with (

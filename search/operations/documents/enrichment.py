@@ -191,29 +191,16 @@ def _source_sha256(bundle_path, manifest_sha256):
     return strict_json(raw)["artifacts"]["source.jsonl.gz"]["sha256"]
 
 
-def load_profiles(
+def _grounded_selection(
     paths,
     bundle_path,
     manifest_sha256,
     snapshot_path,
     *,
-    profile_set=None,
-    deadline=None,
+    profile_set,
+    deadline,
 ):
-    """Return grounded enrichment plus an ID-only report; never fetch or parse
-    files.
-
-    Profiles must refer to the metadata-only bundle built from this exact
-    snapshot. A frozen set may span execution batches; explicit files remain a
-    small one-off selection. Neither path scans caches or performs resource IO.
-    ``deadline`` is an optional absolute monotonic time, checked between
-    profile reads.
-    """
-    if deadline is not None and (
-        type(deadline) not in (int, float) or not math.isfinite(deadline)
-    ):
-        raise EnrichmentError("document_enrichment_selection_invalid")
-    _check_deadline(deadline)
+    """Ground references and failures in the sealed catalog and snapshot."""
     references, failures, set_digest, source_digest = _references(
         paths, profile_set, manifest_sha256, deadline
     )
@@ -254,6 +241,86 @@ def load_profiles(
     for row, (dataset_id, _) in zip(references + failures, selected):
         if row["dataset_id"] != dataset_id:
             raise EnrichmentError("document_enrichment_source_mismatch")
+    return references, failures, set_digest, selected, corpus
+
+
+def _grounded_member(reference, dataset_id, resource, manifest_sha256):
+    """Authenticate one reread profile and its resource-bound parser result."""
+    digest, profile = _read_profile(reference["path"])
+    _profile_fields(profile, manifest_sha256)
+    if digest != reference["profile_sha256"] or any(
+        profile["source"][key] != reference[key]
+        for key in ("dataset_id", "resource_id")
+    ):
+        raise EnrichmentError("document_enrichment_provenance_invalid")
+    origin, policy = profile["source"], profile["policy"]
+    identity = source.source_identity(resource)
+    if (
+        origin["dataset_id"] != dataset_id
+        or origin["url_sha256"] != identity["source_url_sha256"]
+    ):
+        raise EnrichmentError("document_enrichment_source_mismatch")
+    try:
+        result = extractor.validate_report(
+            profile["result"],
+            expected_format=identity["format"],
+            header_policy=policy["header_policy"],
+        )
+    except (ValueError, TypeError) as error:
+        raise EnrichmentError("document_enrichment_result_invalid") from error
+    if result["input_sha256"] != origin["content_sha256"]:
+        raise EnrichmentError("document_enrichment_content_mismatch")
+    return digest, profile, origin, policy, identity, result
+
+
+def _skip_reason(result, identity, policy):
+    """Return the first ineligible text reason after result authentication."""
+    reason = None
+    if result["status"] != "ok":
+        reason = result["status"]
+    elif (
+        identity["format"] == "CSV"
+        and policy["header_policy"] != "first_record"
+    ):
+        reason = "csv_header_absent"
+    elif identity["format"] == "CSV" and not result["columns"]:
+        reason = "csv_columns_empty"
+    elif identity["format"] == "PDF" and not result["text"].strip():
+        reason = "pdf_text_empty"
+    return reason
+
+
+def load_profiles(
+    paths,
+    bundle_path,
+    manifest_sha256,
+    snapshot_path,
+    *,
+    profile_set=None,
+    deadline=None,
+):
+    """Return grounded enrichment plus an ID-only report; never fetch or parse
+    files.
+
+    Profiles must refer to the metadata-only bundle built from this exact
+    snapshot. A frozen set may span execution batches; explicit files remain a
+    small one-off selection. Neither path scans caches or performs resource IO.
+    ``deadline`` is an optional absolute monotonic time, checked between
+    profile reads.
+    """
+    if deadline is not None and (
+        type(deadline) not in (int, float) or not math.isfinite(deadline)
+    ):
+        raise EnrichmentError("document_enrichment_selection_invalid")
+    _check_deadline(deadline)
+    references, failures, set_digest, selected, corpus = _grounded_selection(
+        paths,
+        bundle_path,
+        manifest_sha256,
+        snapshot_path,
+        profile_set=profile_set,
+        deadline=deadline,
+    )
     context_bytes = sum(
         len(
             private_io.canonical(
@@ -280,49 +347,15 @@ def load_profiles(
         raise EnrichmentError("document_enrichment_limit_exceeded")
     for reference, (dataset_id, resource) in zip(references, selected):
         _check_deadline(deadline)
-        digest, profile = _read_profile(reference["path"])
-        _profile_fields(profile, manifest_sha256)
-        if digest != reference["profile_sha256"] or any(
-            profile["source"][key] != reference[key]
-            for key in ("dataset_id", "resource_id")
-        ):
-            raise EnrichmentError("document_enrichment_provenance_invalid")
-        origin, policy = profile["source"], profile["policy"]
-        identity = source.source_identity(resource)
-        if (
-            origin["dataset_id"] != dataset_id
-            or origin["url_sha256"] != identity["source_url_sha256"]
-        ):
-            raise EnrichmentError("document_enrichment_source_mismatch")
-        try:
-            result = extractor.validate_report(
-                profile["result"],
-                expected_format=identity["format"],
-                header_policy=policy["header_policy"],
-            )
-        except (ValueError, TypeError) as error:
-            raise EnrichmentError(
-                "document_enrichment_result_invalid"
-            ) from error
-        if result["input_sha256"] != origin["content_sha256"]:
-            raise EnrichmentError("document_enrichment_content_mismatch")
+        digest, profile, origin, policy, identity, result = _grounded_member(
+            reference, dataset_id, resource, manifest_sha256
+        )
         row = {
             "dataset_id": dataset_id,
             "resource_id": resource["id"],
             "profile_sha256": digest,
         }
-        reason = None
-        if result["status"] != "ok":
-            reason = result["status"]
-        elif (
-            identity["format"] == "CSV"
-            and policy["header_policy"] != "first_record"
-        ):
-            reason = "csv_header_absent"
-        elif identity["format"] == "CSV" and not result["columns"]:
-            reason = "csv_columns_empty"
-        elif identity["format"] == "PDF" and not result["text"].strip():
-            reason = "pdf_text_empty"
+        reason = _skip_reason(result, identity, policy)
         if reason:
             report_row({**row, "status": "skipped", "reason": reason})
             continue
