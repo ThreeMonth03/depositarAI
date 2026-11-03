@@ -22,6 +22,7 @@ GATED_PATHS = (
     "search/operations/documents/cache.py",
     "search/operations/documents/controller.py",
     "search/operations/documents/derivation.py",
+    "scripts/ci",
 )
 
 

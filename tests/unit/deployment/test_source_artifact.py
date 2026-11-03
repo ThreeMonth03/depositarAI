@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 import importlib.util
 import io
 import json
@@ -579,6 +580,400 @@ class SourceArtifactTests(unittest.TestCase):
         )
         self.assertEqual("", result.stdout)
         self.assertNotIn(str(self.root), result.stderr)
+
+    def test_invalid_fingerprint_never_queries_a_history_position(self):
+        for suffix, code in (
+            (
+                "README.md:generic-api-key:0",
+                "source_review_fingerprint_invalid",
+            ),
+            (
+                "README.md:generic-api-key:10000001",
+                "source_review_fingerprint_invalid",
+            ),
+            ("../outside:generic-api-key:1", "source_archive_path_invalid"),
+            ("README.md:other-rule:1", "source_review_fingerprint_invalid"),
+        ):
+            with self.subTest(suffix=suffix):
+                entry = {
+                    **self.reviewed_entry(),
+                    "fingerprint": self.revision + ":" + suffix,
+                }
+                self.commit_policy({"schema_version": 1, "entries": [entry]})
+                tree = artifact._tree(self.repo, self.revision)
+                with mock.patch.object(
+                    artifact, "_git", wraps=artifact._git
+                ) as git:
+                    self.assert_rejected(
+                        code,
+                        lambda: artifact._reviewed_entries(
+                            self.repo, self.revision, tree
+                        ),
+                    )
+                self.assertEqual(
+                    [
+                        mock.call(
+                            self.repo,
+                            "show",
+                            self.revision + ":" + artifact.REVIEWED_MANIFEST,
+                        )
+                    ],
+                    git.call_args_list,
+                )
+
+    def test_history_cache_is_per_commit_path_and_per_invocation(self):
+        original = self.revision
+        (self.repo / "README.md").write_text("first\nsecond\n")
+        (self.repo / "other.txt").write_text("another file\n")
+        self.git("add", ".")
+        self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Two positions in one source",
+        )
+        source = self.git("rev-parse", "HEAD").strip()
+        positions = (
+            (source, "README.md", 1),
+            (source, "README.md", 2),
+            (source, "other.txt", 1),
+            (original, "README.md", 1),
+        )
+        entries = [
+            {
+                "fingerprint": f"{commit}:{path}:generic-api-key:{line}",
+                "reasonCode": "public_source_revision",
+            }
+            for commit, path, line in positions
+        ]
+        manifest = self.commit_policy(
+            {"schema_version": 1, "entries": entries}
+        )
+        tree = artifact._tree(self.repo, self.revision)
+        expected_calls = [
+            mock.call(
+                self.repo,
+                "show",
+                self.revision + ":" + artifact.REVIEWED_MANIFEST,
+            )
+        ]
+        for commit, path in (
+            (source, "README.md"),
+            (source, "other.txt"),
+            (original, "README.md"),
+        ):
+            expected_calls += [
+                mock.call(
+                    self.repo,
+                    "merge-base",
+                    "--is-ancestor",
+                    commit,
+                    self.revision,
+                ),
+                mock.call(self.repo, "show", commit + ":" + path),
+            ]
+        with mock.patch.object(artifact, "_git", wraps=artifact._git) as git:
+            for _ in range(2):
+                fingerprints, digest = artifact._reviewed_entries(
+                    self.repo, self.revision, tree
+                )
+                self.assertEqual(
+                    [e["fingerprint"] for e in entries], fingerprints
+                )
+                self.assertEqual(
+                    hashlib.sha256(manifest.read_bytes()).hexdigest(), digest
+                )
+        self.assertEqual(expected_calls * 2, git.call_args_list)
+
+    def test_duplicate_review_refuses_without_requerying_position(self):
+        entry = self.reviewed_entry()
+        commit = self.revision
+        self.commit_policy({"schema_version": 1, "entries": [entry, entry]})
+        tree = artifact._tree(self.repo, self.revision)
+        with mock.patch.object(artifact, "_git", wraps=artifact._git) as git:
+            self.assert_rejected(
+                "source_review_fingerprint_invalid",
+                lambda: artifact._reviewed_entries(
+                    self.repo, self.revision, tree
+                ),
+            )
+        self.assertEqual(
+            [
+                mock.call(
+                    self.repo,
+                    "show",
+                    self.revision + ":" + artifact.REVIEWED_MANIFEST,
+                ),
+                mock.call(
+                    self.repo,
+                    "merge-base",
+                    "--is-ancestor",
+                    commit,
+                    self.revision,
+                ),
+                mock.call(self.repo, "show", commit + ":README.md"),
+            ],
+            git.call_args_list,
+        )
+
+    def test_unreachable_real_commit_refuses_before_file_lookup(self):
+        tree_id = self.git("rev-parse", "HEAD^{tree}").strip()
+        orphan = self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@invalid",
+            "commit-tree",
+            tree_id,
+            "-m",
+            "Unreachable source fixture",
+        ).strip()
+        entry = {
+            **self.reviewed_entry(),
+            "fingerprint": orphan + ":README.md:generic-api-key:1",
+        }
+        self.commit_policy({"schema_version": 1, "entries": [entry]})
+        tree = artifact._tree(self.repo, self.revision)
+        with mock.patch.object(artifact, "_git", wraps=artifact._git) as git:
+            self.assert_rejected(
+                "source_review_position_unavailable",
+                lambda: artifact._reviewed_entries(
+                    self.repo, self.revision, tree
+                ),
+            )
+        self.assertEqual(
+            [
+                mock.call(
+                    self.repo,
+                    "show",
+                    self.revision + ":" + artifact.REVIEWED_MANIFEST,
+                ),
+                mock.call(
+                    self.repo,
+                    "merge-base",
+                    "--is-ancestor",
+                    orphan,
+                    self.revision,
+                ),
+            ],
+            git.call_args_list,
+        )
+
+
+class ArchiveProofTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="source-archive-proof-")
+        self.addCleanup(temporary.cleanup)
+        self.archive_path = Path(temporary.name) / "source.tar.gz"
+
+    @staticmethod
+    def header(name="depositar-ai/file", *, size=1, kind=tarfile.REGTYPE):
+        member = tarfile.TarInfo(name)
+        member.size, member.type = size, kind
+        return member
+
+    def verify_headers(self, headers, tree, *, stream=None):
+        archive = mock.MagicMock()
+        archive.__enter__.return_value = archive
+        archive.__iter__.return_value = iter(headers)
+        archive.extractfile.return_value = stream
+        with mock.patch.object(artifact.tarfile, "open", return_value=archive):
+            artifact._verify_archive(self.archive_path, tree)
+        return archive
+
+    def test_member_bytes_and_executable_mode_match_real_git_blob_semantics(
+        self,
+    ):
+        raw = b"print('public fixture')\n"
+        empty = b""
+        tree = {
+            "file": (
+                hashlib.sha1(
+                    b"blob " + str(len(raw)).encode() + b"\0" + raw
+                ).hexdigest(),
+                True,
+            ),
+            "empty": (hashlib.sha1(b"blob 0\0").hexdigest(), False),
+        }
+        with tarfile.open(self.archive_path, "w:gz") as archive:
+            directory = self.header("depositar-ai/", kind=tarfile.DIRTYPE)
+            archive.addfile(directory)
+            member = self.header(size=len(raw))
+            member.mode = 0o751
+            archive.addfile(member, io.BytesIO(raw))
+            archive.addfile(
+                self.header("depositar-ai/empty", size=0), io.BytesIO(empty)
+            )
+        artifact._verify_archive(self.archive_path, tree)
+        for expected in (("0" * 40, True), (tree["file"][0], False)):
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(
+                    artifact.ArtifactError, "source_archive_inventory_mismatch"
+                ):
+                    artifact._verify_archive(
+                        self.archive_path, {**tree, "file": expected}
+                    )
+
+    def test_invalid_headers_never_open_payload_and_preserve_precedence(self):
+        tree = {"file": ("0" * 40, False)}
+        cases = (
+            (
+                [self.header("depositar-ai/../outside")],
+                {},
+                {},
+                "source_archive_path_invalid",
+            ),
+            (
+                [self.header("outside/file")],
+                {},
+                {},
+                "source_archive_entry_invalid",
+            ),
+            (
+                [self.header(kind=tarfile.SYMTYPE)],
+                {},
+                {},
+                "source_archive_entry_unsupported",
+            ),
+            (
+                [self.header(kind=tarfile.LNKTYPE)],
+                {},
+                {},
+                "source_archive_entry_unsupported",
+            ),
+            (
+                [self.header(size=9)],
+                {},
+                {"MAX_FILE_BYTES": 8},
+                "source_archive_entry_unsupported",
+            ),
+            (
+                [self.header(size=5)],
+                {},
+                {"MAX_SOURCE_BYTES": 4},
+                "source_archive_too_large",
+            ),
+            ([self.header()], {}, {}, "source_archive_inventory_mismatch"),
+            (
+                [self.header("depositar-ai/", kind=tarfile.DIRTYPE)] * 2,
+                tree,
+                {},
+                "source_archive_entry_invalid",
+            ),
+            (
+                [
+                    self.header("depositar-ai/" + name, kind=tarfile.DIRTYPE)
+                    for name in ("a", "b", "c")
+                ],
+                tree,
+                {"MAX_FILES": 1},
+                "source_archive_too_large",
+            ),
+        )
+        for headers, inventory, limits, code in cases:
+            with self.subTest(code=code, header=headers[0].name):
+                archive = mock.MagicMock()
+                archive.__enter__.return_value = archive
+                archive.__iter__.return_value = iter(headers)
+                archive.extractfile.side_effect = AssertionError(
+                    "rejected payload read"
+                )
+                with (
+                    mock.patch.object(
+                        artifact.tarfile, "open", return_value=archive
+                    ),
+                    mock.patch.multiple(artifact, **limits)
+                    if limits
+                    else nullcontext(),
+                    self.assertRaisesRegex(artifact.ArtifactError, code),
+                ):
+                    artifact._verify_archive(self.archive_path, inventory)
+                archive.extractfile.assert_not_called()
+                archive.__exit__.assert_called_once()
+
+    def test_rejected_header_stops_before_reading_next_member(
+        self,
+    ):
+        def members():
+            yield self.header("outside/file")
+            raise AssertionError("read beyond rejected header")
+
+        with self.assertRaisesRegex(
+            artifact.ArtifactError, "source_archive_entry_invalid"
+        ):
+            self.verify_headers(members(), {})
+
+    def test_missing_short_and_excess_member_streams_keep_closed_error(self):
+        for raw in (None, b"", b"extra"):
+            with self.subTest(raw=raw):
+                stream = None if raw is None else io.BytesIO(raw)
+                with self.assertRaisesRegex(
+                    artifact.ArtifactError, "source_archive_entry_invalid"
+                ):
+                    self.verify_headers(
+                        [self.header()],
+                        {"file": ("0" * 40, False)},
+                        stream=stream,
+                    )
+                if stream is not None:
+                    self.assertTrue(stream.closed)
+
+    def test_corrupt_read_closes_member_and_archive(self):
+        class CorruptStream(io.BytesIO):
+            def read(self, size):
+                raise OSError("synthetic corrupt member")
+
+        stream = CorruptStream(b"x")
+        archive = mock.MagicMock()
+        archive.__enter__.return_value = archive
+        archive.__iter__.return_value = iter([self.header()])
+        archive.extractfile.return_value = stream
+        with mock.patch.object(artifact.tarfile, "open", return_value=archive):
+            with self.assertRaisesRegex(OSError, "synthetic corrupt member"):
+                artifact._verify_archive(
+                    self.archive_path, {"file": ("0" * 40, False)}
+                )
+        self.assertTrue(stream.closed)
+        archive.__exit__.assert_called_once()
+
+    def test_total_size_limit_rejects_second_member_before_payload(self):
+        first = self.header(size=3)
+        second = self.header("depositar-ai/second", size=3)
+        stream = io.BytesIO(b"abc")
+        archive = mock.MagicMock()
+        archive.__enter__.return_value = archive
+        archive.__iter__.return_value = iter([first, second])
+        archive.extractfile.return_value = stream
+        with (
+            mock.patch.object(artifact.tarfile, "open", return_value=archive),
+            mock.patch.object(artifact, "MAX_SOURCE_BYTES", 5),
+            self.assertRaisesRegex(
+                artifact.ArtifactError, "source_archive_too_large"
+            ),
+        ):
+            artifact._verify_archive(
+                self.archive_path,
+                {"file": ("0" * 40, False), "second": ("0" * 40, False)},
+            )
+        archive.extractfile.assert_called_once_with(first)
+        self.assertTrue(stream.closed)
+
+    def test_member_payload_is_read_in_bounded_blocks(self):
+        raw = b"x" * (1024 * 1024 + 1)
+        header = self.header(size=len(raw))
+        digest = hashlib.sha1(
+            b"blob " + str(len(raw)).encode() + b"\0" + raw
+        ).hexdigest()
+        stream = io.BytesIO(raw)
+        read = mock.Mock(wraps=stream.read)
+        stream.read = read
+        self.verify_headers([header], {"file": (digest, False)}, stream=stream)
+        self.assertEqual([mock.call(1024 * 1024)] * 3, read.call_args_list)
+        self.assertTrue(stream.closed)
 
 
 if __name__ == "__main__":

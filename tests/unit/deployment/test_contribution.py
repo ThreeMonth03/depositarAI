@@ -7,6 +7,8 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -392,6 +394,192 @@ class ContributionTests(unittest.TestCase):
                 pr_body() + "\n\n## Results\nAnother result.", REPOSITORY
             ),
         )
+
+    def test_cross_line_comments_do_not_reinterpret_fenced_raw_content(self):
+        body = (
+            "## Motivation\nA<!-- hidden\n-->```html\n<!-- raw\n"
+            "## Issue\n-->\n~~~~\n```\ntail\n## Results\ndone"
+        )
+        self.assertEqual(
+            contribution._sections(body, 2),
+            (
+                {
+                    "motivation": (
+                        ["A", "<!-- raw", "## Issue", "-->", "~~~~", "tail"],
+                        ["A", "tail"],
+                    ),
+                    "results": (["done"], ["done"]),
+                },
+                False,
+                [
+                    (None, "## Motivation"),
+                    ("motivation", "A"),
+                    ("motivation", "tail"),
+                    (None, "## Results"),
+                    ("results", "done"),
+                ],
+            ),
+        )
+
+    def test_open_comment_state_survives_an_intervening_fence(self):
+        body = (
+            "## Method\n```text <!-- open\n## Issue\n```\n"
+            "## Results\nhidden until -->## Visible\nbody"
+        )
+        self.assertEqual(
+            contribution._sections(body, 2),
+            (
+                {
+                    "method": (["## Issue", ""], [""]),
+                    "visible": (["body"], ["body"]),
+                },
+                False,
+                [
+                    (None, "## Method"),
+                    ("method", ""),
+                    (None, "## Visible"),
+                    ("visible", "body"),
+                ],
+            ),
+        )
+
+    def test_unterminated_blocks_keep_raw_content_and_visible_blanks(self):
+        cases = (
+            (
+                "```\nraw <!--\n## Results",
+                ["raw <!--", "## Results"],
+                [],
+            ),
+            (
+                "before<!--\nhidden\n## Results",
+                ["before", "", ""],
+                ["before", "", ""],
+            ),
+        )
+        for suffix, content, visible in cases:
+            with self.subTest(suffix=suffix):
+                sections, duplicate, prose = contribution._sections(
+                    "## Motivation\n" + suffix, 2
+                )
+                self.assertEqual(sections, {"motivation": (content, visible)})
+                self.assertFalse(duplicate)
+                self.assertEqual(
+                    prose,
+                    [(None, "## Motivation")]
+                    + [("motivation", line) for line in visible],
+                )
+
+    def test_repeated_unknown_headings_preserve_order_and_duplicate_verdict(
+        self,
+    ):
+        suffix = "\n## Other\none\n## OTHER\ntwo"
+        sections, duplicate, prose = contribution._sections(suffix, 2)
+        self.assertEqual(sections, {"other": (["one", "two"], ["one", "two"])})
+        self.assertTrue(duplicate)
+        self.assertEqual(
+            prose[-4:],
+            [
+                (None, "## Other"),
+                ("other", "one"),
+                (None, "## OTHER"),
+                ("other", "two"),
+            ],
+        )
+        self.assertEqual(
+            contribution.validate_pr(pr_body() + suffix, REPOSITORY),
+            ["pr_duplicate_section"],
+        )
+
+    def test_heading_casefold_indent_and_trailing_hash_rules_remain_exact(
+        self,
+    ):
+        cases = (
+            ("   ## Straße ###", "strasse"),
+            ("## Results###", "results###"),
+            ("## Results ###", "results"),
+            ("## \tMETHOD\t###", "method"),
+            ("##\tIssue", "issue"),
+            ("    ## Issue", None),
+            ("\t## Issue", None),
+            ("##\u00a0Issue", None),
+            ("### Issue", None),
+        )
+        for heading, name in cases:
+            with self.subTest(heading=heading):
+                sections, duplicate, _ = contribution._sections(
+                    heading + "\nvalue", 2
+                )
+                self.assertEqual(
+                    sections,
+                    {} if name is None else {name: (["value"], ["value"])},
+                )
+                self.assertFalse(duplicate)
+
+    def test_only_matching_long_enough_bare_fences_close_literal_content(self):
+        body = (
+            "## Method\n  ````python\n```\n~~~~\n```` suffix\n"
+            "````` \t\noutside"
+        )
+        sections, duplicate, prose = contribution._sections(body, 2)
+        self.assertEqual(
+            sections,
+            {
+                "method": (
+                    ["```", "~~~~", "```` suffix", "outside"],
+                    ["outside"],
+                )
+            },
+        )
+        self.assertFalse(duplicate)
+        self.assertEqual(prose, [(None, "## Method"), ("method", "outside")])
+
+    def test_unmatched_inline_code_hides_links_but_not_closing_hazards(self):
+        self.assertEqual(contribution._references(["`#7"], REPOSITORY), set())
+        self.assertTrue(
+            contribution._invalid_closing(
+                [("results", "`does not close #7")], REPOSITORY
+            )
+        )
+
+    def test_isolated_cli_keeps_literals_and_fixed_closing_diagnostics(self):
+        script = Path(contribution.__file__)
+        cases = (
+            (pr_body(Results="```html\n<!-- raw -->\n```"), 0, []),
+            (
+                pr_body(Results="canary `does not close #7"),
+                1,
+                ["pr_closing_directive_invalid"],
+            ),
+        )
+        for body, code, issues in cases:
+            path = self.root / "isolated-event.json"
+            path.write_text(
+                json.dumps(self.event(body=body)), encoding="utf-8"
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(script),
+                    "--input",
+                    str(path),
+                    "--repository",
+                    REPOSITORY,
+                    "--kind",
+                    "pull_request",
+                ],
+                env={},
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, code)
+            self.assertEqual(json.loads(completed.stdout)["issues"], issues)
+            self.assertEqual(completed.stderr, "")
+            self.assertNotIn("canary", completed.stdout)
 
     def test_issue_supports_top_level_work_and_linked_subissues(self):
         for kind in ("Bug", "Change"):
