@@ -53,6 +53,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 以下範圍的所有函式強制通過 McCabe 複雜度10：
 
 - `search/planning`、`search/api/retrieval`、`search/operations/cli.py`。
+- `search/api/conversation/calendar.py`。
 - `search/http`、`search/api/shared/middleware.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/quality`、`search/operations/deployment/candidate/batch`。
