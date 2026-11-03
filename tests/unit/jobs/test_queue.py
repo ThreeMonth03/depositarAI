@@ -518,6 +518,70 @@ class QueueTests(unittest.TestCase):
         with self.assertRaisesRegex(pueue.JobError, "queue_peer_invalid"):
             queue.status(self.registry, identifier)
 
+    def test_changed_stashed_task_is_preserved_without_enqueue(self):
+        original_seal = self.transport.seal_environment
+        for field, value in (
+            ("command", "fixture changed command"),
+            ("path", str(self.directory / "other")),
+            ("label", "depositarai-" + "f" * 32),
+            ("group", "default"),
+            ("status", {"Running": {}}),
+            (
+                "envs",
+                {
+                    **pueue.ENVIRONMENT,
+                    "PUEUE_GROUP": "heavy",
+                    "PUEUE_WORKER_ID": "0",
+                },
+            ),
+        ):
+            changed = {}
+
+            def seal(task_id):
+                original_seal(task_id)
+                row = self.transport.tasks[str(task_id)]
+                changed.update(task_id=str(task_id), original=deepcopy(row))
+                row[field] = value
+
+            with self.subTest(field=field):
+                calls_before = len(self.transport.calls)
+                try:
+                    with (
+                        patch.object(
+                            self.transport, "seal_environment", side_effect=seal
+                        ),
+                        self.assertRaises(pueue.JobError),
+                    ):
+                        self.submit()
+                    self.assertFalse(
+                        any(
+                            call[0] == "enqueue"
+                            for call in self.transport.calls[calls_before:]
+                        )
+                    )
+                    row = self.transport.tasks[changed["task_id"]]
+                    self.assertEqual(row[field], value)
+                    identifier = changed["original"]["label"].removeprefix(
+                        "depositarai-"
+                    )
+                    root = self.root / "jobs" / identifier
+                    request = queue.read(root / "request.json")
+                    self.assertEqual(
+                        queue.read(root / "queue.json"),
+                        {
+                            "task_id": int(changed["task_id"]),
+                            "request_sha256": queue.digest(request),
+                        },
+                    )
+                    self.assertEqual(
+                        (root / "source/scripts/depositarai.py").read_bytes(),
+                        self.program.read_bytes(),
+                    )
+                    self.assertFalse((root / "result.json").exists())
+                finally:
+                    if changed:
+                        self.transport.tasks[changed["task_id"]] = changed["original"]
+
     def test_other_repository_and_arbitrary_payload_are_refused(self):
         specification = {
             "schema_version": 1,
@@ -650,21 +714,41 @@ class TransportTests(unittest.TestCase):
             (root / "aliases.yml").write_bytes(b"{}\n")
             (root / "aliases.yml").chmod(0o600)
             result = subprocess.CompletedProcess([], 0, b"fixture", b"")
+            descriptors = []
+
+            def captured(argv, *, pass_fds):
+                descriptors.extend(pass_fds)
+                self.assertEqual(
+                    argv,
+                    [
+                        f"/proc/self/fd/{pass_fds[0]}",
+                        "--config",
+                        f"/proc/self/fd/{pass_fds[1]}",
+                        "status",
+                        "--json",
+                    ],
+                )
+                self.assertEqual(os.pread(pass_fds[0], 4096, 0), binary.read_bytes())
+                self.assertEqual(
+                    os.pread(pass_fds[1], 16384, 0), pueue.configuration(registry)
+                )
+                return result
+
             with (
                 patch.object(
                     pueue,
                     "BINARY_SHA256",
                     hashlib.sha256(binary.read_bytes()).hexdigest(),
                 ),
-                patch.object(pueue, "command", return_value=result) as execute,
+                patch.object(pueue, "command", side_effect=captured) as execute,
             ):
                 self.assertEqual(
                     pueue.Pueue(registry).call("status", "--json"), b"fixture"
                 )
-                self.assertEqual(
-                    execute.call_args.args[0],
-                    [binary, "--config", root / "pueue.yml", "status", "--json"],
-                )
+                self.assertEqual(len(descriptors), 2)
+                for fd in descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
                 (root / "aliases.yml").write_bytes(b"fixture: unexpected\n")
                 with self.assertRaisesRegex(pueue.JobError, "aliases_changed"):
                     pueue.Pueue(registry).call("status", "--json")

@@ -1,10 +1,11 @@
 """Bounded transport to the reviewed private Pueue instance."""
 
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
-import stat
 import subprocess
 
 from search.operations.shared import private_io
@@ -26,7 +27,7 @@ def require(condition, code):
         raise JobError("job_" + code)
 
 
-def command(argv, *, timeout=30, cwd=None):
+def command(argv, *, timeout=30, cwd=None, pass_fds=()):
     """Run fixed argv with bounded pipes and no inherited credentials/hooks."""
     try:
         with subprocess.Popen(
@@ -38,6 +39,7 @@ def command(argv, *, timeout=30, cwd=None):
             stderr=subprocess.PIPE,
             start_new_session=True,
             umask=0o077,
+            pass_fds=pass_fds,
         ) as process:
             with captured_pipes(
                 process,
@@ -52,6 +54,37 @@ def command(argv, *, timeout=30, cwd=None):
                 )
     except (OSError, subprocess.SubprocessError):
         raise JobError("job_command_failed") from None
+
+
+@contextmanager
+def _sealed_input(encoded, mode):
+    """Keep immutable verified bytes available until the child has completed."""
+    fd = None
+    try:
+        fd = os.memfd_create("depositarai-pueue", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+        os.fchmod(fd, mode)
+        pending = memoryview(encoded)
+        while pending:
+            count = os.write(fd, pending)
+            require(0 < count <= len(pending), "sealed_input_failed")
+            pending = pending[count:]
+        os.lseek(fd, 0, os.SEEK_SET)
+        seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
+        require(
+            fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals == seals, "sealed_input_failed"
+        )
+        yield fd
+    except (AttributeError, OSError):
+        raise JobError("job_sealed_input_failed") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def configuration(registry):
@@ -89,8 +122,8 @@ class Pueue:
         root = Path(registry["root"])
         fd = private_io.open_directory(root)
         try:
-            encoded = private_io.read_file(fd, "pueue.yml", mode=0o600, max_bytes=16384)
-            require(encoded == configuration(registry), "daemon_config_changed")
+            config = private_io.read_file(fd, "pueue.yml", mode=0o600, max_bytes=16384)
+            require(config == configuration(registry), "daemon_config_changed")
             require(
                 private_io.read_file(fd, "aliases.yml", mode=0o600, max_bytes=64)
                 == b"{}\n",
@@ -109,8 +142,19 @@ class Pueue:
             )
         finally:
             os.close(parent)
-        require(stat.S_ISREG(binary.lstat().st_mode), "binary_invalid")
-        result = command([binary, "--config", root / "pueue.yml", *arguments])
+        with (
+            _sealed_input(encoded, 0o700) as binary_fd,
+            _sealed_input(config, 0o600) as config_fd,
+        ):
+            result = command(
+                [
+                    f"/proc/self/fd/{binary_fd}",
+                    "--config",
+                    f"/proc/self/fd/{config_fd}",
+                    *arguments,
+                ],
+                pass_fds=(binary_fd, config_fd),
+            )
         require(result.returncode == 0, "queue_command_failed")
         return result.stdout
 

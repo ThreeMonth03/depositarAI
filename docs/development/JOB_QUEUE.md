@@ -81,6 +81,14 @@ Pueue 使用 queue root 下的 `pueue.yml`，內容必須符合程式產生的�
 Unix socket 位於 `runtime_root/depositarai-heavy.socket`，資料與紀錄位於
 queue root 下，shell 固定為 `/bin/sh -c`，不設 callback 或環境 hook，並啟用
 `pause_group_on_failure`；aliases 固定為空，避免沿用帳號其他 Pueue 別名。
+Client 會將已驗證的執行檔與設定 bytes 複製到封印的記憶體檔案，透過 Linux
+`/proc/self/fd` 傳給子程序，避免執行時重新取用來源路徑。主機必須允許 memfd
+執行及 FD 傳遞；不支援時拒絕操作，不會退回來源路徑。
+
+送件先保持 `Stashed`，清除額外環境變數後，重新核對 daemon 記錄的完整 launcher、
+工作目錄、label、heavy group、狀態及環境，才 enqueue。若不一致，保留原工作與
+私有證據供維護者查明，不執行或自動刪除它。這項檢查依賴可信任 daemon；它不會
+驗證 daemon 身分，也不會固定 daemon 端重讀的 aliases 或可變 socket 路徑。
 在乾淨的 operator checkout 中建立設定檔：
 
 ```python
