@@ -27,6 +27,46 @@ TRACE_LIMITS = [
 ]
 
 
+def _source_evidence(source, expected):
+    """Project coverage and condition labels from one source document."""
+    projected = project(source)
+    coverage = {
+        "start": source["temporal"]["start"],
+        "end": source["temporal"]["end"],
+        "status": projected["time_status"],
+    }
+    validate_temporal_coverage(coverage)
+    source_status = (
+        classify(projected, expected) if expected else "not_checked"
+    )
+    return coverage, source_status
+
+
+def _card_evidence_issues(card, source, coverage, source_status):
+    """Compare displayed fields with evidence from one source document."""
+    issues = []
+    try:
+        validate_temporal_coverage(card.get("temporal_coverage"))
+    except ValueError:
+        issues.append("card_coverage_invalid")
+    if card.get("temporal_coverage") != coverage:
+        issues.append("coverage_source_mismatch")
+    if source_status == "outside":
+        issues.append("known_outside_result")
+    if card.get("condition_status") != source_status:
+        issues.append("condition_label_mismatch")
+    formats = card.get("resource_formats")
+    if type(formats) is not list or any(
+        not bounded_text(f, 128) for f in formats
+    ):
+        issues.append("card_formats_invalid")
+    elif {f.strip().upper() for f in formats} != {
+        f.strip().upper() for f in source["resource_formats"]
+    }:
+        issues.append("formats_source_mismatch")
+    return issues
+
+
 def check_card(card, metadata, expected, rank):
     issues = []
     if type(card) is not dict:
@@ -49,37 +89,10 @@ def check_card(card, metadata, expected, rank):
     ):
         return issues + ["source_metadata_invalid"], None
     try:
-        projected = project(source)
-        coverage = {
-            "start": source["temporal"]["start"],
-            "end": source["temporal"]["end"],
-            "status": projected["time_status"],
-        }
-        validate_temporal_coverage(coverage)
-        source_status = (
-            classify(projected, expected) if expected else "not_checked"
-        )
+        coverage, source_status = _source_evidence(source, expected)
     except (AttributeError, KeyError, TypeError, ValueError):
         return issues + ["source_metadata_invalid"], None
-    try:
-        validate_temporal_coverage(card.get("temporal_coverage"))
-    except ValueError:
-        issues.append("card_coverage_invalid")
-    if card.get("temporal_coverage") != coverage:
-        issues.append("coverage_source_mismatch")
-    if source_status == "outside":
-        issues.append("known_outside_result")
-    if card.get("condition_status") != source_status:
-        issues.append("condition_label_mismatch")
-    formats = card.get("resource_formats")
-    if type(formats) is not list or any(
-        not bounded_text(f, 128) for f in formats
-    ):
-        issues.append("card_formats_invalid")
-    elif {f.strip().upper() for f in formats} != {
-        f.strip().upper() for f in source["resource_formats"]
-    }:
-        issues.append("formats_source_mismatch")
+    issues.extend(_card_evidence_issues(card, source, coverage, source_status))
     return issues, {
         "rank": rank,
         "dataset_id": identifier,
@@ -89,22 +102,9 @@ def check_card(card, metadata, expected, rank):
     }
 
 
-def check_turn(turn, number, previous_state):
-    expected = turn["expected"]
-    expected_conditions = conditions(expected)
-    expected_normalized = normalized(expected)
-    reply = turn["response"]
-    issues, ordered = [], []
-    report = {"turn": number, "issues": issues, "cards": ordered}
-    result = reply.get("result")
-    if type(result) is not dict or type(result.get("state")) is not dict:
-        issues.append("response_fields_missing")
-        return report, previous_state
-    state = result["state"]
-    status = result.get("status")
-    report["status"] = (
-        status if type(status) is str and status in OUTCOMES else None
-    )
+def _topic_issues(result, state, status, expected, previous_state):
+    """Check the declared outcome and continuity of the topic."""
+    issues = []
     expected_status = expected.get("status", "ok")
     if status != expected_status:
         issues.append("status_mismatch")
@@ -123,8 +123,12 @@ def check_turn(turn, number, previous_state):
         not previous_topic or topic == previous_topic
     ):
         issues.append("topic_not_changed")
-    if type(reply.get("version")) is not int or reply["version"] != number:
-        issues.append("session_version_mismatch")
+    return issues, topic
+
+
+def _state_condition_issues(state, status, expected_normalized):
+    """Check committed conditions without resolving a new time or topic."""
+    issues = []
     try:
         if normalized(state) != expected_normalized:
             issues.append("state_conditions_mismatch")
@@ -132,39 +136,32 @@ def check_turn(turn, number, previous_state):
         issues.append("state_conditions_invalid")
     if status == "ok" and state.get("unapplied_time") is not None:
         issues.append("unapplied_time_not_evaluated")
-    revision = result.get("revision")
-    if type(revision) is not str or not re.fullmatch(
-        r"[0-9a-f]{40}", revision
-    ):
-        issues.append("revision_invalid")
-        revision = None
-    report["revision"] = revision
-    if report["status"] in {"clarification_required", "rejected"}:
-        previous = previous_state or {"topic": "", "time": None, "formats": []}
-        try:
-            if (
-                topic != previous["topic"]
-                or normalized(state) != normalized(previous)
-                or state.get("unapplied_time")
-                != previous.get("unapplied_time")
-            ):
-                issues.append("non_search_state_changed")
-        except (ValueError, TypeError, KeyError):
+    return issues
+
+
+def _non_search_issues(turn, result, state, topic, previous_state):
+    """Check that a non-search outcome preserves the committed state."""
+    issues = []
+    previous = previous_state or {"topic": "", "time": None, "formats": []}
+    try:
+        if (
+            topic != previous["topic"]
+            or normalized(state) != normalized(previous)
+            or state.get("unapplied_time") != previous.get("unapplied_time")
+        ):
             issues.append("non_search_state_changed")
-        if result.get("search") is not None:
-            issues.append("unexpected_search")
-        if turn["source_metadata"]:
-            issues.append("unexpected_source_metadata")
-        report["issues"] = sorted(set(issues))
-        return report, previous_state
-    search = result.get("search")
-    if (
-        status != "ok"
-        or type(search) is not dict
-        or search.get("status") != "ok"
-    ):
-        issues.append("search_not_ok")
-        return report, previous_state
+    except (ValueError, TypeError, KeyError):
+        issues.append("non_search_state_changed")
+    if result.get("search") is not None:
+        issues.append("unexpected_search")
+    if turn["source_metadata"]:
+        issues.append("unexpected_source_metadata")
+    return issues
+
+
+def _search_identities(search, revision):
+    """Check that search and catalog identities agree with the turn."""
+    issues = []
     identities = {"revision": revision}
     for name, value, length in (
         ("search_revision", search.get("revision"), 40),
@@ -178,11 +175,12 @@ def check_turn(turn, number, previous_state):
             issues.append(name + "_invalid")
     if identities["revision"] != identities["search_revision"]:
         issues.append("revision_mismatch")
-    report.update(identities)
-    cards = search.get("cards")
-    if type(cards) is not list or len(cards) > 20:
-        issues.append("cards_invalid")
-        return report, state
+    return identities, issues
+
+
+def _search_condition_issues(search, expected_conditions, expected_normalized):
+    """Compare parsed and applied conditions with the declared oracle."""
+    issues = []
     for field in ("parsed_conditions", "applied_conditions"):
         actual = search.get(field)
         if (
@@ -199,6 +197,12 @@ def check_turn(turn, number, previous_state):
     scope = "index_prefilter" if expected_conditions else "none"
     if search.get("filter_scope") != scope:
         issues.append("filter_scope_mismatch")
+    return issues
+
+
+def _candidate_evidence(search, cards, turn, expected_conditions, ordered):
+    """Reconcile pool counts and ordered cards with grounded source labels."""
+    issues = []
     count = search.get("candidate_count")
     if (
         type(count) is not int
@@ -236,6 +240,12 @@ def check_turn(turn, number, previous_state):
         returned_counts[label] > counts[label] for label in labels
     ):
         issues.append("candidate_condition_counts_underreported")
+    return count, counts, returned_counts, issues
+
+
+def _ranking_issues(search, cards, count, counts, returned_counts, report):
+    """Record ranking and unknown availability without relevance judgments."""
+    issues = []
     ranking, rerank_status = search.get("ranking"), search.get("rerank_status")
     if type(rerank_status) is not str or rerank_status not in {
         "applied",
@@ -276,6 +286,72 @@ def check_turn(turn, number, previous_state):
             if cards
             else None,
         },
+    )
+    return issues
+
+
+def check_turn(turn, number, previous_state):
+    expected = turn["expected"]
+    expected_conditions = conditions(expected)
+    expected_normalized = normalized(expected)
+    reply = turn["response"]
+    issues, ordered = [], []
+    report = {"turn": number, "issues": issues, "cards": ordered}
+    result = reply.get("result")
+    if type(result) is not dict or type(result.get("state")) is not dict:
+        issues.append("response_fields_missing")
+        return report, previous_state
+    state = result["state"]
+    status = result.get("status")
+    report["status"] = (
+        status if type(status) is str and status in OUTCOMES else None
+    )
+    topic_issues, topic = _topic_issues(
+        result, state, status, expected, previous_state
+    )
+    issues.extend(topic_issues)
+    if type(reply.get("version")) is not int or reply["version"] != number:
+        issues.append("session_version_mismatch")
+    issues.extend(_state_condition_issues(state, status, expected_normalized))
+    revision = result.get("revision")
+    if type(revision) is not str or not re.fullmatch(
+        r"[0-9a-f]{40}", revision
+    ):
+        issues.append("revision_invalid")
+        revision = None
+    report["revision"] = revision
+    if report["status"] in {"clarification_required", "rejected"}:
+        issues.extend(
+            _non_search_issues(turn, result, state, topic, previous_state)
+        )
+        report["issues"] = sorted(set(issues))
+        return report, previous_state
+    search = result.get("search")
+    if (
+        status != "ok"
+        or type(search) is not dict
+        or search.get("status") != "ok"
+    ):
+        issues.append("search_not_ok")
+        return report, previous_state
+    identities, identity_issues = _search_identities(search, revision)
+    issues.extend(identity_issues)
+    report.update(identities)
+    cards = search.get("cards")
+    if type(cards) is not list or len(cards) > 20:
+        issues.append("cards_invalid")
+        return report, state
+    issues.extend(
+        _search_condition_issues(
+            search, expected_conditions, expected_normalized
+        )
+    )
+    count, counts, returned_counts, candidate_issues = _candidate_evidence(
+        search, cards, turn, expected_conditions, ordered
+    )
+    issues.extend(candidate_issues)
+    issues.extend(
+        _ranking_issues(search, cards, count, counts, returned_counts, report)
     )
     report["issues"] = sorted(set(issues))
     return report, state

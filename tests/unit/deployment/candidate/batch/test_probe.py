@@ -444,6 +444,94 @@ class ConversationTests(unittest.TestCase):
             [row["method"] for row in http.calls], ["POST", "DELETE"]
         )
 
+    def test_valid_token_is_reset_after_later_session_schema_failure(self):
+        malformed = session()
+        malformed["extra"] = PRIVATE
+        http = FakeHTTP([(200, malformed), (200, {"status": "cleared"})])
+        report = http.run(["問題"])
+        self.assertEqual(report["error"], "shared_batch_session_invalid")
+        self.assertEqual(report["turns"], [])
+        self.assertTrue(report["session_reset"])
+        self.assertEqual(
+            [row["method"] for row in http.calls], ["POST", "DELETE"]
+        )
+        self.assertNotIn(TOKEN, repr(report))
+        self.assertNotIn(PRIVATE, repr(report))
+
+    def test_checkpoint_rejects_only_literal_false(self):
+        for value in (None, 0, False):
+            replies = [(200, session())]
+            if value is not False:
+                replies.append((200, response()))
+            replies.append((200, {"status": "cleared"}))
+            with self.subTest(value=value):
+                checkpoint = Mock(return_value=value)
+                http = FakeHTTP(replies)
+                report = http.run(["問題"], checkpoint=checkpoint)
+                checkpoint.assert_called_once_with()
+                self.assertTrue(report["session_reset"])
+                if value is False:
+                    self.assertEqual(
+                        report["error"], "shared_batch_checkpoint_failed"
+                    )
+                    self.assertEqual(report["turns"][0]["status"], "failed")
+                    self.assertEqual(
+                        report["turns"][0]["request_seconds"], 0.0
+                    )
+                else:
+                    self.assertEqual(report["status"], "complete")
+                    self.assertIsNone(report["error"])
+
+    def test_validation_time_belongs_to_wall_not_request(self):
+        for drift in (False, True):
+            clock = [100.0]
+            original = probe._turn
+
+            def hook(http):
+                if len(http.calls) == 2:
+                    clock[0] += 3
+
+            def checkpoint():
+                clock[0] += 2
+
+            def validate(*args):
+                clock[0] += 4
+                return original(*args)
+
+            value = response()
+            if drift:
+                value["result"]["revision"] = "c" * 40
+            http = FakeHTTP(
+                [
+                    (200, session()),
+                    (200, value),
+                    (200, {"status": "cleared"}),
+                ],
+                hook=hook,
+            )
+            with (
+                self.subTest(drift=drift),
+                patch.object(
+                    probe.time, "monotonic", side_effect=lambda: clock[0]
+                ),
+                patch.object(probe, "_turn", side_effect=validate),
+            ):
+                report = http.run(["問題"], checkpoint=checkpoint)
+            self.assertEqual(report["turns"][0]["wall_seconds"], 9.0)
+            self.assertEqual(report["turns"][0]["request_seconds"], 3.0)
+            self.assertTrue(report["session_reset"])
+            if drift:
+                self.assertEqual(
+                    report["error"], "shared_batch_identity_changed"
+                )
+                self.assertNotIn("response", report["turns"][0])
+            else:
+                self.assertEqual(report["status"], "complete")
+                self.assertEqual(
+                    report["turns"][0]["response"]["result"]["timing_ms"],
+                    {"total": 4.125},
+                )
+
     def test_response_identity_schema_context_and_secret_echo_are_rejected(
         self,
     ):
@@ -496,6 +584,25 @@ class ConversationTests(unittest.TestCase):
         self.assertFalse(report["session_reset"])
         self.assertEqual(report["turns"][0]["response"], response())
         self.assertNotIn(TOKEN, repr(report))
+
+    def test_reset_failure_overrides_primary_case_error(self):
+        http = FakeHTTP(
+            [
+                (200, session()),
+                (429, PRIVATE.encode()),
+                (503, PRIVATE.encode()),
+            ]
+        )
+        report = http.run(["第一問", "不該送出的下一問"])
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["error"], "shared_batch_reset_failed")
+        self.assertFalse(report["session_reset"])
+        self.assertEqual(len(report["turns"]), 1)
+        self.assertEqual(report["turns"][0]["error"], "shared_batch_busy")
+        self.assertEqual(http.calls[-1]["method"], "DELETE")
+        self.assertEqual(len(http.calls), 3)
+        self.assertNotIn(TOKEN, repr(report))
+        self.assertNotIn(PRIVATE, repr(report))
 
     def test_overlong_and_duplicate_json_fail_with_no_response_body_in_report(
         self,
