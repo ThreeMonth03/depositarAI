@@ -224,6 +224,15 @@ def _operator_error_code(error, command):
         codes = updates.ERROR_CODES
     elif (
         command == "profile-resources"
+        and owner == "search.operations.documents.extractor"
+    ):
+        from search.operations.documents import extractor
+
+        if error_type is not extractor.ExtractorError:
+            return None
+        codes = extractor.ERROR_CODES
+    elif (
+        command == "profile-resources"
         and owner == "search.operations.documents.controller"
     ):
         from search.operations.documents import controller

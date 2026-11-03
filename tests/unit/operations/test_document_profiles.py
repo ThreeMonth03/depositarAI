@@ -1,5 +1,6 @@
 """Protect the single profile processor's reusable extraction and provenance."""
 
+from contextlib import ExitStack
 import hashlib
 import json
 from pathlib import Path
@@ -87,6 +88,70 @@ class DocumentProfileTests(unittest.TestCase):
         self.assertEqual(
             json.loads(path.read_text())["source"]["content_sha256"], self.sha
         )
+
+    def test_root_identities_refuse_even_when_extraction_is_cached(self):
+        identity_names = ("getuid", "getgid", "geteuid", "getegid")
+        state = self.root / "state"
+        for cached in (False, True):
+            if cached:
+                with (
+                    patch.object(source, "acquire", return_value=self.acquired),
+                    patch.object(extractor, "extract", return_value=self.result),
+                ):
+                    self.process()
+                    self.assertTrue(self.process()["extraction_cache_hit"])
+            before = {
+                path.relative_to(state): path.read_bytes()
+                for path in state.rglob("*")
+                if path.is_file()
+            }
+            for root_identity in (*identity_names, "all"):
+                with (
+                    self.subTest(cached=cached, root_identity=root_identity),
+                    ExitStack() as stack,
+                    patch.object(source, "acquire") as acquire,
+                    patch.object(controller, "_extraction") as extraction,
+                    patch.object(controller, "_publish") as publish,
+                    patch.object(extractor, "extract") as parse,
+                    patch.object(extractor, "build_image") as build,
+                ):
+                    for name in identity_names:
+                        stack.enter_context(
+                            patch.object(
+                                extractor.os,
+                                name,
+                                return_value=0
+                                if root_identity in (name, "all")
+                                else 1001,
+                            )
+                        )
+                    with self.assertRaisesRegex(
+                        extractor.ExtractorError,
+                        "^document_extractor_operator_must_be_nonroot$",
+                    ):
+                        controller.process(
+                            DATASET,
+                            RESOURCE,
+                            "d" * 64,
+                            state,
+                            IMAGE,
+                            "utf-8",
+                            "first_record",
+                            None,
+                            None,
+                            container_name="depositarai-extract-" + "e" * 32,
+                        )
+                    for operation in (acquire, extraction, publish, parse, build):
+                        operation.assert_not_called()
+                self.assertEqual(state.exists(), cached)
+                self.assertEqual(
+                    before,
+                    {
+                        path.relative_to(state): path.read_bytes()
+                        for path in state.rglob("*")
+                        if path.is_file()
+                    },
+                )
 
     def test_policy_change_reextracts_cached_material(self):
         with (

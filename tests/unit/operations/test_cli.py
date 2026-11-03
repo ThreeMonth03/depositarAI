@@ -465,6 +465,85 @@ class ActivationDiagnosticBoundaryTests(unittest.TestCase):
 
 
 class ResourceBatchCLITests(unittest.TestCase):
+    def test_root_run_is_rejected_before_state_or_resource_operations(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+        from search.operations.documents import batches, extractor, source
+
+        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        for zero in (*identities, "all"):
+            values = {
+                name: (lambda value=0 if zero in (name, "all") else value: value)
+                for name, value in identities.items()
+            }
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                self.subTest(zero=zero),
+                patch.multiple(extractor.os, **values),
+                patch.object(batches, "_state") as state,
+                patch.object(extractor, "build_image") as build,
+                patch.object(source, "acquire") as acquire,
+                patch.object(cli, "_runtime_report") as runtime,
+                redirect_stdout(output),
+                redirect_stderr(errors),
+            ):
+                code = cli.main(
+                    [
+                        "profile-resources",
+                        "run",
+                        "--bundle",
+                        "/private/never-read-bundle",
+                        "--state-root",
+                        "/private/never-read-state",
+                        "--expected-plan-sha256",
+                        "a" * 64,
+                    ]
+                )
+            self.assertEqual(1, code)
+            self.assertEqual("", output.getvalue())
+            self.assertEqual(
+                {
+                    "schema_version": 1,
+                    "status": "failed",
+                    "code": "product_operation_failed",
+                    "error_type": "ExtractorError",
+                    "active_changed": False,
+                    "error_code": "document_extractor_operator_must_be_nonroot",
+                },
+                json.loads(errors.getvalue()),
+            )
+            for operation in (state, build, acquire, runtime):
+                operation.assert_not_called()
+            self.assertNotIn("/private/", errors.getvalue())
+
+    def test_extractor_diagnostic_is_limited_to_exact_type_command_and_code(self):
+        from search.operations import cli
+        from search.operations.documents import extractor
+
+        class OtherExtractorError(extractor.ExtractorError):
+            pass
+
+        code = "document_extractor_operator_must_be_nonroot"
+        self.assertEqual(
+            code,
+            cli._operator_error_code(
+                extractor.ExtractorError(code), "profile-resources"
+            ),
+        )
+        for error, command in (
+            (OtherExtractorError(code), "profile-resources"),
+            (
+                extractor.ExtractorError("/private/resource token=secret"),
+                "profile-resources",
+            ),
+            (extractor.ExtractorError(code), "sync"),
+        ):
+            with self.subTest(error=type(error).__name__, command=command):
+                self.assertIsNone(cli._operator_error_code(error, command))
+
     def invoke(self, arguments, action, result):
         from contextlib import redirect_stdout
         import io

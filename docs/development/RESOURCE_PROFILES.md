@@ -38,6 +38,11 @@ chmod 600 /absolute/private/resource-input/resource-ids.json
 在容器內完成，主機不需要 JDK。若搬到離線主機，須另外備妥對應 helper 或其
 建置映像；既有產品包的固定 image 集合未包含抽取 helper。
 
+請使用有 Docker 權限的非 root 帳號執行。`run` 與直接解析入口會在處理檔案前
+拒絕任何 real／effective UID 或 GID 為 0 的身分，回報
+`document_extractor_operator_must_be_nonroot`。解析容器使用呼叫者的 effective
+UID／GID，以讀取其擁有的私有素材；不使用 `sudo` 執行。
+
 以下路徑與 SHA256 換成自己的封存資料。`state-root` 使用 Git 外的專用私有目錄，
 其父目錄須先存在。三個子命令都不使用產品 `--config`。
 
