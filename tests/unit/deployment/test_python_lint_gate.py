@@ -68,6 +68,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/documents/__init__.py", '"""Fixtures."""\n'
         )
         self.write("search/operations/jobs/archive.py", "")
+        self.write("search/operations/metadata/sync.py", "")
         self.write("scripts/search_jobs.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
         self.environment = {

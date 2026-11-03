@@ -53,6 +53,35 @@ def _verify_cache_directories(root, root_fd, folders, run_id, run_fd):
         ) from error
 
 
+def _admit_cache_layout(root_fd, folders):
+    """Admit cache contents; retain each opened FD in the caller-owned map."""
+    try:
+        marker = storage.read_record(root_fd, "cache.json")
+    except FileNotFoundError:
+        if set(os.listdir(root_fd)) != {".sync.lock"}:
+            raise storage.SyncError(
+                "unmarked cache is not empty; inspect it before reuse"
+            )
+        for name in ("snapshots", "bundles", "runs"):
+            folders[name] = storage.private_directory(
+                root_fd, name, create=True
+            )
+        storage.write_record(root_fd, "cache.json", MARKER)
+    else:
+        if (
+            type(marker) is not dict
+            or marker != MARKER
+            or type(marker.get("schema_version")) is not int
+        ):
+            raise storage.SyncError("invalid public metadata cache marker")
+        for name in ("snapshots", "bundles", "runs"):
+            folders[name] = storage.private_directory(root_fd, name)
+    if len(os.listdir(folders["runs"])) >= MAX_RUNS:
+        raise storage.SyncError(
+            "metadata cache run limit reached; archive evidence first"
+        )
+
+
 @contextmanager
 def _locked_cache(root):
     root = storage.real_path(root)
@@ -88,31 +117,7 @@ def _locked_cache(root):
             raise storage.SyncError(
                 "metadata sync lock changed while being opened"
             )
-        try:
-            marker = storage.read_record(root_fd, "cache.json")
-        except FileNotFoundError:
-            if set(os.listdir(root_fd)) != {".sync.lock"}:
-                raise storage.SyncError(
-                    "unmarked cache is not empty; inspect it before reuse"
-                )
-            for name in ("snapshots", "bundles", "runs"):
-                folders[name] = storage.private_directory(
-                    root_fd, name, create=True
-                )
-            storage.write_record(root_fd, "cache.json", MARKER)
-        else:
-            if (
-                type(marker) is not dict
-                or marker != MARKER
-                or type(marker.get("schema_version")) is not int
-            ):
-                raise storage.SyncError("invalid public metadata cache marker")
-            for name in ("snapshots", "bundles", "runs"):
-                folders[name] = storage.private_directory(root_fd, name)
-        if len(os.listdir(folders["runs"])) >= MAX_RUNS:
-            raise storage.SyncError(
-                "metadata cache run limit reached; archive evidence first"
-            )
+        _admit_cache_layout(root_fd, folders)
         yield root, root_fd, folders
     finally:
         for fd in folders.values():
@@ -296,6 +301,109 @@ def _check_deadline(deadline):
         raise storage.SyncError("metadata sync deadline exceeded")
 
 
+def _cached_candidate(root, root_fd, folders, ttl_seconds):
+    """Return a verified TTL decision, or no candidate without latest."""
+    latest = None
+    try:
+        latest, snapshot_path, bundle_path, catalog = _verified_latest(
+            root, root_fd, folders
+        )
+    except FileNotFoundError:
+        if "latest.json" in os.listdir(root_fd):
+            raise storage.SyncError(
+                "latest metadata cache is incomplete"
+            ) from None
+    if latest is not None:
+        age = time.time() - latest["fetched_at"]
+        if age < 0:
+            raise storage.SyncError(
+                "cached metadata timestamp is in the future"
+            )
+        return age <= ttl_seconds, latest, snapshot_path, bundle_path, catalog
+    return None
+
+
+def _stage_snapshot(
+    root, root_fd, folders, run_id, run_fd, deadline, snapshot, fetch
+):
+    """Acquire and seal a snapshot and baseline without publishing latest."""
+    records = (
+        source.stable_download(deadline, fetch)
+        if snapshot is None
+        else snapshots.load_source(str(storage.real_path(snapshot)))
+    )
+    _check_deadline(deadline)
+    _verify_cache_directories(root, root_fd, folders, run_id, run_fd)
+    ordered = sorted(
+        ((normalize.normalize_package(item, {})[0], item) for item in records),
+        key=lambda pair: pair[0],
+    )
+    if len({identifier for identifier, _ in ordered}) != len(ordered):
+        raise storage.SyncError(
+            "metadata snapshot contains duplicate dataset IDs"
+        )
+    rows = [item for _, item in ordered]
+    if any(
+        len(source.canonical(item) + b"\n") > policy.MAX_LINE_BYTES
+        for item in rows
+    ):
+        raise storage.SyncError("metadata snapshot exceeds its line limit")
+    build_storage.write_gzip_jsonl(run_fd, "snapshot.jsonl.gz", rows)
+    incoming = root / "runs" / run_id / "snapshot.jsonl.gz"
+    built = builder.build_bundle(incoming, root / "bundles")
+    bundle_path = Path(built["bundle_path"])
+    catalog = CatalogBundle.load(
+        bundle_path,
+        expected_manifest_sha256=built["manifest_sha256"],
+    )
+    raw = storage.file_bytes(
+        run_fd,
+        "snapshot.jsonl.gz",
+        mode=0o400,
+        limit=policy.MAX_COMPRESSED_BYTES,
+    )
+    snapshot_sha = hashlib.sha256(raw).hexdigest()
+    snapshot_path = (
+        root / "snapshots" / ("sha256-" + snapshot_sha + ".jsonl.gz")
+    )
+    try:
+        os.link(
+            "snapshot.jsonl.gz",
+            snapshot_path.name,
+            src_dir_fd=run_fd,
+            dst_dir_fd=folders["snapshots"],
+            follow_symlinks=False,
+        )
+    except FileExistsError:
+        existing = storage.file_bytes(
+            folders["snapshots"],
+            snapshot_path.name,
+            mode=0o400,
+            limit=policy.MAX_COMPRESSED_BYTES,
+        )
+        if hashlib.sha256(existing).hexdigest() != snapshot_sha:
+            raise storage.SyncError(
+                "existing immutable metadata snapshot is corrupted"
+            )
+    os.unlink("snapshot.jsonl.gz", dir_fd=run_fd)
+    os.fsync(run_fd)
+    os.fsync(folders["snapshots"])
+    latest = {
+        "schema_version": 1,
+        "endpoint": source.ENDPOINT,
+        "run_id": run_id,
+        "snapshot_sha256": snapshot_sha,
+        "bundle_id": catalog.bundle_id,
+        "manifest_sha256": catalog.manifest_sha256,
+        "fetched_at": time.time(),
+        "source_consistency": "two_matching_full_scans"
+        if snapshot is None
+        else "offline_not_checked",
+        "document_count": len(catalog.documents),
+    }
+    return built, bundle_path, catalog, snapshot_path, latest
+
+
 def sync(
     cache_root,
     *,
@@ -345,112 +453,26 @@ def sync(
             )
             cache_hit, built, latest = False, None, None
             if snapshot is None and ttl_seconds > 0 and not force:
-                try:
-                    latest, snapshot_path, bundle_path, catalog = (
-                        _verified_latest(root, root_fd, folders)
+                candidate = _cached_candidate(
+                    root, root_fd, folders, ttl_seconds
+                )
+                if candidate is not None:
+                    cache_hit, latest, snapshot_path, bundle_path, catalog = (
+                        candidate
                     )
-                except FileNotFoundError:
-                    if "latest.json" in os.listdir(root_fd):
-                        raise storage.SyncError(
-                            "latest metadata cache is incomplete"
-                        ) from None
-                if latest is not None:
-                    age = time.time() - latest["fetched_at"]
-                    if age < 0:
-                        raise storage.SyncError(
-                            "cached metadata timestamp is in the future"
-                        )
-                    cache_hit = age <= ttl_seconds
             if not cache_hit:
-                records = (
-                    source.stable_download(deadline, fetch)
-                    if snapshot is None
-                    else snapshots.load_source(
-                        str(storage.real_path(snapshot))
+                built, bundle_path, catalog, snapshot_path, latest = (
+                    _stage_snapshot(
+                        root,
+                        root_fd,
+                        folders,
+                        run_id,
+                        run_fd,
+                        deadline,
+                        snapshot,
+                        fetch,
                     )
                 )
-                _check_deadline(deadline)
-                _verify_cache_directories(
-                    root, root_fd, folders, run_id, run_fd
-                )
-                ordered = sorted(
-                    (
-                        (normalize.normalize_package(item, {})[0], item)
-                        for item in records
-                    ),
-                    key=lambda pair: pair[0],
-                )
-                if len({identifier for identifier, _ in ordered}) != len(
-                    ordered
-                ):
-                    raise storage.SyncError(
-                        "metadata snapshot contains duplicate dataset IDs"
-                    )
-                rows = [item for _, item in ordered]
-                if any(
-                    len(source.canonical(item) + b"\n") > policy.MAX_LINE_BYTES
-                    for item in rows
-                ):
-                    raise storage.SyncError(
-                        "metadata snapshot exceeds its line limit"
-                    )
-                build_storage.write_gzip_jsonl(
-                    run_fd, "snapshot.jsonl.gz", rows
-                )
-                incoming = root / "runs" / run_id / "snapshot.jsonl.gz"
-                built = builder.build_bundle(incoming, root / "bundles")
-                bundle_path = Path(built["bundle_path"])
-                catalog = CatalogBundle.load(
-                    bundle_path,
-                    expected_manifest_sha256=built["manifest_sha256"],
-                )
-                raw = storage.file_bytes(
-                    run_fd,
-                    "snapshot.jsonl.gz",
-                    mode=0o400,
-                    limit=policy.MAX_COMPRESSED_BYTES,
-                )
-                snapshot_sha = hashlib.sha256(raw).hexdigest()
-                snapshot_path = (
-                    root
-                    / "snapshots"
-                    / ("sha256-" + snapshot_sha + ".jsonl.gz")
-                )
-                try:
-                    os.link(
-                        "snapshot.jsonl.gz",
-                        snapshot_path.name,
-                        src_dir_fd=run_fd,
-                        dst_dir_fd=folders["snapshots"],
-                        follow_symlinks=False,
-                    )
-                except FileExistsError:
-                    existing = storage.file_bytes(
-                        folders["snapshots"],
-                        snapshot_path.name,
-                        mode=0o400,
-                        limit=policy.MAX_COMPRESSED_BYTES,
-                    )
-                    if hashlib.sha256(existing).hexdigest() != snapshot_sha:
-                        raise storage.SyncError(
-                            "existing immutable metadata snapshot is corrupted"
-                        )
-                os.unlink("snapshot.jsonl.gz", dir_fd=run_fd)
-                os.fsync(run_fd)
-                os.fsync(folders["snapshots"])
-                latest = {
-                    "schema_version": 1,
-                    "endpoint": source.ENDPOINT,
-                    "run_id": run_id,
-                    "snapshot_sha256": snapshot_sha,
-                    "bundle_id": catalog.bundle_id,
-                    "manifest_sha256": catalog.manifest_sha256,
-                    "fetched_at": time.time(),
-                    "source_consistency": "two_matching_full_scans"
-                    if snapshot is None
-                    else "offline_not_checked",
-                    "document_count": len(catalog.documents),
-                }
             # The metadata cache retains only downloaded snapshot identity.
             # Rebuild
             # the cheap baseline on cache hits so selected profile files never

@@ -387,6 +387,165 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertFalse(self.pointer().exists())
         self.assertEqual([], self.calls)
 
+    def test_partial_layout_failure_closes_owned_fds_and_retains_evidence(
+        self,
+    ):
+        opened, closed = [], []
+        admission_failed = False
+        original_directory = storage.private_directory
+        original_open, original_close = os.open, os.close
+
+        def open_file(name, *args, **options):
+            descriptor = original_open(name, *args, **options)
+            if name == ".sync.lock":
+                opened.append(descriptor)
+            return descriptor
+
+        def open_child(parent, name, **options):
+            nonlocal admission_failed
+            if name == "bundles":
+                admission_failed = True
+                raise OSError("synthetic child admission failure")
+            descriptor = original_directory(parent, name, **options)
+            opened.append(descriptor)
+            return descriptor
+
+        def close(descriptor):
+            if admission_failed:
+                closed.append(descriptor)
+            original_close(descriptor)
+
+        with (
+            patch.object(storage, "private_directory", side_effect=open_child),
+            patch.object(os, "open", side_effect=open_file),
+            patch.object(os, "close", side_effect=close),
+            self.assertRaisesRegex(OSError, "synthetic child admission"),
+        ):
+            self.sync()
+        self.assertEqual(opened[::-1], closed[:2])
+        self.assertEqual(3, len(closed))
+        for descriptor in closed:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        self.assertTrue((self.cache / "snapshots").is_dir())
+        self.assertFalse((self.cache / "cache.json").exists())
+        self.assertEqual([], self.calls)
+
+    def test_invalid_marker_precedes_run_retention(self):
+        self.sync()
+        (self.cache / "cache.json").write_bytes(source.canonical({}))
+        with (
+            patch.object(syncer, "MAX_RUNS", 0),
+            self.assertRaisesRegex(
+                storage.SyncError, "^invalid public metadata cache marker$"
+            ),
+        ):
+            self.sync()
+        self.assertEqual(2, len(self.calls))
+
+    def test_exact_ttl_boundary_rebuilds_one_baseline_without_fetching(self):
+        first = self.sync()
+        with (
+            patch.object(
+                syncer.time, "time", return_value=first["fetched_at"] + 60
+            ),
+            patch.object(
+                syncer.builder,
+                "build_bundle",
+                wraps=syncer.builder.build_bundle,
+            ) as build,
+        ):
+            second = self.sync(ttl_seconds=60)
+        self.assertTrue(second["cache_hit"])
+        self.assertEqual(first["fetched_at"], second["fetched_at"])
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual(1, build.call_count)
+        self.assertEqual(Path(first["snapshot_path"]), build.call_args.args[0])
+        self.assertEqual({}, build.call_args.kwargs)
+
+    def test_declared_latest_with_missing_result_is_not_a_refresh_miss(self):
+        first = self.sync()
+        previous = self.pointer().read_bytes()
+        Path(first["receipt_path"]).unlink()
+        with self.assertRaisesRegex(
+            storage.SyncError, "^latest metadata cache is incomplete$"
+        ) as caught:
+            self.sync(ttl_seconds=3600)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertEqual(previous, self.pointer().read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_bad_baseline_precedes_pristine_cache_mutation(self):
+        with self.assertRaisesRegex(storage.SyncError, "^baseline must be"):
+            self.sync(baseline="invalid")
+        self.assertEqual([], list(self.cache.iterdir()))
+        self.assertEqual([], self.calls)
+
+    def test_publication_faults_keep_result_latest_and_quarantine_order(self):
+        original = storage.write_record
+        for target, after in (
+            ("result.json", False),
+            ("latest.json", False),
+            ("latest.json", True),
+        ):
+            with self.subTest(target=target, after=after):
+                cache = self.root / (target + str(after))
+                cache.mkdir(mode=0o700)
+                first = syncer.sync(cache, fetch=self.fetch)
+                pointer = cache / "latest.json"
+                previous = pointer.read_bytes()
+                written = []
+
+                def publish(parent, name, value, **options):
+                    written.append(name)
+                    if name == target and not after:
+                        raise OSError("synthetic publication fault")
+                    original(parent, name, value, **options)
+                    if name == target:
+                        raise OSError("synthetic publication fault")
+
+                with (
+                    patch.object(storage, "write_record", side_effect=publish),
+                    self.assertRaisesRegex(OSError, "synthetic publication"),
+                ):
+                    syncer.sync(cache, fetch=self.fetch)
+                expected = ["started.json", "result.json"]
+                if target == "latest.json":
+                    expected.append("latest.json")
+                self.assertEqual(expected + ["failure.json"], written)
+                self.assertEqual(not after, pointer.read_bytes() == previous)
+                failures = list((cache / "runs").glob("*/failure.json"))
+                self.assertEqual(1, len(failures))
+                self.assertEqual(
+                    "OSError",
+                    json.loads(failures[0].read_text())["error_type"],
+                )
+                self.assertTrue(Path(first["receipt_path"]).is_file())
+
+    def test_failure_record_error_preserves_original_exception_context(self):
+        original = storage.write_record
+        written = []
+
+        def publish(parent, name, value, **options):
+            written.append(name)
+            if name == "failure.json":
+                raise OSError("synthetic quarantine fault")
+            original(parent, name, value, **options)
+
+        def fail_fetch(*_args):
+            raise RuntimeError("synthetic source fault")
+
+        with (
+            patch.object(storage, "write_record", side_effect=publish),
+            self.assertRaisesRegex(OSError, "synthetic quarantine") as caught,
+        ):
+            syncer.sync(self.cache, fetch=fail_fetch)
+        self.assertIs(type(caught.exception.__context__), RuntimeError)
+        self.assertEqual(
+            ["cache.json", "started.json", "failure.json"], written
+        )
+        self.assertFalse(self.pointer().exists())
+
 
 if __name__ == "__main__":
     unittest.main()

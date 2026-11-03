@@ -60,7 +60,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/quality`、`search/operations/deployment/candidate`。
 - `search/operations/deployment/provider`。
 - `search/operations/documents` 的完整目錄。
-- `search/operations/metadata/source.py`。
+- `search/operations/metadata` 下的 `source.py`、`sync.py`。
 - `search/operations/jobs/archive.py`。
 - `search/operations/deployment/frontend/policy.py`。
 - `scripts/ci` 的完整 Python 工具目錄與 `scripts/search_jobs.py`。
