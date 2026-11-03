@@ -261,6 +261,142 @@ def _probe(runner, path: Path, uid: int) -> None:
     )
 
 
+def _check(report, name, action, success="ok"):
+    """Record one prerequisite check using fixed public diagnostic codes."""
+    try:
+        action()
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+    ):
+        report["checks"].append(
+            {"name": name, "status": "blocked", "code": f"{name}_failed"}
+        )
+        return False
+    report["checks"].append({"name": name, "status": "ok", "code": success})
+    return True
+
+
+def _runtime_checks(report, config, repo_root, runner):
+    """Check source and host capabilities, returning Docker availability."""
+
+    def source():
+        report["source_revision"] = require_clean_revision(
+            repo_root, runner=runner
+        )
+
+    _check(report, "source", source)
+
+    def docker():
+        server = json.loads(
+            _command(
+                runner, ["docker", "version", "--format", "{{json .Server}}"]
+            )
+        )
+        if type(server) is not dict or type(server.get("Version")) is not str:
+            raise ValueError("docker_server_missing")
+
+    docker_ok = _check(report, "docker", docker)
+
+    def nvidia_runtime():
+        runtimes = json.loads(
+            _command(
+                runner, ["docker", "info", "--format", "{{json .Runtimes}}"]
+            )
+        )
+        if (
+            type(runtimes) is not dict
+            or type(runtimes.get("nvidia")) is not dict
+        ):
+            raise ValueError("nvidia_runtime_missing")
+
+    if docker_ok:
+        _check(
+            report,
+            "nvidia_runtime",
+            nvidia_runtime,
+            "registered_not_exercised",
+        )
+
+    def compose():
+        version = _command(runner, ["docker", "compose", "version", "--short"])
+        match = re.fullmatch(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)", version)
+        if match is None or tuple(map(int, match.groups())) < (2, 38, 0):
+            raise ValueError("compose_version_unsupported")
+
+    _check(report, "compose", compose)
+
+    def gpu():
+        raw = _command(
+            runner,
+            [
+                "nvidia-smi",
+                "--query-gpu=uuid,index,name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+        )
+        report["hardware"]["gpus"] = _hardware_gpus(raw, config)
+
+    _check(report, "gpus", gpu)
+    return docker_ok
+
+
+def _storage_checks(report, config, runner, uid, docker_ok):
+    """Check host storage and conditional container visibility."""
+    # Never mount a broad ancestor just because state has not been initialized.
+    roots = [
+        ("api_model_storage", config.api_model_root, False),
+        ("embedding_model_storage", config.embedding_model_root, False),
+        ("reranker_model_storage", config.reranker_model_root, False),
+        (
+            "state_storage",
+            config.state_root
+            if config.state_root.exists()
+            else config.state_root.parent,
+            True,
+        ),
+    ]
+    for name, path, writable in roots:
+        details = {}
+
+        def storage(path=path, writable=writable, details=details):
+            details.update(_storage(runner, path, writable=writable))
+
+        if _check(report, name, storage):
+            report["checks"][-1]["storage"] = details
+    if docker_ok:
+
+        def probe_image():
+            identifier = _command(
+                runner,
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    PROBE_IMAGE,
+                    "--format",
+                    "{{.Id}}",
+                ],
+            )
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", identifier) is None:
+                raise ValueError("probe_image_invalid")
+
+        image_ok = _check(report, "storage_probe_image", probe_image)
+        if image_ok:
+            probe_roots = roots[:3]
+            if config.state_root.exists():
+                probe_roots.append(("state_storage", config.state_root, True))
+            for name, path, _writable in probe_roots:
+                _check(
+                    report,
+                    f"{name}_docker",
+                    lambda path=path: _probe(runner, path, uid),
+                )
+
+
 def run_doctor(
     config: ProductConfig,
     *,
@@ -296,25 +432,6 @@ def run_doctor(
     except (OSError, ValueError):
         pass
 
-    def check(name, action, success="ok"):
-        try:
-            action()
-        except (
-            OSError,
-            ValueError,
-            KeyError,
-            TypeError,
-            subprocess.SubprocessError,
-        ):
-            report["checks"].append(
-                {"name": name, "status": "blocked", "code": f"{name}_failed"}
-            )
-            return False
-        report["checks"].append(
-            {"name": name, "status": "ok", "code": success}
-        )
-        return True
-
     if uid == 0:
         report["checks"].append(
             {
@@ -332,7 +449,8 @@ def run_doctor(
     )
     report["hardware"]["uid"] = uid
     report["checks"].append({"name": "operator", "status": "ok", "code": "ok"})
-    if not check(
+    if not _check(
+        report,
         "configuration",
         lambda: validate_config(
             config.to_dict(), repo_root=repo_root, uid=uid
@@ -340,59 +458,7 @@ def run_doctor(
     ):
         return report
 
-    def source():
-        report["source_revision"] = require_clean_revision(
-            repo_root, runner=runner
-        )
-
-    check("source", source)
-
-    def docker():
-        server = json.loads(
-            _command(
-                runner, ["docker", "version", "--format", "{{json .Server}}"]
-            )
-        )
-        if type(server) is not dict or type(server.get("Version")) is not str:
-            raise ValueError("docker_server_missing")
-
-    docker_ok = check("docker", docker)
-
-    def nvidia_runtime():
-        runtimes = json.loads(
-            _command(
-                runner, ["docker", "info", "--format", "{{json .Runtimes}}"]
-            )
-        )
-        if (
-            type(runtimes) is not dict
-            or type(runtimes.get("nvidia")) is not dict
-        ):
-            raise ValueError("nvidia_runtime_missing")
-
-    if docker_ok:
-        check("nvidia_runtime", nvidia_runtime, "registered_not_exercised")
-
-    def compose():
-        version = _command(runner, ["docker", "compose", "version", "--short"])
-        match = re.fullmatch(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)", version)
-        if match is None or tuple(map(int, match.groups())) < (2, 38, 0):
-            raise ValueError("compose_version_unsupported")
-
-    check("compose", compose)
-
-    def gpu():
-        raw = _command(
-            runner,
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,index,name,memory.total,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-        )
-        report["hardware"]["gpus"] = _hardware_gpus(raw, config)
-
-    check("gpus", gpu)
+    docker_ok = _runtime_checks(report, config, repo_root, runner)
 
     for name, action in (
         (
@@ -408,56 +474,9 @@ def run_doctor(
             lambda: _reranker_model(config.reranker_model_root, deep_verify),
         ),
     ):
-        check(name, action)
+        _check(report, name, action)
 
-    # Never mount a broad ancestor just because state has not been initialized.
-    roots = [
-        ("api_model_storage", config.api_model_root, False),
-        ("embedding_model_storage", config.embedding_model_root, False),
-        ("reranker_model_storage", config.reranker_model_root, False),
-        (
-            "state_storage",
-            config.state_root
-            if config.state_root.exists()
-            else config.state_root.parent,
-            True,
-        ),
-    ]
-    for name, path, writable in roots:
-        details = {}
-
-        def storage(path=path, writable=writable, details=details):
-            details.update(_storage(runner, path, writable=writable))
-
-        if check(name, storage):
-            report["checks"][-1]["storage"] = details
-    if docker_ok:
-
-        def probe_image():
-            identifier = _command(
-                runner,
-                [
-                    "docker",
-                    "image",
-                    "inspect",
-                    PROBE_IMAGE,
-                    "--format",
-                    "{{.Id}}",
-                ],
-            )
-            if re.fullmatch(r"sha256:[0-9a-f]{64}", identifier) is None:
-                raise ValueError("probe_image_invalid")
-
-        image_ok = check("storage_probe_image", probe_image)
-        if image_ok:
-            probe_roots = roots[:3]
-            if config.state_root.exists():
-                probe_roots.append(("state_storage", config.state_root, True))
-            for name, path, _writable in probe_roots:
-                check(
-                    f"{name}_docker",
-                    lambda path=path: _probe(runner, path, uid),
-                )
+    _storage_checks(report, config, runner, uid, docker_ok)
     if all(item["status"] == "ok" for item in report["checks"]):
         report["status"] = "ok"
     return report

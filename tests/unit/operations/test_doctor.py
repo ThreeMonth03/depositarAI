@@ -343,6 +343,238 @@ class ProductDoctorTests(unittest.TestCase):
             self.assertEqual(result["status"], "blocked")
             self.assertNotIn("PRIVATE", json.dumps(result))
 
+    def test_root_keeps_ram_observation_before_other_admission(self):
+        with (
+            mock.patch.object(doctor.os, "cpu_count", return_value=8) as cpu,
+            mock.patch.object(
+                doctor.os, "sysconf", side_effect=OSError("PRIVATE RAM")
+            ) as memory,
+            mock.patch.object(doctor.socket, "gethostname") as hostname,
+            mock.patch.object(doctor, "validate_config") as validate,
+        ):
+            result = doctor.run_doctor(self.config, runner=self.runner, uid=0)
+        cpu.assert_called_once_with()
+        memory.assert_called_once_with("SC_PHYS_PAGES")
+        hostname.assert_not_called()
+        validate.assert_not_called()
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(
+            result["hardware"],
+            {"cpu_count": 8, "ram_bytes": None, "gpus": []},
+        )
+        self.assertEqual(
+            result["checks"],
+            [
+                {
+                    "name": "operator",
+                    "status": "blocked",
+                    "code": "non_root_required",
+                }
+            ],
+        )
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_required_checks_models_and_storage_keep_their_order(self):
+        events = []
+        transport, storage, probe = self.runner, doctor._storage, doctor._probe
+
+        def command(argv, *, timeout):
+            name = " ".join(argv[:2]) if argv[0] == "docker" else argv[0]
+            events.append(name)
+            return transport(argv, timeout=timeout)
+
+        def host_storage(runner, path, *, writable):
+            events.append(("storage", path.name, writable))
+            return storage(runner, path, writable=writable)
+
+        def visibility(runner, path, uid):
+            events.append(("probe", path.name, uid))
+            return probe(runner, path, uid)
+
+        self.runner = command
+        for name in ("_api_models", "_embedding_model", "_reranker_model"):
+            getattr(self, name).side_effect = (
+                lambda directory, deep, name=name: events.append(
+                    ("model", name, directory.name, deep)
+                )
+            )
+        with (
+            mock.patch.object(doctor, "_storage", side_effect=host_storage),
+            mock.patch.object(doctor, "_probe", side_effect=visibility),
+        ):
+            result = self.run_doctor()
+        self.assertEqual(
+            events,
+            [
+                "git",
+                "git",
+                "docker version",
+                "docker info",
+                "docker compose",
+                "nvidia-smi",
+                ("model", "_api_models", "api_model_root", False),
+                ("model", "_embedding_model", "embedding_model_root", False),
+                ("model", "_reranker_model", "reranker_model_root", False),
+                ("storage", "api_model_root", False),
+                "findmnt",
+                ("storage", "embedding_model_root", False),
+                "findmnt",
+                ("storage", "reranker_model_root", False),
+                "findmnt",
+                ("storage", "private", True),
+                "findmnt",
+                "docker image",
+                ("probe", "api_model_root", 1234),
+                "docker run",
+                ("probe", "embedding_model_root", 1234),
+                "docker run",
+                ("probe", "reranker_model_root", 1234),
+                "docker run",
+            ],
+        )
+        self.assertEqual(
+            [row["name"] for row in result["checks"]],
+            [
+                "operator",
+                "configuration",
+                "source",
+                "docker",
+                "nvidia_runtime",
+                "compose",
+                "gpus",
+                "api_models",
+                "embedding_model",
+                "reranker_model",
+                "api_model_storage",
+                "embedding_model_storage",
+                "reranker_model_storage",
+                "state_storage",
+                "storage_probe_image",
+                "api_model_storage_docker",
+                "embedding_model_storage_docker",
+                "reranker_model_storage_docker",
+            ],
+        )
+        self.assertEqual(result["status"], "ok")
+
+    def test_each_known_action_error_stays_a_fixed_failed_check(self):
+        for error in (
+            OSError("PRIVATE model"),
+            ValueError("PRIVATE model"),
+            KeyError("PRIVATE model"),
+            TypeError("PRIVATE model"),
+            subprocess.TimeoutExpired(["PRIVATE command"], 15),
+        ):
+            self._api_models.side_effect = error
+            with self.subTest(kind=type(error).__name__):
+                result = self.run_doctor()
+                self.assertEqual(
+                    self.codes(result)["api_models"], "api_models_failed"
+                )
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(self.codes(result)["embedding_model"], "ok")
+                self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_unrelated_action_errors_are_not_converted_to_readiness(self):
+        for error in (RuntimeError("PRIVATE"), AttributeError("PRIVATE")):
+            self._api_models.side_effect = error
+            with self.subTest(kind=type(error).__name__):
+                with self.assertRaises(type(error)) as caught:
+                    self.run_doctor()
+                self.assertIs(caught.exception, error)
+                self._embedding_model.assert_not_called()
+                self._reranker_model.assert_not_called()
+
+    def test_runtime_and_storage_failures_do_not_disable_visibility_probes(
+        self,
+    ):
+        for prefix in (["docker", "info"], ["findmnt"]):
+            self.runner.calls.clear()
+            self.runner.fail = lambda argv: argv[: len(prefix)] == prefix
+            with self.subTest(prefix=prefix):
+                result = self.run_doctor()
+                probes = [
+                    (argv, timeout)
+                    for argv, timeout in self.runner.calls
+                    if argv[:2] == ["docker", "run"]
+                ]
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(len(probes), 3)
+                self.assertEqual([timeout for _, timeout in probes], [30] * 3)
+                self.assertEqual(
+                    self.codes(result)["storage_probe_image"], "ok"
+                )
+
+    def _before_image_inspection(self, action):
+        transport = self.runner
+
+        def command(argv, *, timeout):
+            if argv[:3] == ["docker", "image", "inspect"]:
+                action()
+            return transport(argv, timeout=timeout)
+
+        self.runner = command
+        return transport
+
+    def test_state_appearing_later_is_probed_without_mounting_its_parent(self):
+        transport = self._before_image_inspection(
+            lambda: self.config.state_root.mkdir(mode=0o700)
+        )
+        result = self.run_doctor()
+        host_paths = [
+            argv[3] for argv, _ in transport.calls if argv[0] == "findmnt"
+        ]
+        mounts = [
+            argv[argv.index("--mount") + 1]
+            for argv, _ in transport.calls
+            if argv[:2] == ["docker", "run"]
+        ]
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(str(self.config.state_root.parent), host_paths)
+        self.assertNotIn(str(self.config.state_root), host_paths)
+        self.assertEqual(len(mounts), 4)
+        self.assertIn(
+            f"type=bind,source={self.config.state_root},target=/probe,readonly",
+            mounts,
+        )
+        self.assertNotIn(
+            "type=bind,source="
+            f"{self.config.state_root.parent},target=/probe,readonly",
+            mounts,
+        )
+
+    def test_state_disappearing_later_is_not_probed(self):
+        self.config.state_root.mkdir(mode=0o700)
+        transport = self._before_image_inspection(self.config.state_root.rmdir)
+        result = self.run_doctor()
+        host_paths = [
+            argv[3] for argv, _ in transport.calls if argv[0] == "findmnt"
+        ]
+        probes = [
+            argv
+            for argv, _ in transport.calls
+            if argv[:2] == ["docker", "run"]
+        ]
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(str(self.config.state_root), host_paths)
+        self.assertEqual(len(probes), 3)
+        self.assertNotIn("state_storage_docker", self.codes(result))
+        self.assertFalse(self.config.state_root.exists())
+
+    def test_command_budget_counts_utf8_bytes_before_stripping(self):
+        output = " " * (doctor.MAX_COMMAND_OUTPUT - 2) + "é"
+        runner = mock.Mock(
+            return_value=subprocess.CompletedProcess([], 0, output, "")
+        )
+        self.assertEqual(doctor._command(runner, ["fixture"]), "é")
+        runner.return_value.stdout = output + " "
+        with self.assertRaisesRegex(ValueError, "^command_failed$"):
+            doctor._command(runner, ["fixture"])
+        self.assertEqual(
+            runner.call_args_list,
+            [mock.call(["fixture"], timeout=15)] * 2,
+        )
+
 
 class ModelPreflightTests(unittest.TestCase):
     def setUp(self):
