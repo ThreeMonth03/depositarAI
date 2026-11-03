@@ -17,10 +17,11 @@ import stat
 import time
 import uuid
 
-from search.operations.shared import private_io
+from search.operations.shared import namespace, private_io
 from search.serialization import strict_json
 
-from . import execution, namespace, profiles
+from . import execution, profiles
+from .namespace import check_transport
 from .pueue import ENVIRONMENT, JobError, MAX_OUTPUT, Pueue, command, require
 from .sources import restore_modes
 
@@ -155,7 +156,7 @@ def load_registry(filename=None):
         host_identity() == value["machine_id_sha256"],
         "host_changed",
     )
-    namespace.check_transport(value)
+    check_transport(value)
     for name in ("root", "runtime_root"):
         os.close(private_io.open_directory(path(value[name])))
     root = path(value["root"])

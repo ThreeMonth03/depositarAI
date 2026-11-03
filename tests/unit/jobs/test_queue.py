@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from search.operations.jobs import execution, pueue, queue
 from search.operations.shared import private_io
+from search.operations.shared.namespace import NamespaceError
 from search.quality.contract import plan_digest
 from tests.unit.quality.fixtures import capture, turn
 from tests.unit.quality.test_batches import encoded, make_record, rewrite
@@ -688,7 +689,7 @@ class QueueTests(unittest.TestCase):
         public = self.directory / "public"
         public.mkdir(mode=0o755)
         with patch.object(queue, "read") as read:
-            with self.assertRaisesRegex(ValueError, "namespace_private_directory"):
+            with self.assertRaisesRegex(NamespaceError, "namespace_private_directory"):
                 queue.load_registry(public / "registry.json")
             read.assert_not_called()
 
@@ -701,7 +702,7 @@ class QueueTests(unittest.TestCase):
             with patch.object(queue, "revision") as revision:
                 with self.subTest(field=field):
                     with self.assertRaisesRegex(
-                        ValueError, "namespace_private_directory"
+                        NamespaceError, "namespace_private_directory"
                     ):
                         queue.load_registry(filename)
                     revision.assert_not_called()
@@ -737,7 +738,9 @@ class TransportTests(unittest.TestCase):
                 with (
                     self.subTest(field=field),
                     patch.object(pueue, "command") as command,
-                    self.assertRaisesRegex(ValueError, "namespace_private_directory"),
+                    self.assertRaisesRegex(
+                        NamespaceError, "namespace_private_directory"
+                    ),
                 ):
                     pueue.Pueue(changed).call("status", "--json")
                 command.assert_not_called()
