@@ -52,10 +52,14 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
         remove("rm", identifier)
         remove("volume", "rm", self.volume_name)
         self.assertEqual(
-            failures, [], "owned fixture cleanup failed: " + "; ".join(failures)
+            failures,
+            [],
+            "owned fixture cleanup failed: " + "; ".join(failures),
         )
 
-    def test_real_local_volume_metadata_and_container_shape_without_gpu_probe(self):
+    def test_real_local_volume_metadata_and_container_shape_without_gpu_probe(
+        self,
+    ):
         self.commands = []
         self.container_id = None
         self.volume_name = "depositar-local-volume-fixture-" + uuid.uuid4().hex
@@ -95,7 +99,9 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
             "exec sleep 120",
         ).strip()
         row = ownership._inspect(self.command, self.container_id)
-        ownership._container(row)  # Shape only; does not grant volume authority.
+        ownership._container(
+            row
+        )  # Shape only; does not grant volume authority.
         root = ownership._strict_json(
             self.docker("info", "--format", "{{json .DockerRootDir}}")
         )
@@ -132,16 +138,23 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
                 )
                 # Actual daemon metadata only: no device/bind-options container
                 # is started, and this row is never presented as runtime proof.
-                declaration = {"Mounts": [{"Type": "volume", "Name": options_name}]}
+                declaration = {
+                    "Mounts": [{"Type": "volume", "Name": options_name}]
+                }
                 with self.assertRaisesRegex(
                     ownership.GPUOwnershipError, "volume_metadata_invalid"
                 ):
-                    ownership._collect_local_volumes([declaration], root, self.command)
+                    ownership._collect_local_volumes(
+                        [declaration], root, self.command
+                    )
             finally:
                 self.docker("volume", "rm", options_name)
         self.assertEqual(row["HostConfig"]["DeviceRequests"], [])
         self.assertTrue(
-            all(command[0] in {"docker", "python3"} for command in self.commands)
+            all(
+                command[0] in {"docker", "python3"}
+                for command in self.commands
+            )
         )
 
 

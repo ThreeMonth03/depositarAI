@@ -1,4 +1,6 @@
-"""RAM session isolation, same-origin boundary, failure atomicity and deadlines."""
+"""RAM session isolation, same-origin boundary, failure atomicity and
+deadlines.
+"""
 
 import asyncio
 from dataclasses import replace
@@ -17,7 +19,11 @@ from unittest.mock import patch
 import httpx
 
 from search.tests.asgi_client import ASGITestClient
-from search.api.conversation.contract import SearchState, TurnRequest, TurnResponse
+from search.api.conversation.contract import (
+    SearchState,
+    TurnRequest,
+    TurnResponse,
+)
 from search.api.conversation.engine import ConversationEngine
 from search.api.shared.config import Settings
 from search.tests.fixtures import ConversationFixture
@@ -151,7 +157,9 @@ class WebHTTPTests(unittest.TestCase):
         ):
             headers = {"Origin": origin} if origin else {}
             self.assertEqual(
-                self.client.post("/api/session", json={}, headers=headers).status_code,
+                self.client.post(
+                    "/api/session", json={}, headers=headers
+                ).status_code,
                 403,
             )
         self.assertFalse(self.upstream.calls)
@@ -186,7 +194,10 @@ class WebHTTPTests(unittest.TestCase):
     def test_reset_deletes_and_new_session_is_empty(self):
         self.turn()
         self.assertEqual(
-            self.client.delete("/api/session", headers=self.headers).status_code, 200
+            self.client.delete(
+                "/api/session", headers=self.headers
+            ).status_code,
+            200,
         )
         new = self.client.post(
             "/api/session", json={}, headers={"Origin": ORIGIN}
@@ -197,7 +208,9 @@ class WebHTTPTests(unittest.TestCase):
     def test_security_headers_and_no_store(self):
         headers = self.turn().headers
         self.assertIn("no-store", headers["cache-control"])
-        self.assertIn("frame-ancestors 'none'", headers["content-security-policy"])
+        self.assertIn(
+            "frame-ancestors 'none'", headers["content-security-policy"]
+        )
         self.assertIn("geolocation=()", headers["permissions-policy"])
         self.assertNotIn("access-control-allow-origin", headers)
 
@@ -211,7 +224,9 @@ class WebHTTPTests(unittest.TestCase):
             ("OPTIONS", "/api/turn"),
         ):
             with self.subTest(method=method, path=path):
-                response = self.client.request(method, path, headers=self.headers)
+                response = self.client.request(
+                    method, path, headers=self.headers
+                )
                 self.assertEqual(response.status_code, 405)
 
     def test_non_post_bodies_are_rejected_before_views(self):
@@ -234,14 +249,21 @@ class WebHTTPTests(unittest.TestCase):
         self.assertIn(self.token, self.store.items)
         self.assertEqual(self.client.get("/healthz").status_code, 200)
         self.assertEqual(
-            self.client.get("/api/access", headers=self.headers).status_code, 200
+            self.client.get("/api/access", headers=self.headers).status_code,
+            200,
         )
         self.assertEqual(
-            self.client.delete("/api/session", headers=self.headers).status_code, 200
+            self.client.delete(
+                "/api/session", headers=self.headers
+            ).status_code,
+            200,
         )
 
     def test_body_bounds_duplicate_keys_and_compression(self):
-        for raw, expected in ((b"a" * 4097, 413), (b'{"query":"a","query":"b"}', 400)):
+        for raw, expected in (
+            (b"a" * 4097, 413),
+            (b'{"query":"a","query":"b"}', 400),
+        ):
             response = self.client.post(
                 "/api/turn",
                 content=raw,
@@ -255,7 +277,9 @@ class WebHTTPTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
 
-    def test_ambiguous_headers_query_strings_and_length_mismatch_are_rejected(self):
+    def test_ambiguous_headers_query_strings_and_length_mismatch_are_rejected(
+        self,
+    ):
         for name, value in (
             ("Origin", ORIGIN),
             ("Host", "testserver"),
@@ -312,7 +336,8 @@ class WebConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         token = store.create()
         app = create_app(SETTINGS, upstream, store)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
         ) as client:
             headers = {"Origin": ORIGIN, "Authorization": "Bearer " + token}
             payload = {"query": "氣候", "version": 0}
@@ -321,7 +346,9 @@ class WebConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             )
             try:
                 await asyncio.wait_for(entered.wait(), 2)
-                busy = await client.post("/api/turn", json=payload, headers=headers)
+                busy = await client.post(
+                    "/api/turn", json=payload, headers=headers
+                )
                 self.assertEqual(busy.status_code, 429)
                 self.assertEqual(busy.json()["error"]["code"], "busy")
                 self.assertTrue(store.get(token).busy)
@@ -332,13 +359,17 @@ class WebConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(store.get(token).busy)
             self.assertEqual(store.get(token).version, 0)
             release.set()
-            response = await client.post("/api/turn", json=payload, headers=headers)
+            response = await client.post(
+                "/api/turn", json=payload, headers=headers
+            )
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(store.get(token).version, 1)
 
 
 class WebBodyDeadlineTests(unittest.IsolatedAsyncioTestCase):
-    async def test_slow_bodies_cancel_receive_and_keep_the_website_error_contract(self):
+    async def test_slow_body_cancels_receive_with_website_error(
+        self,
+    ):
         store, upstream = Sessions(), FakeUpstream()
         token = store.create()
         app = create_app(SETTINGS, upstream, store)
@@ -349,7 +380,8 @@ class WebBodyDeadlineTests(unittest.IsolatedAsyncioTestCase):
             return await original_wait(awaitable, timeout=0.01)
 
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
         ) as client:
             for method, path in (
                 ("GET", "/healthz"),
@@ -375,10 +407,14 @@ class WebBodyDeadlineTests(unittest.IsolatedAsyncioTestCase):
                         "Content-Type": "application/json",
                     }
                     with patch(
-                        "search.http.body.asyncio.wait_for", side_effect=shortened_wait
+                        "search.http.body.asyncio.wait_for",
+                        side_effect=shortened_wait,
                     ):
                         response = await client.request(
-                            method, path, content=stalled_body(), headers=headers
+                            method,
+                            path,
+                            content=stalled_body(),
+                            headers=headers,
                         )
                     self.assertEqual(response.status_code, 400)
                     if method != "HEAD":
@@ -395,7 +431,9 @@ class WebBodyDeadlineTests(unittest.IsolatedAsyncioTestCase):
 class WebsiteRouteTests(unittest.TestCase):
     def setUp(self):
         self.store = Sessions()
-        self.client = ASGITestClient(create_app(SETTINGS, FakeUpstream(), self.store))
+        self.client = ASGITestClient(
+            create_app(SETTINGS, FakeUpstream(), self.store)
+        )
         self.addCleanup(self.client.close)
 
     def test_bff_does_not_serve_frontend_files_or_fallback_pages(self):
@@ -404,7 +442,9 @@ class WebsiteRouteTests(unittest.TestCase):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 404)
 
-    def test_api_routes_are_exact_and_missing_routes_do_not_create_sessions(self):
+    def test_api_routes_are_exact_and_missing_routes_do_not_create_sessions(
+        self,
+    ):
         for path in ("/api/access/", "/api/missing", "/api/assets/site.css"):
             with self.subTest(path=path):
                 response = self.client.get(path, headers={"Origin": ORIGIN})
@@ -435,8 +475,12 @@ class ConfigurationTests(unittest.TestCase):
         origin = "http://192.168.56.137:18082"
         with self.assertRaises(ValueError):
             replace(SETTINGS, origin=origin)
-        settings = replace(SETTINGS, origin=origin, access_mode="intranet-http")
-        with ASGITestClient(create_app(settings, FakeUpstream(), Sessions())) as client:
+        settings = replace(
+            SETTINGS, origin=origin, access_mode="intranet-http"
+        )
+        with ASGITestClient(
+            create_app(settings, FakeUpstream(), Sessions())
+        ) as client:
             self.assertEqual(
                 client.post(
                     "/api/session", json={}, headers={"Origin": origin}
@@ -452,8 +496,15 @@ class ConfigurationTests(unittest.TestCase):
                         403,
                     )
 
-    def test_intranet_http_permits_only_rfc1918_and_canonical_dedicated_port(self):
-        for host in ("10.0.0.1", "172.16.0.1", "172.31.255.254", "192.168.56.137"):
+    def test_intranet_http_permits_only_rfc1918_and_canonical_dedicated_port(
+        self,
+    ):
+        for host in (
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.56.137",
+        ):
             with self.subTest(host=host):
                 replace(
                     SETTINGS,
@@ -533,10 +584,17 @@ class ConfigurationTests(unittest.TestCase):
             ("https://private-api.test", Path("relative.pem")),
             ("http://conversation-api:8000", Path("/ca.pem")),
         ):
-            with self.subTest(upstream=upstream), self.assertRaises(ValueError):
-                WebSettings(ORIGIN, upstream, Path("/key"), upstream_ca_file=ca)
+            with (
+                self.subTest(upstream=upstream),
+                self.assertRaises(ValueError),
+            ):
+                WebSettings(
+                    ORIGIN, upstream, Path("/key"), upstream_ca_file=ca
+                )
 
-    def test_http_fixture_imports_do_not_load_test_suites_or_test_clients(self):
+    def test_http_fixture_imports_do_not_load_test_suites_or_test_clients(
+        self,
+    ):
         from search.tests import web_support
 
         self.assertIs(FakeUpstream, web_support.FakeUpstream)
@@ -549,7 +607,8 @@ class ConfigurationTests(unittest.TestCase):
             "for name in ('fixtures', 'web_support', 'web_fixture'):\n"
             "    importlib.import_module('search.tests.' + name)\n"
             "assert not any(name.startswith('search.tests.test_') "
-            "for name in sys.modules), 'test suite imported by HTTP fixtures'\n"
+            "for name in sys.modules), 'test suite imported by HTTP "
+            "fixtures'\n"
             "assert 'search.tests.asgi_client' not in sys.modules\n"
             "print('HTTP fixtures import independently')\n"
         )
@@ -560,7 +619,9 @@ class ConfigurationTests(unittest.TestCase):
             timeout=10,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("HTTP fixtures import independently\n", completed.stdout)
+        self.assertEqual(
+            "HTTP fixtures import independently\n", completed.stdout
+        )
 
     def test_no_plaintext_remote_upstream_or_url_credentials(self):
         for peer in (
@@ -580,13 +641,17 @@ class ConfigurationTests(unittest.TestCase):
             "https://site.test?x=1",
         ):
             with self.assertRaises(ValueError):
-                WebSettings(origin, "http://conversation-api:8000", Path("/key"))
+                WebSettings(
+                    origin, "http://conversation-api:8000", Path("/key")
+                )
 
 
 class TransportTests(unittest.TestCase):
     def search_response(self):
         engine = ConversationEngine(
-            Settings("a" * 40, "b" * 64, Path("/catalog"), Path("/unused"), True, 20),
+            Settings(
+                "a" * 40, "b" * 64, Path("/catalog"), Path("/unused"), True, 20
+            ),
             ConversationFixture(),
         )
         response = asyncio.run(
@@ -624,8 +689,12 @@ class TransportTests(unittest.TestCase):
 
     def test_fixed_endpoint_credential_and_schema(self):
         def handler(request):
-            self.assertEqual(str(request.url), "http://conversation-api:8000/v1/turn")
-            self.assertEqual(request.headers["authorization"], "Bearer " + "1" * 64)
+            self.assertEqual(
+                str(request.url), "http://conversation-api:8000/v1/turn"
+            )
+            self.assertEqual(
+                request.headers["authorization"], "Bearer " + "1" * 64
+            )
             return httpx.Response(
                 200,
                 json=TurnResponse(
@@ -641,7 +710,9 @@ class TransportTests(unittest.TestCase):
     def test_current_search_response_passes_the_bff_boundary(self):
         value = self.search_response()
         self.assertTrue(
-            {"answer", "planning_status", "clarification"}.isdisjoint(value["search"])
+            {"answer", "planning_status", "clarification"}.isdisjoint(
+                value["search"]
+            )
         )
         result = self.invoke(lambda _request: httpx.Response(200, json=value))
         self.assertEqual(result.model_dump(), value)
@@ -661,9 +732,13 @@ class TransportTests(unittest.TestCase):
                 value["search"]["cards"][0].update(
                     temporal_coverage=coverage, metadata_modified="2020-01-01"
                 )
-                result = self.invoke(lambda _request: httpx.Response(200, json=value))
+                result = self.invoke(
+                    lambda _request: httpx.Response(200, json=value)
+                )
                 self.assertEqual(
-                    result.model_dump()["search"]["cards"][0]["temporal_coverage"],
+                    result.model_dump()["search"]["cards"][0][
+                        "temporal_coverage"
+                    ],
                     coverage,
                 )
 
@@ -673,7 +748,8 @@ class TransportTests(unittest.TestCase):
                 "resource_id": "11111111-1111-4111-8111-111111111111",
                 "name": "氣候資料.csv",
                 "format": "CSV",
-                "url": dataset_url + "/resource/11111111-1111-4111-8111-111111111111",
+                "url": dataset_url
+                + "/resource/11111111-1111-4111-8111-111111111111",
                 "columns": ["觀測日期", "氣溫"],
                 "excerpt": "",
             },
@@ -681,7 +757,8 @@ class TransportTests(unittest.TestCase):
                 "resource_id": "22222222-2222-4222-8222-222222222222",
                 "name": "氣候報告.pdf",
                 "format": "PDF",
-                "url": dataset_url + "/resource/22222222-2222-4222-8222-222222222222",
+                "url": dataset_url
+                + "/resource/22222222-2222-4222-8222-222222222222",
                 "columns": [],
                 "excerpt": "氣候觀測摘要。",
             },
@@ -692,12 +769,18 @@ class TransportTests(unittest.TestCase):
             with self.subTest(enriched=enriched):
                 value = self.search_response()
                 card = value["search"]["cards"][0]
-                context = self.resource_context(card["url"]) if enriched else []
+                context = (
+                    self.resource_context(card["url"]) if enriched else []
+                )
                 value["search"]["cards"][0]["resource_context"] = context
-                result = self.invoke(lambda _request: httpx.Response(200, json=value))
+                result = self.invoke(
+                    lambda _request: httpx.Response(200, json=value)
+                )
                 self.assertEqual(result.model_dump(), value)
 
-    def test_twenty_cards_with_maximum_utf8_resource_context_fit_response_bound(self):
+    def test_twenty_maximum_utf8_cards_fit_response_bound(
+        self,
+    ):
         value = self.search_response()
         template = value["search"]["cards"][0]
         prefix = "https://data.depositar.io/dataset/"
@@ -708,7 +791,9 @@ class TransportTests(unittest.TestCase):
             dataset_url = prefix + "a" * (slug_chars - 2) + f"{index:02d}"
             resources = []
             for resource_index in range(1, 4):
-                identifier = f"{index:08x}-1111-4111-8111-{resource_index:012x}"
+                identifier = (
+                    f"{index:08x}-1111-4111-8111-{resource_index:012x}"
+                )
                 resources.append(
                     {
                         "resource_id": identifier,
@@ -739,7 +824,9 @@ class TransportTests(unittest.TestCase):
                 "not_checked": 0,
             },
         )
-        raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode(
+            "utf-8"
+        )
         self.assertGreater(len(raw), 256 * 1024)
         self.assertLess(len(raw), MAX_TURN_RESPONSE_BYTES)
         result = self.invoke(lambda _request: httpx.Response(200, content=raw))
@@ -759,7 +846,14 @@ class TransportTests(unittest.TestCase):
             [{**csv, "excerpt": "prose in a CSV field"}],
             [{**pdf, "columns": ["not a PDF column"]}],
             [{**csv, "url": "https://untrusted.example/file.csv"}],
-            [{**csv, "url": csv["url"].replace("/dataset/", "/dataset/another-")}],
+            [
+                {
+                    **csv,
+                    "url": csv["url"].replace(
+                        "/dataset/", "/dataset/another-"
+                    ),
+                }
+            ],
             [{**csv, "resource_id": "not-a-resource-id"}],
             [{**csv, "extra": "not-in-the-contract"}],
         ):
@@ -771,7 +865,9 @@ class TransportTests(unittest.TestCase):
                 else:
                     card["resource_context"] = context
                 with self.assertRaises(UpstreamError) as caught:
-                    self.invoke(lambda _request: httpx.Response(200, json=value))
+                    self.invoke(
+                        lambda _request: httpx.Response(200, json=value)
+                    )
                 self.assertEqual(caught.exception.status, 503)
 
     def test_missing_or_inconsistent_dataset_coverage_rejects_upstream(self):
@@ -792,7 +888,9 @@ class TransportTests(unittest.TestCase):
                 else:
                     card["temporal_coverage"] = coverage
                 with self.assertRaises(UpstreamError) as caught:
-                    self.invoke(lambda _request: httpx.Response(200, json=value))
+                    self.invoke(
+                        lambda _request: httpx.Response(200, json=value)
+                    )
                 self.assertEqual(caught.exception.status, 503)
 
     def test_removed_search_fields_are_rejected_instead_of_ignored(self):
@@ -802,11 +900,17 @@ class TransportTests(unittest.TestCase):
             ("planning_status", "ready"),
             ("clarification", None),
         ):
-            with self.subTest(field=field), self.assertRaises(UpstreamError) as caught:
+            with (
+                self.subTest(field=field),
+                self.assertRaises(UpstreamError) as caught,
+            ):
                 self.invoke(
                     lambda _request: httpx.Response(
                         200,
-                        json={**value, "search": {**value["search"], field: previous}},
+                        json={
+                            **value,
+                            "search": {**value["search"], field: previous},
+                        },
                     )
                 )
             self.assertEqual(caught.exception.status, 503)
@@ -816,7 +920,9 @@ class TransportTests(unittest.TestCase):
 
         def handler(request):
             calls.append(request)
-            return httpx.Response(307, headers={"Location": "https://evil.test"})
+            return httpx.Response(
+                307, headers={"Location": "https://evil.test"}
+            )
 
         with self.assertRaises(UpstreamError):
             self.invoke(handler)
@@ -828,8 +934,13 @@ class TransportTests(unittest.TestCase):
             b"not json",
             b'{"status":"ok","status":"rejected"}',
         ):
-            with self.subTest(size=len(content)), self.assertRaises(UpstreamError):
-                self.invoke(lambda _request: httpx.Response(200, content=content))
+            with (
+                self.subTest(size=len(content)),
+                self.assertRaises(UpstreamError),
+            ):
+                self.invoke(
+                    lambda _request: httpx.Response(200, content=content)
+                )
 
     def test_timeout_is_sanitized(self):
         def handler(_request):
@@ -844,18 +955,25 @@ class TransportTests(unittest.TestCase):
             self.invoke(lambda _request: httpx.Response(429))
         self.assertEqual(caught.exception.status, 429)
         value = TurnResponse(
-            status="unavailable", message="暫停", state=SearchState(), revision="a" * 40
+            status="unavailable",
+            message="暫停",
+            state=SearchState(),
+            revision="a" * 40,
         ).model_dump()
         with self.assertRaises(UpstreamError):
             self.invoke(lambda _request: httpx.Response(200, json=value))
 
 
 class PrivateUpstreamTLSTests(unittest.TestCase):
-    """Actual local TLS proves private trust never disables identity checking."""
+    """Actual local TLS proves private trust never disables identity
+    checking.
+    """
 
     @classmethod
     def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-web-ca-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-web-ca-test-"
+        )
         cls.addClassCleanup(temporary.cleanup)
         cls.root = Path(temporary.name)
 
@@ -941,7 +1059,9 @@ class PrivateUpstreamTLSTests(unittest.TestCase):
                 pass
 
             def do_POST(self):
-                cls.requests.append((self.path, self.headers.get("Authorization")))
+                cls.requests.append(
+                    (self.path, self.headers.get("Authorization"))
+                )
                 self.rfile.read(int(self.headers["Content-Length"]))
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -952,8 +1072,12 @@ class PrivateUpstreamTLSTests(unittest.TestCase):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cls.addClassCleanup(cls.server.server_close)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(cls.root / "server.pem", cls.root / "server.key")
-        cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
+        context.load_cert_chain(
+            cls.root / "server.pem", cls.root / "server.key"
+        )
+        cls.server.socket = context.wrap_socket(
+            cls.server.socket, server_side=True
+        )
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.addClassCleanup(cls.server.shutdown)
         cls.settings = WebSettings(
@@ -974,7 +1098,9 @@ class PrivateUpstreamTLSTests(unittest.TestCase):
                 "SSL_CERT_FILE": str(self.root / "wrong-ca.pem"),
             },
         ):
-            result = asyncio.run(Upstream(self.settings).turn({"query": "氣候"}))
+            result = asyncio.run(
+                Upstream(self.settings).turn({"query": "氣候"})
+            )
         self.assertEqual(result.status, "rejected")
         self.assertEqual(self.requests, [("/v1/turn", "Bearer " + "1" * 64)])
 
@@ -982,7 +1108,9 @@ class PrivateUpstreamTLSTests(unittest.TestCase):
         for ca in (None, self.root / "wrong-ca.pem"):
             with (
                 self.subTest(ca=ca),
-                patch.dict(os.environ, {"SSL_CERT_FILE": str(self.root / "ca.pem")}),
+                patch.dict(
+                    os.environ, {"SSL_CERT_FILE": str(self.root / "ca.pem")}
+                ),
                 self.assertRaises(UpstreamError),
             ):
                 asyncio.run(
@@ -994,7 +1122,8 @@ class PrivateUpstreamTLSTests(unittest.TestCase):
 
     def test_private_ca_does_not_disable_hostname_verification(self):
         settings = replace(
-            self.settings, upstream=f"https://localhost:{self.server.server_port}"
+            self.settings,
+            upstream=f"https://localhost:{self.server.server_port}",
         )
         with self.assertRaises(UpstreamError):
             asyncio.run(Upstream(settings).turn({"query": "氣候"}))

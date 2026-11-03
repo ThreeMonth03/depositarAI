@@ -1,4 +1,6 @@
-"""Shared wire limits and server-owned metadata projection, without ML imports."""
+"""Shared wire limits and server-owned
+metadata projection, without ML imports.
+"""
 
 import math
 
@@ -54,7 +56,11 @@ def validate_request(value):
         (query, 512),
         *((text, MAX_PASSAGE_CHARS) for text in passages),
     ]:
-        if type(text) is not str or not 1 <= len(text) <= maximum or "\x00" in text:
+        if (
+            type(text) is not str
+            or not 1 <= len(text) <= maximum
+            or "\x00" in text
+        ):
             raise ValueError("invalid ranking text")
         text.encode("utf-8", "strict")
     return query, passages

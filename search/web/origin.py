@@ -1,15 +1,20 @@
-"""Operator-selected browser origins, including an explicit intranet HTTP mode."""
+"""Operator-selected browser origins,
+including an explicit intranet HTTP mode.
+"""
 
 from ipaddress import IPv4Address, IPv4Network
 from urllib.parse import SplitResult, urlsplit
 
 
 _INTRANET_NETWORKS = tuple(
-    IPv4Network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    IPv4Network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 
 
-def validate_origin(value: str, *, access_mode: str = "private") -> SplitResult:
+def validate_origin(
+    value: str, *, access_mode: str = "private"
+) -> SplitResult:
     """Validate a fixed browser origin without granting any network access.
 
     The deployment's client-address ACL remains responsible for admission.
@@ -46,7 +51,9 @@ def validate_origin(value: str, *, access_mode: str = "private") -> SplitResult:
             or not 1024 <= port <= 65535
             or value != f"http://{address}:{port}"
         ):
-            raise ValueError("intranet HTTP requires RFC1918 IPv4 and a dedicated port")
+            raise ValueError(
+                "intranet HTTP requires RFC1918 IPv4 and a dedicated port"
+            )
     elif parsed.scheme != "https" and not (
         parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
     ):

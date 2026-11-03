@@ -1,4 +1,5 @@
-"""One sealed local OpenSearch volume; callers retain the catalog operation lock."""
+"""One sealed local OpenSearch volume; callers retain the catalog operation
+lock."""
 
 from __future__ import annotations
 
@@ -6,7 +7,12 @@ import os
 import stat
 import uuid
 
-from search.operations.catalog import administration, commands, execution, volume_policy
+from search.operations.catalog import (
+    administration,
+    commands,
+    execution,
+    volume_policy,
+)
 from search.operations.catalog.policy import LABEL_PREFIX, RuntimeError
 
 ALIAS = volume_policy.ALIAS
@@ -65,7 +71,11 @@ def _image(context, *, read_only):
 def _run(context, identity, image, *, initialize=False):
     # Metadata is proved before every mount, including root's single new root.
     _inspect(context, identity)
-    mount = "type=volume,source=" + identity["name"] + ",target=/data,volume-nocopy"
+    mount = (
+        "type=volume,source="
+        + identity["name"]
+        + ",target=/data,volume-nocopy"
+    )
     if not initialize:
         mount += ",readonly"
     argv = [
@@ -110,7 +120,8 @@ def _run(context, identity, image, *, initialize=False):
     if initialize:
         argv += ["--cap-add", "CHOWN"]
         program = (
-            "import os; assert not os.listdir('/data'); os.chmod('/data',0o700); "
+            "import os; assert not os.listdir('/data'); "
+            "os.chmod('/data',0o700); "
             f"os.chown('/data',{identity['uid']},{identity['gid']})"
         )
     argv += ["--entrypoint", "python3", image, "-c", program]
@@ -118,14 +129,19 @@ def _run(context, identity, image, *, initialize=False):
         commands.command_output(context["runner"], argv, timeout=30)
         return None
     proof = execution.run_json(context["runner"], argv, timeout=30)
-    expected = {"uid": identity["uid"], "gid": identity["gid"], "mode": stat.S_IRWXU}
+    expected = {
+        "uid": identity["uid"],
+        "gid": identity["gid"],
+        "mode": stat.S_IRWXU,
+    }
     if execution.digest_record(proof) != execution.digest_record(expected):
         raise RuntimeError("catalog_volume_ownership_changed")
     return proof
 
 
 def require(context):
-    """Verify sealed metadata and root ownership without reading index contents."""
+    """Verify sealed metadata and root ownership without reading index
+    contents."""
     identity = _identity(context)
     execution.verify_security_material(context)
     root = context["root"]
@@ -146,15 +162,16 @@ def require(context):
     if execution.digest_record(receipt) != execution.digest_record(expected):
         raise RuntimeError("catalog_volume_receipt_changed")
     _run(context, identity, image)
-    if execution.digest_record(_inspect(context, identity)) != execution.digest_record(
-        metadata
-    ):
+    if execution.digest_record(
+        _inspect(context, identity)
+    ) != execution.digest_record(metadata):
         raise RuntimeError("catalog_volume_metadata_changed")
     return receipt
 
 
 def ensure(context):
-    """Create once after durable startup intent; partial state never auto-retries."""
+    """Create once after durable startup intent; partial state never
+    auto-retries."""
     identity = _identity(context)
     root = context["root"]
     intent = {**execution.catalog_identity(context), "status": "started"}
@@ -182,12 +199,14 @@ def ensure(context):
     metadata = _inspect(context, identity)
     _run(context, identity, image, initialize=True)
     proof = _run(context, identity, image)
-    if execution.digest_record(_inspect(context, identity)) != execution.digest_record(
-        metadata
-    ):
+    if execution.digest_record(
+        _inspect(context, identity)
+    ) != execution.digest_record(metadata):
         raise RuntimeError("catalog_volume_metadata_changed")
     result = volume_policy.expected_receipt(identity, image, metadata)
-    if execution.digest_record(proof) != execution.digest_record(result["ownership"]):
+    if execution.digest_record(proof) != execution.digest_record(
+        result["ownership"]
+    ):
         raise RuntimeError("catalog_volume_ownership_changed")
     execution.write_record(root, "volume.json", result)
     return result

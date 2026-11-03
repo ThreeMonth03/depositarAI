@@ -110,7 +110,8 @@ def _configuration(config):
     identifiers = config.gpus.all_uuids()
     if (
         any(
-            type(identifier) is not str or GPU_UUID.fullmatch(identifier) is None
+            type(identifier) is not str
+            or GPU_UUID.fullmatch(identifier) is None
             for identifier in identifiers
         )
         or len({identifier.lower() for identifier in identifiers}) != 4
@@ -291,7 +292,9 @@ def _inference(config, source_revision, uid, gid, *, inference_source_sha256):
         ("answer-model", config.gpus.planner),
     ):
         services[name] = {
-            **_runtime(uid, gid, cpus=8, memory=16 * 1024**3, pids=512, gpu=True),
+            **_runtime(
+                uid, gid, cpus=8, memory=16 * 1024**3, pids=512, gpu=True
+            ),
             "image": OLLAMA_IMAGE,
             "command": ["serve"],
             "networks": ["inference"],
@@ -332,13 +335,17 @@ def _inference(config, source_revision, uid, gid, *, inference_source_sha256):
             start_period="60s",
         ),
     }
-    # Torch/Python must execute their existing local temporary helper libraries.
+    # Torch/Python must execute their existing local temporary helper
+    # libraries.
     services["reranker"]["tmpfs"] = [
         f"/tmp:rw,nosuid,nodev,size=512m,uid={uid},gid={gid},mode=0700"
     ]
     models = {
         "scope": {"model": SCOPE_MODEL, "manifest_sha256": SCOPE_MODEL_DIGEST},
-        "planner": {"model": PLANNER_MODEL, "manifest_sha256": PLANNER_MODEL_DIGEST},
+        "planner": {
+            "model": PLANNER_MODEL,
+            "manifest_sha256": PLANNER_MODEL_DIGEST,
+        },
         "reranker": {
             "model": MODEL_ID,
             "revision": MODEL_REVISION,
@@ -427,17 +434,20 @@ def render_composition(
     gid,
     inference_source_sha256,
 ):
-    """Return catalog reference, shared inference, CPU release and gateway plans.
+    """Return catalog reference, shared inference, CPU release and gateway
+    plans.
 
     Only validated, private paths enter mounts. Provisioning/readiness/source
     proofs, including compatibility of an older catalog, are caller
     responsibilities, not inferred from this rendering. The
     gateway route text must be safely published before starting the singleton.
     A candidate release can be started alone; it neither publishes 18083 nor
-    allocates GPUs. Catalog network access still requires a sealed client lease.
+    allocates GPUs. Catalog network access still requires a sealed client
+    lease.
     """
     if any(
-        type(value) is not int or not 1 <= value <= 2**31 - 1 for value in (uid, gid)
+        type(value) is not int or not 1 <= value <= 2**31 - 1
+        for value in (uid, gid)
     ):
         raise ValueError("composition_operator_invalid")
     _configuration(config)
@@ -457,7 +467,9 @@ def render_composition(
         gid,
         inference_source_sha256=inference_source_sha256,
     )
-    project = "depositar-ai-release-" + bundle_id[:12] + "-" + source_revision[:12]
+    project = (
+        "depositar-ai-release-" + bundle_id[:12] + "-" + source_revision[:12]
+    )
     alias = project + "-web"
     bundle_target = "/catalog/sha256-" + bundle_id
     services = {
@@ -476,7 +488,12 @@ def render_composition(
         "conversation-api": {
             **_runtime(uid, gid, cpus=2, memory=2 * 1024**3, pids=96),
             "image": "depositar-search-conversation:" + source_revision,
-            "networks": ["website", "existing-inference", "catalog", "ranking"],
+            "networks": [
+                "website",
+                "existing-inference",
+                "catalog",
+                "ranking",
+            ],
             "environment": {
                 "SEARCH_API_MANIFEST_SHA256": catalog_plan["manifest_sha256"],
                 "SEARCH_API_BUNDLE_PATH": bundle_target,
@@ -487,7 +504,10 @@ def render_composition(
             "volumes": [
                 _mount(catalog_plan["bundle_path"], bundle_target),
                 _mount(query_paths.api_key, "/run/secrets/api_key"),
-                _mount(query_paths.index_password, "/run/secrets/index_query_password"),
+                _mount(
+                    query_paths.index_password,
+                    "/run/secrets/index_query_password",
+                ),
                 _mount(query_paths.binding, "/run/index/binding.json"),
                 _mount(query_paths.root_ca, "/run/index/root-ca.pem"),
             ],
@@ -581,7 +601,10 @@ def render_composition(
                     }
                 ],
                 "volumes": [
-                    _mount(config.state_root / "gateway/routes", "/etc/nginx/routes")
+                    _mount(
+                        config.state_root / "gateway/routes",
+                        "/etc/nginx/routes",
+                    )
                 ],
                 "healthcheck": _health(
                     [

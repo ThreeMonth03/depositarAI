@@ -1,4 +1,6 @@
-"""One native quota namespace and a small adapter with no admission algorithm."""
+"""One native quota namespace and a small adapter with no admission
+algorithm.
+"""
 
 import json
 from types import SimpleNamespace
@@ -52,7 +54,9 @@ class AdapterRenderingTests(unittest.TestCase):
         self.assertIn("principal_kind", individual["key"])
         self.assertIn("principal_kind", pool["key"])
         self.assertEqual(len({rule["key"] for rule in config["rules"]}), 3)
-        self.assertTrue(all("quota_period" in rule["key"] for rule in config["rules"]))
+        self.assertTrue(
+            all("quota_period" in rule["key"] for rule in config["rules"])
+        )
         self.assertTrue(
             all(
                 rule["time_window"] == "$http_x_depositar_quota_ttl"
@@ -69,14 +73,17 @@ class AdapterRenderingTests(unittest.TestCase):
         self.assertTrue(all("session_period" in rule["key"] for rule in rules))
         self.assertTrue(
             all(
-                rule["time_window"] == "$http_x_depositar_session_ttl" for rule in rules
+                rule["time_window"] == "$http_x_depositar_session_ttl"
+                for rule in rules
             )
         )
 
-    def test_login_required_keeps_account_and_global_limits_without_a_user_pool(self):
-        rules = render_counter(policy(access_mode="login_required", quota_global=4))[
-            "rules"
-        ]
+    def test_login_required_keeps_account_global_limits_without_pool(
+        self,
+    ):
+        rules = render_counter(
+            policy(access_mode="login_required", quota_global=4)
+        )["rules"]
         self.assertEqual(
             [rule["header_prefix"] for rule in rules], ["Individual", "Global"]
         )

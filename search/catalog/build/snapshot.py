@@ -39,9 +39,13 @@ def load_source(path: str) -> List[Dict[str, Any]]:
                     "source line %d exceeds the line-size limit" % line_number
                 )
             if expanded > policy.MAX_EXPANDED_BYTES:
-                raise policy.BundleError("source exceeds the expanded-size limit")
+                raise policy.BundleError(
+                    "source exceeds the expanded-size limit"
+                )
             if not line.strip():
-                raise policy.BundleError("blank JSON Lines records are not allowed")
+                raise policy.BundleError(
+                    "blank JSON Lines records are not allowed"
+                )
             codec.check_json_nesting(line)
             try:
                 text = line.decode("utf-8", errors="strict")

@@ -1,4 +1,6 @@
-"""One Compose website release updates two images and retains quotas/backend."""
+"""One Compose website release updates two images and retains
+quotas/backend.
+"""
 
 import fcntl
 import json
@@ -11,10 +13,17 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.deployment.public_entry import host, updates
-from tests.unit.deployment.public_entry import test_preflight as preflight_fixture
+from tests.unit.deployment.public_entry import (
+    test_preflight as preflight_fixture,
+)
 
 OLD, NEW, FRONT, NEW_FRONT = ("sha256:" + c * 64 for c in "abcf")
-REVISIONS = {OLD: "1" * 40, FRONT: "1" * 40, NEW: "2" * 40, NEW_FRONT: "2" * 40}
+REVISIONS = {
+    OLD: "1" * 40,
+    FRONT: "1" * 40,
+    NEW: "2" * 40,
+    NEW_FRONT: "2" * 40,
+}
 
 
 class ComposeRunner:
@@ -37,7 +46,10 @@ class ComposeRunner:
             self.entrance = False
         if command[0] == "up" and command[-1] == "quota-redis":
             self.redis_starts += 1
-        if command[0] == "up" and command[-2:] == ["public-web", "public-frontend"]:
+        if command[0] == "up" and command[-2:] == [
+            "public-web",
+            "public-frontend",
+        ]:
             self.images = tuple(
                 config["services"][role]["image"]
                 for role in ("public-web", "public-frontend")
@@ -89,7 +101,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
             "services": {
                 "conversation-api": {"image": "sha256:" + "d" * 64},
                 "web": {
-                    "environment": {"WEB_UPSTREAM": "http://conversation-api:8000"},
+                    "environment": {
+                        "WEB_UPSTREAM": "http://conversation-api:8000"
+                    },
                     "volumes": [
                         {
                             "type": "bind",
@@ -128,16 +142,22 @@ class PublicEntryUpdatesTests(unittest.TestCase):
 
     def invoke(self, function, web=OLD, frontend=FRONT):
         kwargs = dict(
-            runner=self.runner, image_inspector=self.inspector, smoke_probe=self.smoke
+            runner=self.runner,
+            image_inspector=self.inspector,
+            smoke_probe=self.smoke,
         )
         if function is updates.rollback_public_entry:
             return function(self.config_path, **kwargs)
-        return function(self.config_path, self.release_path, web, frontend, **kwargs)
+        return function(
+            self.config_path, self.release_path, web, frontend, **kwargs
+        )
 
     def active(self):
         return json.loads((self.base / "active.json").read_text())
 
-    def test_pair_update_and_explicit_rollback_preserve_redis_and_private_backend(self):
+    def test_pair_update_and_rollback_keep_redis_and_private_backend(
+        self,
+    ):
         started = self.invoke(updates.bootstrap_public_entry)
         self.assertEqual(started["status"], "public_entry_started")
         self.assertEqual(self.runner.redis_starts, 1)
@@ -146,7 +166,8 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         updated = self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
         self.assertEqual(updated["status"], "public_entry_updated")
         self.assertEqual(
-            (updated["web_image"], updated["web_nginx_image"]), (NEW, NEW_FRONT)
+            (updated["web_image"], updated["web_nginx_image"]),
+            (NEW, NEW_FRONT),
         )
         self.assertEqual(updated["previous_generation"], started["generation"])
         self.assertEqual(self.runner.images, (NEW, NEW_FRONT))
@@ -161,7 +182,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         self.assertEqual(self.release_path.read_bytes(), baseline)
         self.assertGreaterEqual(self.backend.call_count, 6)
 
-    def test_failed_candidate_closes_entrance_and_waits_for_manual_rollback(self):
+    def test_failed_candidate_closes_entrance_and_waits_for_manual_rollback(
+        self,
+    ):
         self.invoke(updates.bootstrap_public_entry)
         original = self.active()
         self.runner.fail_image = NEW_FRONT
@@ -213,12 +236,18 @@ class PublicEntryUpdatesTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
             else:
-                failed = self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
+                failed = self.invoke(
+                    updates.update_public_entry, NEW, NEW_FRONT
+                )
                 self.assertEqual(failed["status"], "deployment_failed")
         self.assertFalse(self.runner.entrance)
         self.assertEqual(self.active()["web_image"], NEW)
-        self.assertEqual(self.active()["previous_generation"], initial["generation"])
-        self.assertEqual((self.base / "pending.json").exists(), not after_unlink)
+        self.assertEqual(
+            self.active()["previous_generation"], initial["generation"]
+        )
+        self.assertEqual(
+            (self.base / "pending.json").exists(), not after_unlink
+        )
         if not after_unlink:
             pending = json.loads((self.base / "pending.json").read_text())
             self.assertEqual(pending["candidate"], self.active()["generation"])
@@ -231,14 +260,21 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         self.assertFalse((self.base / "pending.json").exists())
         self.assertTrue(self.runner.entrance)
         self.assertFalse(
-            any("quota-redis" in command for command in self.runner.commands[count:])
+            any(
+                "quota-redis" in command
+                for command in self.runner.commands[count:]
+            )
         )
 
-    def test_pending_unlink_failure_after_active_publication_can_roll_back(self):
+    def test_pending_unlink_failure_after_active_publication_can_roll_back(
+        self,
+    ):
         self.pending_cleanup_failure(OSError("unlink failed"))
 
     def test_pending_fsync_failure_after_unlink_can_roll_back(self):
-        self.pending_cleanup_failure(OSError("fsync failed"), after_unlink=True)
+        self.pending_cleanup_failure(
+            OSError("fsync failed"), after_unlink=True
+        )
 
     def test_interruption_after_active_publication_can_roll_back(self):
         self.pending_cleanup_failure(KeyboardInterrupt())
@@ -259,7 +295,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
             ):
                 self.invoke(updates.rollback_public_entry)
             self.assertEqual(self.runner.commands[count:], [])
-            self.assertEqual(self.active()["generation"], initial["generation"])
+            self.assertEqual(
+                self.active()["generation"], initial["generation"]
+            )
 
     def bootstrap_cleanup_failure(self, error, *, after_unlink=False):
         original_remove = updates._remove
@@ -278,7 +316,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
                 self.assertEqual(failed["status"], "deployment_failed")
         self.assertFalse(self.runner.entrance)
         self.assertIsNone(self.active()["previous_generation"])
-        self.assertEqual((self.base / "pending.json").exists(), not after_unlink)
+        self.assertEqual(
+            (self.base / "pending.json").exists(), not after_unlink
+        )
         sentinel = self.base / "redis-data/quotas"
         sentinel.write_text("keep")
         count = len(self.runner.commands)
@@ -296,15 +336,21 @@ class PublicEntryUpdatesTests(unittest.TestCase):
             call for call in self.runner.commands if call[-1] == "quota-redis"
         ]
         self.assertEqual(len(redis_commands), 2)
-        self.assertTrue(all("--no-recreate" in call for call in redis_commands))
+        self.assertTrue(
+            all("--no-recreate" in call for call in redis_commands)
+        )
 
     def test_bootstrap_pending_unlink_failure_can_retry_the_same_pair(self):
         self.bootstrap_cleanup_failure(OSError("unlink failed"))
 
     def test_bootstrap_pending_fsync_failure_can_retry_the_same_pair(self):
-        self.bootstrap_cleanup_failure(OSError("fsync failed"), after_unlink=True)
+        self.bootstrap_cleanup_failure(
+            OSError("fsync failed"), after_unlink=True
+        )
 
-    def test_bootstrap_interruption_after_active_write_can_retry_the_same_pair(self):
+    def test_bootstrap_interruption_after_active_write_can_retry_the_same_pair(
+        self,
+    ):
         self.bootstrap_cleanup_failure(KeyboardInterrupt())
 
     def test_bootstrap_refuses_unrelated_active_pending_generations(self):
@@ -367,18 +413,24 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
         self.reject_legacy_api()
         count = len(self.runner.commands)
-        for action in (updates.update_public_entry, updates.rollback_public_entry):
+        for action in (
+            updates.update_public_entry,
+            updates.rollback_public_entry,
+        ):
             with (
                 self.subTest(action=action.__name__),
                 self.assertRaisesRegex(
-                    updates.preflight.PublicEntryPreflightError, "contract_changed$"
+                    updates.preflight.PublicEntryPreflightError,
+                    "contract_changed$",
                 ),
             ):
                 self.invoke(action)
         self.assertEqual(self.runner.commands[count:], [])
         self.assertTrue(self.runner.entrance)
 
-    def test_local_legacy_bff_snapshot_blocks_update_and_rollback_before_mutation(self):
+    def test_legacy_bff_snapshot_blocks_update_and_rollback_before_mutation(
+        self,
+    ):
         self.invoke(updates.bootstrap_public_entry)
         self.invoke(updates.update_public_entry, NEW, NEW_FRONT)
         original = self.inspector
@@ -391,7 +443,10 @@ class PublicEntryUpdatesTests(unittest.TestCase):
 
         self.inspector = old_contract
         count = len(self.runner.commands)
-        for action in (updates.update_public_entry, updates.rollback_public_entry):
+        for action in (
+            updates.update_public_entry,
+            updates.rollback_public_entry,
+        ):
             with (
                 self.subTest(action=action.__name__),
                 self.assertRaisesRegex(ValueError, "profile_changed$"),
@@ -421,7 +476,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
 
     def test_operations_cannot_run_concurrently(self):
         descriptor = os.open(
-            self.state / ".public-entry-operation.lock", os.O_CREAT | os.O_RDWR, 0o600
+            self.state / ".public-entry-operation.lock",
+            os.O_CREAT | os.O_RDWR,
+            0o600,
         )
         self.addCleanup(os.close, descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -430,19 +487,22 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         self.assertEqual(self.runner.commands, [])
 
     def test_smoke_failure_never_reports_a_successful_release(self):
-        self.smoke = lambda _config: (_ for _ in ()).throw(ValueError("unhealthy"))
+        self.smoke = lambda _config: (_ for _ in ()).throw(
+            ValueError("unhealthy")
+        )
         result = self.invoke(updates.bootstrap_public_entry)
         self.assertEqual(result["status"], "deployment_failed")
         self.assertFalse(self.runner.entrance)
         self.assertFalse((self.base / "active.json").exists())
         self.assertTrue((self.base / "pending.json").exists())
 
-    def test_first_boot_can_retry_only_the_same_sealed_pair_without_resetting_redis(
+    def test_first_boot_retries_only_same_sealed_pair_without_redis_reset(
         self,
     ):
         self.runner.fail_image = FRONT
         self.assertEqual(
-            self.invoke(updates.bootstrap_public_entry)["status"], "deployment_failed"
+            self.invoke(updates.bootstrap_public_entry)["status"],
+            "deployment_failed",
         )
         sentinel = self.base / "redis-data/keep-existing-quotas"
         sentinel.write_text("keep")
@@ -460,11 +520,16 @@ class PublicEntryUpdatesTests(unittest.TestCase):
             call for call in self.runner.commands if call[-1] == "quota-redis"
         ]
         self.assertEqual(len(redis_commands), 2)
-        self.assertTrue(all("--no-recreate" in call for call in redis_commands))
+        self.assertTrue(
+            all("--no-recreate" in call for call in redis_commands)
+        )
 
-    def test_loopback_smoke_verifies_home_and_bundled_assets_without_redirects(self):
+    def test_loopback_smoke_verifies_home_and_bundled_assets_without_redirects(
+        self,
+    ):
         config = SimpleNamespace(
-            loopback_port=18084, public_origin="https://public.example.org:9443"
+            loopback_port=18084,
+            public_origin="https://public.example.org:9443",
         )
 
         def response(body, mime):
@@ -475,7 +540,9 @@ class PublicEntryUpdatesTests(unittest.TestCase):
         replies = [
             response(b'{"status":"ok"}', "application/json"),
             response(
-                b'<div id="root"></div><script src="/assets/index-test.js"></script><link href="/assets/index-test.css">',
+                b'<div id="root"></div>'
+                b'<script src="/assets/index-test.js"></script>'
+                b'<link href="/assets/index-test.css">',
                 "text/html",
             ),
             response(b"body{}", "text/css"),
@@ -487,7 +554,12 @@ class PublicEntryUpdatesTests(unittest.TestCase):
             updates._smoke(config)
             self.assertEqual(
                 [call.args[1] for call in connection.request.call_args_list],
-                ["/healthz", "/", "/assets/index-test.css", "/assets/index-test.js"],
+                [
+                    "/healthz",
+                    "/",
+                    "/assets/index-test.css",
+                    "/assets/index-test.js",
+                ],
             )
             self.assertTrue(
                 all(

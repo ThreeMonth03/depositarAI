@@ -1,4 +1,6 @@
-"""Real three-plane policy integration under the release host, without Docker IO."""
+"""Real three-plane policy integration under the release host, without Docker
+IO.
+"""
 
 from __future__ import annotations
 
@@ -17,15 +19,18 @@ from tests.unit.catalog.test_client_lease import (
 from tests.unit.deployment.test_composition import product
 from tests.unit.deployment.catalog_fixtures import sealed_catalog_storage
 from tests.unit.deployment.test_inference_runtime import images, snapshot
-from tests.unit.deployment.release.test_runtime import evidence as release_evidence
+from tests.unit.deployment.release.test_runtime import (
+    evidence as release_evidence,
+)
 
 
 def evidence(test):
     """Align existing catalog, GPU and website fixtures to one actual topology.
 
-    These are Docker inspection fixtures, not self-authenticating host receipts.
-    The callback below represents the separately sealed inference receipt while
-    every actual container/network profile is checked by the real validators.
+    These are Docker inspection fixtures, not self-authenticating host
+    receipts. The callback below represents the separately sealed inference
+    receipt while every actual container/network profile is checked by the
+    real validators.
     """
     cpu, catalog = release_evidence(), catalog_evidence()
     catalog_project = catalog["core_plan"]["project"]
@@ -57,7 +62,10 @@ def evidence(test):
             attachment["NetworkID"] = network_ids[name]
     catalog_containers = catalog["core_containers"]
     for row in catalog_containers:
-        if row["Config"]["Labels"]["com.docker.compose.service"] == "ollama-embedding":
+        if (
+            row["Config"]["Labels"]["com.docker.compose.service"]
+            == "ollama-embedding"
+        ):
             row["Id"] = "6" * 64
     catalog_network = catalog["catalog_network"]
     website_network = cpu["networks"][0]
@@ -99,7 +107,10 @@ def evidence(test):
         baseline[0][gpu_compose["name"]],
         [baseline[1][network["Name"]] for network in gpu_networks],
     )
-    authority = {"catalog_identity": cpu["catalog_identity"], "runtime": catalog_proof}
+    authority = {
+        "catalog_identity": cpu["catalog_identity"],
+        "runtime": catalog_proof,
+    }
     verified = []
 
     def verify_inference(proof):
@@ -127,7 +138,9 @@ def evidence(test):
 
 
 class SnapshotDocker:
-    """Exercise the host collector's real unfiltered inspect/ls argument flow."""
+    """Exercise the host collector's real unfiltered inspect/ls argument
+    flow.
+    """
 
     def __init__(self, values):
         self.groups, self.networks = copy.deepcopy(values)
@@ -148,10 +161,15 @@ class SnapshotDocker:
             names = [name for name in self.networks if name.startswith(prefix)]
             names.extend(self.extra_networks)
             return "".join(
-                json.dumps({"ID": "f" * 64, "Name": name}) + "\n" for name in names
+                json.dumps({"ID": "f" * 64, "Name": name}) + "\n"
+                for name in names
             ).encode()
         if arguments[0] == "inspect":
-            rows = {row["Id"]: row for group in self.groups.values() for row in group}
+            rows = {
+                row["Id"]: row
+                for group in self.groups.values()
+                for row in group
+            }
             result = [rows[identifier] for identifier in arguments[1:]]
         elif arguments[:2] == ["network", "inspect"]:
             result = [self.networks[name] for name in arguments[2:]]
@@ -163,7 +181,9 @@ class SnapshotDocker:
 
 
 class ReleaseHostIntegrationTests(unittest.TestCase):
-    def test_baseline_to_actual_lease_proves_all_three_planes_without_mutation(self):
+    def test_baseline_to_actual_lease_proves_all_three_planes_without_mutation(
+        self,
+    ):
         host, baseline, leased, expected_lease, verified = evidence(self)
         original = copy.deepcopy((baseline, leased))
         baseline_result = host.observe(snapshot=baseline)
@@ -174,11 +194,16 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
         result = host.observe(snapshot=leased)
         self.assertEqual(result[0], host.authority["runtime"])
         gpu, cpu = host.last
-        self.assertEqual(gpu["api_container_id"], host.lease["api_container_id"])
-        self.assertEqual(gpu["client_lease_sha256"], cpu["lease_sha256"])
-        self.assertEqual(cpu["lease_sha256"], client_lease.lease_digest(host.lease))
         self.assertEqual(
-            set(cpu["container_ids"]), {"web", "conversation-api", "filtered-embedding"}
+            gpu["api_container_id"], host.lease["api_container_id"]
+        )
+        self.assertEqual(gpu["client_lease_sha256"], cpu["lease_sha256"])
+        self.assertEqual(
+            cpu["lease_sha256"], client_lease.lease_digest(host.lease)
+        )
+        self.assertEqual(
+            set(cpu["container_ids"]),
+            {"web", "conversation-api", "filtered-embedding"},
         )
         self.assertEqual(len(verified), 2)
         self.assertEqual((baseline, leased), original)
@@ -187,12 +212,20 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
         self.assertNotIn("never-save-this-value", json.dumps(host.last))
 
     def test_changed_volume_receipts_cannot_authorize_runtime(self):
-        for filename in ("admin-image.json", "volume-started.json", "volume.json"):
+        for filename in (
+            "admin-image.json",
+            "volume-started.json",
+            "volume.json",
+        ):
             with self.subTest(filename=filename):
                 host, baseline, _leased, _lease, _verified = evidence(self)
-                record = release.execution.read_record(host.context["root"], filename)
+                record = release.execution.read_record(
+                    host.context["root"], filename
+                )
                 field = (
-                    "image_id" if filename == "admin-image.json" else "helper_image_id"
+                    "image_id"
+                    if filename == "admin-image.json"
+                    else "helper_image_id"
                 )
                 record[field] = "sha256:" + "f" * 64
                 release.execution.write_record(
@@ -248,7 +281,9 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                         }[network_kind]
                     )
                 )
-                baseline[1][name]["Containers"][expected["api_container_id"]] = {}
+                baseline[1][name]["Containers"][
+                    expected["api_container_id"]
+                ] = {}
                 with self.assertRaises(ValueError):
                     host.observe(snapshot=baseline)
 
@@ -263,13 +298,25 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                     "ranking": "_ranking",
                     "website": "_website",
                 }[network_kind]
-                name = next(name for name in leased[1] if name.endswith(suffix))
-                leased[1][name]["Containers"]["f" * 64] = {"Name": "unknown-helper"}
+                name = next(
+                    name for name in leased[1] if name.endswith(suffix)
+                )
+                leased[1][name]["Containers"]["f" * 64] = {
+                    "Name": "unknown-helper"
+                }
                 with self.assertRaises(ValueError):
                     host.observe(snapshot=leased)
 
-    def test_api_replacement_capability_and_catalog_identity_drift_reject(self):
-        for kind in ("replacement", "gpu", "environment", "catalog_id", "invalid_pid"):
+    def test_api_replacement_capability_and_catalog_identity_drift_reject(
+        self,
+    ):
+        for kind in (
+            "replacement",
+            "gpu",
+            "environment",
+            "catalog_id",
+            "invalid_pid",
+        ):
             with self.subTest(kind=kind):
                 host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
@@ -281,9 +328,13 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                 if kind == "replacement":
                     api["Id"] = "f" * 64
                 elif kind == "gpu":
-                    api["HostConfig"]["DeviceRequests"] = [{"Driver": "nvidia"}]
+                    api["HostConfig"]["DeviceRequests"] = [
+                        {"Driver": "nvidia"}
+                    ]
                 elif kind == "environment":
-                    api["Config"]["Env"].append("UNKNOWN_SECRET=never-save-this-value")
+                    api["Config"]["Env"].append(
+                        "UNKNOWN_SECRET=never-save-this-value"
+                    )
                 elif kind == "catalog_id":
                     host.lease["catalog_network_id"] = "f" * 64
                 else:
@@ -292,7 +343,10 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                     host.observe(snapshot=leased)
 
     def test_gpu_process_restart_cannot_match_sealed_baseline_receipt(self):
-        for field, value in (("Pid", 9999), ("StartedAt", "2026-10-12T12:00:00Z")):
+        for field, value in (
+            ("Pid", 9999),
+            ("StartedAt", "2026-10-12T12:00:00Z"),
+        ):
             with self.subTest(field=field):
                 host, _baseline, leased, _expected, _verified = evidence(self)
                 host.lease = host.make_lease(leased)
@@ -313,7 +367,8 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                 row = next(
                     row
                     for row in leased[0][host.compose["name"]]
-                    if row["Config"]["Labels"]["com.docker.compose.service"] == service
+                    if row["Config"]["Labels"]["com.docker.compose.service"]
+                    == service
                 )
                 row["State"]["Pid"] += 1
                 host.observe(snapshot=leased)
@@ -330,7 +385,7 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
                         "release_runtime_changed_during_acceptance",
                     )
 
-    def test_collect_handles_shuffled_actual_rows_and_observe_uses_real_validators(
+    def test_collect_handles_shuffled_rows_and_observe_uses_real_validators(
         self,
     ):
         host, baseline, leased, expected, _verified = evidence(self)
@@ -340,7 +395,9 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
         self.assertEqual(
             host.last[0]["container_ids"],
             {
-                row["Config"]["Labels"]["com.docker.compose.service"]: row["Id"]
+                row["Config"]["Labels"]["com.docker.compose.service"]: row[
+                    "Id"
+                ]
                 for row in baseline[0][host.inference_compose["name"]]
             },
         )
@@ -354,7 +411,9 @@ class ReleaseHostIntegrationTests(unittest.TestCase):
         self.assertEqual(len(collected[1]), 4)
         # Actual peer maps are never filtered before any pure plane validator.
         for name, network in collected[1].items():
-            self.assertEqual(network["Containers"], leased[1][name]["Containers"])
+            self.assertEqual(
+                network["Containers"], leased[1][name]["Containers"]
+            )
 
     def test_collector_rejects_extra_project_container_or_network(self):
         for kind in ("container", "network"):

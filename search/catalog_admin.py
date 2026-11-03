@@ -66,11 +66,17 @@ def read_admin_secret(path: Path = ADMIN_SECRET_PATH) -> str:
         before = path.lstat()
     except OSError:
         raise CLIError("administrator secret is unavailable") from None
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError:
-        raise CLIError("administrator secret cannot be opened safely") from None
+        raise CLIError(
+            "administrator secret cannot be opened safely"
+        ) from None
     try:
         opened = os.fstat(descriptor)
         if (
@@ -89,7 +95,9 @@ def read_admin_secret(path: Path = ADMIN_SECRET_PATH) -> str:
         try:
             current = os.stat(path, follow_symlinks=False)
         except OSError:
-            raise CLIError("administrator secret changed while being read") from None
+            raise CLIError(
+                "administrator secret changed while being read"
+            ) from None
         if not _same_file(opened, current):
             raise CLIError("administrator secret changed while being read")
     finally:
@@ -99,7 +107,9 @@ def read_admin_secret(path: Path = ADMIN_SECRET_PATH) -> str:
     try:
         value = raw[:-1].decode("ascii", "strict")
     except UnicodeError:
-        raise CLIError("administrator secret has an invalid encoding") from None
+        raise CLIError(
+            "administrator secret has an invalid encoding"
+        ) from None
     if SECRET_RE.fullmatch(value) is None:
         raise CLIError("administrator secret has an invalid format")
     return value
@@ -135,7 +145,8 @@ def vector_deadline_seconds(value: str) -> float:
         raise argparse.ArgumentTypeError("deadline must be a number") from None
     if not 0 < parsed <= MAX_VECTOR_DEADLINE_SECONDS:
         raise argparse.ArgumentTypeError(
-            "deadline must be in (0, %d] seconds" % int(MAX_VECTOR_DEADLINE_SECONDS)
+            "deadline must be in (0, %d] seconds"
+            % int(MAX_VECTOR_DEADLINE_SECONDS)
         )
     return parsed
 
@@ -146,7 +157,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--manifest-sha256", required=True)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    import_command = commands.add_parser("import", help="import one sealed bundle")
+    import_command = commands.add_parser(
+        "import", help="import one sealed bundle"
+    )
     import_command.add_argument("--batch-size", type=int, default=100)
     import_command.add_argument(
         "--deadline-seconds", type=token_deadline_seconds, default=600.0
@@ -160,7 +173,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
 
     pass_command = commands.add_parser(
-        "vector-pass", help="run one production pass with private durable evidence"
+        "vector-pass",
+        help="run one production pass with private durable evidence",
     )
     pass_command.add_argument("--journal-dir", type=Path, required=True)
     pass_command.add_argument("--run-id", required=True)
@@ -212,7 +226,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "manifest_sha256": bundle.manifest_sha256,
                 "recipe_sha256": arguments.recipe_sha256,
             }
-            with DurableVectorJournal(arguments.journal_dir, identity) as journal:
+            with DurableVectorJournal(
+                arguments.journal_dir, identity
+            ) as journal:
                 result = catalog.build_vector_pass(
                     ADMIN_USERNAME,
                     password,

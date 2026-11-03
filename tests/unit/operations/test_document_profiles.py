@@ -1,4 +1,5 @@
-"""Protect the single profile processor's reusable extraction and provenance."""
+"""Protect the single profile processor's reusable extraction and
+provenance."""
 
 from contextlib import ExitStack
 import hashlib
@@ -70,10 +71,14 @@ class DocumentProfileTests(unittest.TestCase):
                 os.close(profiles)
                 os.close(extractions)
 
-    def test_extraction_reuse_preserves_bound_profile_and_private_payload(self):
+    def test_extraction_reuse_preserves_bound_profile_and_private_payload(
+        self,
+    ):
         with (
             patch.object(source, "acquire", return_value=self.acquired),
-            patch.object(extractor, "extract", return_value=self.result) as parse,
+            patch.object(
+                extractor, "extract", return_value=self.result
+            ) as parse,
         ):
             first = self.process()
             second = self.process()
@@ -81,9 +86,13 @@ class DocumentProfileTests(unittest.TestCase):
         self.assertEqual(parse.call_count, 1)
         self.assertTrue(second["extraction_cache_hit"])
         self.assertEqual(first["profile_sha256"], second["profile_sha256"])
-        self.assertNotEqual(first["profile_sha256"], changed_manifest["profile_sha256"])
+        self.assertNotEqual(
+            first["profile_sha256"], changed_manifest["profile_sha256"]
+        )
         self.assertNotIn("7.2", json.dumps(first))
-        path = self.root / "state/profiles" / (first["profile_sha256"] + ".json")
+        path = (
+            self.root / "state/profiles" / (first["profile_sha256"] + ".json")
+        )
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(
             json.loads(path.read_text())["source"]["content_sha256"], self.sha
@@ -95,8 +104,12 @@ class DocumentProfileTests(unittest.TestCase):
         for cached in (False, True):
             if cached:
                 with (
-                    patch.object(source, "acquire", return_value=self.acquired),
-                    patch.object(extractor, "extract", return_value=self.result),
+                    patch.object(
+                        source, "acquire", return_value=self.acquired
+                    ),
+                    patch.object(
+                        extractor, "extract", return_value=self.result
+                    ),
                 ):
                     self.process()
                     self.assertTrue(self.process()["extraction_cache_hit"])
@@ -141,7 +154,13 @@ class DocumentProfileTests(unittest.TestCase):
                             None,
                             container_name="depositarai-extract-" + "e" * 32,
                         )
-                    for operation in (acquire, extraction, publish, parse, build):
+                    for operation in (
+                        acquire,
+                        extraction,
+                        publish,
+                        parse,
+                        build,
+                    ):
                         operation.assert_not_called()
                 self.assertEqual(state.exists(), cached)
                 self.assertEqual(
@@ -156,7 +175,9 @@ class DocumentProfileTests(unittest.TestCase):
     def test_policy_change_reextracts_cached_material(self):
         with (
             patch.object(source, "acquire", return_value=self.acquired),
-            patch.object(extractor, "extract", return_value=self.result) as parse,
+            patch.object(
+                extractor, "extract", return_value=self.result
+            ) as parse,
         ):
             self.process()
             parse.return_value = dict(self.result, columns=[])
@@ -167,14 +188,18 @@ class DocumentProfileTests(unittest.TestCase):
     def test_corrupt_extraction_cache_is_not_silently_rebuilt(self):
         with (
             patch.object(source, "acquire", return_value=self.acquired),
-            patch.object(extractor, "extract", return_value=self.result) as parse,
+            patch.object(
+                extractor, "extract", return_value=self.result
+            ) as parse,
         ):
             self.process()
             path = next((self.root / "state/extractions").glob("*.json"))
             record = json.loads(path.read_text())
             record["identity"]["encoding"] = "cp950"
             path.write_text(json.dumps(record))
-            with self.assertRaisesRegex(controller.ProfileError, "cache_invalid"):
+            with self.assertRaisesRegex(
+                controller.ProfileError, "cache_invalid"
+            ):
                 self.process()
         self.assertEqual(parse.call_count, 1)
 
@@ -187,7 +212,9 @@ class DocumentProfileTests(unittest.TestCase):
                 return_value=dict(self.result, input_sha256="0" * 64),
             ),
         ):
-            with self.assertRaisesRegex(controller.ProfileError, "content_mismatch"):
+            with self.assertRaisesRegex(
+                controller.ProfileError, "content_mismatch"
+            ):
                 self.process()
         self.assertEqual(list((self.root / "state/profiles").iterdir()), [])
 
@@ -202,7 +229,9 @@ class DocumentProfileTests(unittest.TestCase):
                 ),
             ),
         ):
-            with self.assertRaisesRegex(extractor.ExtractorError, "cleanup_failed"):
+            with self.assertRaisesRegex(
+                extractor.ExtractorError, "cleanup_failed"
+            ):
                 self.process()
 
 

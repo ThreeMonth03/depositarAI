@@ -1,7 +1,8 @@
 """Prepare query access to one complete private catalog, never activate a site.
 
 The lifecycle caller holds the product lock. This facade owns the catalog lock,
-binds transports to the same validated Docker snapshot, and records intent before
+binds transports to the same validated Docker snapshot, and records intent
+before
 any projection/account write. An incomplete run requires operator recovery;
 neither passwords nor remote identities are rotated or retried automatically.
 """
@@ -89,7 +90,8 @@ def _identity(context, gate, scan):
 
 
 def _reports(identity, scan, reports, bundle):
-    """Validate closed, credential-free reports before interpreting old receipts."""
+    """Validate closed, credential-free reports before interpreting old
+    receipts."""
     if type(reports) is not dict or set(reports) != {"projection", "access"}:
         raise RuntimeError("catalog_query_report_invalid")
     projected, indexed = (reports[key] for key in ("projection", "access"))
@@ -113,7 +115,12 @@ def _reports(identity, scan, reports, bundle):
                 bundle,
                 identity["index"],
                 [
-                    {"name": name, "http": status, "expected": status, "passed": True}
+                    {
+                        "name": name,
+                        "http": status,
+                        "expected": status,
+                        "passed": True,
+                    }
                     for name, status in (
                         ("search_allowed", 200),
                         ("wrong_key", 401),
@@ -143,13 +150,18 @@ def _credentials(root, bundle, index):
         private_io.verify_directory(fd, root)
         return (
             query,
-            {name: hashlib.sha256(raw).hexdigest() for name, raw in encoded.items()},
+            {
+                name: hashlib.sha256(raw).hexdigest()
+                for name, raw in encoded.items()
+            },
         )
     finally:
         os.close(fd)
 
 
-def _history(root, identity, scan, bundle, credential_hashes, *, reserve=False):
+def _history(
+    root, identity, scan, bundle, credential_hashes, *, reserve=False
+):
     runs = [path for path in root.iterdir() if path.name != "identity.json"]
     if (len(runs) > MAX_RUNS or reserve and len(runs) == MAX_RUNS) or any(
         re.fullmatch(r"[0-9a-f]{32}", path.name) is None for path in runs
@@ -163,14 +175,18 @@ def _history(root, identity, scan, bundle, credential_hashes, *, reserve=False):
             os.close(fd)
         if names != {"started.json", "complete.json"}:
             raise RuntimeError("catalog_query_recovery_required")
-        started, completed = _read(path, "started.json"), _read(path, "complete.json")
+        started, completed = (
+            _read(path, "started.json"),
+            _read(path, "complete.json"),
+        )
         if (
             type(started) is not dict
             or set(started) != {"identity", "run_id"}
             or not projection.same_json(started["identity"], identity)
             or started["run_id"] != path.name
             or type(completed) is not dict
-            or set(completed) != {"started_sha256", "credential_sha256", "reports"}
+            or set(completed)
+            != {"started_sha256", "credential_sha256", "reports"}
             or completed["started_sha256"] != execution.digest_record(started)
             or not projection.same_json(
                 completed["credential_sha256"], credential_hashes
@@ -182,7 +198,7 @@ def _history(root, identity, scan, bundle, credential_hashes, *, reserve=False):
 
 
 def _sealed_scan(context, gate, identity):
-    """Interpret sealed query identity only against the existing vector gate."""
+    """Interpret sealed query identity against the existing vector gate."""
     if type(identity) is not dict:
         raise RuntimeError("catalog_query_identity_changed")
     index = projection.require_index(identity.get("index"))
@@ -231,14 +247,15 @@ def read_authority(context):
     This entry accepts no caller-supplied runtime/query dictionaries as facts.
     Returned credential hashes bind private files; no password is returned.
     """
-    if require_clean_revision(context["repo"], runner=context["runner"]) != context.get(
-        "source_revision", context["plan"]["revision"]
-    ):
+    if require_clean_revision(
+        context["repo"], runner=context["runner"]
+    ) != context.get("source_revision", context["plan"]["revision"]):
         raise RuntimeError("catalog_query_source_changed")
     try:
         gate, runtime, _images = vectors.read_complete_evidence(context)
         root, history = (
-            context["root"] / name for name in ("query-access", "query-operations")
+            context["root"] / name
+            for name in ("query-access", "query-operations")
         )
         root_fd, history_fd = private_io.open_directory(root), None
         try:
@@ -255,10 +272,17 @@ def read_authority(context):
                 raise RuntimeError("catalog_query_receipt_changed")
             identity = ready["identity"]
             scan = _sealed_scan(context, gate, identity)
-            if not projection.same_json(_read(history, "identity.json"), identity):
+            if not projection.same_json(
+                _read(history, "identity.json"), identity
+            ):
                 raise RuntimeError("catalog_query_identity_changed")
-            _index, hashes = _credentials(root, context["bundle"], identity["index"])
-            if _history(history, identity, scan, context["bundle"], hashes) < 1:
+            _index, hashes = _credentials(
+                root, context["bundle"], identity["index"]
+            )
+            if (
+                _history(history, identity, scan, context["bundle"], hashes)
+                < 1
+            ):
                 raise RuntimeError("catalog_query_receipt_changed")
             complete = _read(history / ready["run_id"], "complete.json")
             if ready["complete_sha256"] != execution.digest_record(complete):
@@ -285,9 +309,9 @@ def read_authority(context):
             os.close(root_fd)
     except FileNotFoundError:
         raise RuntimeError("catalog_query_complete_evidence_missing") from None
-    if require_clean_revision(context["repo"], runner=context["runner"]) != context.get(
-        "source_revision", context["plan"]["revision"]
-    ):
+    if require_clean_revision(
+        context["repo"], runner=context["runner"]
+    ) != context.get("source_revision", context["plan"]["revision"]):
         raise RuntimeError("catalog_query_source_changed")
     return {
         "catalog_identity": {
@@ -350,7 +374,9 @@ def verify_authority(
     if not projection.same_json(
         scan,
         _sealed_scan(
-            context, vectors.read_complete_evidence(context)[0], ready.get("identity")
+            context,
+            vectors.read_complete_evidence(context)[0],
+            ready.get("identity"),
         ),
     ):
         raise RuntimeError("catalog_query_vector_evidence_changed")
@@ -392,8 +418,11 @@ def provision(
     runner=None,
     opensearch_factory=OpenSearchClient,
 ):
-    """Provision/verify query access with no API client attachment or host ports."""
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    """Provision/verify query access with no API client attachment or host
+    ports."""
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     with execution.operation_lock(context):
         return _provision(context, opensearch_factory)
 
@@ -434,7 +463,9 @@ def _provision(context, opensearch_factory):
     else:
         if set(path.name for path in root.iterdir()) != QUERY_FILES:
             raise RuntimeError("catalog_query_inventory_changed")
-        _query, hashes = _credentials(root, context["bundle"], identity["index"])
+        _query, hashes = _credentials(
+            root, context["bundle"], identity["index"]
+        )
     completed_runs = _history(
         history, identity, scan, context["bundle"], hashes, reserve=True
     )
@@ -446,10 +477,13 @@ def _provision(context, opensearch_factory):
         or re.fullmatch(r"[0-9a-f]{32}", ready["run_id"]) is None
         or completed_runs < 1
         or ready["complete_sha256"]
-        != execution.digest_record(_read(history / ready["run_id"], "complete.json"))
+        != execution.digest_record(
+            _read(history / ready["run_id"], "complete.json")
+        )
     ):
         raise RuntimeError("catalog_query_receipt_changed")
-    # Recheck the peer/security proof immediately before publishing write intent.
+    # Recheck the peer/security proof immediately before publishing write
+    # intent.
     if before != execution.digest_record(
         execution.require_runtime(context)
     ) or peers != connection.peers(context, runtime, images):
@@ -492,7 +526,9 @@ def _provision(context, opensearch_factory):
         final_projection, {**projected, "projection_updated_count": 0}
     ) or not projection.same_json(final_access, {**indexed, "created": False}):
         raise RuntimeError("catalog_query_permissions_or_projection_changed")
-    after_scan = projection.verify_vectors(client, context["bundle"], identity["index"])
+    after_scan = projection.verify_vectors(
+        client, context["bundle"], identity["index"]
+    )
     if not projection.same_json(scan, after_scan) or not projection.same_json(
         gate, vectors.verify_complete(context)
     ):
@@ -538,12 +574,16 @@ def _provision(context, opensearch_factory):
         },
         replace=ready is not None,
     )
-    cache = reuse.export(context, client, after_scan, _read(root, "ready.json"))
+    cache = reuse.export(
+        context, client, after_scan, _read(root, "ready.json")
+    )
     return {
         **identity,
         "status": "query-ready",
         "run_id": run_id,
-        "query_receipt_sha256": execution.digest_record(_read(root, "ready.json")),
+        "query_receipt_sha256": execution.digest_record(
+            _read(root, "ready.json")
+        ),
         "permissions_verified": True,
         "runtime_verified": True,
         "host_cleanup_verified": True,

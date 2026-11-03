@@ -1,4 +1,6 @@
-"""Offline CPU release drift regressions; no Docker, models or HTTP requests."""
+"""Offline CPU release drift regressions; no Docker, models or HTTP
+requests.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +30,9 @@ def evidence():
         },
     )
     compose["services"]["filtered-embedding"]["image"] = "sha256:" + "b" * 64
-    values["lease"]["release_compose_sha256"] = client_lease.lease_digest(compose)
+    values["lease"]["release_compose_sha256"] = client_lease.lease_digest(
+        compose
+    )
     images = {
         "conversation-api": {
             "Id": values["lease"]["api_image_id"],
@@ -90,7 +94,9 @@ def evidence():
             Env=[
                 key + "=" + value
                 for key, value in (
-                    dict(entry.split("=", 1) for entry in image["Config"]["Env"])
+                    dict(
+                        entry.split("=", 1) for entry in image["Config"]["Env"]
+                    )
                     | service["environment"]
                 ).items()
             ],
@@ -152,7 +158,9 @@ def evidence():
             "com.docker.compose.project": compose["name"],
             "com.docker.compose.network": "website",
         },
-        "Containers": {row["Id"]: {"Name": "not-authority"} for row in containers},
+        "Containers": {
+            row["Id"]: {"Name": "not-authority"} for row in containers
+        },
     }
     return {
         **values,
@@ -205,9 +213,16 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertEqual(values, original)
         self.assertEqual(
             set(result),
-            {"container_ids", "network_ids", "start_identity_sha256", "lease_sha256"},
+            {
+                "container_ids",
+                "network_ids",
+                "start_identity_sha256",
+                "lease_sha256",
+            },
         )
-        self.assertEqual(set(result["container_ids"]), release_runtime.SERVICES)
+        self.assertEqual(
+            set(result["container_ids"]), release_runtime.SERVICES
+        )
         self.assertEqual(result["network_ids"], values["lease"]["network_ids"])
         self.assertEqual(
             result["lease_sha256"], client_lease.lease_digest(values["lease"])
@@ -227,7 +242,8 @@ class ReleaseRuntimeTests(unittest.TestCase):
             checker.call_args.kwargs["api_container"], values["containers"][0]
         )
         self.assertIs(
-            checker.call_args.kwargs["catalog_network"], values["catalog_network"]
+            checker.call_args.kwargs["catalog_network"],
+            values["catalog_network"],
         )
 
     def test_api_capability_or_catalog_peer_drift_is_rejected(self):
@@ -240,16 +256,22 @@ class ReleaseRuntimeTests(unittest.TestCase):
                         "8000/tcp": [{"HostPort": "8000"}]
                     }
                 elif kind == "gpu":
-                    api["HostConfig"]["DeviceRequests"] = [{"Driver": "nvidia"}]
+                    api["HostConfig"]["DeviceRequests"] = [
+                        {"Driver": "nvidia"}
+                    ]
                 elif kind == "mount":
                     api["Mounts"][0]["RW"] = True
                 elif kind == "environment":
-                    api["Config"]["Env"].append("UNAPPROVED_SECRET=private-value")
+                    api["Config"]["Env"].append(
+                        "UNAPPROVED_SECRET=private-value"
+                    )
                 else:
                     values["catalog_network"]["Containers"]["f" * 64] = {}
                 self.reject(values, "release_runtime_client_lease_invalid")
 
-    def test_full_inventory_rejects_extra_missing_duplicate_wrong_project(self):
+    def test_full_inventory_rejects_extra_missing_duplicate_wrong_project(
+        self,
+    ):
         for kind in (
             "extra",
             "missing",
@@ -261,11 +283,15 @@ class ReleaseRuntimeTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 values = evidence()
                 if kind == "extra":
-                    values["containers"].append(copy.deepcopy(values["containers"][1]))
+                    values["containers"].append(
+                        copy.deepcopy(values["containers"][1])
+                    )
                 elif kind == "missing":
                     values["containers"].pop()
                 elif kind == "duplicate":
-                    values["containers"][2] = copy.deepcopy(values["containers"][1])
+                    values["containers"][2] = copy.deepcopy(
+                        values["containers"][1]
+                    )
                 elif kind in {"project", "oneoff"}:
                     values["containers"][1]["Config"]["Labels"][
                         "com.docker.compose." + kind
@@ -300,19 +326,25 @@ class ReleaseRuntimeTests(unittest.TestCase):
                 values["networks"][0][key] = content
                 self.reject(values)
 
-    def test_website_network_required_and_duplicate_or_unknown_network_rejected(self):
+    def test_website_network_required_duplicate_or_unknown_network_rejects(
+        self,
+    ):
         for kind in ("missing", "duplicate", "unknown"):
             with self.subTest(kind=kind):
                 values = evidence()
                 if kind == "missing":
                     values["networks"] = []
                 else:
-                    values["networks"].append(copy.deepcopy(values["networks"][0]))
+                    values["networks"].append(
+                        copy.deepcopy(values["networks"][0])
+                    )
                     if kind == "unknown":
                         values["networks"][1]["Name"] = "unapproved"
                 self.reject(values)
 
-    def test_optional_external_snapshot_identity_does_not_replace_peer_validation(self):
+    def test_optional_external_identity_does_not_replace_peer_validation(
+        self,
+    ):
         values = evidence()
         values["networks"].append(copy.deepcopy(values["catalog_network"]))
         release_runtime.validate_runtime(**values)
@@ -339,7 +371,9 @@ class ReleaseRuntimeTests(unittest.TestCase):
                         attachments[name]["Aliases"] = ["web"]
                     self.reject(values)
 
-    def test_cpu_profiles_reject_resource_gpu_namespace_and_logging_drift(self):
+    def test_cpu_profiles_reject_resource_gpu_namespace_and_logging_drift(
+        self,
+    ):
         drifts = (
             ("Runtime", "nvidia"),
             ("ReadonlyRootfs", False),
@@ -377,7 +411,11 @@ class ReleaseRuntimeTests(unittest.TestCase):
 
     def test_user_terminal_and_port_drift(self):
         for index in (1, 2):
-            for key, content in (("User", "0:0"), ("Tty", True), ("OpenStdin", True)):
+            for key, content in (
+                ("User", "0:0"),
+                ("Tty", True),
+                ("OpenStdin", True),
+            ):
                 with self.subTest(index=index, key=key):
                     values = evidence()
                     values["containers"][index]["Config"][key] = content
@@ -393,7 +431,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
                     }
                     self.reject(values, "release_runtime_publishes_port")
 
-    def test_both_services_reject_command_entrypoint_workingdir_and_environment_drift(
+    def test_services_reject_command_entrypoint_workdir_or_env_drift(
         self,
     ):
         for index in (1, 2):
@@ -462,7 +500,9 @@ class ReleaseRuntimeTests(unittest.TestCase):
                             mounts.append(copy.deepcopy(mounts[-1]))
                     self.reject(values, "release_runtime_mounts_changed")
 
-    def test_approved_tmpfs_mounts_and_exposed_unpublished_port_are_allowed(self):
+    def test_approved_tmpfs_mounts_and_exposed_unpublished_port_are_allowed(
+        self,
+    ):
         values = evidence()
         for row in values["containers"][1:]:
             for target in row["HostConfig"]["Tmpfs"]:
@@ -493,9 +533,13 @@ class ReleaseRuntimeTests(unittest.TestCase):
                     values["containers"][index]["State"][key] = content
                     self.reject(values)
             values = evidence()
-            before = release_runtime.validate_runtime(**values)["start_identity_sha256"]
+            before = release_runtime.validate_runtime(**values)[
+                "start_identity_sha256"
+            ]
             values["containers"][index]["State"]["Pid"] += 1
-            after = release_runtime.validate_runtime(**values)["start_identity_sha256"]
+            after = release_runtime.validate_runtime(**values)[
+                "start_identity_sha256"
+            ]
             self.assertNotEqual(before, after)
             values["containers"][index]["RestartCount"] = 1
             self.reject(values)
@@ -510,7 +554,9 @@ class ReleaseRuntimeTests(unittest.TestCase):
             ):
                 with self.subTest(index=index, key=key):
                     values = evidence()
-                    values["containers"][index]["Config"]["Healthcheck"][key] = content
+                    values["containers"][index]["Config"]["Healthcheck"][
+                        key
+                    ] = content
                     self.reject(values, "release_runtime_healthcheck_changed")
 
     def test_unsafe_resealed_service_plans_are_not_accepted(self):
@@ -573,22 +619,29 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
                 proof = release_runtime.validate_runtime(**values)
                 self.assertEqual(values, original)
                 self.assertEqual(
-                    proof["lease_sha256"], client_lease.lease_digest(values["lease"])
+                    proof["lease_sha256"],
+                    client_lease.lease_digest(values["lease"]),
                 )
                 self.assertEqual(
                     set(proof["container_ids"].values()),
                     {c["Id"] for c in values["containers"]},
                 )
 
-    def test_shared_collection_is_verified_once_without_a_single_peer_bypass(self):
+    def test_shared_collection_is_verified_once_without_a_single_peer_bypass(
+        self,
+    ):
         values = shared_runtime_evidence()
         real = client_lease.validate_clients
         with (
-            mock.patch.object(client_lease, "validate_clients", wraps=real) as checker,
+            mock.patch.object(
+                client_lease, "validate_clients", wraps=real
+            ) as checker,
             mock.patch.object(
                 client_lease,
                 "validate_client_lease",
-                side_effect=AssertionError("single-client default must not be reused"),
+                side_effect=AssertionError(
+                    "single-client default must not be reused"
+                ),
             ),
         ):
             release_runtime.validate_runtime(**values)
@@ -600,8 +653,15 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
         values.pop("shared_clients")
         self.reject(values, "release_runtime_client_lease_invalid")
 
-    def test_stale_snapshot_environment_plan_or_catalog_cannot_select_a_proof(self):
-        for kind in ("api_snapshot", "image_environment", "plan", "catalog_snapshot"):
+    def test_stale_snapshot_environment_plan_or_catalog_cannot_select_a_proof(
+        self,
+    ):
+        for kind in (
+            "api_snapshot",
+            "image_environment",
+            "plan",
+            "catalog_snapshot",
+        ):
             with self.subTest(kind=kind):
                 values = shared_runtime_evidence()
                 member = values["shared_clients"][0]
@@ -612,9 +672,9 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
                 elif kind == "image_environment":
                     member["image_environment"].reverse()
                 elif kind == "plan":
-                    member["release_compose"]["services"]["web"]["healthcheck"][
-                        "interval"
-                    ] = "30s"
+                    member["release_compose"]["services"]["web"][
+                        "healthcheck"
+                    ]["interval"] = "30s"
                     member["lease"]["release_compose_sha256"] = (
                         client_lease.lease_digest(member["release_compose"])
                     )
@@ -634,9 +694,9 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
                     for member in clients:
                         member["catalog_network"]["Containers"]["f" * 64] = {}
                 elif kind == "gpu":
-                    clients[1]["api_container"]["HostConfig"]["DeviceRequests"] = [
-                        {"Driver": "nvidia"}
-                    ]
+                    clients[1]["api_container"]["HostConfig"][
+                        "DeviceRequests"
+                    ] = [{"Driver": "nvidia"}]
                 elif kind == "third":
                     clients.append(copy.deepcopy(clients[1]))
                 else:
@@ -659,9 +719,9 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
         for member in values["shared_clients"]:
             peers = member["catalog_network"]["Containers"]
             peers[new] = peers.pop(old)
-        values["catalog_network"]["Containers"][new] = values["catalog_network"][
-            "Containers"
-        ].pop(old)
+        values["catalog_network"]["Containers"][new] = values[
+            "catalog_network"
+        ]["Containers"].pop(old)
         self.reject(values, "release_runtime_identity_collision")
 
 

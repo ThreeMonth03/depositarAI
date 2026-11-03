@@ -29,7 +29,11 @@ class ExecutionTests(unittest.TestCase):
         self.record = make_record(
             capture(
                 turn(None),
-                turn({"start": "2024", "end": "2024"}, version=2, retain_topic=True),
+                turn(
+                    {"start": "2024", "end": "2024"},
+                    version=2,
+                    retain_topic=True,
+                ),
             )
         )
         self.plan = self.record["plan"]
@@ -101,11 +105,15 @@ class ExecutionTests(unittest.TestCase):
     def quality_summary(self):
         return {
             key: value
-            for key, value in json.loads(self.record["files"]["run.json"]).items()
+            for key, value in json.loads(
+                self.record["files"]["run.json"]
+            ).items()
             if key != "identity"
         }
 
-    def test_fixed_argv_uses_frozen_executing_source_and_required_native_hash(self):
+    def test_fixed_argv_uses_frozen_executing_source_and_required_native_hash(
+        self,
+    ):
         for profile, script, flag, value in (
             (
                 self.quality,
@@ -122,11 +130,16 @@ class ExecutionTests(unittest.TestCase):
         ):
             with self.subTest(profile=profile["type"]):
                 argv = execution.argv(self.root, self.request(profile))
-                self.assertEqual(argv[:4], ["/usr/bin/python3", "-I", "-S", "-B"])
-                self.assertEqual(argv[4], self.root / "source/scripts" / script)
+                self.assertEqual(
+                    argv[:4], ["/usr/bin/python3", "-I", "-S", "-B"]
+                )
+                self.assertEqual(
+                    argv[4], self.root / "source/scripts" / script
+                )
                 self.assertEqual(argv[argv.index(flag) + 1], value)
                 self.assertEqual(
-                    argv[argv.index("--config") + 1], self.root / "native-config.json"
+                    argv[argv.index("--config") + 1],
+                    self.root / "native-config.json",
                 )
                 self.assertNotIn(profile["config"], argv)
         vector = execution.argv(self.root, self.request(self.vector))
@@ -139,34 +152,48 @@ class ExecutionTests(unittest.TestCase):
         self.capture_files()
         self.assertEqual(
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             ),
             "completed",
         )
         (self.root / "capture/capture.json").write_bytes(b"{}\n")
         with self.assertRaises(ValueError):
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             )
 
     def test_stdout_alone_is_not_verified_quality_evidence(self):
         self.freeze(self.quality)
         with self.assertRaises((OSError, ValueError)):
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             )
 
-    def test_quality_assertion_failure_does_not_become_collection_failure(self):
+    def test_quality_assertion_failure_does_not_become_collection_failure(
+        self,
+    ):
         captured = json.loads(self.record["files"]["capture.json"])
-        captured["cases"][0]["turns"][1]["response"]["result"]["state"]["topic"] = (
-            "different topic"
-        )
+        captured["cases"][0]["turns"][1]["response"]["result"]["state"][
+            "topic"
+        ] = "different topic"
         rewrite(self.record, captured=captured)
         self.freeze(self.quality)
         self.capture_files()
         self.assertEqual(
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             ),
             "completed",
         )
@@ -179,10 +206,15 @@ class ExecutionTests(unittest.TestCase):
         self.capture_files()
         with self.assertRaises(ValueError):
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             )
 
-    def test_quality_wrong_source_catalog_model_and_future_identity_are_rejected(self):
+    def test_quality_rejects_mismatched_identity_fields(
+        self,
+    ):
         original = deepcopy(self.record)
         self.freeze(self.quality)
         for key, value in (
@@ -200,24 +232,38 @@ class ExecutionTests(unittest.TestCase):
                 self.capture_files()
                 with self.assertRaises(JobError):
                     execution.verify(
-                        self.quality_summary(), 0, self.root, self.request(self.quality)
+                        self.quality_summary(),
+                        0,
+                        self.root,
+                        self.request(self.quality),
                     )
 
-    def test_future_identity_fields_are_preserved_when_the_full_hash_matches(self):
+    def test_future_identity_fields_are_preserved_when_the_full_hash_matches(
+        self,
+    ):
         run = json.loads(self.record["files"]["run.json"])
-        run["identity"]["future_selected_catalog"] = {"manifest_sha256": "d" * 64}
-        self.quality["expected_identity_sha256"] = queue.digest(run["identity"])
+        run["identity"]["future_selected_catalog"] = {
+            "manifest_sha256": "d" * 64
+        }
+        self.quality["expected_identity_sha256"] = queue.digest(
+            run["identity"]
+        )
         rewrite(self.record, run=run)
         self.freeze(self.quality)
         self.capture_files()
         self.assertEqual(
             execution.verify(
-                self.quality_summary(), 0, self.root, self.request(self.quality)
+                self.quality_summary(),
+                0,
+                self.root,
+                self.request(self.quality),
             ),
             "completed",
         )
 
-    def test_quality_failed_quarantined_or_changed_stdout_are_not_completed(self):
+    def test_quality_failed_quarantined_or_changed_stdout_are_not_completed(
+        self,
+    ):
         self.freeze(self.quality)
         original = deepcopy(self.record)
         for status in ("failed", "quarantined"):
@@ -233,7 +279,10 @@ class ExecutionTests(unittest.TestCase):
                 self.capture_files()
                 with self.assertRaises(JobError):
                     execution.verify(
-                        self.quality_summary(), 1, self.root, self.request(self.quality)
+                        self.quality_summary(),
+                        1,
+                        self.root,
+                        self.request(self.quality),
                     )
         self.record = original
         self.capture_files()
@@ -245,7 +294,9 @@ class ExecutionTests(unittest.TestCase):
                 self.request(self.quality),
             )
 
-    def test_vector_checkpoint_requires_runtime_target_counts_and_clean_new_pass(self):
+    def test_vector_checkpoint_needs_runtime_counts_and_clean_pass(
+        self,
+    ):
         self.freeze(self.vector)
         self.assertEqual(
             execution.verify(
@@ -270,7 +321,9 @@ class ExecutionTests(unittest.TestCase):
                     self.request(self.vector),
                 )
 
-    def test_zero_new_pass_checkpoint_is_not_completion_or_claimed_helper_cleanup(self):
+    def test_zero_pass_checkpoint_cannot_claim_completion_or_cleanup(
+        self,
+    ):
         self.freeze(self.vector)
         value = {
             **self.vector_report,
@@ -291,10 +344,15 @@ class ExecutionTests(unittest.TestCase):
         ):
             with self.subTest(change=change), self.assertRaises(JobError):
                 execution.verify(
-                    {**value, **change}, 2, self.root, self.request(self.vector)
+                    {**value, **change},
+                    2,
+                    self.root,
+                    self.request(self.vector),
                 )
 
-    def test_vector_new_completion_and_already_complete_readonly_are_distinct(self):
+    def test_vector_new_completion_and_already_complete_readonly_are_distinct(
+        self,
+    ):
         self.freeze(self.vector)
         value = {
             **self.vector_report,

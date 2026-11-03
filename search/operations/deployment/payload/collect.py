@@ -63,7 +63,9 @@ def _asset_records(paths, *, maximum):
     """Reuse the source tool's stable no-follow streaming reader."""
     result = {}
     for name, path in paths.items():
-        digest = source_artifact._read_file(path, maximum=maximum, digest_only=True)
+        digest = source_artifact._read_file(
+            path, maximum=maximum, digest_only=True
+        )
         result[name] = {"bytes": path.stat().st_size, "sha256": digest}
     return result
 
@@ -74,13 +76,17 @@ def _image_summary(revision, sources, inspected):
         "source_sha256": _digest(sources),
         "image_id": inspected["Id"],
         "image_environment_sha256": _digest(
-            source_bundle.parse_image_environment(inspected["Config"].get("Env"))
+            source_bundle.parse_image_environment(
+                inspected["Config"].get("Env")
+            )
         ),
     }
 
 
 def _catalog_images(context):
-    """Authenticate exact-project receipts, including the prepare-time helper."""
+    """Authenticate exact-project receipts, including the prepare-time
+    helper.
+    """
     staged = runtime._require_staged_images(context)
     images, admin = staged["images"], staged["admin_image"]
     helper = execution.read_record(context["root"], "hash-image.json")
@@ -91,7 +97,8 @@ def _catalog_images(context):
     }
     if (
         type(helper) is not dict
-        or set(helper) != {"image_id", "reference", "revision", "sources", "base"}
+        or set(helper)
+        != {"image_id", "reference", "revision", "sources", "base"}
         or helper["reference"] != backend.HASH_IMAGE_PREFIX + revision
         or helper["revision"] != revision
         or helper["sources"] != sources
@@ -114,7 +121,9 @@ def _catalog_images(context):
             context, entry["reference"], entry["image_id"], labels
         )
         result[role] = _image_summary(revision, entry["sources"], inspected)
-    ollama = execution.inspect_image(context, images["ollama-embedding"]["image_id"])
+    ollama = execution.inspect_image(
+        context, images["ollama-embedding"]["image_id"]
+    )
     result["ollama"] = {
         "image_id": ollama["Id"],
         "reference": composition.OLLAMA_IMAGE,
@@ -160,7 +169,8 @@ def package_product(
     """Export current application assets and a compatible catalog's own images.
 
     Missing receipts fail before source scanning/export. Models are copied and
-    deep-hashed by default; external mode records the exact required inventories.
+    deep-hashed by default; external mode records the exact required
+    inventories.
     Full runtime installation/registry-digest restoration are separate gates.
     """
     destination = _destination(config, repo_root, destination)
@@ -168,7 +178,9 @@ def package_product(
     source_plan = source_bundle.committed_source_plan(
         repo_root, revision, runner=source_runner
     )
-    authority = image_evidence.read_completed_images(config, store, source_plan)
+    authority = image_evidence.read_completed_images(
+        config, store, source_plan
+    )
     context = execution.load_context(
         config, catalog_plan, repo_root=repo_root, runner=catalog_runner
     )
@@ -191,10 +203,16 @@ def package_product(
         ) as temporary:
             temporary = Path(temporary)
             source_root = temporary / "source"
-            source_artifact.package(source_root, revision, scanner, repo_root=repo_root)
-            # Use the existing exact-tree/Git-bundle/CLI roundtrip before handing
-            # source files to the product exporter. This creates no Docker runtime.
-            source_artifact.restore(source_root, revision, temporary / "restored")
+            source_artifact.package(
+                source_root, revision, scanner, repo_root=repo_root
+            )
+            # Use the existing exact-tree/Git-bundle/CLI roundtrip before
+            # handing
+            # source files to the product exporter. This creates no Docker
+            # runtime.
+            source_artifact.restore(
+                source_root, revision, temporary / "restored"
+            )
             source_files = {
                 name: source_root / name
                 for name in product_package.source_names(revision)

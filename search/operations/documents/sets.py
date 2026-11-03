@@ -1,4 +1,6 @@
-"""Freeze explicit private profile references for a single metadata snapshot."""
+"""Freeze explicit private profile references for a single metadata
+snapshot.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +36,9 @@ class ProfileSetError(ValueError):
 
 
 def validate(value):
-    """Validate and copy a sorted set, rejecting duplicate resource identities."""
+    """Validate and copy a sorted set, rejecting duplicate resource
+    identities.
+    """
     if (
         type(value) is not dict
         or set(value)
@@ -56,7 +60,11 @@ def validate(value):
         or type(value["failures"]) is not list
     ):
         raise ProfileSetError("document_profile_set_invalid")
-    if not 1 <= len(value["profiles"]) + len(value["failures"]) <= MAX_SELECTED:
+    if (
+        not 1
+        <= len(value["profiles"]) + len(value["failures"])
+        <= MAX_SELECTED
+    ):
         raise ProfileSetError("document_profile_set_limit_exceeded")
     seen = set()
     for field, extra in (("profiles", "profile_sha256"), ("failures", "code")):
@@ -72,7 +80,9 @@ def validate(value):
                 )
                 or type(row[extra]) is not str
                 or (
-                    controller.SHA256 if extra == "profile_sha256" else _FAILURE_CODE
+                    controller.SHA256
+                    if extra == "profile_sha256"
+                    else _FAILURE_CODE
                 ).fullmatch(row[extra])
                 is None
             ):
@@ -87,8 +97,12 @@ def validate(value):
     return deepcopy(value)
 
 
-def publish(parent_fd, catalog_manifest_sha256, source_sha256, profiles, failures):
-    """Publish a content-addressed set once; identical publication is idempotent."""
+def publish(
+    parent_fd, catalog_manifest_sha256, source_sha256, profiles, failures
+):
+    """Publish a content-addressed set once; identical publication is
+    idempotent.
+    """
     try:
         info = os.fstat(parent_fd)
         if (
@@ -103,10 +117,12 @@ def publish(parent_fd, catalog_manifest_sha256, source_sha256, profiles, failure
                 "catalog_manifest_sha256": catalog_manifest_sha256,
                 "source_sha256": source_sha256,
                 "profiles": sorted(
-                    profiles, key=lambda row: (row["dataset_id"], row["resource_id"])
+                    profiles,
+                    key=lambda row: (row["dataset_id"], row["resource_id"]),
                 ),
                 "failures": sorted(
-                    failures, key=lambda row: (row["dataset_id"], row["resource_id"])
+                    failures,
+                    key=lambda row: (row["dataset_id"], row["resource_id"]),
                 ),
             }
         )
@@ -116,7 +132,9 @@ def publish(parent_fd, catalog_manifest_sha256, source_sha256, profiles, failure
         digest = hashlib.sha256(raw).hexdigest()
         name = "profile-set-" + digest + ".json"
         try:
-            private_io.write_file(parent_fd, name, raw, max_bytes=MAX_SET_BYTES)
+            private_io.write_file(
+                parent_fd, name, raw, max_bytes=MAX_SET_BYTES
+            )
         except FileExistsError:
             if (
                 private_io.read_file(
@@ -133,7 +151,9 @@ def publish(parent_fd, catalog_manifest_sha256, source_sha256, profiles, failure
 
 
 def read(path):
-    """Read a canonical private set whose filename authenticates its exact bytes."""
+    """Read a canonical private set whose filename authenticates its exact
+    bytes.
+    """
     try:
         path = Path(path)
         parent = controller._external_root(path.parent)

@@ -1,1 +1,3 @@
-"""Private, bounded cross-encoder reranking; no generation or tool execution."""
+"""Private, bounded cross-encoder reranking;
+no generation or tool execution.
+"""

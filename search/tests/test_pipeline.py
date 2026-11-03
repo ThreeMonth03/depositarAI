@@ -1,4 +1,6 @@
-"""Execute the actual pinned Haystack graph with injected live-client boundary."""
+"""Execute the actual pinned Haystack graph with injected live-client
+boundary.
+"""
 
 import unittest
 from search.api.retrieval.pipeline import retrieve
@@ -14,7 +16,9 @@ class PipelineTests(unittest.TestCase):
                 return [("shared", 1), (branch, 0.5)]
 
         conditions = {"time": {"start": "2025", "end": "2025"}}
-        rows, branches = retrieve(Client(), "水質", conditions, [1.0] * 768, 20)
+        rows, branches = retrieve(
+            Client(), "水質", conditions, [1.0] * 768, 20
+        )
         self.assertEqual(rows[0].id, "shared")
         self.assertEqual(len(rows), 3)
         self.assertEqual(set(branches), {"lexical", "vector"})

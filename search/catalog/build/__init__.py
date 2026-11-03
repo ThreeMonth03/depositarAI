@@ -1,1 +1,1 @@
-"""Offline metadata construction; import each implementation owner explicitly."""
+"""Offline metadata construction; import implementation owners explicitly."""

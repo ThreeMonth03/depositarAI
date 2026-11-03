@@ -1,4 +1,5 @@
-"""Validate public resource cards and private provenance without runtime deps."""
+"""Validate public resource cards and private provenance without runtime
+deps."""
 
 from copy import deepcopy
 import unittest
@@ -41,12 +42,15 @@ class ResourceContextTests(unittest.TestCase):
         original = [self.entry()]
         copied = resources.validate_enrichment_resources(original)
         copied[0]["context"]["columns"].append("extra")
-        self.assertEqual(["pH", "eventDate"], original[0]["context"]["columns"])
+        self.assertEqual(
+            ["pH", "eventDate"], original[0]["context"]["columns"]
+        )
 
     def test_source_links_have_one_canonical_local_landing_shape(self):
         good = "https://data.depositar.io/dataset/%E6%B0%B4%E8%B3%AA"
         self.assertEqual(
-            good + "/resource/" + IDENTIFIER, resources.resource_url(good, IDENTIFIER)
+            good + "/resource/" + IDENTIFIER,
+            resources.resource_url(good, IDENTIFIER),
         )
         for url in (
             "http://data.depositar.io/dataset/water",
@@ -71,7 +75,10 @@ class ResourceContextTests(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 resources.validate_resource_context(value)
-        another = {**item, "resource_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        another = {
+            **item,
+            "resource_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        }
         another["url"] = resources.resource_url(
             "https://data.depositar.io/dataset/water", another["resource_id"]
         )
@@ -104,7 +111,9 @@ class ResourceContextTests(unittest.TestCase):
             {"index_text": "unrelated values"},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                resources.validate_enrichment_resources([{**original, **changes}])
+                resources.validate_enrichment_resources(
+                    [{**original, **changes}]
+                )
         pdf = deepcopy(original)
         pdf["context"].update(format="PDF", columns=[], excerpt="wrong")
         with self.assertRaises(ValueError):

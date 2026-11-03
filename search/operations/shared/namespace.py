@@ -1,8 +1,9 @@
 """Require directory paths protected from other unprivileged Unix accounts.
 
 Root, the executing account and storage administrators remain trusted. Linux
-POSIX permission/ACL-mask and sticky semantics must be enforced by the filesystem;
-these checks do not authenticate a daemon or inspect arbitrary ACL policies.
+POSIX permission/ACL-mask and sticky semantics must be enforced by the
+filesystem; these checks do not authenticate a daemon or inspect arbitrary ACL
+policies.
 """
 
 import os
@@ -42,7 +43,9 @@ def check_directory(path, *, private=False):
             try:
                 info = os.fstat(child)
                 _check_directory(info)
-                named = os.stat(component, dir_fd=parent, follow_symlinks=False)
+                named = os.stat(
+                    component, dir_fd=parent, follow_symlinks=False
+                )
                 if any(
                     getattr(info, field) != getattr(named, field)
                     for field in ("st_dev", "st_ino", "st_uid", "st_mode")

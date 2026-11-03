@@ -27,7 +27,9 @@ class Principal:
     @property
     def owner(self) -> str | None:
         # A guest and user with the same opaque subject remain distinct owners.
-        return None if self.kind == "private" else f"{self.kind}:{self.subject}"
+        return (
+            None if self.kind == "private" else f"{self.kind}:{self.subject}"
+        )
 
 
 @dataclass(frozen=True)
@@ -41,11 +43,21 @@ class AccessIdentity:
         """Limits describe policy; this read never checks or spends quota."""
         return {
             "mode": self.mode,
-            "principal": {"kind": self.principal.kind, "id": self.principal.subject},
+            "principal": {
+                "kind": self.principal.kind,
+                "id": self.principal.subject,
+            },
             "can_search": True,
-            "login_url": "/auth/login" if self.principal.kind == "guest" else None,
-            "logout_url": "/auth/logout" if self.principal.kind == "user" else None,
-            "limits": {"turns": self.turns, "window_seconds": self.window_seconds},
+            "login_url": "/auth/login"
+            if self.principal.kind == "guest"
+            else None,
+            "logout_url": "/auth/logout"
+            if self.principal.kind == "user"
+            else None,
+            "limits": {
+                "turns": self.turns,
+                "window_seconds": self.window_seconds,
+            },
         }
 
 
@@ -80,7 +92,8 @@ class EdgeIdentity:
             raise SessionError(401, "authentication_required")
         try:
             values = {
-                name: entries[0].decode("ascii") for name, entries in expected.items()
+                name: entries[0].decode("ascii")
+                for name, entries in expected.items()
             }
             kind = values[b"x-depositar-principal-kind"]
             mode = values[b"x-depositar-access-mode"]
@@ -90,7 +103,9 @@ class EdgeIdentity:
                 raise ValueError("invalid public access mode")
             principal = Principal(kind, values[b"x-depositar-subject"])
             turns = self._limit(values[b"x-depositar-turn-limit"], 1, 10000)
-            window = self._limit(values[b"x-depositar-window-seconds"], 60, 604800)
+            window = self._limit(
+                values[b"x-depositar-window-seconds"], 60, 604800
+            )
         except (UnicodeError, ValueError):
             raise SessionError(401, "authentication_required") from None
         return AccessIdentity(principal, mode, turns, window)

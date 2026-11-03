@@ -38,14 +38,18 @@ from .transport import Deadline
 MAX_TOKEN_OPERATION_DEADLINE_SECONDS = 600.0
 
 
-def _token_operation_deadline(seconds: float, clock: Callable[[], float]) -> Deadline:
+def _token_operation_deadline(
+    seconds: float, clock: Callable[[], float]
+) -> Deadline:
     if (
         isinstance(seconds, bool)
         or not isinstance(seconds, (int, float))
         or not math.isfinite(float(seconds))
         or not 0 < float(seconds) <= MAX_TOKEN_OPERATION_DEADLINE_SECONDS
     ):
-        raise ConfigurationError("operation deadline is outside its token-safe cap")
+        raise ConfigurationError(
+            "operation deadline is outside its token-safe cap"
+        )
     return Deadline.after(float(seconds), clock)
 
 
@@ -117,10 +121,13 @@ class CatalogImporter:
             actual = frozenset(snapshot.entries)
             if snapshot.entries == expected_entries:
                 return snapshot
-            if snapshot.count > len(expected_entries) or not actual.issubset(expected):
+            if snapshot.count > len(expected_entries) or not actual.issubset(
+                expected
+            ):
                 raise _diagnosed(
                     ImportFailed(
-                        "post-import inventory contains data outside the sealed bundle"
+                        "post-import inventory contains data "
+                        "outside the sealed bundle"
                     ),
                     stage="post_import_inventory",
                     cause="inventory_mismatch",
@@ -147,7 +154,9 @@ class CatalogImporter:
             raise ConfigurationError(
                 "import token nonce must be 12 lowercase hex characters"
             )
-        deadline = _token_operation_deadline(deadline_seconds, self.access.clock)
+        deadline = _token_operation_deadline(
+            deadline_seconds, self.access.clock
+        )
         started = self.access.clock()
         batch_count = 0
         with self.access.token(
@@ -182,7 +191,8 @@ class CatalogImporter:
                         raise
                     raise _diagnosed(
                         ImportFailed(
-                            "document bulk request failed; catalog may be partially imported"
+                            "document bulk request failed; "
+                            "catalog may be partially imported"
                         ),
                         stage="bulk_after_prior_batch",
                         cause=_failure_cause(error),
@@ -195,7 +205,8 @@ class CatalogImporter:
                 ):
                     raise _diagnosed(
                         ImportFailed(
-                            "document bulk response was partial; catalog may be polluted"
+                            "document bulk response was partial; "
+                            "catalog may be polluted"
                         ),
                         stage="bulk_response",
                         cause=(
@@ -213,7 +224,8 @@ class CatalogImporter:
                     ):
                         raise _diagnosed(
                             ImportFailed(
-                                "document bulk response was partial; catalog may be polluted"
+                                "document bulk response was partial; "
+                                "catalog may be polluted"
                             ),
                             stage="bulk_response",
                             cause="bulk_response_partial",
@@ -227,7 +239,9 @@ class CatalogImporter:
                 raise
             except CatalogError as error:
                 raise _diagnosed(
-                    ImportFailed("post-import inventory could not be verified"),
+                    ImportFailed(
+                        "post-import inventory could not be verified"
+                    ),
                     stage="post_import_inventory",
                     cause=_failure_cause(error),
                 ) from None
@@ -260,7 +274,9 @@ class CatalogImporter:
             raise ConfigurationError(
                 "import token nonce must be 12 lowercase hex characters"
             )
-        deadline = _token_operation_deadline(deadline_seconds, self.access.clock)
+        deadline = _token_operation_deadline(
+            deadline_seconds, self.access.clock
+        )
         started = self.access.clock()
         expected_entries = self.bundle.expected_inventory_entries
         with self.access.token(
@@ -273,7 +289,8 @@ class CatalogImporter:
                 )
             except CatalogError:
                 raise InventoryConflict(
-                    "quarantined catalog does not exactly match the sealed bundle"
+                    "quarantined catalog does not exactly match "
+                    "the sealed bundle"
                 ) from None
             return ImportReport(
                 status="reconciled-active",

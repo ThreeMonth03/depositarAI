@@ -1,4 +1,6 @@
-"""Validate fixed job inputs and preserve their private, exact byte snapshots."""
+"""Validate fixed job inputs and preserve their private, exact byte
+snapshots.
+"""
 
 import hashlib
 import os
@@ -17,7 +19,13 @@ REVISION = re.compile(r"[0-9a-f]{40}\Z")
 MAX_CONFIG_BYTES = 16 * 1024
 MAX_CASE_BYTES = 64 * 1024
 FIELDS = {
-    "resource-pass": {"type", "bundle", "state_root", "plan_sha256", "manifest_sha256"},
+    "resource-pass": {
+        "type",
+        "bundle",
+        "state_root",
+        "plan_sha256",
+        "manifest_sha256",
+    },
     "quality-batch": {
         "type",
         "config",
@@ -52,9 +60,15 @@ def validate(profile, root):
     )
     for key, value in profile.items():
         if key.endswith("_sha256") or key == "bundle_id":
-            require(type(value) is str and SHA256.fullmatch(value), "profile_invalid")
+            require(
+                type(value) is str and SHA256.fullmatch(value),
+                "profile_invalid",
+            )
         elif key.endswith("_revision"):
-            require(type(value) is str and REVISION.fullmatch(value), "profile_invalid")
+            require(
+                type(value) is str and REVISION.fullmatch(value),
+                "profile_invalid",
+            )
     for key in ("bundle", "state_root", "config", "cases"):
         if key not in profile:
             continue
@@ -82,14 +96,18 @@ def validate(profile, root):
 
 def verify_source(profile, revision):
     if profile["type"] != "resource-pass":
-        require(profile["source_revision"] == revision, "profile_source_changed")
+        require(
+            profile["source_revision"] == revision, "profile_source_changed"
+        )
 
 
 def _read(filename, maximum):
     filename = Path(filename)
     fd = private_io.open_directory(filename.parent)
     try:
-        raw = private_io.read_file(fd, filename.name, mode=0o600, max_bytes=maximum)
+        raw = private_io.read_file(
+            fd, filename.name, mode=0o600, max_bytes=maximum
+        )
         private_io.verify_directory(fd, filename.parent)
         return raw
     finally:
@@ -132,7 +150,9 @@ def _check(profile, files):
 
 
 def load_inputs(profile):
-    """Read the selected immutable inputs without any native runtime inspection."""
+    """Read the selected immutable inputs without any native runtime
+    inspection.
+    """
     if profile["type"] == "resource-pass":
         verify_resource_plan(profile)
         return {}
@@ -155,7 +175,9 @@ def freeze(root, profile, files):
 
 
 def read_frozen(root, profile):
-    """Verify saved bytes, never substitute a modified registry/caller input."""
+    """Verify saved bytes, never substitute a modified registry/caller
+    input.
+    """
     files = {
         name: _read(root / name, maximum)
         for name, maximum in frozen_names(profile).items()
@@ -165,7 +187,9 @@ def read_frozen(root, profile):
 
 
 def verify_resource_plan(profile):
-    plan = strict_json(_read(Path(profile["state_root"]) / "plan.json", 8 * 1024**2))
+    plan = strict_json(
+        _read(Path(profile["state_root"]) / "plan.json", 8 * 1024**2)
+    )
     require(
         type(plan) is dict
         and hashlib.sha256(private_io.canonical(plan)).hexdigest()

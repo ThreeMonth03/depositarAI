@@ -31,12 +31,19 @@ def _equal(actual, expected, code):
 
 
 def read_completed_images(config, store, source_plan):
-    """Read closed completed source/image evidence, never attest its own source."""
-    return _read_completed_images(config, store, source_plan, candidate_required=True)
+    """Read closed completed source/image evidence, never attest its own
+    source.
+    """
+    return _read_completed_images(
+        config, store, source_plan, candidate_required=True
+    )
 
 
-def read_completed_images_at_revision(config, store, current_plan, origin_revision):
-    """Authenticate an original build whose complete reranker source is current.
+def read_completed_images_at_revision(
+    config, store, current_plan, origin_revision
+):
+    """Authenticate an original build whose complete reranker source is
+    current.
 
     Unrelated historical website recipes need not equal today's recipes. The
     original manifest, staged bytes and all build receipts remain sealed under
@@ -97,7 +104,10 @@ def read_completed_images_at_revision(config, store, current_plan, origin_revisi
             "inference_origin_reranker_source_changed",
         )
         _equal(
-            {path: origin["files"].get(path) for path in expected["source_map"]},
+            {
+                path: origin["files"].get(path)
+                for path in expected["source_map"]
+            },
             expected["source_map"],
             "inference_origin_reranker_source_changed",
         )
@@ -119,7 +129,9 @@ def _read_completed_images(config, store, source_plan, *, candidate_required):
     else:
         descriptor = private_io.open_directory(parent)
         try:
-            candidate = build._record(descriptor, name + ".image-complete.json")
+            candidate = build._record(
+                descriptor, name + ".image-complete.json"
+            )
         finally:
             os.close(descriptor)
     images = staging._image_result(
@@ -127,7 +139,9 @@ def _read_completed_images(config, store, source_plan, *, candidate_required):
         {
             "schema_version": 1,
             "revision": revision,
-            "images": candidate.get("images") if type(candidate) is dict else None,
+            "images": candidate.get("images")
+            if type(candidate) is dict
+            else None,
             "services_started": False,
             "registry_published": False,
         },

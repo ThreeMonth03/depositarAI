@@ -39,13 +39,19 @@ def _validate_metadata(
     if kind == "directory" and not stat.S_ISDIR(metadata.st_mode):
         raise PolicyError("a required directory is a symlink or special file")
     if kind == "file" and not stat.S_ISREG(metadata.st_mode):
-        raise PolicyError("the dictionary tree contains a symlink or special file")
+        raise PolicyError(
+            "the dictionary tree contains a symlink or special file"
+        )
     if metadata.st_uid != expected_uid:
-        raise PolicyError("the dictionary tree contains an entry with the wrong owner")
+        raise PolicyError(
+            "the dictionary tree contains an entry with the wrong owner"
+        )
     if metadata.st_dev != expected_device:
         raise PolicyError("the dictionary tree crosses a filesystem boundary")
     if require_single_link and metadata.st_nlink != 1:
-        raise PolicyError("the dictionary tree contains a multiply-linked file")
+        raise PolicyError(
+            "the dictionary tree contains a multiply-linked file"
+        )
 
 
 def _apply_or_check_mode(fd: int, expected_mode: int, converge: bool) -> None:
@@ -55,7 +61,9 @@ def _apply_or_check_mode(fd: int, expected_mode: int, converge: bool) -> None:
         if actual_mode != expected_mode:
             os.fchmod(fd, expected_mode)
         if stat.S_IMODE(os.fstat(fd).st_mode) != expected_mode:
-            raise PolicyError("could not converge dictionary entry permissions")
+            raise PolicyError(
+                "could not converge dictionary entry permissions"
+            )
     elif actual_mode != expected_mode:
         raise PolicyError(
             "the dictionary tree contains an entry with unsafe permissions"
@@ -98,7 +106,9 @@ def enforce(data_root: str, converge: bool) -> None:
                 def visit(directory_fd: int, depth: int) -> None:
                     nonlocal entry_count
                     if depth > MAX_DEPTH:
-                        raise PolicyError("the dictionary tree exceeds the depth limit")
+                        raise PolicyError(
+                            "the dictionary tree exceeds the depth limit"
+                        )
                     try:
                         entries = os.scandir(directory_fd)
                     except OSError as error:
@@ -110,11 +120,13 @@ def enforce(data_root: str, converge: bool) -> None:
                             entry_count += 1
                             if entry_count > MAX_ENTRIES:
                                 raise PolicyError(
-                                    "the dictionary tree exceeds the entry limit"
+                                    "the dictionary tree exceeds "
+                                    "the entry limit"
                                 )
                             if not hasattr(os, "O_PATH"):
                                 raise PolicyError(
-                                    "the host cannot safely inspect dictionary entries"
+                                    "the host cannot safely inspect "
+                                    "dictionary entries"
                                 )
                             try:
                                 inspect_fd = os.open(
@@ -124,7 +136,8 @@ def enforce(data_root: str, converge: bool) -> None:
                                 )
                             except OSError as error:
                                 raise PolicyError(
-                                    "the dictionary tree contains an inaccessible or unsafe entry"
+                                    "the dictionary tree contains "
+                                    "an inaccessible or unsafe entry"
                                 ) from error
                             try:
                                 metadata = os.fstat(inspect_fd)
@@ -148,12 +161,15 @@ def enforce(data_root: str, converge: bool) -> None:
                                 try:
                                     child_fd = os.open(
                                         entry.name,
-                                        open_flags | os.O_CLOEXEC | os.O_NOFOLLOW,
+                                        open_flags
+                                        | os.O_CLOEXEC
+                                        | os.O_NOFOLLOW,
                                         dir_fd=directory_fd,
                                     )
                                 except OSError as error:
                                     raise PolicyError(
-                                        "the dictionary tree contains an inaccessible entry"
+                                        "the dictionary tree contains "
+                                        "an inaccessible entry"
                                     ) from error
                                 try:
                                     opened = os.fstat(child_fd)
@@ -162,7 +178,8 @@ def enforce(data_root: str, converge: bool) -> None:
                                         metadata.st_ino,
                                     ):
                                         raise PolicyError(
-                                            "the dictionary tree changed while it was opened"
+                                            "the dictionary tree changed "
+                                            "while it was opened"
                                         )
                                     if stat.S_ISDIR(metadata.st_mode):
                                         _apply_or_check_mode(
@@ -185,7 +202,8 @@ def enforce(data_root: str, converge: bool) -> None:
                                     metadata.st_ino,
                                 ):
                                     raise PolicyError(
-                                        "the dictionary tree changed while it was inspected"
+                                        "the dictionary tree changed "
+                                        "while it was inspected"
                                     )
                             finally:
                                 os.close(inspect_fd)
@@ -202,7 +220,8 @@ def enforce(data_root: str, converge: bool) -> None:
 def main() -> int:
     if len(sys.argv) != 3 or sys.argv[1] not in {"--check", "--converge"}:
         print(
-            "usage: search_dictionary_permissions.py (--check|--converge) DATA_ROOT",
+            "usage: search_dictionary_permissions.py "
+            "(--check|--converge) DATA_ROOT",
             file=sys.stderr,
         )
         return 2

@@ -1,4 +1,6 @@
-"""CI-only fixtures: real HTTP on both sides, deterministic inference boundary."""
+"""CI-only fixtures: real HTTP on both sides, deterministic inference
+boundary.
+"""
 
 from pathlib import Path
 
@@ -22,7 +24,9 @@ class Backend(ConversationFixture):
     async def call(self, operation, payload, timeout):
         if operation == "scope":
             return {
-                "decision": "out_of_scope" if "Python" in payload["query"] else "search"
+                "decision": "out_of_scope"
+                if "Python" in payload["query"]
+                else "search"
             }
         if operation == "conversation_plan":
             query = payload["query"]
@@ -36,7 +40,9 @@ class Backend(ConversationFixture):
             if calendar_text(query).lunar_date:
                 return {
                     **PLAN,
-                    "action": "refine" if payload["state"]["topic"] else "new_search",
+                    "action": "refine"
+                    if payload["state"]["topic"]
+                    else "new_search",
                     "topic": None if payload["state"]["topic"] else "澎湖古蹟",
                     "time_op": "lunar",
                     "lunar_time": {"calendar": "lunar", "text": query},
@@ -48,7 +54,9 @@ class Backend(ConversationFixture):
                 mode, unit, value = literal_spec(relative[0])
                 return {
                     **PLAN,
-                    "action": "refine" if payload["state"]["topic"] else "new_search",
+                    "action": "refine"
+                    if payload["state"]["topic"]
+                    else "new_search",
                     "topic": None if payload["state"]["topic"] else "氣候",
                     "time_op": "relative",
                     "relative_time": {
@@ -64,26 +72,36 @@ class Backend(ConversationFixture):
                 if "CSV" in query:
                     result.update(formats_op="set", formats=["CSV"])
                 elif "2024" in query:
-                    result.update(time_op="set", time={"start": "2024", "end": "2024"})
+                    result.update(
+                        time_op="set", time={"start": "2024", "end": "2024"}
+                    )
                 elif "取消時間" in query:
                     result.update(time_op="clear")
                 return result
             if "澎湖" in (payload.get("pending") or query):
                 return {**PLAN, "topic": "澎湖古蹟"}
-            return {**PLAN, "time_op": "set", "time": {"start": "2025", "end": "2025"}}
+            return {
+                **PLAN,
+                "time_op": "set",
+                "time": {"start": "2025", "end": "2025"},
+            }
         return await super().call(operation, payload, timeout)
 
 
 def conversation():
     path = key()
     return gpu_app(
-        Settings("a" * 40, "b" * 64, Path("/catalog"), path, True, 20), Backend()
+        Settings("a" * 40, "b" * 64, Path("/catalog"), path, True, 20),
+        Backend(),
     )
 
 
 def website():
     return website_app(
         WebSettings(
-            "http://127.0.0.1:8080", "http://conversation-api:8000", key(), "a" * 40
+            "http://127.0.0.1:8080",
+            "http://conversation-api:8000",
+            key(),
+            "a" * 40,
         )
     )

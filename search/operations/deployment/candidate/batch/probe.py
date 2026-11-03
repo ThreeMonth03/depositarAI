@@ -2,7 +2,8 @@
 
 The caller verifies the Docker snapshot and checkpoints shared model ownership.
 This module neither discovers endpoints nor accesses Docker or service keys.
-Each invocation owns one RAM-only session and returns public BFF responses only.
+Each invocation owns one RAM-only session and returns public BFF responses
+only.
 """
 
 from __future__ import annotations
@@ -67,7 +68,9 @@ class _Connection(AbortableConnection, http.client.HTTPConnection):
     debuglevel = 0
 
     def __init__(self, endpoint, timeout):
-        http.client.HTTPConnection.__init__(self, endpoint, 8000, timeout=timeout)
+        http.client.HTTPConnection.__init__(
+            self, endpoint, 8000, timeout=timeout
+        )
         self._init_abortable()
 
     def connect(self):
@@ -103,7 +106,9 @@ def _request(endpoint, method, path, *, deadline, token=None, payload=None):
     if token is not None:
         headers["Authorization"] = "Bearer " + token
     if payload is not None:
-        body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+        body = json.dumps(
+            payload, ensure_ascii=False, allow_nan=False
+        ).encode()
         headers["Content-Type"] = "application/json"
     timer.start()
     try:
@@ -127,7 +132,13 @@ def _request(endpoint, method, path, *, deadline, token=None, payload=None):
         raise
     except (TimeoutError, socket.timeout):
         raise _Failure("shared_batch_timeout") from None
-    except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError):
+    except (
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+        TypeError,
+        RecursionError,
+    ):
         code = "timeout" if expired.is_set() else "http_failed"
         raise _Failure("shared_batch_" + code) from None
     finally:
@@ -177,7 +188,10 @@ def _turn(value, version, revision, manifest, token):
         "response_invalid",
     )
     result = value["result"]
-    _require(type(result) is dict and set(result) == RESULT_FIELDS, "response_invalid")
+    _require(
+        type(result) is dict and set(result) == RESULT_FIELDS,
+        "response_invalid",
+    )
     _require(result["revision"] == revision, "identity_changed")
     _require(
         result["status"] in {"ok", "rejected", "clarification_required"}
@@ -207,29 +221,45 @@ def _turn(value, version, revision, manifest, token):
             and search.get("context_used") == value["context_used"],
             "response_invalid",
         )
-    # A malformed reviewed service must not turn a session secret into metadata.
+    # A malformed reviewed service must not turn a session secret into
+    # metadata.
     encoded = json.dumps(
         value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
     _require(token not in encoded, "response_invalid")
     # At most eight compact UTF-8 responses plus fixed per-turn report fields
     # stay below 3 MiB, including after JSON number/string normalization.
-    _require(len(encoded.encode("utf-8")) <= MAX_RESPONSE_BYTES, "response_limit")
+    _require(
+        len(encoded.encode("utf-8")) <= MAX_RESPONSE_BYTES, "response_limit"
+    )
 
 
 def conversation(
-    endpoint, queries, revision, manifest_sha256, *, checkpoint=None, deadline=None
+    endpoint,
+    queries,
+    revision,
+    manifest_sha256,
+    *,
+    checkpoint=None,
+    deadline=None,
 ):
-    """Run one fresh session, preserving ordered BFF responses and partial work.
+    """
+    Run one fresh session, preserving ordered BFF responses and partial work.
 
     ``endpoint`` is a previously authenticated RFC1918 IPv4, never a URL.
     ``checkpoint()`` runs before every turn and must enforce its own IO budget;
-    its time counts toward this case and the turn's wall_seconds. request_seconds
-    measures only the turn HTTP request, not the checkpoint or backend timings.
-    The optional deadline is absolute monotonic time. Five seconds reserve reset.
-    Ordinary failure and KeyboardInterrupt return a closed failed report.
+    its time counts toward this case and the turn's wall_seconds.
+    request_seconds measures only the turn HTTP request, not the checkpoint or
+    backend timings. The optional deadline is absolute monotonic time. Five
+    seconds reserve reset. Ordinary failure and KeyboardInterrupt return a
+    closed failed report.
     """
-    report = {"status": "failed", "turns": [], "error": None, "session_reset": False}
+    report = {
+        "status": "failed",
+        "turns": [],
+        "error": None,
+        "session_reset": False,
+    }
     token = None
     case_end = None
     try:
@@ -252,7 +282,9 @@ def conversation(
         try:
             queries = list(queries)
             for text in queries:
-                checked_query(text)  # Validate without changing the plan's raw text.
+                checked_query(
+                    text
+                )  # Validate without changing the plan's raw text.
         except (ValueError, TypeError):
             raise _Failure("shared_batch_input_invalid") from None
         _require(
@@ -283,12 +315,14 @@ def conversation(
         # Retain a valid token before the remaining identity checks, so an
         # unexpected revision also gets a reset without sending a query.
         _require(
-            type(session.get("token")) is str and TOKEN.fullmatch(session["token"]),
+            type(session.get("token")) is str
+            and TOKEN.fullmatch(session["token"]),
             "session_invalid",
         )
         token = session["token"]
         _require(
-            set(session) == {"token", "version", "expires_in", "max_turns", "revision"}
+            set(session)
+            == {"token", "version", "expires_in", "max_turns", "revision"}
             and type(session["version"]) is int
             and session["version"] == 0
             and type(session["expires_in"]) is int
@@ -300,18 +334,26 @@ def conversation(
         _require(session["revision"] == revision, "identity_changed")
         for index, text in enumerate(queries):
             started = time.monotonic()
-            turn = {"status": "failed", "wall_seconds": 0.0, "request_seconds": 0.0}
+            turn = {
+                "status": "failed",
+                "wall_seconds": 0.0,
+                "request_seconds": 0.0,
+            }
             report["turns"].append(turn)
             try:
                 turn_end = min(work_end, started + 125)
                 _remaining(turn_end)
                 if checkpoint is not None:
                     try:
-                        _require(checkpoint() is not False, "checkpoint_failed")
+                        _require(
+                            checkpoint() is not False, "checkpoint_failed"
+                        )
                     except KeyboardInterrupt:
                         raise
                     except Exception:
-                        raise _Failure("shared_batch_checkpoint_failed") from None
+                        raise _Failure(
+                            "shared_batch_checkpoint_failed"
+                        ) from None
                 _remaining(turn_end)
                 requested = time.monotonic()
                 try:
@@ -344,7 +386,9 @@ def conversation(
                 turn["error"] = "shared_batch_response_invalid"
                 raise _Failure("shared_batch_response_invalid") from None
             finally:
-                turn["wall_seconds"] = round(max(0.0, time.monotonic() - started), 3)
+                turn["wall_seconds"] = round(
+                    max(0.0, time.monotonic() - started), 3
+                )
         report["status"] = "complete"
     except _Failure as error:
         report["error"] = str(error)

@@ -1,4 +1,5 @@
-"""Check Unix directory-chain trust with synthetic owners and private fixtures."""
+"""Check Unix directory-chain trust with synthetic owners and private
+fixtures."""
 
 from contextlib import contextmanager
 import errno
@@ -30,7 +31,8 @@ class NamespaceTests(unittest.TestCase):
             "loaded = {name for name in sys.modules "
             "if name == 'search' or name.startswith('search.')}\n"
             "assert loaded == {'search', 'search.operations', "
-            "'search.operations.shared', 'search.operations.shared.namespace'}, "
+            "'search.operations.shared', "
+            "'search.operations.shared.namespace'}, "
             "sorted(loaded)\n"
         )
         result = subprocess.run(
@@ -72,7 +74,9 @@ class NamespaceTests(unittest.TestCase):
         try:
             with (
                 patch.object(namespace.os, "open", side_effect=open_directory),
-                patch.object(namespace.os, "close", side_effect=close_directory),
+                patch.object(
+                    namespace.os, "close", side_effect=close_directory
+                ),
             ):
                 yield opened
         finally:
@@ -82,7 +86,9 @@ class NamespaceTests(unittest.TestCase):
                     fcntl.fcntl(descriptor, fcntl.F_GETFD)
                 self.assertEqual(caught.exception.errno, errno.EBADF)
 
-    def test_directory_owner_and_write_permissions_form_one_trust_boundary(self):
+    def test_directory_owner_and_write_permissions_form_one_trust_boundary(
+        self,
+    ):
         executing_uid, foreign_uid = 12345, 23456
         accepted = (
             (0, 0o755),
@@ -104,18 +110,27 @@ class NamespaceTests(unittest.TestCase):
         with patch.object(namespace.os, "geteuid", return_value=executing_uid):
             for owner, mode in accepted:
                 with self.subTest(owner=owner, mode=oct(mode)):
-                    info = SimpleNamespace(st_uid=owner, st_mode=stat.S_IFDIR | mode)
+                    info = SimpleNamespace(
+                        st_uid=owner, st_mode=stat.S_IFDIR | mode
+                    )
                     namespace._check_directory(info)
             for owner, mode in refused:
                 with self.subTest(owner=owner, mode=oct(mode)):
-                    info = SimpleNamespace(st_uid=owner, st_mode=stat.S_IFDIR | mode)
+                    info = SimpleNamespace(
+                        st_uid=owner, st_mode=stat.S_IFDIR | mode
+                    )
                     with self.assertRaisesRegex(
                         namespace.NamespaceError, "^namespace_unsafe$"
                     ):
                         namespace._check_directory(info)
 
     def test_trusted_owner_cannot_make_a_nondirectory_acceptable(self):
-        for file_type in (stat.S_IFREG, stat.S_IFLNK, stat.S_IFIFO, stat.S_IFSOCK):
+        for file_type in (
+            stat.S_IFREG,
+            stat.S_IFLNK,
+            stat.S_IFIFO,
+            stat.S_IFSOCK,
+        ):
             with self.subTest(file_type=file_type):
                 info = SimpleNamespace(st_uid=0, st_mode=file_type | 0o1777)
                 with self.assertRaisesRegex(
@@ -192,7 +207,9 @@ class NamespaceTests(unittest.TestCase):
 
             with self.subTest(target=target.name):
                 with self.descriptors() as opened:
-                    with patch.object(namespace.os, "fstat", side_effect=foreign_owner):
+                    with patch.object(
+                        namespace.os, "fstat", side_effect=foreign_owner
+                    ):
                         with self.assertRaisesRegex(
                             namespace.NamespaceError, "^namespace_unsafe$"
                         ):
@@ -206,12 +223,15 @@ class NamespaceTests(unittest.TestCase):
                 namespace.check_directory(leaf)
                 with self.descriptors():
                     with self.assertRaisesRegex(
-                        namespace.NamespaceError, "^namespace_private_directory_unsafe$"
+                        namespace.NamespaceError,
+                        "^namespace_private_directory_unsafe$",
                     ):
                         namespace.check_directory(leaf, private=True)
                 self.assertEqual(stat.S_IMODE(leaf.stat().st_mode), mode)
 
-    def test_root_owned_leaf_is_not_private_for_another_executing_account(self):
+    def test_root_owned_leaf_is_not_private_for_another_executing_account(
+        self,
+    ):
         leaf = self.directory("leaf")
         identity = (leaf.stat().st_dev, leaf.stat().st_ino)
         real_fstat, real_stat = os.fstat, os.stat
@@ -227,9 +247,13 @@ class NamespaceTests(unittest.TestCase):
             return info
 
         with (
-            patch.object(namespace.os, "geteuid", return_value=os.geteuid() or 12345),
             patch.object(
-                namespace.os, "fstat", side_effect=lambda fd: root_owned(real_fstat(fd))
+                namespace.os, "geteuid", return_value=os.geteuid() or 12345
+            ),
+            patch.object(
+                namespace.os,
+                "fstat",
+                side_effect=lambda fd: root_owned(real_fstat(fd)),
             ),
             patch.object(
                 namespace.os,
@@ -239,7 +263,8 @@ class NamespaceTests(unittest.TestCase):
             self.descriptors(),
         ):
             with self.assertRaisesRegex(
-                namespace.NamespaceError, "^namespace_private_directory_unsafe$"
+                namespace.NamespaceError,
+                "^namespace_private_directory_unsafe$",
             ):
                 namespace.check_directory(leaf, private=True)
 
@@ -278,7 +303,9 @@ class NamespaceTests(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(target.stat(), before)
 
-    def test_named_entry_identity_drift_is_rejected_for_every_bound_field(self):
+    def test_named_entry_identity_drift_is_rejected_for_every_bound_field(
+        self,
+    ):
         leaf = self.directory("leaf")
         real_stat = os.stat
         for field in ("st_dev", "st_ino", "st_uid", "st_mode"):
@@ -296,7 +323,9 @@ class NamespaceTests(unittest.TestCase):
 
             with self.subTest(field=field):
                 with self.descriptors():
-                    with patch.object(namespace.os, "stat", side_effect=changed_entry):
+                    with patch.object(
+                        namespace.os, "stat", side_effect=changed_entry
+                    ):
                         with self.assertRaisesRegex(
                             namespace.NamespaceError, "^namespace_changed$"
                         ):
@@ -318,7 +347,9 @@ class NamespaceTests(unittest.TestCase):
 
         try:
             with self.descriptors():
-                with patch.object(namespace.os, "stat", side_effect=replace_entry):
+                with patch.object(
+                    namespace.os, "stat", side_effect=replace_entry
+                ):
                     with self.assertRaisesRegex(
                         namespace.NamespaceError, "^namespace_changed$"
                     ):
@@ -350,7 +381,9 @@ class NamespaceTests(unittest.TestCase):
     def test_failed_root_fstat_closes_root_descriptor(self):
         with self.descriptors():
             with patch.object(
-                namespace.os, "fstat", side_effect=OSError(errno.EIO, "fixture")
+                namespace.os,
+                "fstat",
+                side_effect=OSError(errno.EIO, "fixture"),
             ):
                 with self.assertRaises(OSError):
                     namespace.check_directory(self.root)

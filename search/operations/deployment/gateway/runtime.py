@@ -39,7 +39,8 @@ def _same(left, right):
 def _plan(gateway, release, lease, image_proof):
     _require(
         type(gateway) is dict
-        and set(gateway) == {"name", "services", "networks", "x-depositar-plan"},
+        and set(gateway)
+        == {"name", "services", "networks", "x-depositar-plan"},
         "plan_invalid",
     )
     _require(
@@ -60,7 +61,9 @@ def _plan(gateway, release, lease, image_proof):
         and type(image_proof["image_id"]) is str
         and policy.IMAGE_ID.fullmatch(image_proof["image_id"])
         and type(image_proof["image_environment_sha256"]) is str
-        and source_bundle.DIGEST.fullmatch(image_proof["image_environment_sha256"]),
+        and source_bundle.DIGEST.fullmatch(
+            image_proof["image_environment_sha256"]
+        ),
         "image_proof_invalid",
     )
     website = release["networks"]["website"]["name"]
@@ -70,7 +73,11 @@ def _plan(gateway, release, lease, image_proof):
             gateway["networks"],
             {
                 "route": {"external": True, "name": website},
-                "ingress": {"name": ingress, "internal": False, "attachable": False},
+                "ingress": {
+                    "name": ingress,
+                    "internal": False,
+                    "attachable": False,
+                },
             },
         ),
         "network_plan_invalid",
@@ -78,12 +85,16 @@ def _plan(gateway, release, lease, image_proof):
     api = release["services"]["conversation-api"]
     uid, gid = (int(value) for value in api["user"].split(":"))
     api_key = next(
-        value for value in api["volumes"] if value["target"] == "/run/secrets/api_key"
+        value
+        for value in api["volumes"]
+        if value["target"] == "/run/secrets/api_key"
     )
     route_root = Path(api_key["source"]).parent.parent / "gateway/routes"
     labels = release_runtime._labels(lease, ROLE, image_proof["source_sha256"])
     expected = {
-        **composition._runtime(uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32),
+        **composition._runtime(
+            uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32
+        ),
         "image": image_proof["image_id"],
         "labels": labels,
         "environment": {"NVIDIA_VISIBLE_DEVICES": "void"},
@@ -99,10 +110,19 @@ def _plan(gateway, release, lease, image_proof):
         ],
         "volumes": [composition._mount(route_root, "/etc/nginx/routes")],
         "healthcheck": composition._health(
-            ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+            [
+                "CMD",
+                "wget",
+                "-q",
+                "-O",
+                "/dev/null",
+                "http://127.0.0.1:8080/healthz",
+            ]
         ),
     }
-    _require(_same(gateway["services"][ROLE], expected), "service_plan_invalid")
+    _require(
+        _same(gateway["services"][ROLE], expected), "service_plan_invalid"
+    )
     alias = release["name"] + "-web"
     _require(
         _same(
@@ -134,7 +154,8 @@ def _gateway(row, service, image, proof, container_id):
     labels = config.get("Labels")
     _require(
         row.get("Id") == container_id
-        and row.get("Name") == "/" + composition.GATEWAY_PROJECT + "-web-nginx-1"
+        and row.get("Name")
+        == "/" + composition.GATEWAY_PROJECT + "-web-nginx-1"
         and type(labels) is dict
         and all(
             labels.get(key) == value
@@ -177,7 +198,8 @@ def _gateway(row, service, image, proof, container_id):
     )
     environment = source_bundle.parse_image_environment(built.get("Env"))
     _require(
-        client_lease.lease_digest(environment) == proof["image_environment_sha256"]
+        client_lease.lease_digest(environment)
+        == proof["image_environment_sha256"]
         and source_bundle.parse_image_environment(config.get("Env"))
         == environment | service["environment"],
         "environment_changed",
@@ -208,7 +230,14 @@ def _gateway(row, service, image, proof, container_id):
     _require(
         type(mount) is dict
         and set(mount)
-        <= {"Type", "Source", "Target", "ReadOnly", "Consistency", "BindOptions"}
+        <= {
+            "Type",
+            "Source",
+            "Target",
+            "ReadOnly",
+            "Consistency",
+            "BindOptions",
+        }
         and all(
             mount.get(key) == value
             for key, value in {
@@ -232,7 +261,8 @@ def _gateway(row, service, image, proof, container_id):
     )
     binding = [{"HostIp": "127.0.0.1", "HostPort": "18083"}]
     _require(
-        _same(host.get("PortBindings"), {"8080/tcp": binding}), "port_binding_changed"
+        _same(host.get("PortBindings"), {"8080/tcp": binding}),
+        "port_binding_changed",
     )
     exposed = built.get("ExposedPorts", {})
     _require(
@@ -244,7 +274,10 @@ def _gateway(row, service, image, proof, container_id):
         "image_ports_invalid",
     )
     ports = {key: None for key in exposed} | {"8080/tcp": binding}
-    _require(_same(row["NetworkSettings"].get("Ports"), ports), "port_binding_changed")
+    _require(
+        _same(row["NetworkSettings"].get("Ports"), ports),
+        "port_binding_changed",
+    )
 
 
 def validate_runtime(
@@ -267,11 +300,12 @@ def validate_runtime(
 ):
     """Verify exact four website peers and a gateway-only ingress, without IO.
 
-    ``release_proof`` is the previously authenticated pre-routing release proof.
-    Gateway/container/network IDs must come from the host's sealed creation
-    evidence. CPU capabilities are checked again against their existing lease;
-    the entire website and ingress peer sets are then checked without filtering.
-    The caller separately proves unfiltered catalog/GPU networks and route bytes.
+    ``release_proof`` is the previously authenticated pre-routing release
+    proof. Gateway/container/network IDs must come from the host's sealed
+    creation evidence. CPU capabilities are checked again against their
+    existing lease; the entire website and ingress peer sets are then checked
+    without filtering. The caller separately proves unfiltered catalog/GPU
+    networks and route bytes.
     """
     try:
         _require(
@@ -303,7 +337,9 @@ def validate_runtime(
             catalog_network=catalog_network,
         )
         current_release = release_runtime._proof(by_role, client)
-        _require(_same(current_release, release_proof), "release_identity_changed")
+        _require(
+            _same(current_release, release_proof), "release_identity_changed"
+        )
         _require(
             gateway_container_id
             not in set(current_release["container_ids"].values())
@@ -316,7 +352,11 @@ def validate_runtime(
         )
         gateway = gateways[0]
         _gateway(
-            gateway, service, gateway_image, gateway_image_proof, gateway_container_id
+            gateway,
+            service,
+            gateway_image,
+            gateway_image_proof,
+            gateway_container_id,
         )
         expected_ids = {
             website: client["network_ids"][website],
@@ -332,7 +372,9 @@ def validate_runtime(
                 "network_identity_changed",
             )
             by_network[network["Name"]] = network
-        _require(set(by_network) == set(expected_ids), "network_identity_changed")
+        _require(
+            set(by_network) == set(expected_ids), "network_identity_changed"
+        )
         all_ids = set(current_release["container_ids"].values()) | {
             gateway_container_id
         }
@@ -347,7 +389,9 @@ def validate_runtime(
                 and network.get("EnableIPv6") is False
                 and type(network.get("Labels")) is dict
                 and network["Labels"].get("com.docker.compose.project")
-                == (compose["name"] if routing else composition.GATEWAY_PROJECT)
+                == (
+                    compose["name"] if routing else composition.GATEWAY_PROJECT
+                )
                 and network["Labels"].get("com.docker.compose.network")
                 == ("website" if routing else "ingress")
                 and type(network.get("Containers")) is dict
@@ -379,10 +423,15 @@ def validate_runtime(
             "container_ids": {
                 role: row["Id"] for role, row in sorted(all_roles.items())
             },
-            "network_ids": dict(client["network_ids"]) | {ingress: ingress_network_id},
-            "start_identity_sha256": process_identity.start_identity_sha256(all_roles),
+            "network_ids": dict(client["network_ids"])
+            | {ingress: ingress_network_id},
+            "start_identity_sha256": process_identity.start_identity_sha256(
+                all_roles
+            ),
             "release_proof_sha256": client_lease.lease_digest(release_proof),
-            "gateway_compose_sha256": client_lease.lease_digest(gateway_compose),
+            "gateway_compose_sha256": client_lease.lease_digest(
+                gateway_compose
+            ),
             "gateway_image_proof_sha256": client_lease.lease_digest(
                 gateway_image_proof
             ),

@@ -3,9 +3,10 @@
 The caller authenticates the rendered/sealed Compose, immutable images, source
 receipts and catalog lease, holds the operation locks and collects current
 unfiltered Docker snapshots. These dictionaries cannot authenticate themselves.
-This proof does no IO and grants no gateway, query, GPU or HTTP readiness claim.
-The website network must contain precisely these three services; attaching a
-gateway is a different future phase and deliberately fails this profile.
+This proof does no IO and grants no gateway, query, GPU or HTTP readiness
+claim. The website network must contain precisely these three services;
+attaching a gateway is a different future phase and deliberately fails this
+profile.
 """
 
 from __future__ import annotations
@@ -45,7 +46,9 @@ EMPTY = (None, [])
 
 
 class ReleaseRuntimeError(ValueError):
-    """Fixed diagnostic codes, without raw Docker evidence or private values."""
+    """Fixed diagnostic codes, without raw Docker evidence or private
+    values.
+    """
 
 
 def _integer(value, expected):
@@ -56,7 +59,9 @@ def _environment(value):
     try:
         return source_bundle.parse_image_environment(value)
     except source_bundle.SourceBundleError:
-        raise ReleaseRuntimeError("release_runtime_environment_invalid") from None
+        raise ReleaseRuntimeError(
+            "release_runtime_environment_invalid"
+        ) from None
 
 
 def _closed(value, fields, code):
@@ -87,7 +92,9 @@ def _plan(compose, lease):
         client_lease.API_FIELDS - {"labels"} | {"command"},
         "release_runtime_embedding_plan_invalid",
     )
-    user = re.fullmatch(r"([1-9][0-9]{0,9}):([1-9][0-9]{0,9})", str(api["user"]))
+    user = re.fullmatch(
+        r"([1-9][0-9]{0,9}):([1-9][0-9]{0,9})", str(api["user"])
+    )
     if user is None:
         raise ReleaseRuntimeError("release_runtime_user_plan_invalid")
     uid, gid = user.groups()
@@ -112,7 +119,10 @@ def _plan(compose, lease):
             or policy._memory_bytes(service["memswap_limit"]) != memory
             or not _integer(service["pids_limit"], pids)
             or service["logging"]
-            != {"driver": "json-file", "options": {"max-size": "5m", "max-file": "3"}}
+            != {
+                "driver": "json-file",
+                "options": {"max-size": "5m", "max-file": "3"},
+            }
             or policy._tmpfs(service["tmpfs"]) != policy._tmpfs(tmpfs)
             or type(service["image"]) is not str
             or policy.IMAGE_ID.fullmatch(service["image"]) is None
@@ -127,14 +137,17 @@ def _plan(compose, lease):
             "retries": 5,
             "start_period": "0s",
         }
-        if private_io.canonical(service["healthcheck"]) != private_io.canonical(health):
+        if private_io.canonical(
+            service["healthcheck"]
+        ) != private_io.canonical(health):
             raise ReleaseRuntimeError("release_runtime_health_plan_invalid")
     source = web["labels"].get("io.depositar.ai.source.sha256")
     if (
         type(source) is not str
         or source_bundle.DIGEST.fullmatch(source) is None
         or web["labels"] != _labels(lease, "web", source)
-        or web["networks"] != {"website": {"aliases": [compose["name"] + "-web"]}}
+        or web["networks"]
+        != {"website": {"aliases": [compose["name"] + "-web"]}}
         or web["environment"]
         != {
             "WEB_ORIGIN": "http://127.0.0.1:18083",
@@ -157,7 +170,9 @@ def _plan(compose, lease):
     ):
         raise ReleaseRuntimeError("release_runtime_service_plan_invalid")
     api_key = next(
-        mount for mount in api["volumes"] if mount["target"] == "/run/secrets/api_key"
+        mount
+        for mount in api["volumes"]
+        if mount["target"] == "/run/secrets/api_key"
     )
     if web["volumes"] != [api_key]:
         raise ReleaseRuntimeError("release_runtime_mount_plan_invalid")
@@ -169,7 +184,8 @@ def _plan(compose, lease):
         {"type", "source", "target", "read_only", "bind"},
         "release_runtime_mount_plan_invalid",
     )
-    # Model-root provenance is a host receipt/configuration obligation. Here the
+    # Model-root provenance is a host receipt/configuration obligation. Here
+    # the
     # exact canonical path and readonly bind are closed and compared to Docker.
     client_lease._path(mount["source"])
     if (
@@ -257,7 +273,8 @@ def _runtime_resources(row, service, profile):
         or not _integer(health.get("Retries"), approved["retries"])
         or any(
             not _integer(
-                health.get(actual, 0), policy._duration(approved.get(key, "0s"))
+                health.get(actual, 0),
+                policy._duration(approved.get(key, "0s")),
             )
             for actual, key in (
                 ("Interval", "interval"),
@@ -276,7 +293,9 @@ def _resources(row, service, role):
         row["HostConfig"].get("PortBindings"),
         row["NetworkSettings"].get("Ports"),
     ):
-        if type(value) is not dict or any(item is not None for item in value.values()):
+        if type(value) is not dict or any(
+            item is not None for item in value.values()
+        ):
             raise ReleaseRuntimeError("release_runtime_publishes_port")
 
 
@@ -296,7 +315,10 @@ def _mounts(row, service):
             if mount.get("Propagation") != "rprivate":
                 raise ReleaseRuntimeError("release_runtime_mounts_changed")
             binds.append(
-                tuple(mount.get(key) for key in ("Type", "Source", "Destination", "RW"))
+                tuple(
+                    mount.get(key)
+                    for key in ("Type", "Source", "Destination", "RW")
+                )
             )
     expected = [
         (mount["type"], mount["source"], mount["target"], False)
@@ -325,7 +347,9 @@ def _image_and_command(role, service, image, row, revision):
             )
         ):
             raise ReleaseRuntimeError("release_runtime_image_contract_changed")
-    elif built.get("Entrypoint") != ["/bin/ollama"] or built.get("Cmd") != ["serve"]:
+    elif built.get("Entrypoint") != ["/bin/ollama"] or built.get("Cmd") != [
+        "serve"
+    ]:
         raise ReleaseRuntimeError("release_runtime_image_contract_changed")
     if (
         config.get("Cmd") != service.get("command", built.get("Cmd"))
@@ -335,7 +359,10 @@ def _image_and_command(role, service, image, row, revision):
     ):
         raise ReleaseRuntimeError("release_runtime_command_changed")
     environment = _environment(built.get("Env"))
-    if role != "filtered-embedding" and environment.get("SOURCE_REVISION") != revision:
+    if (
+        role != "filtered-embedding"
+        and environment.get("SOURCE_REVISION") != revision
+    ):
         raise ReleaseRuntimeError("release_runtime_image_revision_changed")
     if _environment(config.get("Env")) != environment | service["environment"]:
         raise ReleaseRuntimeError("release_runtime_environment_changed")
@@ -399,21 +426,30 @@ def _validate_containers(
             core_ids = set(client["core_container_ids"].values())
         else:
             matches = [
-                proof for evidence, proof in validated_clients if evidence == member
+                proof
+                for evidence, proof in validated_clients
+                if evidence == member
             ]
             if len(matches) != 1:
-                raise ReleaseRuntimeError("release_runtime_shared_client_changed")
+                raise ReleaseRuntimeError(
+                    "release_runtime_shared_client_changed"
+                )
             client = matches[0]
             core_ids = set().union(
-                *(set(p["core_container_ids"].values()) for _, p in validated_clients)
+                *(
+                    set(p["core_container_ids"].values())
+                    for _, p in validated_clients
+                )
             )
-            other_apis = {p["api_container_id"] for _, p in validated_clients} - {
-                client["api_container_id"]
-            }
+            other_apis = {
+                p["api_container_id"] for _, p in validated_clients
+            } - {client["api_container_id"]}
             if seen & other_apis:
                 raise ReleaseRuntimeError("release_runtime_identity_collision")
     except client_lease.LeaseError:
-        raise ReleaseRuntimeError("release_runtime_client_lease_invalid") from None
+        raise ReleaseRuntimeError(
+            "release_runtime_client_lease_invalid"
+        ) from None
     if seen & core_ids:
         raise ReleaseRuntimeError("release_runtime_identity_collision")
     _plan(compose, lease)
@@ -436,8 +472,12 @@ def _validate_containers(
         _running(row)
         _image_and_command(role, service, image, row, lease["revision"])
         if role == "conversation-api":
-            if _environment(image["Config"]["Env"]) != _environment(image_environment):
-                raise ReleaseRuntimeError("release_runtime_api_image_env_changed")
+            if _environment(image["Config"]["Env"]) != _environment(
+                image_environment
+            ):
+                raise ReleaseRuntimeError(
+                    "release_runtime_api_image_env_changed"
+                )
             continue
         _resources(row, service, role)
         _mounts(row, service)
@@ -449,19 +489,28 @@ def _validate_containers(
             or type(attachments[website]) is not dict
             or attachments[website].get("NetworkID") != network_ids[website]
         ):
-            raise ReleaseRuntimeError("release_runtime_network_attachment_changed")
+            raise ReleaseRuntimeError(
+                "release_runtime_network_attachment_changed"
+            )
         if role == "web":
             aliases = attachments[website].get("Aliases")
-            if type(aliases) is not list or compose["name"] + "-web" not in aliases:
+            if (
+                type(aliases) is not list
+                or compose["name"] + "-web" not in aliases
+            ):
                 raise ReleaseRuntimeError("release_runtime_web_alias_changed")
     return by_role, client
 
 
 def _proof(by_role, client):
     return {
-        "container_ids": {role: row["Id"] for role, row in sorted(by_role.items())},
+        "container_ids": {
+            role: row["Id"] for role, row in sorted(by_role.items())
+        },
         "network_ids": dict(client["network_ids"]),
-        "start_identity_sha256": process_identity.start_identity_sha256(by_role),
+        "start_identity_sha256": process_identity.start_identity_sha256(
+            by_role
+        ),
         "lease_sha256": client["lease_sha256"],
     }
 
@@ -485,9 +534,9 @@ def validate_runtime(
     The host independently authenticates source/build/registry authority before
     supplying them; matching inspect dictionaries alone is not such authority.
     The API reuses the unchanged catalog ``validate_client_lease`` contract.
-    ``networks`` contains the full unfiltered website inspection, optionally the
-    other lease networks. Only website peers are proved here; the caller must
-    independently verify catalog core, inference and ranking peers without
+    ``networks`` contains the full unfiltered website inspection, optionally
+    the other lease networks. Only website peers are proved here; the caller
+    must independently verify catalog core, inference and ranking peers without
     filtering. ``catalog_network`` is separately passed unfiltered to the lease
     checker. No gateway is allowed in this pre-activation phase.
 
@@ -500,7 +549,8 @@ def validate_runtime(
     Shared private helpers from catalog policy normalize memory, duration,
     tmpfs and namespaces. The API field/path helpers intentionally bind this
     profile to the same renderer contract. No inputs are changed and only fixed
-    IDs/digests are returned, never Env, mount paths or arbitrary caller fields.
+    IDs/digests are returned, never Env, mount paths or arbitrary caller
+    fields.
     """
     try:
         if (
@@ -543,10 +593,14 @@ def validate_runtime(
                 or row["Name"] in by_network
                 or row.get("Id") != network_ids[row["Name"]]
             ):
-                raise ReleaseRuntimeError("release_runtime_network_inventory_changed")
+                raise ReleaseRuntimeError(
+                    "release_runtime_network_inventory_changed"
+                )
             by_network[row["Name"]] = row
         if website not in by_network:
-            raise ReleaseRuntimeError("release_runtime_network_inventory_changed")
+            raise ReleaseRuntimeError(
+                "release_runtime_network_inventory_changed"
+            )
         network = by_network[website]
         if (
             network.get("Internal") is not True
@@ -556,7 +610,8 @@ def validate_runtime(
             or network.get("Scope") != "local"
             or network.get("Labels", {}).get("com.docker.compose.project")
             != compose["name"]
-            or network.get("Labels", {}).get("com.docker.compose.network") != "website"
+            or network.get("Labels", {}).get("com.docker.compose.network")
+            != "website"
             or type(network.get("Containers")) is not dict
             or set(network["Containers"]) != seen
         ):

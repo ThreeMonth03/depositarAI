@@ -1,4 +1,5 @@
-"""Shared sealed context, image execution and receipt proof for private catalogs.
+"""Shared sealed context, image execution and receipt proof for private
+catalogs.
 
 Startup and bounded administration depend on this layer, never on each other.
 It validates operator-owned state and exact Git source; no generic retries,
@@ -139,7 +140,9 @@ def operation_lock(context):
         ):
             raise RuntimeError("catalog_operation_lock_unsafe")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        named = os.stat("operations.lock", dir_fd=directory, follow_symlinks=False)
+        named = os.stat(
+            "operations.lock", dir_fd=directory, follow_symlinks=False
+        )
         if private_io.identity(info) != private_io.identity(named):
             raise RuntimeError("catalog_operation_lock_changed")
         private_io.verify_directory(directory, state)
@@ -187,7 +190,9 @@ def container_ids(context):
 
 
 def inspect_image(context, reference):
-    rows = run_json(context["runner"], ["docker", "image", "inspect", reference])
+    rows = run_json(
+        context["runner"], ["docker", "image", "inspect", reference]
+    )
     if (
         type(rows) is not list
         or len(rows) != 1
@@ -214,7 +219,10 @@ def verify_image(context, reference, image_id, labels):
     if type(image_id) is not str or IMAGE_ID.fullmatch(image_id) is None:
         raise RuntimeError("catalog_image_id_not_immutable")
     image = inspect_image(context, reference)
-    if image["Id"] != image_id or inspect_image(context, image_id)["Id"] != image_id:
+    if (
+        image["Id"] != image_id
+        or inspect_image(context, image_id)["Id"] != image_id
+    ):
         raise RuntimeError("catalog_image_identity_changed")
     actual = image.get("Config", {}).get("Labels") or {}
     if any(actual.get(name) != value for name, value in labels.items()):
@@ -282,12 +290,17 @@ def _read_iid(root, name):
 
 
 def build_image(context, service, files, dockerfile, arguments, *, network):
-    raw_sources = {relative: sealed_source(context, relative) for relative in files}
+    raw_sources = {
+        relative: sealed_source(context, relative) for relative in files
+    }
     sources = {
-        name: hashlib.sha256(raw).hexdigest() for name, raw in raw_sources.items()
+        name: hashlib.sha256(raw).hexdigest()
+        for name, raw in raw_sources.items()
     }
     base = next(
-        value for name, value in arguments.items() if name.endswith("BASE_IMAGE")
+        value
+        for name, value in arguments.items()
+        if name.endswith("BASE_IMAGE")
     )
     labels = image_labels(context, service, sources, base)
     directory = context["root"] / ("build-" + service)
@@ -344,7 +357,9 @@ def service_sources(name):
         if (
             relative.startswith("deploy/docker/opensearch/")
             if name == "opensearch-search"
-            else relative.startswith(("deploy/docker/fess/", "deploy/config/fess/"))
+            else relative.startswith(
+                ("deploy/docker/fess/", "deploy/config/fess/")
+            )
         )
     )
 
@@ -387,11 +402,14 @@ def _verify_images_receipt(context, receipt):
             or type(entry["sources"]) is not dict
         ):
             raise RuntimeError("catalog_image_receipt_invalid")
-        verify_image(context, entry["reference"], entry["image_id"], entry["labels"])
+        verify_image(
+            context, entry["reference"], entry["image_id"], entry["labels"]
+        )
         if name == "ollama-embedding":
             image = inspect_image(context, entry["image_id"])
             if (
-                entry["reference"] != context["compose"]["services"][name]["image"]
+                entry["reference"]
+                != context["compose"]["services"][name]["image"]
                 or registry_digest(entry["reference"])
                 not in (image.get("RepoDigests") or [])
                 or entry["labels"]
@@ -401,15 +419,16 @@ def _verify_images_receipt(context, receipt):
         else:
             base = next(
                 value
-                for key, value in context["compose"]["services"][name]["build"][
-                    "args"
-                ].items()
+                for key, value in context["compose"]["services"][name][
+                    "build"
+                ]["args"].items()
                 if key.endswith("BASE_IMAGE")
             )
             expected = image_labels(context, name, entry["sources"], base)
             if (
                 entry["labels"] != expected
-                or entry["reference"] != context["plan"]["project"] + "-" + name + ":1"
+                or entry["reference"]
+                != context["plan"]["project"] + "-" + name + ":1"
                 or set(entry["sources"]) != set(service_sources(name))
             ):
                 raise RuntimeError("catalog_image_source_receipt_changed")
@@ -432,7 +451,9 @@ def verify_images(context, receipt):
 
 def load_images(context):
     verify_security_material(context)
-    return _verify_images_receipt(context, read_record(context["root"], "images.json"))
+    return _verify_images_receipt(
+        context, read_record(context["root"], "images.json")
+    )
 
 
 def inspect_runtime(context, images, *, include_snapshot=False):
@@ -489,7 +510,9 @@ def require_storage(context):
     if type(image) is not str or IMAGE_ID.fullmatch(image) is None:
         raise RuntimeError("catalog_volume_helper_identity_changed")
     started = read_record(root, "volume-started.json")
-    if digest_record(started) != digest_record(volume_policy.started(identity, image)):
+    if digest_record(started) != digest_record(
+        volume_policy.started(identity, image)
+    ):
         raise RuntimeError("catalog_volume_receipt_changed")
     receipt = read_record(root, "volume.json")
     metadata = volume_policy.inspect_metadata(
@@ -513,12 +536,16 @@ def require_storage(context):
 
 
 def validate_storage_mounts(storage_proof, containers):
-    """Bind the sealed volume to the same unfiltered Docker container snapshot."""
+    """Bind the sealed volume to the same unfiltered container snapshot."""
     if type(storage_proof) is not dict:
         raise RuntimeError("catalog_runtime_volume_binding_changed")
     matches = []
     for row in containers:
-        role = row.get("Config", {}).get("Labels", {}).get("com.docker.compose.service")
+        role = (
+            row.get("Config", {})
+            .get("Labels", {})
+            .get("com.docker.compose.service")
+        )
         for mount in row.get("Mounts") or []:
             if mount.get("Type") != "volume":
                 continue
@@ -526,7 +553,8 @@ def validate_storage_mounts(storage_proof, containers):
                 role != "opensearch-search"
                 or mount.get("Destination") != "/usr/share/opensearch/data"
                 or mount.get("Name") != storage_proof["name"]
-                or mount.get("Source") != storage_proof["metadata"]["mountpoint"]
+                or mount.get("Source")
+                != storage_proof["metadata"]["mountpoint"]
                 or mount.get("Driver") != "local"
                 or mount.get("RW") is not True
             ):
@@ -556,7 +584,9 @@ def require_runtime(context):
     images = load_images(context)
     proof = inspect_runtime(context, images)
     overlay = {
-        "services": {name: {"image": item["image_id"]} for name, item in images.items()}
+        "services": {
+            name: {"image": item["image_id"]} for name, item in images.items()
+        }
     }
     expected = {
         **catalog_identity(context),

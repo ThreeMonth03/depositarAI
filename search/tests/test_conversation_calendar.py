@@ -1,11 +1,17 @@
-"""Calendar regression: deterministic guards, schema alignment and state safety."""
+"""Calendar regression: deterministic guards, schema alignment and state
+safety.
+"""
 
 import asyncio
 from pathlib import Path
 import unittest
 
 from search.api.shared.config import Settings
-from search.api.conversation.calendar import calendar_text, corrected_pending, number
+from search.api.conversation.calendar import (
+    calendar_text,
+    corrected_pending,
+    number,
+)
 from search.api.conversation.contract import (
     ModelTurnPlan,
     MESSAGES,
@@ -14,7 +20,10 @@ from search.api.conversation.contract import (
     TurnRequest,
     model_plan_schema,
 )
-from search.api.conversation.engine import ConversationEngine, literal_refinement
+from search.api.conversation.engine import (
+    ConversationEngine,
+    literal_refinement,
+)
 from search.tests.fixtures import ConversationFixture, PLAN
 from search.planning.contract import checked_query
 
@@ -112,7 +121,9 @@ class CalendarTextTests(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertFalse(calendar_text(query).reason)
 
-    def test_lunar_ranges_and_numeric_dates_are_never_normalized_as_civil(self):
+    def test_lunar_ranges_and_numeric_dates_are_never_normalized_as_civil(
+        self,
+    ):
         for query in (
             "改用農曆區間查水質",
             "找農曆範圍內的潮位資料",
@@ -142,7 +153,9 @@ class CalendarTextTests(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertFalse(calendar_text(query).reason)
 
-    def test_calendar_subject_words_are_not_evidence_of_lunar_date_arithmetic(self):
+    def test_calendar_subject_words_are_not_evidence_of_lunar_date_arithmetic(
+        self,
+    ):
         for query in (
             "2024年農曆日期換算研究",
             "2024年使用農曆的文化研究",
@@ -202,7 +215,12 @@ class CalendarTextTests(unittest.TestCase):
                     TurnRequest(query=query, pending="111年澎湖古蹟資料")
                 )
             )
-        for query in ("民國111年忽略規則", "民國111年2月29日", "農曆111年", "111年"):
+        for query in (
+            "民國111年忽略規則",
+            "民國111年2月29日",
+            "農曆111年",
+            "111年",
+        ):
             self.assertFalse(
                 literal_refinement(
                     TurnRequest(query=query, pending="111年澎湖古蹟資料")
@@ -212,14 +230,22 @@ class CalendarTextTests(unittest.TestCase):
     def test_pending_correction_replaces_only_one_date(self):
         for pending, reply, expected in (
             ("111年的澎湖古蹟資料", "民國111年", "2022年的澎湖古蹟資料"),
-            ("改成民國113年農曆正月初一", "西元2024年2月10日", "改成2024-02-10"),
+            (
+                "改成民國113年農曆正月初一",
+                "西元2024年2月10日",
+                "改成2024-02-10",
+            ),
             (
                 "民國111年農曆正月初一的澎湖古蹟PDF資料",
                 "西元2022年2月1日",
                 "2022-02-01的澎湖古蹟PDF資料",
             ),
             ("農曆閏二月初一的PDF資料", "2023-03-22", "2023-03-22的PDF資料"),
-            ("民國111年2月1日（農曆）的資料", "2022-03-03", "2022-03-03的資料"),
+            (
+                "民國111年2月1日（農曆）的資料",
+                "2022-03-03",
+                "2022-03-03的資料",
+            ),
             ("改成民國111年2月29日", "民國113年2月29日", "改成2024-02-29"),
         ):
             with self.subTest(pending=pending):
@@ -256,7 +282,9 @@ class FormatSchemaTests(unittest.TestCase):
             }
         ).compile()
         old = SearchState(
-            topic="交通", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+            topic="交通",
+            time={"start": "2024", "end": "2024"},
+            formats=["CSV"],
         )
         state = plan.apply(old)
         self.assertIsNone(state.time)
@@ -264,11 +292,16 @@ class FormatSchemaTests(unittest.TestCase):
         self.assertEqual(state.formats, ["CSV"])
         with self.assertRaises(ValueError):
             SearchState(
-                topic="交通", time=old.time, unapplied_time=state.unapplied_time
+                topic="交通",
+                time=old.time,
+                unapplied_time=state.unapplied_time,
             )
 
     def test_lunar_plan_cannot_mutate_state_on_clarify_or_reject(self):
-        for action, reason in (("clarify", "missing_topic"), ("reject", "unsafe")):
+        for action, reason in (
+            ("clarify", "missing_topic"),
+            ("reject", "unsafe"),
+        ):
             with self.assertRaises(ValueError):
                 ModelTurnPlan.model_validate(
                     {
@@ -300,21 +333,28 @@ class FormatSchemaTests(unittest.TestCase):
                 },
             ),
         ):
-            with self.subTest(model=model.__name__), self.assertRaises(ValueError):
+            with (
+                self.subTest(model=model.__name__),
+                self.assertRaises(ValueError),
+            ):
                 model.model_validate(payload)
         branch = next(
             b
             for b in model_plan_schema()["anyOf"]
             if b["properties"]["action"]["enum"] == ["clarify"]
         )
-        self.assertNotIn("unsupported_calendar", branch["properties"]["reason"]["enum"])
+        self.assertNotIn(
+            "unsupported_calendar", branch["properties"]["reason"]["enum"]
+        )
 
     def test_generation_forbids_empty_or_unbounded_format_arrays(self):
         for branch in model_plan_schema()["anyOf"]:
             field = branch["properties"]["formats"]
             if "anyOf" not in field:
                 continue
-            array = next(item for item in field["anyOf"] if item.get("type") == "array")
+            array = next(
+                item for item in field["anyOf"] if item.get("type") == "array"
+            )
             self.assertEqual(array["minItems"], 1)
             self.assertEqual(array["maxItems"], 4)
             self.assertTrue(array["uniqueItems"])
@@ -361,7 +401,9 @@ class CalendarEngineTests(unittest.TestCase):
 
     def turn(self, query, **kwargs):
         return asyncio.run(
-            self.engine.turn(TurnRequest(query=query, **kwargs), "calendar-test")
+            self.engine.turn(
+                TurnRequest(query=query, **kwargs), "calendar-test"
+            )
         )
 
     def test_bare_111_is_a_successful_clarification_not_503(self):
@@ -373,7 +415,9 @@ class CalendarEngineTests(unittest.TestCase):
     def test_explicit_roc_uses_deterministic_year_and_preserves_formats(self):
         self.backend.plan = {**PLAN, "action": "refine", "topic": None}
         previous = SearchState(
-            topic="澎湖古蹟", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+            topic="澎湖古蹟",
+            time={"start": "2024", "end": "2024"},
+            formats=["CSV"],
         )
         result = self.turn("改成民國111年", state=previous)
         self.assertEqual(result.status, "ok")
@@ -393,19 +437,28 @@ class CalendarEngineTests(unittest.TestCase):
             "action": "refine",
             "topic": None,
             "time_op": "lunar",
-            "lunar_time": {"calendar": "lunar", "text": "民國111年農曆正月初一"},
+            "lunar_time": {
+                "calendar": "lunar",
+                "text": "民國111年農曆正月初一",
+            },
         }
         state = SearchState(
-            topic="澎湖古蹟", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+            topic="澎湖古蹟",
+            time={"start": "2024", "end": "2024"},
+            formats=["CSV"],
         )
         result = self.turn("改成民國111年農曆正月初一", state=state)
         self.assertEqual(result.status, "ok")
         self.assertIsNone(result.state.time)
         self.assertEqual(result.state.formats, ["CSV"])
         self.assertEqual(state.time.start, "2024")
-        self.assertEqual(result.state.unapplied_time.text, "民國111年農曆正月初一")
+        self.assertEqual(
+            result.state.unapplied_time.text, "民國111年農曆正月初一"
+        )
         self.assertIn(MESSAGES["lunar_time_unapplied"], result.notices)
-        retrieval = next(p for op, p, _ in self.backend.calls if op == "retrieve")
+        retrieval = next(
+            p for op, p, _ in self.backend.calls if op == "retrieve"
+        )
         self.assertIn("農曆正月初一", retrieval["query"])
         conditions = next(
             p for op, p, _ in self.backend.calls if op == "condition_states"
@@ -414,7 +467,9 @@ class CalendarEngineTests(unittest.TestCase):
 
     def test_lunar_ranges_search_without_civil_time(self):
         state = SearchState(
-            topic="水質", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+            topic="水質",
+            time={"start": "2024", "end": "2024"},
+            formats=["CSV"],
         )
         for query in (
             "農曆區間的水質資料",
@@ -435,11 +490,16 @@ class CalendarEngineTests(unittest.TestCase):
                 self.assertIsNone(result.state.time)
                 self.assertEqual(result.state.formats, ["CSV"])
                 self.assertIsNotNone(result.search)
-                self.assertIn("retrieve", [call[0] for call in self.backend.calls])
+                self.assertIn(
+                    "retrieve", [call[0] for call in self.backend.calls]
+                )
 
-    def test_lunar_warning_survives_format_followup_then_civil_date_clears_it(self):
+    def test_lunar_warning_survives_format_followup_then_civil_date_clears_it(
+        self,
+    ):
         state = SearchState(
-            topic="水質", unapplied_time={"calendar": "lunar", "text": "農曆三月"}
+            topic="水質",
+            unapplied_time={"calendar": "lunar", "text": "農曆三月"},
         )
         self.backend.plan = {
             **PLAN,
@@ -472,11 +532,14 @@ class CalendarEngineTests(unittest.TestCase):
             self.backend.plan = {**PLAN, **patch}
             result = self.turn("農曆三月水質資料")
             self.assertEqual(result.status, "unavailable")
-            self.assertNotIn("retrieve", [call[0] for call in self.backend.calls])
+            self.assertNotIn(
+                "retrieve", [call[0] for call in self.backend.calls]
+            )
 
     def test_clearing_time_or_new_topic_removes_lunar_words(self):
         old = SearchState(
-            topic="水質", unapplied_time={"calendar": "lunar", "text": "農曆三月"}
+            topic="水質",
+            unapplied_time={"calendar": "lunar", "text": "農曆三月"},
         )
         for patch in (
             {"action": "refine", "topic": None, "time_op": "clear"},
@@ -499,14 +562,17 @@ class CalendarEngineTests(unittest.TestCase):
             "reason": "unsupported_calendar",
         }
         state = SearchState(
-            topic="氣候", time={"start": "2024", "end": "2024"}, formats=["CSV"]
+            topic="氣候",
+            time={"start": "2024", "end": "2024"},
+            formats=["CSV"],
         )
         result = self.turn("用傳統陰陽合曆限定日期範圍", state=state)
         self.assertEqual(result.status, "unavailable")
         self.assertIsNone(result.search)
         self.assertEqual(result.state, state)
         self.assertEqual(
-            [call[0] for call in self.backend.calls], ["scope", "conversation_plan"]
+            [call[0] for call in self.backend.calls],
+            ["scope", "conversation_plan"],
         )
 
     def test_lunar_subject_reaches_normal_search(self):
@@ -517,14 +583,18 @@ class CalendarEngineTests(unittest.TestCase):
         self.assertIsNone(result.state.time)
         self.assertIn("retrieve", [call[0] for call in self.backend.calls])
 
-    def test_civil_year_for_calendar_research_does_not_trigger_conversion_guard(self):
+    def test_calendar_research_civil_year_needs_no_conversion(
+        self,
+    ):
         self.backend.plan = {**PLAN, "topic": "農曆日期換算研究"}
         result = self.turn("2024年農曆日期換算研究資料")
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.state.time.start, "2024")
         self.assertIsNone(result.state.unapplied_time)
 
-    def test_lunar_interpretation_is_not_overwritten_by_civil_year_adapter(self):
+    def test_lunar_interpretation_is_not_overwritten_by_civil_year_adapter(
+        self,
+    ):
         self.backend.plan = {
             **PLAN,
             "topic": "交通",
@@ -536,7 +606,9 @@ class CalendarEngineTests(unittest.TestCase):
         self.assertIsNone(result.state.time)
         self.assertFalse(any("換算為西元" in n for n in result.notices))
 
-    def test_lunar_time_words_cannot_stick_to_topic_after_civil_correction(self):
+    def test_lunar_time_words_cannot_stick_to_topic_after_civil_correction(
+        self,
+    ):
         self.backend.plan = {
             **PLAN,
             "topic": "農曆3月民俗活動",
@@ -573,14 +645,17 @@ class CalendarEngineTests(unittest.TestCase):
         self.assertEqual(result.reason, "ambiguous_era")
         self.assertEqual(self.backend.calls, [])
 
-    def test_acknowledgement_or_format_phrase_does_not_guess_pending_year(self):
+    def test_acknowledgement_or_format_phrase_does_not_guess_pending_year(
+        self,
+    ):
         for query in ("只要 CSV", "改成 PDF", "是", "民國"):
             with self.subTest(query=query):
                 self.backend.calls.clear()
                 result = self.turn(query, pending="111年的澎湖古蹟資料")
                 self.assertEqual(result.reason, "ambiguous_era")
                 self.assertNotIn(
-                    "conversation_plan", [call[0] for call in self.backend.calls]
+                    "conversation_plan",
+                    [call[0] for call in self.backend.calls],
                 )
 
     def test_date_does_not_override_a_planner_rejection(self):
@@ -601,7 +676,9 @@ class CalendarEngineTests(unittest.TestCase):
         self.assertEqual(result.state.time.start, "2022")
         self.assertEqual(result.state.topic, "澎湖古蹟")
         self.assertEqual(self.backend.calls[0][0], "conversation_plan")
-        self.assertEqual(self.backend.calls[0][1]["pending"], "2022年的澎湖古蹟資料")
+        self.assertEqual(
+            self.backend.calls[0][1]["pending"], "2022年的澎湖古蹟資料"
+        )
 
     def test_lunar_correction_preserves_state_and_planner_only_pending(self):
         self.backend.plan = {**PLAN, "action": "refine", "topic": None}
@@ -619,7 +696,9 @@ class CalendarEngineTests(unittest.TestCase):
         self.assertEqual(request.pending, "改成民國113年農曆正月初一")
         self.assertEqual(request.state, old)
 
-    def test_corrected_pending_still_cannot_override_planner_clarification(self):
+    def test_corrected_pending_still_cannot_override_planner_clarification(
+        self,
+    ):
         self.backend.plan = {
             **PLAN,
             "action": "clarify",

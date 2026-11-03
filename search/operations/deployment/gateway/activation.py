@@ -4,7 +4,8 @@ The product lifecycle owns its lock; this facade additionally holds the catalog
 lock. Completed private CPU3 acceptance is mandatory before any mutation. The
 routed host preserves unfiltered catalog/GPU networks and proves website4 plus
 gateway-only ingress. An active pointer is published last, after real loopback
-search/reset acceptance and a fresh proof. No retry, rollback or adoption exists.
+search/reset acceptance and a fresh proof. No retry, rollback or adoption
+exists.
 """
 
 from __future__ import annotations
@@ -110,27 +111,38 @@ class _RoutedHost(release._Host):
         release_proof,
     ):
         super().__init__(*args)
-        self.gateway_compose, self.gateway_image = gateway_compose, gateway_image
+        self.gateway_compose, self.gateway_image = (
+            gateway_compose,
+            gateway_image,
+        )
         self.gateway_proof, self.gateway_id = gateway_proof, gateway_id
         self.ingress_id, self.release_proof = ingress_id, release_proof
 
     def collect(self, *, clients):
-        _require(clients is True and self.lease is not None, "private_lease_required")
+        _require(
+            clients is True and self.lease is not None,
+            "private_lease_required",
+        )
         groups, networks = super().collect(clients=True)
         ingress = composition.GATEWAY_PROJECT + "_ingress"
         ids, names = runtime_docker.project_inventory(
             self.docker, composition.GATEWAY_PROJECT
         )
         _require(
-            ids == [self.gateway_id] and names == {ingress}, "gateway_inventory_changed"
+            ids == [self.gateway_id] and names == {ingress},
+            "gateway_inventory_changed",
         )
         _require(
             self.gateway_id
             not in {row["Id"] for group in groups.values() for row in group},
             "identity_collision",
         )
-        rows = image_build._json(self.docker.call(["inspect", self.gateway_id]))
-        network = image_build._json(self.docker.call(["network", "inspect", ingress]))
+        rows = image_build._json(
+            self.docker.call(["inspect", self.gateway_id])
+        )
+        network = image_build._json(
+            self.docker.call(["network", "inspect", ingress])
+        )
         _require(
             type(rows) is list
             and len(rows) == 1
@@ -194,7 +206,11 @@ def _http_report(value, *, revision, bundle_id, manifest_sha256, run_id):
         and set(value) == set(expected) | {"website", "probe_runtime"},
         "http_contract_invalid",
     )
-    _same({key: value[key] for key in expected}, expected, "http_contract_invalid")
+    _same(
+        {key: value[key] for key in expected},
+        expected,
+        "http_contract_invalid",
+    )
     runtime = value["probe_runtime"]
     _require(
         type(runtime) is dict
@@ -219,7 +235,9 @@ def _http_report(value, *, revision, bundle_id, manifest_sha256, run_id):
         },
         "http_contract_invalid",
     )
-    website = release_probe._web(value["website"], revision, bundle_id, manifest_sha256)
+    website = release_probe._web(
+        value["website"], revision, bundle_id, manifest_sha256
+    )
     _require(website["code"] == "ready", "http_acceptance_blocked")
     return copy.deepcopy(value)
 
@@ -231,7 +249,10 @@ def _probe_records(fd, path, report, *, image_id):
     runtime = report["probe_runtime"]
     identity = {
         "schema_version": 1,
-        **{key: report[key] for key in ("revision", "bundle_id", "manifest_sha256")},
+        **{
+            key: report[key]
+            for key in ("revision", "bundle_id", "manifest_sha256")
+        },
         "run_id": runtime["run_id"],
         "image_id": image_id,
         "container_name": "depositar-ai-gateway-probe-" + runtime["run_id"],
@@ -248,9 +269,15 @@ def _probe_records(fd, path, report, *, image_id):
             "status": "probe_created",
             "container_id": runtime["container_id"],
         },
-        "complete.json": {**identity, "status": "probe_complete", "report": report},
+        "complete.json": {
+            **identity,
+            "status": "probe_complete",
+            "report": report,
+        },
     }
-    records = {name: private_io.canonical(value) for name, value in values.items()}
+    records = {
+        name: private_io.canonical(value) for name, value in values.items()
+    }
     for name, raw in records.items():
         _require(
             private_io.read_file(fd, name, mode=0o600, max_bytes=16384) == raw,
@@ -283,7 +310,8 @@ def activate_gateway(
         )
         deadline = time.monotonic() + TOTAL_SECONDS
         _require(
-            "active.json" not in os.listdir(store.fd), "existing_active_not_adopted"
+            "active.json" not in os.listdir(store.fd),
+            "existing_active_not_adopted",
         )
         with ExitStack() as initial:
             descriptor = private_io.open_child_directory(store.fd, "gateway")
@@ -310,10 +338,14 @@ def activate_gateway(
             gpu_runner=gpu_runner,
         )
         _require(
-            prepared.get("preparation_reused") is True, "prepared_candidate_required"
+            prepared.get("preparation_reused") is True,
+            "prepared_candidate_required",
         )
         context = execution.load_context(
-            config, catalog_plan, repo_root=Path(repo_root), runner=catalog_runner
+            config,
+            catalog_plan,
+            repo_root=Path(repo_root),
+            runner=catalog_runner,
         )
         with execution.operation_lock(context):
             return _activate(
@@ -365,15 +397,21 @@ def _activate(
     source_plan = source_bundle.committed_source_plan(
         repo, revision, runner=source_runner
     )
-    image_authority = image_evidence.read_completed_images(config, store, source_plan)
+    image_authority = image_evidence.read_completed_images(
+        config, store, source_plan
+    )
     inference_plan = composition._inference(
         config,
         revision,
         os.geteuid(),
         os.getegid(),
-        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+        inference_source_sha256=source_plan["services"]["reranker"][
+            "source_sha256"
+        ],
     )
-    gpu_authority = inference._authority(config, store, source_plan, inference_plan)
+    gpu_authority = inference._authority(
+        config, store, source_plan, inference_plan
+    )
     root = config.state_root / "gateway"
     with ExitStack() as state:
         gateway_fd = private_io.open_child_directory(store.fd, "gateway")
@@ -394,7 +432,10 @@ def _activate(
         )
         gateway_compose = preparation["compose.json"]
         candidate = private_io.read_file(
-            routes_fd, "candidate.conf", mode=0o600, max_bytes=gateway.MAX_ROUTE_BYTES
+            routes_fd,
+            "candidate.conf",
+            mode=0o600,
+            max_bytes=gateway.MAX_ROUTE_BYTES,
         )
         _same(hashlib.sha256(candidate).hexdigest(), prepared["route_sha256"])
         parents = private_io.open_child_directory(store.fd, "releases")
@@ -403,14 +444,18 @@ def _activate(
         slot = private_io.open_child_directory(parents, name)
         state.callback(os.close, slot)
         records = {
-            filename: image_build._record(slot, filename) for filename in release.FILES
+            filename: image_build._record(slot, filename)
+            for filename in release.FILES
         }
         completed, lease, compose = (
             records["complete.json"],
             records["lease.json"],
             records["compose.json"],
         )
-        _same(execution.digest_record(completed), prepared["release_complete_sha256"])
+        _same(
+            execution.digest_record(completed),
+            prepared["release_complete_sha256"],
+        )
         _same(execution.digest_record(lease), prepared["release_lease_sha256"])
         _same(
             image_authority["source_manifest_sha256"],
@@ -424,7 +469,8 @@ def _activate(
             for field in ("name", "services", "networks")
         }
         _require(
-            b"$" not in private_io.canonical(native), "compose_interpolation_forbidden"
+            b"$" not in private_io.canonical(native),
+            "compose_interpolation_forbidden",
         )
         activation_fd = None
         probe_fd = None
@@ -436,10 +482,15 @@ def _activate(
             inference._source_revision(repo, revision, source_runner)
             store._check_directory()
             _require(
-                "active.json" not in os.listdir(store.fd), "existing_active_not_adopted"
+                "active.json" not in os.listdir(store.fd),
+                "existing_active_not_adopted",
             )
-            private_io.verify_directory(parents, config.state_root / "releases")
-            private_io.verify_directory(slot, config.state_root / "releases" / name)
+            private_io.verify_directory(
+                parents, config.state_root / "releases"
+            )
+            private_io.verify_directory(
+                slot, config.state_root / "releases" / name
+            )
             _require(set(os.listdir(slot)) == release.FILES, "release_changed")
             for filename, value in records.items():
                 _same(image_build._record(slot, filename), value)
@@ -465,9 +516,12 @@ def _activate(
                 for filename, value in activation_records.items():
                     _same(image_build._record(activation_fd, filename), value)
             if probe_fd is not None:
-                private_io.verify_directory(probe_fd, root / "activation/probe")
+                private_io.verify_directory(
+                    probe_fd, root / "activation/probe"
+                )
                 _require(
-                    set(os.listdir(probe_fd)) == set(probe_records), "probe_changed"
+                    set(os.listdir(probe_fd)) == set(probe_records),
+                    "probe_changed",
                 )
                 for filename, raw in probe_records.items():
                     _require(
@@ -509,7 +563,10 @@ def _activate(
         def publish(filename, value):
             state_check()
             private_io.write_json(
-                activation_fd, filename, value, max_bytes=image_build.MAX_RECORD_BYTES
+                activation_fd,
+                filename,
+                value,
+                max_bytes=image_build.MAX_RECORD_BYTES,
             )
             activation_records[filename] = value
 
@@ -541,7 +598,9 @@ def _activate(
                 verify_client=verify_client,
             )
             _require(
-                image_build._json(docker.call(["info", "--format", "{{json .OSType}}"]))
+                image_build._json(
+                    docker.call(["info", "--format", "{{json .OSType}}"])
+                )
                 == "linux",
                 "daemon_unsupported",
             )
@@ -556,7 +615,9 @@ def _activate(
             plans = composition.render_composition(
                 config,
                 context["plan"],
-                composition.QueryBindingPaths.for_catalog(config, context["plan"]),
+                composition.QueryBindingPaths.for_catalog(
+                    config, context["plan"]
+                ),
                 revision,
                 uid=os.geteuid(),
                 gid=os.getegid(),
@@ -596,11 +657,16 @@ def _activate(
                 image = docker.inspect(proof["image_id"])
                 for row in (
                     image,
-                    docker.inspect(image_build.TAGS[gateway_runtime.ROLE] + revision),
+                    docker.inspect(
+                        image_build.TAGS[gateway_runtime.ROLE] + revision
+                    ),
                 ):
                     _same(
                         source_bundle.validate_built_image(
-                            source_plan, gateway_runtime.ROLE, proof["image_id"], row
+                            source_plan,
+                            gateway_runtime.ROLE,
+                            proof["image_id"],
+                            row,
                         ),
                         proof,
                         "gateway_image_changed",
@@ -609,7 +675,8 @@ def _activate(
 
             built = gateway_image()
             _same(
-                query.verify_authority(context, observe_runtime=host.observe), authority
+                query.verify_authority(context, observe_runtime=host.observe),
+                authority,
             )
             private_proof = host.last[1]
             _same(
@@ -630,7 +697,9 @@ def _activate(
                 _same(query.read_authority(context), authority)
                 _same(credentials.read_api_key_authority(config, store), key)
                 _same(
-                    image_evidence.read_completed_images(config, store, source_plan),
+                    image_evidence.read_completed_images(
+                        config, store, source_plan
+                    ),
                     image_authority,
                 )
                 _same(execution.load_images(context), catalog_images)
@@ -640,10 +709,16 @@ def _activate(
                     ),
                     gpu_authority,
                 )
-                _same(inference._images(docker, source_plan, gpu_authority), gpu_images)
+                _same(
+                    inference._images(docker, source_plan, gpu_authority),
+                    gpu_images,
+                )
                 _same(
                     release._images(docker, source_plan, image_authority),
-                    {role: images[role] for role in ("web", "conversation-api")},
+                    {
+                        role: images[role]
+                        for role in ("web", "conversation-api")
+                    },
                 )
                 _same(
                     {
@@ -677,14 +752,18 @@ def _activate(
                 "release_project": compose["name"],
                 "bundle_id": context["bundle"].bundle_id,
                 "manifest_sha256": context["plan"]["manifest_sha256"],
-                "source_manifest_sha256": image_authority["source_manifest_sha256"],
+                "source_manifest_sha256": image_authority[
+                    "source_manifest_sha256"
+                ],
                 "prepared_sha256": execution.digest_record(
                     preparation["prepared.json"]
                 ),
                 "native_compose_sha256": execution.digest_record(native),
                 "bootstrap_sha256": hashlib.sha256(BOOTSTRAP).hexdigest(),
                 "route_sha256": hashlib.sha256(candidate).hexdigest(),
-                "private_release_proof_sha256": execution.digest_record(private_proof),
+                "private_release_proof_sha256": execution.digest_record(
+                    private_proof
+                ),
                 "probe_run_id": uuid.uuid4().hex,
                 "active_changed": False,
                 "confers_runtime_authority": False,
@@ -697,7 +776,10 @@ def _activate(
             publish("compose.json", native)
             state_check()
             private_io.write_file(
-                routes_fd, "active.conf", BOOTSTRAP, max_bytes=gateway.MAX_ROUTE_BYTES
+                routes_fd,
+                "active.conf",
+                BOOTSTRAP,
+                max_bytes=gateway.MAX_ROUTE_BYTES,
             )
             route_bytes = BOOTSTRAP
             state_check()
@@ -741,8 +823,13 @@ def _activate(
                 docker, composition.GATEWAY_PROJECT
             )
             ingress = composition.GATEWAY_PROJECT + "_ingress"
-            _require(len(ids) == 1 and names == {ingress}, "created_inventory_changed")
-            network = image_build._json(docker.call(["network", "inspect", ingress]))
+            _require(
+                len(ids) == 1 and names == {ingress},
+                "created_inventory_changed",
+            )
+            network = image_build._json(
+                docker.call(["network", "inspect", ingress])
+            )
             _require(
                 type(network) is list
                 and len(network) == 1
@@ -764,7 +851,11 @@ def _activate(
             routed_proof = routed.last[1]
             publish(
                 "created.json",
-                {**identity, "status": "bootstrap_running", "proof": routed_proof},
+                {
+                    **identity,
+                    "status": "bootstrap_running",
+                    "proof": routed_proof,
+                },
             )
             state_check()
             docker.call(
@@ -788,7 +879,14 @@ def _activate(
             route_bytes = candidate
             state_check()
             docker.call(
-                ["exec", ids[0], "nginx", "-t", "-c", "/etc/nginx/routes/active.conf"]
+                [
+                    "exec",
+                    ids[0],
+                    "nginx",
+                    "-t",
+                    "-c",
+                    "/etc/nginx/routes/active.conf",
+                ]
             )
             state_check()
             docker.call(
@@ -843,10 +941,16 @@ def _activate(
             )
             state_check()
             _same(
-                query.verify_authority(context, observe_runtime=routed.observe),
+                query.verify_authority(
+                    context, observe_runtime=routed.observe
+                ),
                 authority,
             )
-            _same(routed.last[1], routed_proof, "runtime_changed_during_acceptance")
+            _same(
+                routed.last[1],
+                routed_proof,
+                "runtime_changed_during_acceptance",
+            )
             inference._gpu(
                 config,
                 inference_runtime.ownership_proofs(
@@ -856,7 +960,11 @@ def _activate(
             )
             authority_check()
             routed.observe()
-            _same(routed.last[1], routed_proof, "runtime_changed_during_acceptance")
+            _same(
+                routed.last[1],
+                routed_proof,
+                "runtime_changed_during_acceptance",
+            )
             verify_client()
             transport.close()
         _same(query.read_authority(context), authority)
@@ -880,7 +988,8 @@ def _activate(
         }
         publish("complete.json", result)
         _require(
-            set(activation_records) | {"probe"} == ACTIVATION_FILES, "state_changed"
+            set(activation_records) | {"probe"} == ACTIVATION_FILES,
+            "state_changed",
         )
         state_check()
         pointer = {
@@ -894,6 +1003,10 @@ def _activate(
             "activation_complete_sha256": execution.digest_record(result),
             "active_changed": True,
         }
-        returned = {**result, "active_changed": True, "activation_performed": True}
+        returned = {
+            **result,
+            "active_changed": True,
+            "activation_performed": True,
+        }
         store.write("active.json", pointer)
         return returned

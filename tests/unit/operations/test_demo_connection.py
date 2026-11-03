@@ -87,7 +87,9 @@ class ProfileTests(unittest.TestCase):
             path.chmod(0o600)
             self.assertEqual(demo.load_profile(path), profile())
             path.chmod(0o644)
-            with self.assertRaisesRegex(demo.DemoConnectionError, "permissions"):
+            with self.assertRaisesRegex(
+                demo.DemoConnectionError, "permissions"
+            ):
                 demo.load_profile(path)
             path.chmod(0o600)
             path.write_text('{"schema_version":1,"schema_version":1}')
@@ -123,15 +125,22 @@ class ProfileTests(unittest.TestCase):
         for mutate in mutations:
             value = profile()
             mutate(value)
-            with self.subTest(value=value), self.assertRaises(demo.DemoConnectionError):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(demo.DemoConnectionError),
+            ):
                 demo.validate_profile(value)
 
-    def test_nested_ssh_preserves_remote_paths_and_local_forward_ownership(self):
+    def test_nested_ssh_preserves_remote_paths_and_local_forward_ownership(
+        self,
+    ):
         command = demo.ssh_command(profile(), tunnel=True, nonce=NONCE)
         self.assertIn("-tt", command)
         self.assertIn("127.0.0.1:18081:127.0.0.1:38081", command)
         inner = shlex.split(command[-1])
-        self.assertEqual(inner[:3], ["ssh", "-F", "/private/server's ssh.conf"])
+        self.assertEqual(
+            inner[:3], ["ssh", "-F", "/private/server's ssh.conf"]
+        )
         self.assertIn("-T", inner)
         self.assertIn("-N", inner)
         self.assertNotIn("-tt", inner)
@@ -141,7 +150,9 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn("PermitLocalCommand=yes", command)
         self.assertIn("PermitLocalCommand=yes", inner)
         self.assertNotIn("PermitLocalCommand=no", inner)
-        self.assertIn(f"LocalCommand=printf '{demo.READY_PREFIX}{NONCE}\\n'", inner)
+        self.assertIn(
+            f"LocalCommand=printf '{demo.READY_PREFIX}{NONCE}\\n'", inner
+        )
         for args in (command, inner):
             self.assertIn("StrictHostKeyChecking=yes", args)
             self.assertIn("ControlMaster=no", args)
@@ -157,7 +168,11 @@ class ProfileTests(unittest.TestCase):
         value = profile()
         value["hops"].insert(
             1,
-            {"destination": "middle", "ssh_config": None, "local_forward_port": 28081},
+            {
+                "destination": "middle",
+                "ssh_config": None,
+                "local_forward_port": 28081,
+            },
         )
         command = demo.ssh_command(value, tunnel=False)
         for _ in range(3):
@@ -181,7 +196,8 @@ class ProfileTests(unittest.TestCase):
 
     def test_remote_identity_is_closed_and_does_not_accept_health_only(self):
         self.assertEqual(
-            demo.validate_remote_check(checked(), profile()["expected"]), checked()
+            demo.validate_remote_check(checked(), profile()["expected"]),
+            checked(),
         )
         for field, value in (
             ("api_revision", "d" * 40),
@@ -199,7 +215,10 @@ class ProfileTests(unittest.TestCase):
         ):
             report = checked()
             report[field] = value
-            with self.subTest(field=field), self.assertRaises(demo.DemoConnectionError):
+            with (
+                self.subTest(field=field),
+                self.assertRaises(demo.DemoConnectionError),
+            ):
                 demo.validate_remote_check(report, profile()["expected"])
         with self.assertRaises(demo.DemoConnectionError):
             demo.validate_remote_check({"status": "ok"}, profile()["expected"])
@@ -247,7 +266,9 @@ def website(*, access_status=200, oversized=False):
         return original(server.server_address, **kwargs)
 
     try:
-        with mock.patch.object(demo.socket, "create_connection", side_effect=create):
+        with mock.patch.object(
+            demo.socket, "create_connection", side_effect=create
+        ):
             yield calls
     finally:
         server.shutdown()
@@ -256,7 +277,7 @@ def website(*, access_status=200, oversized=False):
 
 
 class NetworkTests(unittest.TestCase):
-    def test_local_checks_only_get_and_send_exact_origin_without_environment_proxy(
+    def test_local_checks_use_get_and_exact_origin_without_proxy(
         self,
     ):
         with (
@@ -272,7 +293,10 @@ class NetworkTests(unittest.TestCase):
             demo.local_check()
         self.assertEqual(
             calls,
-            [("GET", path, demo.ORIGIN) for path in ("/healthz", "/", "/api/access")],
+            [
+                ("GET", path, demo.ORIGIN)
+                for path in ("/healthz", "/", "/api/access")
+            ],
         )
 
     def test_origin_denial_redirect_and_body_limits_remain_failures(self):
@@ -293,14 +317,18 @@ class NetworkTests(unittest.TestCase):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen()
-            with self.assertRaisesRegex(demo.DemoConnectionError, "local_port_in_use"):
+            with self.assertRaisesRegex(
+                demo.DemoConnectionError, "local_port_in_use"
+            ):
                 demo.available_port(listener.getsockname()[1])
             self.assertGreaterEqual(listener.fileno(), 0)
 
     def test_closed_ssh_and_http_failure_have_clear_stage(self):
         tunnel = mock.Mock()
         with (
-            mock.patch.object(demo, "local_check", side_effect=ConnectionRefusedError),
+            mock.patch.object(
+                demo, "local_check", side_effect=ConnectionRefusedError
+            ),
             mock.patch.object(demo, "START_SECONDS", 0),
         ):
             with self.assertRaisesRegex(
@@ -345,7 +373,8 @@ class ProcessTests(unittest.TestCase):
 
     def test_tunnel_output_is_bounded_and_sanitized(self):
         own = self.spawn(
-            "import sys,time;sys.stderr.write('PRIVATE_SENTINEL'*10000);sys.stderr.flush();time.sleep(30)"
+            "import sys,time;sys.stderr.write('PRIVATE_SENTINEL'*10000);"
+            "sys.stderr.flush();time.sleep(30)"
         )
         tunnel = demo.Tunnel(own, NONCE)
         try:
@@ -379,7 +408,9 @@ class ProcessTests(unittest.TestCase):
         with (
             mock.patch.object(demo, "remote_check"),
             mock.patch.object(demo, "open_tunnel", opened),
-            mock.patch.object(demo, "verify_local", side_effect=KeyboardInterrupt),
+            mock.patch.object(
+                demo, "verify_local", side_effect=KeyboardInterrupt
+            ),
             self.assertRaises(KeyboardInterrupt),
         ):
             demo.run(profile(), connect=True)
@@ -389,7 +420,8 @@ class ProcessTests(unittest.TestCase):
         for code, expected in (
             ("import time;time.sleep(30)", "forward_readiness_timeout"),
             (
-                "print('DEPOSITAR_DEMO_READY_'+'a'*64,flush=True);import time;time.sleep(30)",
+                "print('DEPOSITAR_DEMO_READY_'+'a'*64,flush=True);"
+                "import time;time.sleep(30)",
                 "forward_readiness_invalid",
             ),
         ):
@@ -414,7 +446,8 @@ class ProcessTests(unittest.TestCase):
             with self.subTest(intermediate_ptys=carriage_returns):
                 own = self.spawn(
                     "import time;time.sleep(.1);print('DEPOSITAR_DEMO_READY_'+"
-                    f" 'f'*64+'\\r'*{carriage_returns},flush=True);time.sleep(30)"
+                    f" 'f'*64+'\\r'*{carriage_returns},flush=True);"
+                    "time.sleep(30)"
                 )
                 tunnel = demo.Tunnel(own, NONCE)
                 try:
@@ -434,7 +467,9 @@ class ProcessTests(unittest.TestCase):
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
             mock.patch.object(
-                demo, "load_profile", side_effect=ValueError("PRIVATE_SENTINEL")
+                demo,
+                "load_profile",
+                side_effect=ValueError("PRIVATE_SENTINEL"),
             ),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
@@ -447,7 +482,9 @@ class ProcessTests(unittest.TestCase):
         )
         self.assertEqual(stdout.getvalue(), "")
 
-    def test_termination_signals_close_owned_tunnel_and_preserve_other_process(self):
+    def test_termination_signals_close_owned_tunnel_and_preserve_other_process(
+        self,
+    ):
         unrelated = self.spawn("import time;time.sleep(30)")
         root = Path(__file__).resolve().parents[3]
         try:
@@ -463,21 +500,25 @@ class ProcessTests(unittest.TestCase):
                     pending = owned.with_suffix(".pending")
                     code = (
                         "from pathlib import Path\nimport sys\n"
-                        "from search.operations.deployment import demo_connection as d\n"
+                        "from search.operations.deployment "
+                        "import demo_connection as d\n"
                         "d.remote_check=lambda p:None\n"
-                        "d.ssh_command=lambda p,**kw:[sys.executable,'-c','import time;time.sleep(30)']\n"
+                        "d.ssh_command=lambda p,**kw:[sys.executable,'-c',"
+                        "'import time;time.sleep(30)']\n"
                         "d.available_port=lambda p:None\n"
                         f"owned=Path({str(owned)!r})\n"
                         "pending=owned.with_suffix('.pending')\n"
                         "def ready(t):\n"
                         "    with pending.open('w') as stream:\n"
                         "        print('PID_PENDING',flush=True)\n"
-                        "        if sys.stdin.buffer.read(1)!=b'1':raise RuntimeError('gate_closed')\n"
+                        "        if sys.stdin.buffer.read(1)!=b'1':"
+                        "raise RuntimeError('gate_closed')\n"
                         "        stream.write(str(t.process.pid))\n"
                         "    pending.replace(owned)\n"
                         "    print('PID_READY',flush=True)\n"
                         "d.verify_local=ready\n"
-                        f"raise SystemExit(d.main(['connect','--config',{str(config)!r}]))\n"
+                        "raise SystemExit(d.main(['connect','--config',"
+                        f"{str(config)!r}]))\n"
                     )
                     child = subprocess.Popen(
                         [sys.executable, "-c", code],
@@ -501,13 +542,15 @@ class ProcessTests(unittest.TestCase):
                                 )
                                 self.assertTrue(readable)
                                 part = os.read(
-                                    child.stdout.fileno(), len(expected) - len(data)
+                                    child.stdout.fileno(),
+                                    len(expected) - len(data),
                                 )
                                 self.assertTrue(part)
                                 data.extend(part)
                             self.assertEqual(bytes(data), expected)
 
-                        # Force the create/write window before permitting publication.
+                        # Force the create/write window before permitting
+                        # publication.
                         wait_marker(b"PID_PENDING\n")
                         self.assertEqual(pending.read_bytes(), b"")
                         self.assertFalse(owned.exists())
@@ -517,9 +560,12 @@ class ProcessTests(unittest.TestCase):
                         identifier = int(owned.read_text())
                         child.send_signal(number)
                         out, err = child.communicate(timeout=8)
-                        self.assertEqual(child.returncode, 128 + number, err.decode())
                         self.assertEqual(
-                            json.loads(out.splitlines()[-1])["status"], "closed"
+                            child.returncode, 128 + number, err.decode()
+                        )
+                        self.assertEqual(
+                            json.loads(out.splitlines()[-1])["status"],
+                            "closed",
                         )
                         with self.assertRaises(ProcessLookupError):
                             os.kill(identifier, 0)
@@ -527,7 +573,8 @@ class ProcessTests(unittest.TestCase):
                     finally:
                         try:
                             if child.poll() is None:
-                                # Let handlers close the tunnel's separate session.
+                                # Let handlers close the tunnel's separate
+                                # session.
                                 child.terminate()
                                 try:
                                     child.wait(timeout=5)
@@ -542,7 +589,11 @@ class ProcessTests(unittest.TestCase):
                                     except ProcessLookupError:
                                         pass
                             finally:
-                                for stream in (child.stdin, child.stdout, child.stderr):
+                                for stream in (
+                                    child.stdin,
+                                    child.stdout,
+                                    child.stderr,
+                                ):
                                     try:
                                         stream.close()
                                     except OSError:
@@ -557,7 +608,8 @@ class ProcessTests(unittest.TestCase):
         cases = [
             ("import time;time.sleep(10)", "remote_check_timeout"),
             (
-                "import sys,time;sys.stderr.write('PRIVATE_SENTINEL'*10000);sys.stderr.flush();time.sleep(10)",
+                "import sys,time;sys.stderr.write('PRIVATE_SENTINEL'*10000);"
+                "sys.stderr.flush();time.sleep(10)",
                 "remote_check_output_limit",
             ),
         ]
@@ -565,7 +617,9 @@ class ProcessTests(unittest.TestCase):
             with (
                 self.subTest(code=expected),
                 mock.patch.object(
-                    demo, "ssh_command", return_value=[sys.executable, "-c", code]
+                    demo,
+                    "ssh_command",
+                    return_value=[sys.executable, "-c", code],
                 ),
                 mock.patch.object(demo, "CHECK_SECONDS", 0.3),
             ):

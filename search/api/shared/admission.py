@@ -8,7 +8,9 @@ class Busy(RuntimeError):
 
 
 class Slots:
-    """Event-loop-owned counter: excess requests fail immediately, never queue."""
+    """Event-loop-owned counter: excess
+    requests fail immediately, never queue.
+    """
 
     def __init__(self, capacity):
         self.capacity, self.used = capacity, 0

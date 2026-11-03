@@ -1,4 +1,5 @@
-"""Query-only operator provisioning with fake HTTP and private temporary state."""
+"""Query-only operator provisioning with fake HTTP and private temporary
+state."""
 
 from __future__ import annotations
 
@@ -28,7 +29,9 @@ class AccessClient:
         self.search_fault = None
 
     def request(self, method, path, payload=None, **kwargs):
-        self.calls.append((method, path, copy.deepcopy(payload), copy.deepcopy(kwargs)))
+        self.calls.append(
+            (method, path, copy.deepcopy(payload), copy.deepcopy(kwargs))
+        )
         if kwargs:
             assert set(kwargs) == {"username", "password"}
             assert kwargs["username"] == access.USER
@@ -64,7 +67,8 @@ class AccessClient:
                 if kind == "internalusers":
                     self.password = value.pop("password")
                     value.update(
-                        hash="redacted-private-hash", opendistro_security_roles=[]
+                        hash="redacted-private-hash",
+                        opendistro_security_roles=[],
                     )
                 value.update(reserved=False, hidden=False, static=False)
                 self.values[kind] = value
@@ -72,7 +76,9 @@ class AccessClient:
         raise AssertionError("unexpected fixed operator request")
 
     def admin_writes(self):
-        return [call for call in self.calls if call[0] == "PUT" and not call[3]]
+        return [
+            call for call in self.calls if call[0] == "PUT" and not call[3]
+        ]
 
 
 class CatalogAccessTests(unittest.TestCase):
@@ -88,13 +94,17 @@ class CatalogAccessTests(unittest.TestCase):
         cls.bundle_temporary.cleanup()
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-access-state-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-access-state-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.client = AccessClient(len(self.bundle.documents))
 
     def provision(self):
-        return access.provision_access(self.client, self.bundle, INDEX, self.root)
+        return access.provision_access(
+            self.client, self.bundle, INDEX, self.root
+        )
 
     def save(self, name, encoded):
         fd = private_io.open_directory(self.root)
@@ -103,7 +113,9 @@ class CatalogAccessTests(unittest.TestCase):
         finally:
             os.close(fd)
 
-    def test_creates_private_secret_exact_binding_and_query_only_privileges(self):
+    def test_creates_private_secret_exact_binding_and_query_only_privileges(
+        self,
+    ):
         proof = self.provision()
         self.assertEqual("ready", proof["status"])
         self.assertIs(proof["created"], True)
@@ -123,7 +135,9 @@ class CatalogAccessTests(unittest.TestCase):
         # Actual API parser, not a duplicated expectation of its contract.
         self.assertEqual(
             binding,
-            index_client.load_binding(self.root / access.BINDING_NAME, self.bundle),
+            index_client.load_binding(
+                self.root / access.BINDING_NAME, self.bundle
+            ),
         )
         self.assertNotIn(self.client.password, json.dumps(proof))
         self.assertNotIn("redacted-private-hash", json.dumps(proof))
@@ -131,7 +145,10 @@ class CatalogAccessTests(unittest.TestCase):
     def test_exact_completed_repeat_is_readback_only_no_secret_rotation(self):
         self.provision()
         old = {
-            name: ((self.root / name).stat().st_ino, (self.root / name).read_bytes())
+            name: (
+                (self.root / name).stat().st_ino,
+                (self.root / name).read_bytes(),
+            )
             for name in (access.SECRET_NAME, access.BINDING_NAME)
         }
         self.client.calls.clear()
@@ -141,7 +158,10 @@ class CatalogAccessTests(unittest.TestCase):
         for name, identity in old.items():
             self.assertEqual(
                 identity,
-                ((self.root / name).stat().st_ino, (self.root / name).read_bytes()),
+                (
+                    (self.root / name).stat().st_ino,
+                    (self.root / name).read_bytes(),
+                ),
             )
 
     def test_verify_does_not_provision_missing_identity(self):
@@ -151,11 +171,15 @@ class CatalogAccessTests(unittest.TestCase):
         self.assertEqual([], list(self.root.iterdir()))
         self.provision()
         self.client.calls.clear()
-        proof = access.verify_access(self.client, self.bundle, INDEX, self.root)
+        proof = access.verify_access(
+            self.client, self.bundle, INDEX, self.root
+        )
         self.assertEqual([], self.client.admin_writes())
         self.assertIs(proof["created"], False)
 
-    def test_secret_without_binding_requires_explicit_recovery_without_http(self):
+    def test_secret_without_binding_requires_explicit_recovery_without_http(
+        self,
+    ):
         secret = b"a" * 64 + b"\n"
         self.save(access.SECRET_NAME, secret)
         with self.assertRaisesRegex(access.AccessError, "recovery_required"):
@@ -179,7 +203,9 @@ class CatalogAccessTests(unittest.TestCase):
             self.client.values[kind] = {"unrelated": "existing-identity"}
             with (
                 self.subTest(kind=kind),
-                self.assertRaisesRegex(access.AccessError, "recovery_required"),
+                self.assertRaisesRegex(
+                    access.AccessError, "recovery_required"
+                ),
             ):
                 self.provision()
             self.assertEqual([], self.client.admin_writes())
@@ -201,8 +227,12 @@ class CatalogAccessTests(unittest.TestCase):
         self.provision()
         for fault in (
             lambda value: value.update(cluster_permissions=["cluster_all"]),
-            lambda value: value.update(tenant_permissions=[{"tenant_patterns": ["*"]}]),
-            lambda value: value["index_permissions"][0].update(index_patterns=["*"]),
+            lambda value: value.update(
+                tenant_permissions=[{"tenant_patterns": ["*"]}]
+            ),
+            lambda value: value["index_permissions"][0].update(
+                index_patterns=["*"]
+            ),
             lambda value: value["index_permissions"][0].update(
                 allowed_actions=["indices_all"]
             ),
@@ -216,7 +246,9 @@ class CatalogAccessTests(unittest.TestCase):
             self.client.role_fault = fault
             with (
                 self.subTest(fault=fault),
-                self.assertRaisesRegex(access.AccessError, "permissions_changed"),
+                self.assertRaisesRegex(
+                    access.AccessError, "permissions_changed"
+                ),
             ):
                 self.provision()
             self.assertEqual([], self.client.admin_writes())
@@ -235,7 +267,9 @@ class CatalogAccessTests(unittest.TestCase):
             self.client.values[kind][key] = value
             with (
                 self.subTest(kind=kind, key=key),
-                self.assertRaisesRegex(access.AccessError, "permissions_changed"),
+                self.assertRaisesRegex(
+                    access.AccessError, "permissions_changed"
+                ),
             ):
                 self.provision()
 
@@ -250,7 +284,9 @@ class CatalogAccessTests(unittest.TestCase):
             self.client.probe_status = {(method, path): 200}
             with (
                 self.subTest(path=path),
-                self.assertRaisesRegex(access.AccessError, "privilege_probe_failed"),
+                self.assertRaisesRegex(
+                    access.AccessError, "privilege_probe_failed"
+                ),
             ):
                 self.provision()
 
@@ -266,7 +302,9 @@ class CatalogAccessTests(unittest.TestCase):
             self.client.search_fault = fault
             with (
                 self.subTest(fault=fault),
-                self.assertRaisesRegex(access.AccessError, "search_incomplete"),
+                self.assertRaisesRegex(
+                    access.AccessError, "search_incomplete"
+                ),
             ):
                 self.provision()
 
@@ -275,12 +313,16 @@ class CatalogAccessTests(unittest.TestCase):
 
         def wrong(method, path, payload=None, **kwargs):
             result = original(method, path, payload, **kwargs)
-            if method == "PUT" and path.endswith("internalusers/" + access.USER):
+            if method == "PUT" and path.endswith(
+                "internalusers/" + access.USER
+            ):
                 self.client.password = "b" * 64
             return result
 
         with patch.object(self.client, "request", side_effect=wrong):
-            with self.assertRaisesRegex(access.AccessError, "privilege_probe_failed"):
+            with self.assertRaisesRegex(
+                access.AccessError, "privilege_probe_failed"
+            ):
                 self.provision()
         self.assertTrue((self.root / access.SECRET_NAME).exists())
         self.assertFalse((self.root / access.BINDING_NAME).exists())
@@ -290,7 +332,10 @@ class CatalogAccessTests(unittest.TestCase):
         path = self.root / access.BINDING_NAME
         for encoded in (
             private_io.canonical(
-                {**access._binding(self.bundle, INDEX), "index": "fess.20261008120001"}
+                {
+                    **access._binding(self.bundle, INDEX),
+                    "index": "fess.20261008120001",
+                }
             ),
             b'{"index":"wrong","index":"' + INDEX.encode() + b'"}\n',
         ):
@@ -310,7 +355,9 @@ class CatalogAccessTests(unittest.TestCase):
         os.link(secret, self.root / "hardlink")
         with self.assertRaises(ValueError):
             self.provision()
-        with tempfile.TemporaryDirectory(prefix="depositar-access-link-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-access-link-"
+        ) as temporary:
             root = Path(temporary)
             (root / access.SECRET_NAME).symlink_to(secret)
             with self.assertRaises(OSError):
@@ -322,7 +369,10 @@ class CatalogAccessTests(unittest.TestCase):
         link = self.root / "linked"
         link.symlink_to(self.root, target_is_directory=True)
         for path in (public, link, self.root / "absent"):
-            with self.subTest(path=path.name), self.assertRaises((OSError, ValueError)):
+            with (
+                self.subTest(path=path.name),
+                self.assertRaises((OSError, ValueError)),
+            ):
                 access.provision_access(self.client, self.bundle, INDEX, path)
         self.assertEqual([], self.client.calls)
 
@@ -344,10 +394,14 @@ class CatalogAccessTests(unittest.TestCase):
             "fess.123\n",
         ):
             with self.subTest(index=index), self.assertRaises(ValueError):
-                access.provision_access(self.client, self.bundle, index, self.root)
+                access.provision_access(
+                    self.client, self.bundle, index, self.root
+                )
         self.assertEqual([], self.client.calls)
 
-    def test_transport_output_is_sanitized_and_secret_stays_out_of_reports(self):
+    def test_transport_output_is_sanitized_and_secret_stays_out_of_reports(
+        self,
+    ):
         class Broken:
             def request(self, *_args, **_kwargs):
                 raise OSError("administrator-password-sensitive-server-body")
@@ -358,12 +412,16 @@ class CatalogAccessTests(unittest.TestCase):
         self.assertTrue(error.exception.__suppress_context__)
         self.assertEqual([], list(self.root.iterdir()))
 
-    def test_all_zero_generated_secret_has_a_different_negative_probe_password(self):
+    def test_all_zero_generated_secret_has_a_different_negative_probe_password(
+        self,
+    ):
         with patch.object(access.secrets, "token_hex", return_value="0" * 64):
             proof = self.provision()
         self.assertTrue(all(row["passed"] for row in proof["probes"]))
         query_credentials = [
-            kwargs["password"] for _, _, _, kwargs in self.client.calls if kwargs
+            kwargs["password"]
+            for _, _, _, kwargs in self.client.calls
+            if kwargs
         ]
         self.assertIn("1" * 64, query_credentials)
 

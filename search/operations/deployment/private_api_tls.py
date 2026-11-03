@@ -1,7 +1,8 @@
 """Two stateless TLS proxies bound to an existing, unchanged private API.
 
 The inner process shares the exact API container network namespace. The host
-listener verifies its TLS identity before forwarding service credentials. Neither
+listener verifies its TLS identity before forwarding service credentials.
+Neither
 proxy mounts an API key, Docker socket, or CA signing key.
 """
 
@@ -15,7 +16,11 @@ import re
 import subprocess
 
 from search.serialization import strict_json
-from search.operations.deployment import composition, gpu_ownership, source_bundle
+from search.operations.deployment import (
+    composition,
+    gpu_ownership,
+    source_bundle,
+)
 from search.operations.deployment.images import build as image_build
 from search.operations.deployment.public_entry import preflight, profile
 from search.operations.shared import private_io
@@ -50,11 +55,14 @@ ISOLATED_NETWORK_FORMAT = (
 DETAIL_FORMAT = (
     '{"Id":{{json .Id}},"Image":{{json .Image}},'
     '"Pid":{{json .State.Pid}},"StartedAt":{{json .State.StartedAt}},'
-    '"SandboxID":{{json .NetworkSettings.SandboxID}},"Labels":{{json .Config.Labels}},'
+    '"SandboxID":{{json .NetworkSettings.SandboxID}},"Labels":{{json '
+    ".Config.Labels}},"
     '"Networks":{{json .NetworkSettings.Networks}},"Mounts":{{json .Mounts}},'
-    '"State":{"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},'
+    '"State":{"Running":{{json .State.Running}},"Paused":{{json '
+    ".State.Paused}},"
     '"Restarting":{{json .State.Restarting}},"Dead":{{json .State.Dead}},'
-    '"Health":{{if .State.Health}}{"Status":{{json .State.Health.Status}}}{{else}}null{{end}}},'
+    '"Health":{{if .State.Health}}{"Status":{{json '
+    ".State.Health.Status}}}{{else}}null{{end}}},"
     '"Ports":{{json .NetworkSettings.Ports}},'
     '"PortBindings":{{json .HostConfig.PortBindings}}}'
 )
@@ -74,7 +82,9 @@ def _path(value):
 
 
 def _read(path):
-    return profile._read_private(Path(path), uid=os.geteuid(), maximum=256 * 1024)
+    return profile._read_private(
+        Path(path), uid=os.geteuid(), maximum=256 * 1024
+    )
 
 
 def load_config(path):
@@ -85,7 +95,10 @@ def load_config(path):
 def _server_name(value):
     _require(type(value) is str and 1 <= len(value) <= 253)
     labels = value.split(".")
-    _require(len(labels) >= 2 and all(DNS_LABEL.fullmatch(label) for label in labels))
+    _require(
+        len(labels) >= 2
+        and all(DNS_LABEL.fullmatch(label) for label in labels)
+    )
     try:
         ipaddress.ip_address(value)
     except ValueError:
@@ -98,7 +111,8 @@ def validate_config(value):
     version = value.get("schema_version")
     _require(type(version) is int and version in (1, 2))
     _require(
-        set(value) == CONFIG_FIELDS | ({"backend_mode"} if version == 2 else set())
+        set(value)
+        == CONFIG_FIELDS | ({"backend_mode"} if version == 2 else set())
     )
     if version == 2:
         _require(value["backend_mode"] == "isolated-release")
@@ -113,9 +127,13 @@ def validate_config(value):
             r"(?:sha256:|[a-z0-9][a-z0-9./_:-]*@sha256:)[0-9a-f]{64}", image
         )
     )
-    _require(type(value["listen_port"]) is int and 1 <= value["listen_port"] <= 65535)
     _require(
-        type(value["bind_address"]) is str and type(value["allowed_source"]) is str
+        type(value["listen_port"]) is int
+        and 1 <= value["listen_port"] <= 65535
+    )
+    _require(
+        type(value["bind_address"]) is str
+        and type(value["allowed_source"]) is str
     )
     address = ipaddress.IPv4Address(value["bind_address"])
     source = ipaddress.IPv4Network(value["allowed_source"], strict=True)
@@ -139,7 +157,9 @@ def _output(argv, runner=subprocess.run):
 
 def _compose_output(argv, runner):
     if runner is subprocess.run:
-        result = image_build._run(argv, timeout=60, environment=dict(os.environ))
+        result = image_build._run(
+            argv, timeout=60, environment=dict(os.environ)
+        )
     else:
         result = runner(
             argv,
@@ -171,7 +191,9 @@ def _backend(config, runner):
     )
     bound = {
         "services": {"public-web": {"volumes": [key_mount]}},
-        "networks": {"existing-release": {"external": True, "name": network_name}},
+        "networks": {
+            "existing-release": {"external": True, "name": network_name}
+        },
     }
     preflight.verify_private_backend(bound, release, runner=runner)
     network = _one(
@@ -189,11 +211,13 @@ def _backend(config, runner):
     _require(len(members) == 4, "peers_changed")
     rows = preflight._objects(
         _output(
-            ["docker", "inspect", "--format", DETAIL_FORMAT, *sorted(members)], runner
+            ["docker", "inspect", "--format", DETAIL_FORMAT, *sorted(members)],
+            runner,
         )
     )
     _require(
-        len(rows) == 4 and {r["Id"] for r in rows} == set(members), "peers_changed"
+        len(rows) == 4 and {r["Id"] for r in rows} == set(members),
+        "peers_changed",
     )
     expected = {
         (release["name"], role)
@@ -221,7 +245,9 @@ def _backend(config, runner):
     )
     ip = str(ipaddress.IPv4Address(api["Networks"][network_name]["IPAddress"]))
     gateway = next(
-        r for r in rows if r["Labels"].get("com.docker.compose.service") == "web-nginx"
+        r
+        for r in rows
+        if r["Labels"].get("com.docker.compose.service") == "web-nginx"
     )
     route_mount = next(
         m
@@ -247,7 +273,9 @@ def _backend(config, runner):
 
 
 def _isolated_peer(row, role, release, network):
-    """Seal a healthy, unpublished CPU peer without granting gateway authority."""
+    """Seal a healthy, unpublished CPU peer without granting gateway
+    authority.
+    """
     service = release["services"][role]
     planned = service.get("networks")
     _require(type(planned) in (list, dict) and planned, "backend_changed")
@@ -260,7 +288,10 @@ def _isolated_peer(row, role, release, network):
         and preflight.IMAGE.fullmatch(service["image"])
         and not service.get("ports")
         and state.get("Running") is True
-        and all(state.get(name) is False for name in ("Paused", "Restarting", "Dead"))
+        and all(
+            state.get(name) is False
+            for name in ("Paused", "Restarting", "Dead")
+        )
         and (state.get("Health") or {}).get("Status") == "healthy"
         and row.get("PortBindings") in (None, {})
         and (
@@ -290,7 +321,9 @@ def _isolated_peer(row, role, release, network):
 
 
 def _isolated_backend(config, runner):
-    """Explicit schema 2: exactly the three native release services, no gateway."""
+    """Explicit schema 2: exactly the three native release services, no
+    gateway.
+    """
     raw = _read(config["release_compose"])
     release = strict_json(raw)
     _require(
@@ -312,7 +345,9 @@ def _isolated_backend(config, runner):
     )
     bound = {
         "services": {"public-web": {"volumes": [key_mount]}},
-        "networks": {"existing-release": {"external": True, "name": network_name}},
+        "networks": {
+            "existing-release": {"external": True, "name": network_name}
+        },
     }
     preflight.verify_private_backend(bound, release, runner=runner)
     network = _one(
@@ -345,7 +380,8 @@ def _isolated_backend(config, runner):
     )
     rows = preflight._objects(
         _output(
-            ["docker", "inspect", "--format", DETAIL_FORMAT, *sorted(members)], runner
+            ["docker", "inspect", "--format", DETAIL_FORMAT, *sorted(members)],
+            runner,
         )
     )
     _require(
@@ -363,7 +399,8 @@ def _isolated_backend(config, runner):
     )
     peers = {row["Labels"]["com.docker.compose.service"]: row for row in rows}
     proof = {
-        role: _isolated_peer(row, role, release, network) for role, row in peers.items()
+        role: _isolated_peer(row, role, release, network)
+        for role, row in peers.items()
     }
     _require(
         len({row["sandbox_id"] for row in proof.values()}) == 3
@@ -398,7 +435,10 @@ def _materials(config, runner):
         digests[name] = hashlib.sha256(_read(config[name])).hexdigest()
     for prefix in ("outer", "inner"):
         hostname = config[prefix + "_server_name"]
-        cert, key = config[prefix + "_certificate_file"], config[prefix + "_key_file"]
+        cert, key = (
+            config[prefix + "_certificate_file"],
+            config[prefix + "_key_file"],
+        )
         _output(
             [
                 "openssl",
@@ -414,21 +454,32 @@ def _materials(config, runner):
             runner,
         )
         san = _output(
-            ["openssl", "x509", "-in", cert, "-noout", "-ext", "subjectAltName"],
+            [
+                "openssl",
+                "x509",
+                "-in",
+                cert,
+                "-noout",
+                "-ext",
+                "subjectAltName",
+            ],
             runner,
         ).decode("ascii")
         _require(
-            "DNS:" + hostname in {name.strip() for name in re.split(r"[,\n]", san)},
+            "DNS:" + hostname
+            in {name.strip() for name in re.split(r"[,\n]", san)},
             "certificate_invalid",
         )
         _output(
-            ["openssl", "x509", "-in", cert, "-noout", "-checkend", "86400"], runner
+            ["openssl", "x509", "-in", cert, "-noout", "-checkend", "86400"],
+            runner,
         )
         cert_public = _output(
             ["openssl", "x509", "-in", cert, "-pubkey", "-noout"], runner
         )
         key_public = _output(
-            ["openssl", "pkey", "-in", key, "-passin", "pass:", "-pubout"], runner
+            ["openssl", "pkey", "-in", key, "-passin", "pass:", "-pubout"],
+            runner,
         )
         _require(cert_public == key_public, "certificate_invalid")
     return hashlib.sha256(private_io.canonical(digests)).hexdigest()
@@ -442,65 +493,118 @@ def _nginx(config, backend, *, inner):
     inner_hostname = config["inner_server_name"]
     acl = "" if inner else f"allow {config['allowed_source']}; deny all;"
     upstream = (
-        "http://127.0.0.1:8000" if inner else f"https://{backend['api_address']}:8443"
+        "http://127.0.0.1:8000"
+        if inner
+        else f"https://{backend['api_address']}:8443"
     )
     tls = (
         ""
         if inner
-        else f"proxy_ssl_server_name on; proxy_ssl_name {inner_hostname}; proxy_ssl_verify on; proxy_ssl_verify_depth 2; proxy_ssl_trusted_certificate /run/tls/ca.pem; proxy_ssl_session_reuse off;"
+        else (
+            "proxy_ssl_server_name on; proxy_ssl_name "
+            f"""{inner_hostname}"""
+            "; proxy_ssl_verify on; proxy_ssl_verify_depth 2; "
+            "proxy_ssl_trusted_certificate /run/tls/ca.pem; "
+            "proxy_ssl_session_reuse off;"
+        )
     )
     locations = []
     for path, method in (("/v1/turn", "POST"), ("/v1/version", "GET")):
-        locations.append(f'''location = {path} {{
-            if ($request_uri != "{path}") {{ return 400; }}
-            if ($request_method != {method}) {{ return 405; }}
-            proxy_pass {upstream}; {tls}
-            proxy_set_header Host {inner_hostname if not inner else "conversation-api"};
-            proxy_set_header Connection close;
-            proxy_http_version 1.1;
-            proxy_next_upstream off;
-            proxy_connect_timeout 3s; proxy_read_timeout 125s; proxy_send_timeout 5s;
-            proxy_buffering off;
-        }}''')
+        locations.append(
+            (
+                "location = "
+                f"""{path}"""
+                " {\n"
+                '            if ($request_uri != "'
+                f"""{path}"""
+                '") { return 400; }\n'
+                "            if ($request_method != "
+                f"""{method}"""
+                ") { return 405; }\n"
+                "            proxy_pass "
+                f"""{upstream}"""
+                "; "
+                f"""{tls}"""
+                "\n"
+                "            proxy_set_header Host "
+                f"""{inner_hostname if not inner else "conversation-api"}"""
+                ";\n"
+                "            proxy_set_header Connection close;\n"
+                "            proxy_http_version 1.1;\n"
+                "            proxy_next_upstream off;\n"
+                "            proxy_connect_timeout 3s; proxy_read_timeout "
+                "125s; proxy_send_timeout 5s;\n"
+                "            proxy_buffering off;\n"
+                "        }"
+            )
+        )
     user = "" if inner else "user nginx;"
-    return f"""{user}
-worker_processes 1;
-pid /tmp/nginx.pid;
-error_log /dev/stderr crit;
-events {{ worker_connections 128; }}
-http {{
-    access_log off; server_tokens off;
-    client_body_temp_path /tmp/client; proxy_temp_path /tmp/proxy;
-    fastcgi_temp_path /tmp/fastcgi; uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi;
-    client_max_body_size 8192;
-    client_header_timeout 5s; client_body_timeout 5s; send_timeout 5s;
-    keepalive_timeout 5s; large_client_header_buffers 2 8k;
-    server {{
-        listen {address}:{port} ssl;
-        server_name {hostname};
-        ssl_certificate /run/tls/{prefix}.crt;
-        ssl_certificate_key /run/tls/{prefix}.key;
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_session_tickets off;
-        {acl}
-        if ($host != {hostname}) {{ return 421; }}
-        {"".join(locations)}
-        location / {{ return 404; }}
-    }}
-}}
-"""
+    return (
+        f"""{user}"""
+        "\n"
+        "worker_processes 1;\n"
+        "pid /tmp/nginx.pid;\n"
+        "error_log /dev/stderr crit;\n"
+        "events { worker_connections 128; }\n"
+        "http {\n"
+        "    access_log off; server_tokens off;\n"
+        "    client_body_temp_path /tmp/client; proxy_temp_path "
+        "/tmp/proxy;\n"
+        "    fastcgi_temp_path /tmp/fastcgi; uwsgi_temp_path "
+        "/tmp/uwsgi; scgi_temp_path /tmp/scgi;\n"
+        "    client_max_body_size 8192;\n"
+        "    client_header_timeout 5s; client_body_timeout 5s; "
+        "send_timeout 5s;\n"
+        "    keepalive_timeout 5s; large_client_header_buffers 2 8k;\n"
+        "    server {\n"
+        "        listen "
+        f"""{address}"""
+        ":"
+        f"""{port}"""
+        " ssl;\n"
+        "        server_name "
+        f"""{hostname}"""
+        ";\n"
+        "        ssl_certificate /run/tls/"
+        f"""{prefix}"""
+        ".crt;\n"
+        "        ssl_certificate_key /run/tls/"
+        f"""{prefix}"""
+        ".key;\n"
+        "        ssl_protocols TLSv1.2 TLSv1.3;\n"
+        "        ssl_session_tickets off;\n"
+        "        "
+        f"""{acl}"""
+        "\n"
+        "        if ($host != "
+        f"""{hostname}"""
+        ") { return 421; }\n"
+        "        "
+        f"""{"".join(locations)}"""
+        "\n"
+        "        location / { return 404; }\n"
+        "    }\n"
+        "}\n"
+    )
 
 
 def render(config, backend, output, *, project="depositar-private-api-tls"):
-    _require(re.fullmatch(r"depositar-private-api-tls(?:-[a-z0-9-]{1,40})?", project))
+    _require(
+        re.fullmatch(
+            r"depositar-private-api-tls(?:-[a-z0-9-]{1,40})?", project
+        )
+    )
     uid, gid = os.geteuid(), os.getegid()
     services, assets = {}, {}
     for role in ("inner", "outer"):
         assets[role + ".conf"] = _nginx(config, backend, inner=role == "inner")
         volumes = [
-            composition._mount(output / (role + ".conf"), "/run/endpoint.conf"),
             composition._mount(
-                Path(config[role + "_certificate_file"]), "/run/tls/" + role + ".crt"
+                output / (role + ".conf"), "/run/endpoint.conf"
+            ),
+            composition._mount(
+                Path(config[role + "_certificate_file"]),
+                "/run/tls/" + role + ".crt",
             ),
             composition._mount(
                 Path(config[role + "_key_file"]), "/run/tls/" + role + ".key"
@@ -511,7 +615,9 @@ def render(config, backend, output, *, project="depositar-private-api-tls"):
                 composition._mount(Path(config["ca_file"]), "/run/tls/ca.pem")
             )
         service = {
-            **composition._runtime(uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32),
+            **composition._runtime(
+                uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32
+            ),
             "image": config["nginx_image"],
             "entrypoint": ["nginx"],
             "command": ["-c", "/run/endpoint.conf", "-g", "daemon off;"],
@@ -526,7 +632,14 @@ def render(config, backend, output, *, project="depositar-private-api-tls"):
                 ).hexdigest()
             },
             "healthcheck": {
-                "test": ["CMD", "nginx", "-t", "-q", "-c", "/run/endpoint.conf"],
+                "test": [
+                    "CMD",
+                    "nginx",
+                    "-t",
+                    "-q",
+                    "-c",
+                    "/run/endpoint.conf",
+                ],
                 "interval": "2s",
                 "timeout": "3s",
                 "retries": 10,
@@ -544,7 +657,11 @@ def render(config, backend, output, *, project="depositar-private-api-tls"):
 
 
 def prepare(
-    config_path, output, *, runner=subprocess.run, project="depositar-private-api-tls"
+    config_path,
+    output,
+    *,
+    runner=subprocess.run,
+    project="depositar-private-api-tls",
 ):
     config = load_config(config_path)
     output = _path(str(output))
@@ -552,7 +669,14 @@ def prepare(
     material = _materials(config, runner)
     backend = _backend(config, runner)
     _output(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", config["nginx_image"]],
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            config["nginx_image"],
+        ],
         runner,
     )
     compose, assets = render(config, backend, output, project=project)
@@ -570,8 +694,12 @@ def prepare(
     descriptor = private_io.open_directory(output, create=True)
     try:
         for name, raw in assets.items():
-            private_io.write_file(descriptor, name, raw.encode(), max_bytes=256 * 1024)
-        private_io.write_json(descriptor, "plan.json", plan, max_bytes=256 * 1024)
+            private_io.write_file(
+                descriptor, name, raw.encode(), max_bytes=256 * 1024
+            )
+        private_io.write_json(
+            descriptor, "plan.json", plan, max_bytes=256 * 1024
+        )
     finally:
         os.close(descriptor)
     return {
@@ -596,7 +724,10 @@ def _read_plan(path):
     _require(plan["schema_version"] == plan["config"]["schema_version"])
     if plan["schema_version"] == 2:
         _validate_isolated_binding(plan["backend"])
-    _require(plan["backend"]["api_container_id"] == plan["config"]["api_container_id"])
+    _require(
+        plan["backend"]["api_container_id"]
+        == plan["config"]["api_container_id"]
+    )
     _require(type(plan["backend"]["api_address"]) is str)
     _require(
         str(ipaddress.IPv4Address(plan["backend"]["api_address"]))
@@ -612,7 +743,9 @@ def _read_plan(path):
 
 
 def _validate_isolated_binding(backend):
-    """Authenticate schema shape even for stop, which cannot require a live API."""
+    """Authenticate schema shape even for stop, which cannot require a live
+    API.
+    """
     _require(
         type(backend) is dict
         and set(backend)
@@ -634,7 +767,8 @@ def _validate_isolated_binding(backend):
         and backend["backend_mode"] == "isolated-release"
         and type(backend["release_project"]) is str
         and preflight.PROJECT.fullmatch(backend["release_project"])
-        and backend["website_network"] == backend["release_project"] + "_website"
+        and backend["website_network"]
+        == backend["release_project"] + "_website"
         and type(backend["release_compose_sha256"]) is str
         and preflight.IDENTIFIER.fullmatch(backend["release_compose_sha256"])
         and type(backend["website_network_id"]) is str
@@ -677,7 +811,9 @@ def _validate_isolated_binding(backend):
         and backend["api_started_at"] == api["started_at"]
         and backend["api_sandbox_id"] == api["sandbox_id"]
         and backend["peer_ids"]
-        == sorted(peer["container_id"] for peer in backend["peer_proofs"].values())
+        == sorted(
+            peer["container_id"] for peer in backend["peer_proofs"].values()
+        )
         and len(set(backend["peer_ids"])) == 3,
     )
 
@@ -687,11 +823,15 @@ def check(plan_path, *, runner=subprocess.run):
     plan = _read_plan(plan_path)
     for name, digest in plan["files"].items():
         _require(
-            hashlib.sha256(_read(plan_path.parent / name)).hexdigest() == digest,
+            hashlib.sha256(_read(plan_path.parent / name)).hexdigest()
+            == digest,
             "material_changed",
         )
     config = validate_config(plan["config"])
-    _require(_materials(config, runner) == plan["material_sha256"], "material_changed")
+    _require(
+        _materials(config, runner) == plan["material_sha256"],
+        "material_changed",
+    )
     _require(_backend(config, runner) == plan["backend"], "backend_changed")
     compose, assets = render(
         config,
@@ -700,11 +840,15 @@ def check(plan_path, *, runner=subprocess.run):
         project=strict_json(_read(plan_path.parent / "compose.json"))["name"],
     )
     _require(
-        private_io.canonical(compose) == _read(plan_path.parent / "compose.json"),
+        private_io.canonical(compose)
+        == _read(plan_path.parent / "compose.json"),
         "material_changed",
     )
     _require(
-        all(assets[name].encode() == _read(plan_path.parent / name) for name in assets),
+        all(
+            assets[name].encode() == _read(plan_path.parent / name)
+            for name in assets
+        ),
         "material_changed",
     )
     return plan
@@ -760,7 +904,10 @@ def _owned(path, plan, runner, *, healthy=False, with_roles=False):
         "runtime_changed",
     )
     if healthy:
-        _require({r["Service"] for r in rows} == {"inner", "outer"}, "runtime_changed")
+        _require(
+            {r["Service"] for r in rows} == {"inner", "outer"},
+            "runtime_changed",
+        )
     image_id = (
         _output(
             [
@@ -778,17 +925,27 @@ def _owned(path, plan, runner, *, healthy=False, with_roles=False):
     )
     result = []
     fmt = (
-        '{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json .Config.Labels}},"Mounts":{{json .Mounts}},'
-        '"NetworkMode":{{json .HostConfig.NetworkMode}},"Running":{{json .State.Running}},'
-        '"Command":{{json .Config.Cmd}},"Entrypoint":{{json .Config.Entrypoint}},"User":{{json .Config.User}},'
-        '"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},"Privileged":{{json .HostConfig.Privileged}},'
-        '"CapAdd":{{json .HostConfig.CapAdd}},"CapDrop":{{json .HostConfig.CapDrop}},'
-        '"SecurityOpt":{{json .HostConfig.SecurityOpt}},"PortBindings":{{json .HostConfig.PortBindings}},'
-        '"Runtime":{{json .HostConfig.Runtime}},"PidMode":{{json .HostConfig.PidMode}},'
-        '"Healthy":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
+        '{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json '
+        '.Config.Labels}},"Mounts":{{json .Mounts}},'
+        '"NetworkMode":{{json .HostConfig.NetworkMode}},"Running":{{json '
+        ".State.Running}},"
+        '"Command":{{json .Config.Cmd}},"Entrypoint":{{json '
+        '.Config.Entrypoint}},"User":{{json .Config.User}},'
+        '"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},'
+        '"Privileged":{{json .HostConfig.Privileged}},'
+        '"CapAdd":{{json .HostConfig.CapAdd}},"CapDrop":{{json '
+        ".HostConfig.CapDrop}},"
+        '"SecurityOpt":{{json .HostConfig.SecurityOpt}},"PortBindings":{{j'
+        "son .HostConfig.PortBindings}},"
+        '"Runtime":{{json .HostConfig.Runtime}},"PidMode":{{json '
+        ".HostConfig.PidMode}},"
+        '"Healthy":{{if .State.Health}}{{json '
+        ".State.Health.Status}}{{else}}null{{end}}}"
     )
     for row in rows:
-        observed = _one(["docker", "inspect", "--format", fmt, row["ID"]], runner)
+        observed = _one(
+            ["docker", "inspect", "--format", fmt, row["ID"]], runner
+        )
         service = compose["services"][row["Service"]]
         labels = observed["Labels"]
         mounts = sorted(
@@ -797,7 +954,8 @@ def _owned(path, plan, runner, *, healthy=False, with_roles=False):
             if m["Type"] == "bind"
         )
         wanted = sorted(
-            (m["source"], m["target"], not m["read_only"]) for m in service["volumes"]
+            (m["source"], m["target"], not m["read_only"])
+            for m in service["volumes"]
         )
         _require(
             observed["Id"] == row["ID"]
@@ -820,29 +978,39 @@ def _owned(path, plan, runner, *, healthy=False, with_roles=False):
             and observed.get("Privileged") is False
             and observed.get("Runtime") == "runc"
             and observed.get("PidMode") in (None, "")
-            and set(observed.get("SecurityOpt") or []) == set(service["security_opt"])
-            and {c.removeprefix("CAP_") for c in (observed.get("CapDrop") or [])}
+            and set(observed.get("SecurityOpt") or [])
+            == set(service["security_opt"])
+            and {
+                c.removeprefix("CAP_") for c in (observed.get("CapDrop") or [])
+            }
             == {"ALL"}
-            and {c.removeprefix("CAP_") for c in (observed.get("CapAdd") or [])}
+            and {
+                c.removeprefix("CAP_") for c in (observed.get("CapAdd") or [])
+            }
             == set(service.get("cap_add", []))
             and observed.get("PortBindings") in (None, {}),
             "runtime_changed",
         )
         if healthy:
             _require(
-                observed["Running"] is True and observed["Healthy"] == "healthy",
+                observed["Running"] is True
+                and observed["Healthy"] == "healthy",
                 "runtime_changed",
             )
         result.append(row["ID"])
-    return {row["Service"]: row["ID"] for row in rows} if with_roles else result
+    return (
+        {row["Service"]: row["ID"] for row in rows} if with_roles else result
+    )
 
 
 def gpu_ownership_proofs(
     plan_path, *, runner=subprocess.run
 ) -> tuple[gpu_ownership.CPUContainerProof, ...]:
-    """Prove the exact healthy TLS pair without stopping it or granting GPU use.
+    """Prove the exact healthy TLS pair without stopping it or granting GPU
+    use.
 
-    Material, backend, rendered profile and actual TLS ownership are independently
+    Material, backend, rendered profile and actual TLS ownership are
+    independently
     verified before sealing the full local GPU-ownership inspect projection.
     Callers must retain operation locks and use these proofs only immediately:
     subsequent GPU collection rechecks every container and exact fingerprint.
@@ -860,12 +1028,17 @@ def gpu_ownership_proofs(
             return image_build._run(
                 argv,
                 timeout=kwargs["timeout"],
-                environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+                environment={
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                    "LANG": "C.UTF-8",
+                },
             )
         return runner(argv, **kwargs)
 
     plan = check(path, runner=local_runner)
-    identifiers = _owned(path, plan, local_runner, healthy=True, with_roles=True)
+    identifiers = _owned(
+        path, plan, local_runner, healthy=True, with_roles=True
+    )
     _require(set(identifiers) == {"inner", "outer"}, "runtime_changed")
 
     def command(argv):
@@ -887,7 +1060,8 @@ def gpu_ownership_proofs(
         raise EndpointError("private_api_tls_runtime_changed") from None
     _require(check(path, runner=local_runner) == plan, "material_changed")
     _require(
-        _owned(path, plan, local_runner, healthy=True, with_roles=True) == identifiers,
+        _owned(path, plan, local_runner, healthy=True, with_roles=True)
+        == identifiers,
         "runtime_changed",
     )
     return tuple(result)
@@ -896,7 +1070,9 @@ def gpu_ownership_proofs(
 def _stop_owned(path, plan, runner):
     identifiers = _owned(path, plan, runner)
     if identifiers:
-        _compose_output(["docker", "stop", "--time", "5", *identifiers], runner)
+        _compose_output(
+            ["docker", "stop", "--time", "5", *identifiers], runner
+        )
         _compose_output(["docker", "rm", *identifiers], runner)
 
 

@@ -1,4 +1,6 @@
-"""Exercise intranet admission publication using private, local CPU fixtures."""
+"""Exercise intranet admission publication using private, local CPU
+fixtures.
+"""
 
 from contextlib import contextmanager
 import errno
@@ -88,7 +90,9 @@ class AccessTests(unittest.TestCase):
             access.prepare_access(self.config)
         self.assertEqual(self.path.read_bytes(), RULES)
         self.assertTrue(stat.S_ISREG(original.st_mode))
-        self.assertEqual((original.st_uid, original.st_nlink), (os.geteuid(), 1))
+        self.assertEqual(
+            (original.st_uid, original.st_nlink), (os.geteuid(), 1)
+        )
         self.assertEqual(stat.S_IMODE(original.st_mode), 0o444)
         self.assertEqual(self.path.stat().st_ino, original.st_ino)
 
@@ -96,16 +100,17 @@ class AccessTests(unittest.TestCase):
         self.write()
         sentinel = self.parent / "unrelated"
         sentinel.write_bytes(b"untouched")
-        self.config["services"]["web-nginx"]["environment"]["WEB_ALLOWED_CIDRS"] = (
-            "192.168.2.0/24,10.20.31.0/24"
-        )
+        self.config["services"]["web-nginx"]["environment"][
+            "WEB_ALLOWED_CIDRS"
+        ] = "192.168.2.0/24,10.20.31.0/24"
         with self.descriptors():
             with self.assertRaises(ValueError):
                 access.verify_access(self.config)
             access.prepare_access(self.config)
             access.verify_access(self.config)
         expected = RULES.replace(
-            b"allow 10.20.30.0/24;\n", b"allow 192.168.2.0/24;\nallow 10.20.31.0/24;\n"
+            b"allow 10.20.30.0/24;\n",
+            b"allow 192.168.2.0/24;\nallow 10.20.31.0/24;\n",
         )
         self.assertEqual(self.path.read_bytes(), expected)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o444)
@@ -122,7 +127,11 @@ class AccessTests(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), mode)
 
     def test_verify_requires_exact_approved_ascii_bytes(self):
-        for raw in (RULES + b"\n", RULES.replace(b"deny all;", b"allow all;"), b"\xff"):
+        for raw in (
+            RULES + b"\n",
+            RULES.replace(b"deny all;", b"allow all;"),
+            b"\xff",
+        ):
             with self.subTest(raw=raw):
                 self.write(raw)
                 with self.descriptors():
@@ -142,7 +151,9 @@ class AccessTests(unittest.TestCase):
                     finally:
                         directory.chmod(0o700)
 
-    def test_symlink_destination_and_hardlink_never_overwrite_another_file(self):
+    def test_symlink_destination_and_hardlink_never_overwrite_another_file(
+        self,
+    ):
         external = self.root / "external"
         external.write_bytes(b"external sentinel")
         external.chmod(0o444)
@@ -154,7 +165,9 @@ class AccessTests(unittest.TestCase):
                     os.link(external, self.path)
                 try:
                     self.denied()
-                    self.assertEqual(external.read_bytes(), b"external sentinel")
+                    self.assertEqual(
+                        external.read_bytes(), b"external sentinel"
+                    )
                 finally:
                     self.path.unlink()
 
@@ -207,12 +220,17 @@ class AccessTests(unittest.TestCase):
                 self.write(b"old policy\n")
 
                 def failing_fsync(descriptor):
-                    if stat.S_ISDIR(os.fstat(descriptor).st_mode) == directory_failure:
+                    if (
+                        stat.S_ISDIR(os.fstat(descriptor).st_mode)
+                        == directory_failure
+                    ):
                         raise OSError(errno.EIO, "synthetic fsync failure")
                     return real_fsync(descriptor)
 
                 with self.descriptors():
-                    with patch.object(access.os, "fsync", side_effect=failing_fsync):
+                    with patch.object(
+                        access.os, "fsync", side_effect=failing_fsync
+                    ):
                         with self.assertRaises(OSError):
                             access.prepare_access(self.config)
                 self.assertEqual(list(self.parent.iterdir()), [self.path])

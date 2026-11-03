@@ -1,4 +1,6 @@
-"""Offline product consumer tests: real Git, metadata, archives and model pins."""
+"""Offline product consumer tests: real Git, metadata, archives and model
+pins.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +32,8 @@ from tests.unit.operations.test_metadata_sync import dataset
 
 ROOT = Path(__file__).resolve().parents[4]
 APP_PATHS = {
-    role: "fixture/" + role + ".py" for role in product_package.image_build.SERVICES
+    role: "fixture/" + role + ".py"
+    for role in product_package.image_build.SERVICES
 }
 CATALOG_PATHS = {
     "fess-search": ("fixture/fess.py",),
@@ -42,68 +45,77 @@ CATALOG_PATHS = {
 # This tiny historical policy deliberately has different inputs from the
 # consumer's RECIPES. Its subprocess still reads real committed Git objects.
 HISTORICAL_SOURCE = (
-    """
-import hashlib, subprocess
-from pathlib import Path
-from search.operations.shared import private_io
-from search.operations.shared.source_identity import require_clean_revision
-MAX_FILE_BYTES = 2 * 1024**2
-APP_PATHS = %r
-def _runner(argv, *, timeout):
-    if argv[0] != "/usr/bin/env" or "git" not in argv:
-        raise ValueError("fixture_git_only")
-    return subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL,
-        timeout=timeout, check=False)
-class _Git:
-    def __init__(self, repo, runner):
-        self.repo, self.runner = Path(repo), runner
-    def raw(self, argv, *, max_bytes=2 * 1024**2):
-        result = self.runner(argv, timeout=10)
-        if result.returncode or len(result.stdout) > max_bytes:
-            raise ValueError("fixture_git_failed")
-        return result.stdout
-    def tree(self, revision):
-        rows = self.raw(["git", "-C", str(self.repo), "ls-tree", "-rz", revision])
-        result = {}
-        for row in rows.split(b"\\0"):
-            if row:
-                metadata, name = row.split(b"\\t", 1)
-                mode, kind, object_id = metadata.decode().split()
-                result[name.decode()] = {"mode": mode, "type": kind, "object": object_id}
-        return result
-    def clean(self, revision):
-        def text(argv, *, timeout):
-            raw = self.raw(argv)
-            return subprocess.CompletedProcess(argv, 0, raw.decode(), "")
-        if require_clean_revision(self.repo, runner=text) != revision:
-            raise ValueError("fixture_not_clean")
-def committed_source_plan(root, revision, runner=None):
-    git = _Git(root, runner)
-    git.clean(revision)
-    tree, services = git.tree(revision), {}
-    for role, path in APP_PATHS.items():
-        raw = git.raw(["git", "-C", str(root), "show", revision + ":" + path])
-        sources = {path: {"mode": tree[path]["mode"], "size": len(raw),
-            "sha256": hashlib.sha256(raw).hexdigest()}}
-        services[role] = {"source_sha256": hashlib.sha256(private_io.canonical(sources)).hexdigest()}
-    return {"services": services}
-"""
-    % APP_PATHS
-)
+    "\n"
+    "import hashlib, subprocess\n"
+    "from pathlib import Path\n"
+    "from search.operations.shared import private_io\n"
+    "from search.operations.shared.source_identity import "
+    "require_clean_revision\n"
+    "MAX_FILE_BYTES = 2 * 1024**2\n"
+    "APP_PATHS = %r\n"
+    "def _runner(argv, *, timeout):\n"
+    '    if argv[0] != "/usr/bin/env" or "git" not in argv:\n'
+    '        raise ValueError("fixture_git_only")\n'
+    "    return subprocess.run(argv, capture_output=True, "
+    "stdin=subprocess.DEVNULL,\n"
+    "        timeout=timeout, check=False)\n"
+    "class _Git:\n"
+    "    def __init__(self, repo, runner):\n"
+    "        self.repo, self.runner = Path(repo), runner\n"
+    "    def raw(self, argv, *, max_bytes=2 * 1024**2):\n"
+    "        result = self.runner(argv, timeout=10)\n"
+    "        if result.returncode or len(result.stdout) > max_bytes:\n"
+    '            raise ValueError("fixture_git_failed")\n'
+    "        return result.stdout\n"
+    "    def tree(self, revision):\n"
+    '        rows = self.raw(["git", "-C", str(self.repo), '
+    '"ls-tree", "-rz", revision])\n'
+    "        result = {}\n"
+    '        for row in rows.split(b"\\0"):\n'
+    "            if row:\n"
+    '                metadata, name = row.split(b"\\t", 1)\n'
+    "                mode, kind, object_id = metadata.decode().split()\n"
+    '                result[name.decode()] = {"mode": mode, "type": '
+    'kind, "object": object_id}\n'
+    "        return result\n"
+    "    def clean(self, revision):\n"
+    "        def text(argv, *, timeout):\n"
+    "            raw = self.raw(argv)\n"
+    "            return subprocess.CompletedProcess(argv, 0, "
+    'raw.decode(), "")\n'
+    "        if require_clean_revision(self.repo, runner=text) != "
+    "revision:\n"
+    '            raise ValueError("fixture_not_clean")\n'
+    "def committed_source_plan(root, revision, runner=None):\n"
+    "    git = _Git(root, runner)\n"
+    "    git.clean(revision)\n"
+    "    tree, services = git.tree(revision), {}\n"
+    "    for role, path in APP_PATHS.items():\n"
+    '        raw = git.raw(["git", "-C", str(root), "show", '
+    'revision + ":" + path])\n'
+    '        sources = {path: {"mode": tree[path]["mode"], "size": '
+    "len(raw),\n"
+    '            "sha256": hashlib.sha256(raw).hexdigest()}}\n'
+    '        services[role] = {"source_sha256": '
+    "hashlib.sha256(private_io.canonical(sources)).hexdigest()}\n"
+    '    return {"services": services}\n'
+) % APP_PATHS
 
-HISTORICAL_BACKEND = """
-DATA_FILES = %r
-def validate_compatibility(plan, *, repo_root, revision, runner=None):
-    origin = plan["revision"]
-    for path in DATA_FILES:
-        def blob(sha):
-            result = runner(["git", "-C", str(repo_root), "show", sha + ":" + path], timeout=10)
-            if result.returncode:
-                raise ValueError("fixture_missing_history")
-            return result.stdout
-        if blob(origin) != blob(revision):
-            raise ValueError("fixture_catalog_incompatible")
-""" % (
+HISTORICAL_BACKEND = (
+    "\n"
+    "DATA_FILES = %r\n"
+    "def validate_compatibility(plan, *, repo_root, revision, runner=None):\n"
+    '    origin = plan["revision"]\n'
+    "    for path in DATA_FILES:\n"
+    "        def blob(sha):\n"
+    '            result = runner(["git", "-C", str(repo_root), "show", '
+    'sha + ":" + path], timeout=10)\n'
+    "            if result.returncode:\n"
+    '                raise ValueError("fixture_missing_history")\n'
+    "            return result.stdout\n"
+    "        if blob(origin) != blob(revision):\n"
+    '            raise ValueError("fixture_catalog_incompatible")\n'
+) % (
     identity.SOURCE_FILES
     + tuple(sorted({paths[0] for paths in CATALOG_PATHS.values()})),
 )
@@ -111,7 +123,9 @@ def validate_compatibility(plan, *, repo_root, revision, runner=None):
 
 class ProductRestoreTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-product-restore-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-product-restore-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.repo = self.root / "historical-source"
@@ -138,7 +152,13 @@ class ProductRestoreTests(unittest.TestCase):
 
     def git(self, *arguments):
         result = subprocess.run(
-            ["git", "--no-replace-objects", "-C", str(self.repo), *map(str, arguments)],
+            [
+                "git",
+                "--no-replace-objects",
+                "-C",
+                str(self.repo),
+                *map(str, arguments),
+            ],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=15,
@@ -170,20 +190,30 @@ class ProductRestoreTests(unittest.TestCase):
     def _source_fixture(self):
         files = {
             "README.md": b"Historical committed source fixture.\n",
-            "search/operations/deployment/source_bundle.py": HISTORICAL_SOURCE.encode(),
+            "search/operations/deployment/source_bundle.py": (
+                HISTORICAL_SOURCE.encode()
+            ),
             "search/operations/deployment/product_package.py": (
                 "MAX_RECORD_BYTES = 1024**2\nCATALOG_ROLES = "
                 + repr(product_package.CATALOG_ROLES)
                 + "\n"
             ).encode(),
-            "search/operations/catalog/backend.py": HISTORICAL_BACKEND.encode(),
+            "search/operations/catalog/backend.py": (
+                HISTORICAL_BACKEND.encode()
+            ),
             "search/operations/catalog/execution.py": (
-                "import hashlib\nfrom search.operations.shared import private_io\n"
-                "def digest_record(value):\n    return hashlib.sha256(private_io.canonical(value)).hexdigest()\n"
+                "import hashlib\n"
+                "from search.operations.shared import private_io\n"
+                "def digest_record(value):\n"
+                "    return hashlib.sha256("
+                "private_io.canonical(value)).hexdigest()\n"
                 "def service_sources(role):\n"
-                "    return ('fixture/opensearch.py',) if role == 'opensearch-search' else ('fixture/fess.py',)\n"
+                "    return ('fixture/opensearch.py',) if role == "
+                "'opensearch-search' else ('fixture/fess.py',)\n"
             ).encode(),
-            "search/operations/catalog/administration.py": b"ADMIN_FILES = ('fixture/admin.py',)\n",
+            "search/operations/catalog/administration.py": (
+                b"ADMIN_FILES = ('fixture/admin.py',)\n"
+            ),
             "search/operations/shared/private_io.py": (
                 ROOT / "search/operations/shared/private_io.py"
             ).read_bytes(),
@@ -191,8 +221,10 @@ class ProductRestoreTests(unittest.TestCase):
                 ROOT / "search/operations/shared/source_identity.py"
             ).read_bytes(),
             "scripts/depositarai.py": (
-                "import argparse\nparser = argparse.ArgumentParser()\n"
-                "parser.add_argument('--config', required=True)\nparser.parse_args()\n"
+                "import argparse\n"
+                "parser = argparse.ArgumentParser()\n"
+                "parser.add_argument('--config', required=True)\n"
+                "parser.parse_args()\n"
             ).encode(),
         }
         for name in (
@@ -214,11 +246,17 @@ class ProductRestoreTests(unittest.TestCase):
         self.git("init", "--quiet")
         self.catalog_revision = self.commit()
         self.write(
-            self.repo, APP_PATHS["web"], b"# application changed after catalog\n"
+            self.repo,
+            APP_PATHS["web"],
+            b"# application changed after catalog\n",
         )
         self.revision = self.commit()
-        self.source_tree = self.git("rev-parse", "HEAD^{tree}").decode().strip()
-        archive, bundle, revision = product_package.source_names(self.revision)[:-1]
+        self.source_tree = (
+            self.git("rev-parse", "HEAD^{tree}").decode().strip()
+        )
+        archive, bundle, revision = product_package.source_names(
+            self.revision
+        )[:-1]
         source = self.package / "source"
         source.mkdir(mode=0o700)
         self.git(
@@ -240,7 +278,9 @@ class ProductRestoreTests(unittest.TestCase):
 
     def _metadata_fixture(self):
         snapshot = self.write(
-            self.root, "snapshot.jsonl", (json.dumps(dataset()) + "\n").encode()
+            self.root,
+            "snapshot.jsonl",
+            (json.dumps(dataset()) + "\n").encode(),
         )
         bundles = self.root / "bundles"
         bundles.mkdir(mode=0o700)
@@ -252,7 +292,10 @@ class ProductRestoreTests(unittest.TestCase):
             "document_count": 1,
             "files": {},
         }
-        for name in (*product_package.ARTIFACT_NAMES, product_package.MANIFEST_NAME):
+        for name in (
+            *product_package.ARTIFACT_NAMES,
+            product_package.MANIFEST_NAME,
+        ):
             raw = (sealed / name).read_bytes()
             self.write(self.package, "metadata/" + name, raw)
             self.metadata["files"][name] = record(raw)
@@ -265,10 +308,15 @@ class ProductRestoreTests(unittest.TestCase):
             for raw in blobs
         ]
         raw = private_io.canonical(
-            {"schemaVersion": 2, "config": descriptors[0], "layers": descriptors[1:]}
+            {
+                "schemaVersion": 2,
+                "config": descriptors[0],
+                "layers": descriptors[1:],
+            }
         )
         inventory = {
-            "manifests/registry.ollama.ai/library/" + model.replace(":", "/"): raw
+            "manifests/registry.ollama.ai/library/"
+            + model.replace(":", "/"): raw
         }
         inventory.update(
             {"blobs/sha256-" + record(blob)["sha256"]: blob for blob in blobs}
@@ -283,7 +331,9 @@ class ProductRestoreTests(unittest.TestCase):
 
     def _model_fixture(self):
         api, api_digest, api_files = self._ollama_fixture("api")
-        embedding, embedding_digest, embedding_files = self._ollama_fixture("embedding")
+        embedding, embedding_digest, embedding_files = self._ollama_fixture(
+            "embedding"
+        )
         raw = b"small fixed reranker weights"
         self.write(self.package, "models/reranker/model.safetensors", raw)
         self.models = {
@@ -298,7 +348,9 @@ class ProductRestoreTests(unittest.TestCase):
             mock.patch.object(embedding_policy, "MODEL", embedding)
         )
         self.stack.enter_context(
-            mock.patch.object(embedding_policy, "MODEL_DIGEST", embedding_digest)
+            mock.patch.object(
+                embedding_policy, "MODEL_DIGEST", embedding_digest
+            )
         )
         self.stack.enter_context(
             mock.patch.object(
@@ -324,9 +376,9 @@ class ProductRestoreTests(unittest.TestCase):
             "compose_sha256": "c" * 64,
             "image_receipt_sha256": "d" * 64,
         }
-        environment_digest = record(private_io.canonical({"PATH": "/usr/bin"}))[
-            "sha256"
-        ]
+        environment_digest = record(
+            private_io.canonical({"PATH": "/usr/bin"})
+        )["sha256"]
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w"):
             pass
@@ -353,7 +405,9 @@ class ProductRestoreTests(unittest.TestCase):
                     private_io.canonical(
                         {
                             name: record(
-                                self.git("show", self.catalog_revision + ":" + name)
+                                self.git(
+                                    "show", self.catalog_revision + ":" + name
+                                )
                             )["sha256"]
                             for name in CATALOG_PATHS[role]
                         }
@@ -466,7 +520,8 @@ class ProductRestoreTests(unittest.TestCase):
             self.package,
             "SHA256SUMS",
             "".join(
-                digest + "  " + name + "\n" for name, digest in sorted(records.items())
+                digest + "  " + name + "\n"
+                for name, digest in sorted(records.items())
             ).encode(),
         )
 
@@ -489,7 +544,9 @@ class ProductRestoreTests(unittest.TestCase):
         self.assertNotIn(str(self.root), message)
         self.assertFalse((self.destination / "restore.json").exists())
 
-    def test_real_offline_restore_uses_packaged_policy_and_sanitized_children(self):
+    def test_real_offline_restore_uses_packaged_policy_and_sanitized_children(
+        self,
+    ):
         original_popen = subprocess.Popen
         commands = []
 
@@ -506,7 +563,10 @@ class ProductRestoreTests(unittest.TestCase):
             mock.patch.object(source_bundle, "RECIPES", {}),
             mock.patch.dict(
                 os.environ,
-                {"GIT_DIR": "/must-not-be-used", "PYTHONPATH": "/must-not-be-imported"},
+                {
+                    "GIT_DIR": "/must-not-be-used",
+                    "PYTHONPATH": "/must-not-be-imported",
+                },
             ),
             mock.patch.object(
                 doctor, "_ollama_files", wraps=doctor._ollama_files
@@ -520,7 +580,8 @@ class ProductRestoreTests(unittest.TestCase):
         self.assertEqual(result["catalog_revision"], self.catalog_revision)
         self.assertNotEqual(self.catalog_revision, self.revision)
         self.assertEqual(
-            json.loads((self.destination / "restore.json").read_bytes()), result
+            json.loads((self.destination / "restore.json").read_bytes()),
+            result,
         )
         self.assertEqual(result["source_restore"]["status"], "restored")
         self.assertEqual(
@@ -533,7 +594,8 @@ class ProductRestoreTests(unittest.TestCase):
         )
         self.assertEqual(len(bundle.documents), 1)
         self.assertEqual(
-            stat.S_IMODE(Path(result["metadata_directory"]).stat().st_mode), 0o500
+            stat.S_IMODE(Path(result["metadata_directory"]).stat().st_mode),
+            0o500,
         )
         for field in (
             "payload_verified",
@@ -640,7 +702,8 @@ class ProductRestoreTests(unittest.TestCase):
     def test_checksums_cannot_add_duplicate_records(self):
         target = self.package / "SHA256SUMS"
         target.write_bytes(
-            target.read_bytes() + target.read_bytes().splitlines(keepends=True)[0]
+            target.read_bytes()
+            + target.read_bytes().splitlines(keepends=True)[0]
         )
         self.rejected("checksums_invalid")
         self.assertFalse(self.destination.exists())
@@ -657,7 +720,9 @@ class ProductRestoreTests(unittest.TestCase):
 
     def test_real_ollama_pin_validation_rejects_reanchored_bad_manifest(self):
         name = next(
-            name for name in self.models["api"] if name.startswith("manifests/")
+            name
+            for name in self.models["api"]
+            if name.startswith("manifests/")
         )
         raw = b'{"schemaVersion":0}'
         self.write(self.package, "models/api/" + name, raw)
@@ -676,7 +741,9 @@ class ProductRestoreTests(unittest.TestCase):
         self.assertTrue(self.destination.exists())
         self.assertFalse((self.destination / "source").exists())
 
-    def test_late_source_failure_preserves_partial_output_and_requires_new_path(self):
+    def test_late_source_failure_preserves_partial_output(
+        self,
+    ):
         def fail(*_args):
             raise ValueError("private-subprocess-output-sentinel")
 
@@ -691,7 +758,9 @@ class ProductRestoreTests(unittest.TestCase):
         self.rejected("source_closure_invalid")
         self.assertTrue((self.destination / "source/.git").exists())
 
-    def test_metadata_closure_hashes_git_blobs_without_importing_digest_code(self):
+    def test_metadata_closure_hashes_git_blobs_without_importing_digest_code(
+        self,
+    ):
         guard = """
 import sys
 class RejectBuilder:
@@ -710,12 +779,16 @@ sys.meta_path.insert(0, RejectBuilder())
             ],
             timeout=300,
         )
-        self.assertEqual(proof["metadata_builder_sha256"], identity.source_digest())
+        self.assertEqual(
+            proof["metadata_builder_sha256"], identity.source_digest()
+        )
         self.assertEqual(proof["catalog_revision"], self.catalog_revision)
 
     def test_dependency_mutation_after_source_restore_prevents_receipt(self):
         def mutate(package, revision, destination):
-            result = product_restore._restore_source(package, revision, destination)
+            result = product_restore._restore_source(
+                package, revision, destination
+            )
             target = self.package / "models/reranker/model.safetensors"
             target.write_bytes(b"x" * target.stat().st_size)
             return result
@@ -731,7 +804,9 @@ sys.meta_path.insert(0, RejectBuilder())
             (source / "README.md").write_bytes(b"Late tracked source drift.\n")
             return result
 
-        with mock.patch.object(product_restore, "_source_proof", side_effect=mutate):
+        with mock.patch.object(
+            product_restore, "_source_proof", side_effect=mutate
+        ):
             self.rejected()
         self.assertTrue((self.destination / "source/.git").exists())
 
@@ -751,7 +826,9 @@ sys.meta_path.insert(0, RejectBuilder())
             target.chmod(0o400)
             return result
 
-        with mock.patch.object(product_restore, "_source_proof", side_effect=mutate):
+        with mock.patch.object(
+            product_restore, "_source_proof", side_effect=mutate
+        ):
             self.rejected("dependency_changed")
 
     def test_publication_failure_never_claims_completed_restore(self):
@@ -802,9 +879,13 @@ sys.meta_path.insert(0, RejectBuilder())
             return original(root_fd, name)
 
         with (
-            mock.patch.object(product_restore, "_open_asset", side_effect=replace),
             mock.patch.object(
-                product_package, "_check_archive", wraps=product_package._check_archive
+                product_restore, "_open_asset", side_effect=replace
+            ),
+            mock.patch.object(
+                product_package,
+                "_check_archive",
+                wraps=product_package._check_archive,
             ) as parsed,
         ):
             self.rejected("dependency_changed")
@@ -814,10 +895,14 @@ sys.meta_path.insert(0, RejectBuilder())
 
     def test_existing_destination_and_package_overlap_are_rejected(self):
         self.destination.mkdir(mode=0o700)
-        sentinel = self.write(self.destination, "keep", b"preserve existing output")
+        sentinel = self.write(
+            self.destination, "keep", b"preserve existing output"
+        )
         self.rejected("destination_exists")
         self.assertEqual(sentinel.read_bytes(), b"preserve existing output")
-        self.rejected("destination_unsafe", destination=self.package / "restored")
+        self.rejected(
+            "destination_unsafe", destination=self.package / "restored"
+        )
         self.assertFalse((self.package / "restored").exists())
 
     def test_concurrent_destination_creation_is_never_adopted(self):
@@ -834,7 +919,9 @@ sys.meta_path.insert(0, RejectBuilder())
         self.assertEqual(
             set(self.destination.iterdir()), {self.destination / "sentinel"}
         )
-        self.assertEqual((self.destination / "sentinel").read_bytes(), sentinel)
+        self.assertEqual(
+            (self.destination / "sentinel").read_bytes(), sentinel
+        )
 
 
 if __name__ == "__main__":

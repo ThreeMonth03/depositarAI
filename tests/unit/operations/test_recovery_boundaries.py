@@ -1,7 +1,8 @@
-"""Catalog recovery boundaries with real metadata, locks and operation receipts.
+"""Catalog recovery boundaries with real metadata, locks and operation
+receipts.
 
-Domain owners are fake; these tests do not start Docker or prove runtime health.
-"""
+Domain owners are fake; these tests do not start Docker or prove runtime
+health."""
 
 from contextlib import ExitStack
 from dataclasses import replace
@@ -15,7 +16,12 @@ from search.catalog.bundle import CatalogBundle
 from search.operations import lifecycle
 from search.operations.catalog import backend, runtime, vectors
 from search.operations.config import GPUConfig, ProductConfig
-from search.operations.state import OPERATIONS, StateStore, locked_state, operation
+from search.operations.state import (
+    OPERATIONS,
+    StateStore,
+    locked_state,
+    operation,
+)
 
 
 REVISION = "a" * 40
@@ -23,7 +29,9 @@ REVISION = "a" * 40
 
 class RecoveryBoundaryTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-recovery-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-recovery-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = ProductConfig(
@@ -156,7 +164,9 @@ class RecoveryBoundaryTests(unittest.TestCase):
         lifecycle.sync_metadata(self.config, snapshot=self.snapshot)
         lifecycle.prepare_index(self.config)
 
-    def test_failed_import_reconciles_then_stage_skips_write_but_rechecks_vectors(self):
+    def test_failed_import_reconciles_and_stage_rechecks_vectors(
+        self,
+    ):
         self.admin_failure = True
         with self.assertRaisesRegex(ValueError, "fake admin failure"):
             self.stage()
@@ -174,19 +184,28 @@ class RecoveryBoundaryTests(unittest.TestCase):
         self.assertEqual("vectors-complete", recovered["status"])
         self.assertEqual(
             ["import", "reconcile"],
-            [call.kwargs["operation"] for call in self.owners["admin"].call_args_list],
+            [
+                call.kwargs["operation"]
+                for call in self.owners["admin"].call_args_list
+            ],
         )
         self.owners["build"].assert_called_once()
         self.assertEqual(failed, {path: path.read_bytes() for path in failed})
-        self.assertEqual("recovery_required", lifecycle.status(self.config)["status"])
-        with self.assertRaisesRegex(ValueError, "product_private_recovery_required"):
+        self.assertEqual(
+            "recovery_required", lifecycle.status(self.config)["status"]
+        )
+        with self.assertRaisesRegex(
+            ValueError, "product_private_recovery_required"
+        ):
             lifecycle.up_private(self.config, snapshot=self.snapshot)
 
     def test_reconciliation_does_not_bypass_vector_result_validation(self):
         self.prepare_candidate()
         lifecycle.reconcile_index(self.config)
         self.vector_changed = True
-        with self.assertRaisesRegex(ValueError, "product_stage_vector_outcome_invalid"):
+        with self.assertRaisesRegex(
+            ValueError, "product_stage_vector_outcome_invalid"
+        ):
             self.stage()
         self.assertEqual(
             "reconcile", self.owners["admin"].call_args.kwargs["operation"]
@@ -216,7 +235,11 @@ class RecoveryBoundaryTests(unittest.TestCase):
                         if case == "missing_identity":
                             value = {}
                         elif case in {"bundle", "manifest"}:
-                            key = "bundle_id" if case == "bundle" else "manifest_sha256"
+                            key = (
+                                "bundle_id"
+                                if case == "bundle"
+                                else "manifest_sha256"
+                            )
                             value[key] = "f" * 64
                         if case == "failed":
                             self.admin_failure = True
@@ -228,7 +251,9 @@ class RecoveryBoundaryTests(unittest.TestCase):
                             ) as outcome:
                                 outcome.update(value)
                 if case == "failed":
-                    with self.assertRaisesRegex(ValueError, "fake admin failure"):
+                    with self.assertRaisesRegex(
+                        ValueError, "fake admin failure"
+                    ):
                         lifecycle.reconcile_index(self.config)
                     self.admin_failure = False
                 self.owners["admin"].reset_mock()
@@ -236,10 +261,13 @@ class RecoveryBoundaryTests(unittest.TestCase):
                 self.assertIs(report["import_skipped"], False)
                 self.owners["admin"].assert_called_once()
                 self.assertEqual(
-                    "import", self.owners["admin"].call_args.kwargs["operation"]
+                    "import",
+                    self.owners["admin"].call_args.kwargs["operation"],
                 )
 
-    def test_started_intent_blocks_all_operation_names_and_catalog_entrypoints(self):
+    def test_started_intent_blocks_all_operation_names_and_catalog_entrypoints(
+        self,
+    ):
         self.prepare_candidate()
         with locked_state(self.config) as store:
             store.write(
@@ -258,7 +286,10 @@ class RecoveryBoundaryTests(unittest.TestCase):
                         ValueError, "product_operation_recovery_required"
                     ):
                         with operation(store, name, REVISION):
-                            self.fail("interrupted import permitted another operation")
+                            self.fail(
+                                "interrupted import permitted "
+                                "another operation"
+                            )
         for owner in self.owners.values():
             owner.reset_mock()
         actions = (
@@ -274,9 +305,13 @@ class RecoveryBoundaryTests(unittest.TestCase):
                 ValueError, "product_operation_recovery_required"
             ):
                 action(self.config)
-        with self.assertRaisesRegex(ValueError, "product_operation_recovery_required"):
+        with self.assertRaisesRegex(
+            ValueError, "product_operation_recovery_required"
+        ):
             lifecycle.sync_metadata(self.config, snapshot=self.snapshot)
-        with self.assertRaisesRegex(ValueError, "product_operation_recovery_required"):
+        with self.assertRaisesRegex(
+            ValueError, "product_operation_recovery_required"
+        ):
             self.stage()
         for owner in self.owners.values():
             owner.assert_not_called()
@@ -286,7 +321,9 @@ class RecoveryBoundaryTests(unittest.TestCase):
             if path.is_file()
         }
         with patch.object(
-            StateStore, "write", side_effect=AssertionError("status wrote state")
+            StateStore,
+            "write",
+            side_effect=AssertionError("status wrote state"),
         ):
             report = lifecycle.status(self.config)
         self.assertEqual("recovery_required", report["status"])

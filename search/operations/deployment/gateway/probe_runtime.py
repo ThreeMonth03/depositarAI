@@ -1,10 +1,11 @@
 """Run the shared loopback smoke probe in an authenticated web image.
 
-The caller supplies a bounded ``runtime_docker.Docker``, holds the product/catalog
-locks, authenticates the immutable web build, and checks the gateway profile/CAS
-before and after. This adapter has no source, gateway, lease or route authority.
-It needs no host Pydantic: the existing web image supplies the real wire models.
-Only fixed code and public identities enter argv; no host mounts or secrets do.
+The caller supplies a bounded ``runtime_docker.Docker``, holds the
+product/catalog locks, authenticates the immutable web build, and checks the
+gateway profile/CAS before and after. This adapter has no source, gateway,
+lease or route authority. It needs no host Pydantic: the existing web image
+supplies the real wire models. Only fixed code and public identities enter
+argv; no host mounts or secrets do.
 """
 
 from __future__ import annotations
@@ -49,12 +50,17 @@ def _equal(actual, expected):
 
 
 def _profile(row, *, image, identity, container_id, exited):
-    """Prove the actual helper before start and before removing an exited ID."""
+    """Prove the actual helper before start and before removing an exited
+    ID.
+    """
     _require(type(row) is dict)
     config, host, state, network = (
-        row.get(key) for key in ("Config", "HostConfig", "State", "NetworkSettings")
+        row.get(key)
+        for key in ("Config", "HostConfig", "State", "NetworkSettings")
     )
-    _require(all(type(value) is dict for value in (config, host, state, network)))
+    _require(
+        all(type(value) is dict for value in (config, host, state, network))
+    )
     baseline = image["Config"]
     command = [
         "-B",
@@ -134,7 +140,9 @@ def _profile(row, *, image, identity, container_id, exited):
     )
     _equal(config.get("Labels"), labels)
     _equal(host.get("RestartPolicy"), {"Name": "no", "MaximumRetryCount": 0})
-    _equal(source_bundle.parse_image_environment(config.get("Env")), environment)
+    _equal(
+        source_bundle.parse_image_environment(config.get("Env")), environment
+    )
     _equal(config.get("ExposedPorts"), baseline.get("ExposedPorts"))
     mounts = row.get("Mounts")
     _require(type(mounts) is list and len(mounts) <= 1)
@@ -166,16 +174,18 @@ def verify_gateway_from_image(
     The dedicated retained directory must be empty and private. Its no-clobber
     intent/container/failure records quarantine uncertain daemon work: this
     function never adopts a prior run, retries, kills or removes running work.
-    A failed smoke probe also raises, after safe exited-helper cleanup if possible.
-    ``manifest_sha256`` is the catalog manifest, not the source-bundle digest.
-    Normal success uses exactly twelve bounded native calls; the caller reserves
-    that capacity in its shared Docker budget and overall workflow deadline.
+    A failed smoke probe also raises, after safe exited-helper cleanup if
+    possible. ``manifest_sha256`` is the catalog manifest, not the
+    source-bundle digest. Normal success uses exactly twelve bounded native
+    calls; the caller reserves that capacity in its shared Docker budget and
+    overall workflow deadline.
     """
     if (
         type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
         or any(
-            type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            type(value) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", value) is None
             for value in (bundle_id, manifest_sha256)
         )
         or type(run_id) is not str
@@ -184,7 +194,9 @@ def verify_gateway_from_image(
         or type(source_plan) is not dict
         or source_plan.get("revision") != revision
     ):
-        raise GatewayProbeRuntimeError("gateway_probe_runtime_identity_invalid")
+        raise GatewayProbeRuntimeError(
+            "gateway_probe_runtime_identity_invalid"
+        )
     try:
         expected = source_bundle.validate_built_image(
             source_plan,
@@ -195,7 +207,9 @@ def verify_gateway_from_image(
         _equal(image_proof, expected)
         private_io.verify_directory(directory_fd, directory_path)
         if os.listdir(directory_fd):
-            raise GatewayProbeRuntimeError("gateway_probe_runtime_requires_recovery")
+            raise GatewayProbeRuntimeError(
+                "gateway_probe_runtime_requires_recovery"
+            )
     except GatewayProbeRuntimeError:
         raise
     except Exception:
@@ -383,7 +397,11 @@ def verify_gateway_from_image(
         container_id = raw_id.decode("ascii").strip()
         publish(
             "container.json",
-            {**identity, "status": "probe_created", "container_id": container_id},
+            {
+                **identity,
+                "status": "probe_created",
+                "container_id": container_id,
+            },
         )
         inspect(False)
         output, start_failed = None, False
@@ -391,8 +409,10 @@ def verify_gateway_from_image(
             output = call(["start", "--attach", container_id], timeout=285)
         except Exception:
             start_failed = True
-        # A timed-out client can leave daemon work running. Only an independently
-        # inspected, exact exited helper may be removed; uncertainty is retained.
+        # A timed-out client can leave daemon work running. Only an
+        # independently
+        # inspected, exact exited helper may be removed; uncertainty is
+        # retained.
         exit_code = inspect(True)
         website = None
         if not start_failed and exit_code == 0:
@@ -405,7 +425,9 @@ def verify_gateway_from_image(
                 )
             except Exception:
                 pass
-        _require(call(["rm", container_id]).strip() == container_id.encode("ascii"))
+        _require(
+            call(["rm", container_id]).strip() == container_id.encode("ascii")
+        )
         absence(by_id=True)
         absence()
         removed = True
@@ -436,7 +458,8 @@ def verify_gateway_from_image(
         }
         _require(time.monotonic() <= deadline)
         publish(
-            "complete.json", {**identity, "status": "probe_complete", "report": report}
+            "complete.json",
+            {**identity, "status": "probe_complete", "report": report},
         )
         _require(time.monotonic() <= deadline)
         return report
@@ -454,4 +477,6 @@ def verify_gateway_from_image(
             )
         except Exception:
             pass
-        raise GatewayProbeRuntimeError("gateway_probe_runtime_failed") from None
+        raise GatewayProbeRuntimeError(
+            "gateway_probe_runtime_failed"
+        ) from None

@@ -17,8 +17,9 @@
 
 ## Python
 
-- 使用四個空白縮排、UTF-8 及 LF。行寬沿用現有 Ruff 的 88 字元目標，
-  字串使用雙引號；formatter 不保證每一種字串或註解都能自動縮到目標寬度。
+- 使用四個空白縮排、UTF-8 及 LF，字串使用雙引號。Ruff formatter 與 E501
+  共同檢查79字元行寬；formatter 無法折行的註解與字串需人工整理。
+  URL 等情況沿用 E501 內建例外，不新增整批忽略規則。
 - 函式與變數使用 `snake_case`，類別使用 `CamelCase`，常數使用 `UPPER_CASE`。
   名稱應讓讀者辨識用途，不用註解彌補含糊命名。
 - import 應能看出依賴來源，避免 wildcard import。跨責任邊界使用明確路徑；
@@ -31,7 +32,7 @@
   不為形式一致而一次要求整個專案通過 strict type checking。
 
 Python lint 使用 `search/api/requirements-test.lock` 固定的 Ruff 與 Vulture。
-`ruff.toml` 明列目前已使用的 `E4`、`E7`、`E9`、`F`，目前未啟用命名、import
+`ruff.toml` 明列目前已使用的 `E4`、`E7`、`E9`、`F`、`E501`，目前未啟用命名、import
 排序或 docstring lint。新增規則須另提變更，說明實際收益。
 
 先在 repository 外建立並啟用 Python virtual environment，安裝同一份 lock 中的

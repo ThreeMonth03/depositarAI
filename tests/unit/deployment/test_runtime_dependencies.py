@@ -84,16 +84,25 @@ class RuntimeDependencyTests(unittest.TestCase):
                 with self.subTest(lock=relative, entry=line):
                     package, *hashes = line.split()
                     self.assertRegex(
-                        package, r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s]+$"
+                        package,
+                        r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?==[^\s]+$",
                     )
                     self.assertTrue(hashes)
                     for digest in hashes:
-                        self.assertRegex(digest, r"^--hash=sha256:[0-9a-f]{64}$")
+                        self.assertRegex(
+                            digest, r"^--hash=sha256:[0-9a-f]{64}$"
+                        )
 
     def test_product_dockerfiles_do_not_copy_research_paths(self) -> None:
-        for dockerfile in sorted((ROOT / "deploy/docker").rglob("*Dockerfile")):
-            with self.subTest(dockerfile=dockerfile.relative_to(ROOT).as_posix()):
-                for source in copy_sources(dockerfile.read_text(encoding="utf-8")):
+        for dockerfile in sorted(
+            (ROOT / "deploy/docker").rglob("*Dockerfile")
+        ):
+            with self.subTest(
+                dockerfile=dockerfile.relative_to(ROOT).as_posix()
+            ):
+                for source in copy_sources(
+                    dockerfile.read_text(encoding="utf-8")
+                ):
                     self.assertFalse(source.startswith("search/evaluation/"))
                     self.assertFalse(source.startswith("research/"))
 
@@ -106,23 +115,32 @@ class RuntimeDependencyTests(unittest.TestCase):
                 source = dockerfile.read_text(encoding="utf-8")
                 self.assertTrue((ROOT / lock).is_file())
                 self.assertEqual(copy_sources(source).count(lock), 1)
-                exceptions = allowed_inputs(Path(str(dockerfile) + ".dockerignore"))
-                self.assertTrue(any(matches_input(lock, item) for item in exceptions))
+                exceptions = allowed_inputs(
+                    Path(str(dockerfile) + ".dockerignore")
+                )
+                self.assertTrue(
+                    any(matches_input(lock, item) for item in exceptions)
+                )
                 self.assertIn("--require-hashes", source)
 
     def test_sealed_recipes_include_every_local_copy_input(self) -> None:
         for name, recipe in source_bundle.RECIPES.items():
             dockerfile = ROOT / recipe["dockerfile"]
-            exceptions = allowed_inputs(Path(str(dockerfile) + ".dockerignore"))
+            exceptions = allowed_inputs(
+                Path(str(dockerfile) + ".dockerignore")
+            )
             for source in copy_sources(dockerfile.read_text(encoding="utf-8")):
                 with self.subTest(image=name, source=source):
                     copied = set()
                     for path in ROOT.glob(source):
-                        candidates = path.rglob("*") if path.is_dir() else (path,)
+                        candidates = (
+                            path.rglob("*") if path.is_dir() else (path,)
+                        )
                         for candidate in candidates:
                             relative = candidate.relative_to(ROOT).as_posix()
                             if candidate.is_file() and any(
-                                matches_input(relative, item) for item in exceptions
+                                matches_input(relative, item)
+                                for item in exceptions
                             ):
                                 copied.add(relative)
                     self.assertTrue(copied, "COPY source has no allowed files")
@@ -132,7 +150,9 @@ class RuntimeDependencyTests(unittest.TestCase):
                         + repr(sorted(copied - recipe["inputs"])),
                     )
 
-    def test_conversation_image_has_the_product_entrypoint_and_limits(self) -> None:
+    def test_conversation_image_has_the_product_entrypoint_and_limits(
+        self,
+    ) -> None:
         dockerfile = ROOT / "deploy/docker/api/Dockerfile"
         source = dockerfile.read_text(encoding="utf-8")
         commands = re.findall(r"(?m)^CMD (.+)$", source)
@@ -140,14 +160,23 @@ class RuntimeDependencyTests(unittest.TestCase):
         command = json.loads(commands[0])
         self.assertEqual(
             command[:4],
-            ["python", "-m", "uvicorn", "search.api.conversation.app:create_app"],
+            [
+                "python",
+                "-m",
+                "uvicorn",
+                "search.api.conversation.app:create_app",
+            ],
         )
         self.assertIn("--factory", command)
         self.assertEqual(command[command.index("--workers") + 1], "1")
-        self.assertEqual(command[command.index("--limit-concurrency") + 1], "16")
+        self.assertEqual(
+            command[command.index("--limit-concurrency") + 1], "16"
+        )
         self.assertNotIn("search.api.planned.app", source)
         self.assertIn("USER 1000:1000", source)
-        self.assertIn("org.opencontainers.image.revision=$SOURCE_REVISION", source)
+        self.assertIn(
+            "org.opencontainers.image.revision=$SOURCE_REVISION", source
+        )
 
     def test_conversation_context_excludes_tests_research_and_private_files(
         self,
@@ -168,7 +197,9 @@ class RuntimeDependencyTests(unittest.TestCase):
                     any(matches_input(excluded, item) for item in exceptions)
                 )
 
-    def test_runtime_recipe_contains_current_retrieval_and_shared_contract(self):
+    def test_runtime_recipe_contains_current_retrieval_and_shared_contract(
+        self,
+    ):
         recipe = source_bundle.RECIPES["conversation-api"]
         for source in (
             "search/api/retrieval/__init__.py",
@@ -192,19 +223,29 @@ class RuntimeDependencyTests(unittest.TestCase):
                     },
                 )
 
-    def test_web_contract_shares_metadata_without_retrieval_implementation(self):
+    def test_web_contract_shares_metadata_without_retrieval_implementation(
+        self,
+    ):
         metadata = "search/api/retrieval/metadata.py"
         results = "search/api/retrieval/results.py"
         for service in ("conversation-api", "web"):
             with self.subTest(service=service):
-                self.assertIn(metadata, source_bundle.RECIPES[service]["inputs"])
-        self.assertIn(results, source_bundle.RECIPES["conversation-api"]["inputs"])
+                self.assertIn(
+                    metadata, source_bundle.RECIPES[service]["inputs"]
+                )
+        self.assertIn(
+            results, source_bundle.RECIPES["conversation-api"]["inputs"]
+        )
         self.assertNotIn(results, source_bundle.RECIPES["web"]["inputs"])
 
-    def test_api_test_target_cannot_supply_test_files_to_production(self) -> None:
+    def test_api_test_target_cannot_supply_test_files_to_production(
+        self,
+    ) -> None:
         source = (ROOT / "deploy/docker/api/Dockerfile").read_text()
         runtime, test_stage = source.split("FROM runtime AS tests\n")
-        test_stage, production = test_stage.split("FROM runtime AS production\n")
+        test_stage, production = test_stage.split(
+            "FROM runtime AS production\n"
+        )
         lock = "search/api/requirements-test.lock"
         self.assertIn("--mount=type=bind,source=" + lock, test_stage)
         self.assertIn("target=/tmp/test.lock,readonly", test_stage)

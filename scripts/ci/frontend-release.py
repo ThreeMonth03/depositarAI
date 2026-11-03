@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Capture, export and publish tested frontend images on a trusted hosted runner."""
+"""Capture, export and publish tested frontend images on a trusted hosted
+runner.
+"""
 
 import argparse
 import hashlib
@@ -77,21 +79,36 @@ def _json(raw):
 
 
 def _write_new(path, value):
-    raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    raw = (
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(raw)
 
 
 def _inspect(role, revision, *, release_tag=False):
-    from search.operations.deployment.frontend.policy import validate_image_labels
+    from search.operations.deployment.frontend.policy import (
+        validate_image_labels,
+    )
 
     tag = revision if release_tag else "ci"
     reference = f"depositar-search-{role}:{tag}"
     rows = _json(
-        _run(["docker", "image", "inspect", "--platform", "linux/amd64", reference])
+        _run(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--platform",
+                "linux/amd64",
+                reference,
+            ]
+        )
     )
-    _require(type(rows) is list and len(rows) == 1, "unexpected image inventory")
+    _require(
+        type(rows) is list and len(rows) == 1, "unexpected image inventory"
+    )
     row = rows[0]
     _require(type(row) is dict, "invalid image inspection")
     descriptor = row.get("Descriptor", {})
@@ -99,7 +116,8 @@ def _inspect(role, revision, *, release_tag=False):
     _require(type(config) is dict, "invalid image configuration")
     labels = config.get("Labels")
     _require(
-        type(descriptor) is dict and type(labels) is dict, "missing image identity"
+        type(descriptor) is dict and type(labels) is dict,
+        "missing image identity",
     )
     identifier = row.get("Id")
     _require(
@@ -111,7 +129,8 @@ def _inspect(role, revision, *, release_tag=False):
             "application/vnd.oci.image.manifest.v1+json",
             "application/vnd.docker.distribution.manifest.v2+json",
         }
-        and descriptor.get("platform") == {"architecture": "amd64", "os": "linux"}
+        and descriptor.get("platform")
+        == {"architecture": "amd64", "os": "linux"}
         and row.get("Os") == "linux"
         and row.get("Architecture") == "amd64",
         "image platform, revision or contract does not match",
@@ -135,7 +154,9 @@ def capture(output):
 def _tested_images(path, revision):
     path = Path(path)
     _require(
-        path.is_file() and not path.is_symlink() and path.stat().st_size <= 16384,
+        path.is_file()
+        and not path.is_symlink()
+        and path.stat().st_size <= 16384,
         "tested image receipt is missing or invalid",
     )
     value = _json(path.read_bytes())
@@ -179,9 +200,18 @@ def export(tested_images, output):
     images = {}
     for role in ROLES:
         reference = f"depositar-search-{role}:{revision}"
-        _run(["docker", "image", "tag", f"depositar-search-{role}:ci", reference])
+        _run(
+            [
+                "docker",
+                "image",
+                "tag",
+                f"depositar-search-{role}:ci",
+                reference,
+            ]
+        )
         _require(
-            _inspect(role, revision, release_tag=True) == tested[role], "tag drift"
+            _inspect(role, revision, release_tag=True) == tested[role],
+            "tag drift",
         )
         archive = output / f"{role}.oci.tar"
         _run(
@@ -209,7 +239,8 @@ def export(tested_images, output):
         )
         images[role] = entry
     _require(
-        sum(row["archive_bytes"] for row in images.values()) <= MAX_TOTAL_BYTES,
+        sum(row["archive_bytes"] for row in images.values())
+        <= MAX_TOTAL_BYTES,
         "frontend archives exceed the release size budget",
     )
     manifest = {
@@ -248,7 +279,10 @@ def verify(directory, *, signed=False):
     )
     for role in ROLES:
         validate_archive(
-            directory / f"{role}.oci.tar", value["images"][role], revision, role
+            directory / f"{role}.oci.tar",
+            value["images"][role],
+            revision,
+            role,
         )
     if signed:
         bundle = directory / BUNDLE
@@ -258,7 +292,10 @@ def verify(directory, *, signed=False):
             and 0 < bundle.stat().st_size <= 4 * 1024**2,
             "missing signature bundle",
         )
-        _require(type(_json(bundle.read_bytes())) is dict, "invalid signature bundle")
+        _require(
+            type(_json(bundle.read_bytes())) is dict,
+            "invalid signature bundle",
+        )
     return value
 
 
@@ -287,10 +324,12 @@ def publish(directory):
     revision = value["revision"]
     tag = "frontend-" + revision
     _require(
-        _api("releases/tags/" + tag, missing=True) is None, "release already exists"
+        _api("releases/tags/" + tag, missing=True) is None,
+        "release already exists",
     )
     _require(
-        _api("git/ref/tags/" + tag, missing=True) is None, "release tag already exists"
+        _api("git/ref/tags/" + tag, missing=True) is None,
+        "release tag already exists",
     )
     # Create the exact source tag first: release --target alone cannot override
     # an existing tag pointing elsewhere. Never move or overwrite any tag.
@@ -310,22 +349,31 @@ def publish(directory):
             ("name", "Frontend " + revision),
             (
                 "body",
-                "Tested frontend image archives and their signed manifest. Source: "
-                + revision,
+                "Tested frontend image archives and their signed manifest. "
+                "Source: " + revision,
             ),
             ("draft", True),
         ),
     )
     identifier = release.get("id")
     _require(
-        type(identifier) is int and identifier > 0, "invalid draft release identity"
+        type(identifier) is int and identifier > 0,
+        "invalid draft release identity",
     )
     paths = [
         directory / name
         for name in (MANIFEST, BUNDLE, "web.oci.tar", "web-nginx.oci.tar")
     ]
     _run(
-        ["gh", "release", "upload", tag, "--repo", REPOSITORY, *map(str, paths)],
+        [
+            "gh",
+            "release",
+            "upload",
+            tag,
+            "--repo",
+            REPOSITORY,
+            *map(str, paths),
+        ],
         timeout=600,
     )
     release = _api(f"releases/{identifier}")
@@ -340,7 +388,8 @@ def publish(directory):
     for path in paths:
         asset = next(x for x in assets if x["name"] == path.name)
         _require(
-            asset.get("size") == path.stat().st_size, "uploaded asset size mismatch"
+            asset.get("size") == path.stat().st_size,
+            "uploaded asset size mismatch",
         )
         if asset.get("digest") is not None:
             digest = hashlib.sha256()
@@ -352,7 +401,10 @@ def publish(directory):
                 "uploaded asset digest mismatch",
             )
     reference = _api("git/ref/tags/" + tag)
-    _require(reference.get("object", {}).get("sha") == revision, "release tag changed")
+    _require(
+        reference.get("object", {}).get("sha") == revision,
+        "release tag changed",
+    )
     published = _api(
         f"releases/{identifier}",
         fields=(("draft", False), ("make_latest", "false")),

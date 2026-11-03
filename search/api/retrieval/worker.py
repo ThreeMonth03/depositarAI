@@ -1,4 +1,6 @@
-"""Bounded catalog operations used after conversation state has been verified."""
+"""Bounded catalog operations used after
+conversation state has been verified.
+"""
 
 from search.catalog.bundle import CatalogBundle
 
@@ -33,7 +35,8 @@ def run(operation, payload, settings):
         if "bbox" in conditions:
             raise ValueError("spatial filtering is not enabled")
         bundle = CatalogBundle.load(
-            settings.bundle_path, expected_manifest_sha256=settings.manifest_sha256
+            settings.bundle_path,
+            expected_manifest_sha256=settings.manifest_sha256,
         )
         return {
             "manifest_sha256": bundle.manifest_sha256,
@@ -47,7 +50,9 @@ def run(operation, payload, settings):
 
 def main():
     return run_worker(
-        lambda operation, payload: run(operation, payload, Settings.from_environment())
+        lambda operation, payload: run(
+            operation, payload, Settings.from_environment()
+        )
     )
 
 

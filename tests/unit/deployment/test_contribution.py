@@ -19,32 +19,48 @@ PR_FIELDS = {
     "Issue": "Related to #7",
     "Motivation": "A year refinement should preserve the selected format.",
     "Method": "Apply the validated time patch to the committed search state.",
-    "Results": "The state-patch regression passes; deployment acceptance is pending.",
+    "Results": (
+        "The state-patch regression passes; deployment acceptance is pending."
+    ),
 }
 ISSUE_FIELDS = {
     "Work type": "Bug",
     "Parent issue": "None",
     "Motivation": "The CSV format disappears after a year refinement.",
-    "Example / bug reproduction": 'New session: "Climate CSV"; then "Use 2024".',
-    "Expected outcome": "The topic and CSV remain selected while the year changes.",
-    "Scope and coordination": "Owner: search; writes: state patch; resources: CPU tests.",
-    "Acceptance criteria": "- [ ] AC-1: The follow-up retains topic and format.",
+    "Example / bug reproduction": (
+        'New session: "Climate CSV"; then "Use 2024".'
+    ),
+    "Expected outcome": (
+        "The topic and CSV remain selected while the year changes."
+    ),
+    "Scope and coordination": (
+        "Owner: search; writes: state patch; resources: CPU tests."
+    ),
+    "Acceptance criteria": (
+        "- [ ] AC-1: The follow-up retains topic and format."
+    ),
 }
 
 
 def pr_body(**changes):
     values = {**PR_FIELDS, **changes}
-    return "\n\n".join("## " + name + "\n" + value for name, value in values.items())
+    return "\n\n".join(
+        "## " + name + "\n" + value for name, value in values.items()
+    )
 
 
 def issue_body(**changes):
     values = {**ISSUE_FIELDS, **changes}
-    return "\n\n".join("### " + name + "\n" + value for name, value in values.items())
+    return "\n\n".join(
+        "### " + name + "\n" + value for name, value in values.items()
+    )
 
 
 class ContributionTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-contribution-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-contribution-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
@@ -86,7 +102,10 @@ class ContributionTests(unittest.TestCase):
         ):
             with self.subTest(reference=reference):
                 self.assertEqual(
-                    [], contribution.validate_pr(pr_body(Issue=reference), REPOSITORY)
+                    [],
+                    contribution.validate_pr(
+                        pr_body(Issue=reference), REPOSITORY
+                    ),
                 )
 
     def test_negated_partial_delivery_cannot_hide_a_closing_directive(self):
@@ -95,10 +114,13 @@ class ContributionTests(unittest.TestCase):
             Results="This work does not close #123.",
         )
         self.assertIn(
-            "pr_closing_directive_invalid", contribution.validate_pr(body, REPOSITORY)
+            "pr_closing_directive_invalid",
+            contribution.validate_pr(body, REPOSITORY),
         )
 
-    def test_closing_keywords_are_standalone_positive_lines_in_the_issue_section(self):
+    def test_issue_closures_require_standalone_positive_lines(
+        self,
+    ):
         for keyword in (
             "close",
             "closes",
@@ -117,7 +139,9 @@ class ContributionTests(unittest.TestCase):
                 ):
                     with self.subTest(spelling=spelling, reference=reference):
                         body = pr_body(Issue=spelling + " " + reference)
-                        self.assertEqual([], contribution.validate_pr(body, REPOSITORY))
+                        self.assertEqual(
+                            [], contribution.validate_pr(body, REPOSITORY)
+                        )
         self.assertEqual(
             [],
             contribution.validate_pr(
@@ -126,7 +150,9 @@ class ContributionTests(unittest.TestCase):
             ),
         )
 
-    def test_embedded_outside_and_conditional_closing_directives_are_rejected(self):
+    def test_embedded_outside_and_conditional_closing_directives_are_rejected(
+        self,
+    ):
         for body in (
             pr_body(Issue="This change closes #123."),
             pr_body(Issue="Closes #123 if the remaining work is accepted."),
@@ -146,24 +172,36 @@ class ContributionTests(unittest.TestCase):
                     contribution.validate_pr(body, REPOSITORY),
                 )
 
-    def test_split_and_other_reference_forms_cannot_bypass_closing_placement(self):
+    def test_split_and_other_reference_forms_cannot_bypass_closing_placement(
+        self,
+    ):
         for directive in (
             "Closes\n#123",
             "CLOSES:\n\n#123",
             "This does not close example/project#123.",
             "This does not resolve other/project#123.",
             "This does not fix https://github.com/example/project/issues/123.",
-            "This does not fix <https://github.com/example/project/issues/123>.",
+            (
+                "This does not fix <https://github.com/example/project/issues/"
+                "123>."
+            ),
             "This does not close [#123](https://example.test/).",
-            "This does not close [delivered](https://github.com/example/project/issues/123).",
+            (
+                "This does not close "
+                "[delivered](https://github.com/example/project/issues/123)."
+            ),
         ):
             with self.subTest(directive=directive):
                 self.assertIn(
                     "pr_closing_directive_invalid",
-                    contribution.validate_pr(pr_body(Results=directive), REPOSITORY),
+                    contribution.validate_pr(
+                        pr_body(Results=directive), REPOSITORY
+                    ),
                 )
 
-    def test_closing_examples_remain_data_in_existing_markdown_boundaries(self):
+    def test_closing_examples_remain_data_in_existing_markdown_boundaries(
+        self,
+    ):
         for example in (
             "```text\nThis does not close #123.\n```",
             "~~~text\nCloses #123\n~~~",
@@ -174,21 +212,33 @@ class ContributionTests(unittest.TestCase):
         ):
             with self.subTest(example=example):
                 self.assertEqual(
-                    [], contribution.validate_pr(pr_body(Results=example), REPOSITORY)
+                    [],
+                    contribution.validate_pr(
+                        pr_body(Results=example), REPOSITORY
+                    ),
                 )
 
-    def test_unmatched_or_escaped_code_and_code_suffix_cannot_hide_closing_prose(self):
+    def test_unmatched_escaped_or_suffixed_code_cannot_hide_closures(
+        self,
+    ):
         for prose in (
             "An unmatched ` span does not close #123.",
             "An unmatched ` span\nThis does not close #123.",
             "An unmatched ` span\n\nThis does not close #123.\n\nAnother `.",
-            "An unmatched ` span\n## Other\nThis does not close #123.\nAnother `.",
+            (
+                "An unmatched ` span\n"
+                "## Other\n"
+                "This does not close #123.\n"
+                "Another `."
+            ),
             "Escaped \\` text does not close #123 \\`.",
         ):
             with self.subTest(prose=prose):
                 self.assertIn(
                     "pr_closing_directive_invalid",
-                    contribution.validate_pr(pr_body(Results=prose), REPOSITORY),
+                    contribution.validate_pr(
+                        pr_body(Results=prose), REPOSITORY
+                    ),
                 )
         self.assertIn(
             "pr_closing_directive_invalid",
@@ -197,11 +247,21 @@ class ContributionTests(unittest.TestCase):
             ),
         )
 
-    def test_closing_guard_cli_returns_fixed_diagnostics_without_echoing_prose(self):
+    def test_closing_guard_cli_returns_fixed_diagnostics_without_echoing_prose(
+        self,
+    ):
         prose = "private-canary does not close #123."
-        code, result, output = self.cli(self.event(body=pr_body(Results=prose)))
+        code, result, output = self.cli(
+            self.event(body=pr_body(Results=prose))
+        )
         self.assertEqual(
-            (1, {"status": "failed", "issues": ["pr_closing_directive_invalid"]}),
+            (
+                1,
+                {
+                    "status": "failed",
+                    "issues": ["pr_closing_directive_invalid"],
+                },
+            ),
             (code, result),
         )
         self.assertNotIn(prose, output)
@@ -209,11 +269,15 @@ class ContributionTests(unittest.TestCase):
     def test_long_closing_prose_and_link_labels_remain_bounded_data(self):
         for issue in (
             "Closes #123" + " " * 50_000 + "pending",
-            "Related to #123\nCloses [" + "A" * 50_000 + "](https://example.test/)",
+            "Related to #123\nCloses ["
+            + "A" * 50_000
+            + "](https://example.test/)",
             "Related to #123\n`" + "A" * 50_000 + " does not close #123",
         ):
             with self.subTest(prefix=issue[:20]):
-                problems = contribution.validate_pr(pr_body(Issue=issue), REPOSITORY)
+                problems = contribution.validate_pr(
+                    pr_body(Issue=issue), REPOSITORY
+                )
                 self.assertEqual(
                     "https://example.test/" not in issue,
                     "pr_closing_directive_invalid" in problems,
@@ -222,10 +286,14 @@ class ContributionTests(unittest.TestCase):
     def test_pr_requires_each_nonempty_section(self):
         for heading in PR_FIELDS:
             with self.subTest(heading=heading):
-                issues = contribution.validate_pr(pr_body(**{heading: ""}), REPOSITORY)
+                issues = contribution.validate_pr(
+                    pr_body(**{heading: ""}), REPOSITORY
+                )
                 self.assertIn("pr_" + heading.lower() + "_missing", issues)
 
-    def test_placeholders_and_hidden_comments_do_not_fill_required_sections(self):
+    def test_placeholders_and_hidden_comments_do_not_fill_required_sections(
+        self,
+    ):
         for value in (
             "TODO",
             "TBD",
@@ -240,10 +308,14 @@ class ContributionTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(
                     "pr_motivation_missing",
-                    contribution.validate_pr(pr_body(Motivation=value), REPOSITORY),
+                    contribution.validate_pr(
+                        pr_body(Motivation=value), REPOSITORY
+                    ),
                 )
 
-    def test_headings_are_casefolded_but_require_the_declared_level_and_space(self):
+    def test_headings_are_casefolded_but_require_the_declared_level_and_space(
+        self,
+    ):
         body = pr_body().replace("## Motivation", "## mOtIvAtIoN")
         self.assertEqual([], contribution.validate_pr(body, REPOSITORY))
         for replacement in ("##Motivation", "# Motivation", "### Motivation"):
@@ -251,11 +323,14 @@ class ContributionTests(unittest.TestCase):
                 self.assertIn(
                     "pr_motivation_missing",
                     contribution.validate_pr(
-                        pr_body().replace("## Motivation", replacement), REPOSITORY
+                        pr_body().replace("## Motivation", replacement),
+                        REPOSITORY,
                     ),
                 )
 
-    def test_code_comments_and_external_markdown_labels_cannot_supply_issue_links(self):
+    def test_comments_and_external_labels_cannot_supply_issue_links(
+        self,
+    ):
         for reference in (
             "`#7`",
             "```text\n#7\n```",
@@ -270,10 +345,14 @@ class ContributionTests(unittest.TestCase):
             with self.subTest(reference=reference):
                 self.assertIn(
                     "pr_issue_link_missing",
-                    contribution.validate_pr(pr_body(Issue=reference), REPOSITORY),
+                    contribution.validate_pr(
+                        pr_body(Issue=reference), REPOSITORY
+                    ),
                 )
 
-    def test_issue_urls_must_target_the_same_repository_and_exact_issue_path(self):
+    def test_issue_urls_must_target_the_same_repository_and_exact_issue_path(
+        self,
+    ):
         for reference in (
             "https://github.com/other/project/issues/7",
             "http://github.com/example/project/issues/7",
@@ -287,7 +366,9 @@ class ContributionTests(unittest.TestCase):
             with self.subTest(reference=reference):
                 self.assertIn(
                     "pr_issue_link_missing",
-                    contribution.validate_pr(pr_body(Issue=reference), REPOSITORY),
+                    contribution.validate_pr(
+                        pr_body(Issue=reference), REPOSITORY
+                    ),
                 )
 
     def test_fenced_and_commented_headings_cannot_forge_missing_sections(self):
@@ -299,7 +380,9 @@ class ContributionTests(unittest.TestCase):
             with self.subTest(wrapped=wrapped):
                 self.assertIn(
                     "pr_motivation_missing",
-                    contribution.validate_pr(body + "\n\n" + wrapped, REPOSITORY),
+                    contribution.validate_pr(
+                        body + "\n\n" + wrapped, REPOSITORY
+                    ),
                 )
 
     def test_duplicate_sections_are_rejected(self):
@@ -325,7 +408,10 @@ class ContributionTests(unittest.TestCase):
                     [],
                     contribution.validate_issue(
                         issue_body(
-                            **{"Work type": "Sub-issue", "Parent issue": parent}
+                            **{
+                                "Work type": "Sub-issue",
+                                "Parent issue": parent,
+                            }
                         ),
                         REPOSITORY,
                         9,
@@ -370,7 +456,10 @@ class ContributionTests(unittest.TestCase):
                 self.assertTrue(
                     contribution.validate_issue(
                         issue_body(
-                            **{"Work type": "Sub-issue", "Parent issue": parent}
+                            **{
+                                "Work type": "Sub-issue",
+                                "Parent issue": parent,
+                            }
                         ),
                         REPOSITORY,
                         9,
@@ -380,7 +469,9 @@ class ContributionTests(unittest.TestCase):
             with self.subTest(number=number):
                 self.assertIn(
                     "issue_number_invalid",
-                    contribution.validate_issue(issue_body(), REPOSITORY, number),
+                    contribution.validate_issue(
+                        issue_body(), REPOSITORY, number
+                    ),
                 )
 
     def test_code_examples_remain_data_including_literal_html_comments(self):
@@ -398,10 +489,17 @@ class ContributionTests(unittest.TestCase):
                     ),
                 )
 
-    def test_manual_cli_validates_both_event_kinds_with_structured_output(self):
-        for kind, body in (("pull_request", pr_body()), ("issue", issue_body())):
+    def test_manual_cli_validates_both_event_kinds_with_structured_output(
+        self,
+    ):
+        for kind, body in (
+            ("pull_request", pr_body()),
+            ("issue", issue_body()),
+        ):
             with self.subTest(kind=kind):
-                code, result, _ = self.cli(self.event(kind=kind, body=body), kind=kind)
+                code, result, _ = self.cli(
+                    self.event(kind=kind, body=body), kind=kind
+                )
                 self.assertEqual(
                     (0, {"status": "passed", "issues": []}), (code, result)
                 )
@@ -416,7 +514,9 @@ class ContributionTests(unittest.TestCase):
                 self.assertEqual("failed", result["status"])
                 self.assertTrue(result["issues"])
 
-    def test_malformed_duplicate_and_nonfinite_json_or_event_shape_use_exit_two(self):
+    def test_invalid_json_and_event_shapes_use_exit_two(
+        self,
+    ):
         encoded_body = json.dumps(pr_body())
         for raw in (
             b"{",
@@ -430,11 +530,15 @@ class ContributionTests(unittest.TestCase):
                 + encoded_body
                 + "}}"
             ).encode(),
-            ('{"pull_request":{"body":' + encoded_body + '},"ignored":NaN}').encode(),
+            (
+                '{"pull_request":{"body":' + encoded_body + '},"ignored":NaN}'
+            ).encode(),
         ):
             with self.subTest(raw=raw):
                 code, result, _ = self.cli(raw, raw=True)
-                self.assertEqual((2, "invalid_input"), (code, result["status"]))
+                self.assertEqual(
+                    (2, "invalid_input"), (code, result["status"])
+                )
         for event in (
             {"pull_request": {}},
             {"pull_request": []},
@@ -452,9 +556,9 @@ class ContributionTests(unittest.TestCase):
         )
         self.assertEqual(
             2,
-            self.cli(self.event(body=pr_body() + "x" * contribution.MAX_INPUT_BYTES))[
-                0
-            ],
+            self.cli(
+                self.event(body=pr_body() + "x" * contribution.MAX_INPUT_BYTES)
+            )[0],
         )
         path = self.root / "event.json"
         event = self.event()
@@ -476,10 +580,14 @@ class ContributionTests(unittest.TestCase):
                         "pull_request",
                     ]
                 )
-                self.assertEqual((2, "invalid_input"), (code, result["status"]))
+                self.assertEqual(
+                    (2, "invalid_input"), (code, result["status"])
+                )
                 self.assertNotIn(repository, output)
 
-    def test_automatic_pr_event_and_explicit_event_path_share_the_validator(self):
+    def test_automatic_pr_event_and_explicit_event_path_share_the_validator(
+        self,
+    ):
         path = self.root / "event.json"
         path.write_text(json.dumps(self.event()))
         environment = {
@@ -489,7 +597,9 @@ class ContributionTests(unittest.TestCase):
         }
         self.assertEqual(0, self.invoke(environment=environment)[0])
         environment["GITHUB_EVENT_PATH"] = str(self.root / "missing.json")
-        self.assertEqual(0, self.invoke(["--event", str(path)], environment)[0])
+        self.assertEqual(
+            0, self.invoke(["--event", str(path)], environment)[0]
+        )
 
     def test_unrelated_automatic_events_skip_without_reading_any_file(self):
         for name in ("push", "issues", "workflow_dispatch", ""):
@@ -501,7 +611,9 @@ class ContributionTests(unittest.TestCase):
             with (
                 self.subTest(name=name),
                 patch.object(
-                    Path, "open", side_effect=AssertionError("unexpected event read")
+                    Path,
+                    "open",
+                    side_effect=AssertionError("unexpected event read"),
                 ),
             ):
                 code, result, _ = self.invoke(environment=environment)
@@ -515,7 +627,8 @@ class ContributionTests(unittest.TestCase):
         body = pr_body(Method="```sh\n" + payload + "\n```")
         with (
             patch(
-                "os.system", side_effect=AssertionError("unexpected shell execution")
+                "os.system",
+                side_effect=AssertionError("unexpected shell execution"),
             ),
             patch(
                 "subprocess.Popen",
@@ -532,12 +645,16 @@ class ContributionTests(unittest.TestCase):
         ):
             self.assertEqual([], contribution.validate_pr(body, REPOSITORY))
             code, result, output = self.cli(self.event(body=body))
-        self.assertEqual((0, {"status": "passed", "issues": []}), (code, result))
+        self.assertEqual(
+            (0, {"status": "passed", "issues": []}), (code, result)
+        )
         self.assertFalse(marker.exists())
         self.assertNotIn(payload, output)
         self.assertNotIn(str(marker), output)
 
-    def test_long_unmatched_markdown_and_repeated_comments_remain_plain_data(self):
+    def test_long_unmatched_markdown_and_repeated_comments_remain_plain_data(
+        self,
+    ):
         for value in (
             "A" * 50_000,
             "[" * 50_000,

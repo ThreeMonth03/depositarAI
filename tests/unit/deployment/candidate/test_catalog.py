@@ -1,4 +1,6 @@
-"""Independent catalog authority, locks and cross-catalog snapshot regressions."""
+"""Independent catalog authority, locks and cross-catalog snapshot
+regressions.
+"""
 
 from contextlib import ExitStack
 import copy
@@ -38,12 +40,14 @@ def two_catalogs():
             role = row["Config"]["Labels"]["com.docker.compose.service"]
             if role in cores:
                 row["Id"] = cores[role]
-                row["NetworkSettings"]["Networks"][network["Name"]]["NetworkID"] = (
-                    network["Id"]
-                )
+                row["NetworkSettings"]["Networks"][network["Name"]][
+                    "NetworkID"
+                ] = network["Id"]
             else:
                 row["Id"] = ("4" if index else "c") * 64
-                row["HostConfig"]["NetworkMode"] = "container:" + cores["fess-search"]
+                row["HostConfig"]["NetworkMode"] = (
+                    "container:" + cores["fess-search"]
+                )
         context = {
             "plan": values["core_plan"],
             "compose": values["core_compose"],
@@ -59,7 +63,9 @@ def two_catalogs():
                 "catalog_identity": member["catalog_identity"],
                 "runtime": {
                     "container_ids": {
-                        r["Config"]["Labels"]["com.docker.compose.service"]: r["Id"]
+                        r["Config"]["Labels"]["com.docker.compose.service"]: r[
+                            "Id"
+                        ]
                         for r in values["core_containers"]
                     },
                     "network_id": network["Id"],
@@ -86,7 +92,9 @@ class CatalogSnapshotTests(unittest.TestCase):
             patch.object(execution, "validate_storage_mounts")
         )
 
-    def test_each_catalog_authenticates_its_own_real_core_and_complete_client(self):
+    def test_each_catalog_authenticates_its_own_real_core_and_complete_client(
+        self,
+    ):
         bindings, groups, networks, clients = two_catalogs()
         expected = copy.deepcopy((groups, networks, clients))
         for binding in bindings:
@@ -95,7 +103,9 @@ class CatalogSnapshotTests(unittest.TestCase):
         self.assertEqual((groups, networks, clients), expected)
         self.assertEqual(self.mounts.call_count, 2)
 
-    def test_other_catalog_lease_or_runtime_cannot_authorize_the_selected_core(self):
+    def test_other_catalog_lease_or_runtime_cannot_authorize_the_selected_core(
+        self,
+    ):
         for kind in ("authority", "core", "unknown_peer", "third_client"):
             with self.subTest(kind=kind):
                 bindings, groups, networks, clients = two_catalogs()
@@ -107,18 +117,22 @@ class CatalogSnapshotTests(unittest.TestCase):
                         bindings[0].context["plan"]["project"]
                     ]
                 elif kind == "unknown_peer":
-                    networks[target.context["plan"]["project"] + "_search_backend"][
-                        "Containers"
-                    ]["f" * 64] = {}
+                    networks[
+                        target.context["plan"]["project"] + "_search_backend"
+                    ]["Containers"]["f" * 64] = {}
                 else:
                     clients.append(copy.deepcopy(clients[0]))
                 with self.assertRaises((ValueError, RuntimeError)):
                     catalog.observe(target, groups, networks, clients)
 
-    def test_selected_catalog_before_cpu_creation_keeps_exact_core_only_contract(self):
+    def test_precreation_selected_catalog_keeps_exact_core_contract(
+        self,
+    ):
         bindings, groups, networks, clients = two_catalogs()
         target = bindings[1]
-        network = networks[target.context["plan"]["project"] + "_search_backend"]
+        network = networks[
+            target.context["plan"]["project"] + "_search_backend"
+        ]
         del network["Containers"][clients[1]["lease"]["api_container_id"]]
         snapshot = catalog.observe(target, groups, networks, clients[:1])
         self.assertEqual(snapshot[0], target.authority["runtime"])
@@ -126,7 +140,9 @@ class CatalogSnapshotTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             catalog.observe(target, groups, networks, clients[:1])
 
-    def test_network_type_is_checked_before_and_after_selected_cpu_creation(self):
+    def test_network_type_is_checked_before_and_after_selected_cpu_creation(
+        self,
+    ):
         for attached in (False, True):
             for field, invalid in (
                 ("Driver", "overlay"),
@@ -150,9 +166,13 @@ class CatalogSnapshotTests(unittest.TestCase):
                     ):
                         catalog.observe(target, groups, networks, clients)
 
-    def test_wrong_image_startup_or_storage_never_becomes_query_authority(self):
+    def test_wrong_image_startup_or_storage_never_becomes_query_authority(
+        self,
+    ):
         bindings, groups, networks, clients = two_catalogs()
-        bindings[1].inspections["fess-search"]["Config"]["Cmd"] = ["unreviewed"]
+        bindings[1].inspections["fess-search"]["Config"]["Cmd"] = [
+            "unreviewed"
+        ]
         with self.assertRaises(client_lease.LeaseError):
             catalog.observe(bindings[1], groups, networks, clients)
         self.mounts.side_effect = ValueError("catalog_storage_changed")
@@ -161,7 +181,9 @@ class CatalogSnapshotTests(unittest.TestCase):
 
 
 class CatalogAuditTests(unittest.TestCase):
-    def test_refresh_rejects_drift_in_config_source_plan_and_api_key_authority(self):
+    def test_refresh_rejects_drift_in_config_source_plan_and_api_key_authority(
+        self,
+    ):
         for kind in ("config", "source", "plan", "key"):
             with self.subTest(kind=kind):
                 binding = two_catalogs()[0][1]
@@ -177,7 +199,9 @@ class CatalogAuditTests(unittest.TestCase):
                         return_value=binding.config,
                     ) as config,
                     patch.object(
-                        catalog, "require_clean_revision", return_value=REVISION
+                        catalog,
+                        "require_clean_revision",
+                        return_value=REVISION,
                     ) as source,
                     patch.object(
                         catalog.credentials,
@@ -190,13 +214,15 @@ class CatalogAuditTests(unittest.TestCase):
                     elif kind == "source":
                         source.return_value = "b" * 40
                     elif kind == "plan":
-                        binding.store.read.return_value = {"other_catalog": True}
+                        binding.store.read.return_value = {
+                            "other_catalog": True
+                        }
                     else:
                         key.return_value = {"credential_sha256": "2" * 64}
                     with self.assertRaises(ValueError):
                         binding.refresh()
 
-    def test_selected_chunk_profile_rejects_missing_duplicate_and_overriding_properties(
+    def test_chunk_profile_rejects_missing_duplicate_or_overridden_fields(
         self,
     ):
         context = {
@@ -204,7 +230,9 @@ class CatalogAuditTests(unittest.TestCase):
                 "services": {
                     "fess-search": {
                         "environment": {
-                            "FESS_JAVA_OPTS": " ".join(catalog.chunks.JAVA_OPTIONS)
+                            "FESS_JAVA_OPTS": " ".join(
+                                catalog.chunks.JAVA_OPTIONS
+                            )
                         }
                     }
                 }
@@ -230,7 +258,9 @@ class CatalogAuditTests(unittest.TestCase):
                 ):
                     catalog.validate_chunk_profile(context)
 
-    def test_query_profile_reads_fixed_literals_without_executing_module_text(self):
+    def test_query_profile_reads_fixed_literals_without_executing_module_text(
+        self,
+    ):
         source = Path(__file__).resolve().parents[4]
         expected = catalog.query_profile(source)
         with tempfile.TemporaryDirectory() as directory:
@@ -246,7 +276,9 @@ class CatalogAuditTests(unittest.TestCase):
             embedding = root / "search/catalog/embedding.py"
             marker = root / "must-not-exist"
             embedding.write_text(
-                f"MODEL = __import__('pathlib').Path({str(marker)!r}).touch()\nMODEL_DIGEST = 'unsealed'\nDIMENSIONS = 768\n"
+                "MODEL = __import__('pathlib').Path("
+                f"{str(marker)!r}).touch()\n"
+                "MODEL_DIGEST = 'unsealed'\nDIMENSIONS = 768\n"
             )
             with self.assertRaisesRegex(
                 catalog.SharedCatalogError, "query_profile_invalid"
@@ -273,11 +305,17 @@ class CatalogAuditTests(unittest.TestCase):
                 argv[6:9], ["/selected-source", "/selected-config", REVISION]
             )
             self.assertEqual(kwargs["timeout"], 37)
-            self.assertEqual(json.loads(Path(argv[9]).read_bytes()), list(snapshot))
-            return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode())
+            self.assertEqual(
+                json.loads(Path(argv[9]).read_bytes()), list(snapshot)
+            )
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(value).encode()
+            )
 
         with (
-            patch.object(catalog, "require_clean_revision", return_value=REVISION),
+            patch.object(
+                catalog, "require_clean_revision", return_value=REVISION
+            ),
             patch.object(catalog.image_build, "_run", side_effect=run),
         ):
             actual = catalog.source_record(
@@ -289,20 +327,26 @@ class CatalogAuditTests(unittest.TestCase):
             )
         self.assertEqual(actual, value)
 
-    def test_changed_source_is_rejected_before_execution_and_child_failure_is_closed(
+    def test_source_drift_rejects_before_execution_and_child_failure_closes(
         self,
     ):
         with (
-            patch.object(catalog, "require_clean_revision", return_value="b" * 40),
+            patch.object(
+                catalog, "require_clean_revision", return_value="b" * 40
+            ),
             patch.object(catalog.image_build, "_run") as run,
         ):
-            with self.assertRaisesRegex(catalog.SharedCatalogError, "source_changed"):
+            with self.assertRaisesRegex(
+                catalog.SharedCatalogError, "source_changed"
+            ):
                 catalog.source_record(
                     Path("/selected-source"), Path("/config"), REVISION
                 )
             run.assert_not_called()
         with (
-            patch.object(catalog, "require_clean_revision", return_value=REVISION),
+            patch.object(
+                catalog, "require_clean_revision", return_value=REVISION
+            ),
             patch.object(
                 catalog.image_build,
                 "_run",
@@ -334,7 +378,9 @@ class CatalogAuditTests(unittest.TestCase):
                 changed[key] = {"other_catalog": True}
                 with (
                     patch.object(binding, "refresh"),
-                    patch.object(catalog, "source_record", return_value=changed),
+                    patch.object(
+                        catalog, "source_record", return_value=changed
+                    ),
                 ):
                     with self.assertRaisesRegex(
                         ValueError, "catalog_authority_changed"
@@ -343,14 +389,19 @@ class CatalogAuditTests(unittest.TestCase):
 
 
 class CatalogSelectionTests(unittest.TestCase):
-    def test_default_selection_reuses_exact_native_authority_without_new_state(self):
+    def test_default_selection_reuses_exact_native_authority_without_new_state(
+        self,
+    ):
         native = SimpleNamespace(
             context={},
             authority={"native": True},
             catalog_images={},
             catalog_inspections={},
         )
-        with ExitStack() as stack, patch.object(catalog, "locked_state") as lock:
+        with (
+            ExitStack() as stack,
+            patch.object(catalog, "locked_state") as lock,
+        ):
             first, selected = catalog.select(
                 {"production_config": Path("/native.json")},
                 stack,
@@ -363,7 +414,9 @@ class CatalogSelectionTests(unittest.TestCase):
             self.assertIs(selected.authority, native.authority)
             lock.assert_not_called()
 
-    def test_selected_product_and_catalog_locks_are_retained_until_session_exit(self):
+    def test_product_and_catalog_locks_remain_until_session_exit(
+        self,
+    ):
         from tests.unit.catalog.test_client_lease import evidence
         from search.operations.config import load_config
 
@@ -371,7 +424,8 @@ class CatalogSelectionTests(unittest.TestCase):
             root = Path(temporary)
             root.chmod(0o700)
             fixture = evidence()
-            # Obtain the canonical product shape without needing any real models.
+            # Obtain the canonical product shape without needing any real
+            # models.
             raw = {
                 "schema_version": 2,
                 "cache_ttl_seconds": 0,
@@ -424,7 +478,9 @@ class CatalogSelectionTests(unittest.TestCase):
                     "services": {
                         "fess-search": {
                             "environment": {
-                                "FESS_JAVA_OPTS": " ".join(catalog.chunks.JAVA_OPTIONS)
+                                "FESS_JAVA_OPTS": " ".join(
+                                    catalog.chunks.JAVA_OPTIONS
+                                )
                             }
                         }
                     }
@@ -432,7 +488,9 @@ class CatalogSelectionTests(unittest.TestCase):
             }
             value = {"images": {}, "authority": fixture["catalog_identity"]}
             with (
-                patch.object(catalog, "load_context", return_value=(context, value)),
+                patch.object(
+                    catalog, "load_context", return_value=(context, value)
+                ),
                 patch.object(catalog.Catalog, "refresh"),
                 patch.object(
                     catalog.credentials,
@@ -445,22 +503,34 @@ class CatalogSelectionTests(unittest.TestCase):
                         profile, stack, config, None, native, {}
                     )
                     self.assertIsNot(original, chosen)
-                    with self.assertRaisesRegex(ValueError, "product_operation_busy"):
+                    with self.assertRaisesRegex(
+                        ValueError, "product_operation_busy"
+                    ):
                         with locked_state(selected):
                             self.fail("selected product lock was released")
                     with self.assertRaises(BlockingIOError):
                         with execution.operation_lock({"data": data}):
                             self.fail("selected catalog lock was released")
-                with locked_state(selected), execution.operation_lock({"data": data}):
+                with (
+                    locked_state(selected),
+                    execution.operation_lock({"data": data}),
+                ):
                     pass
 
 
 class CatalogCollectionTests(unittest.TestCase):
-    def test_five_projects_use_twelve_commands_and_retain_unknown_network_peers(self):
-        projects = [(f"project-{n}", {f"project-{n}_network"}) for n in range(5)]
+    def test_five_projects_use_twelve_commands_and_keep_unknown_peers(
+        self,
+    ):
+        projects = [
+            (f"project-{n}", {f"project-{n}_network"}) for n in range(5)
+        ]
         rows = [{"Id": f"{n:064x}"} for n in range(1, 16)]
         networks = [
-            {"Name": f"project-{n}_network", "Containers": {"unknown-peer": {}}}
+            {
+                "Name": f"project-{n}_network",
+                "Containers": {"unknown-peer": {}},
+            }
             for n in range(5)
         ]
         calls = []
@@ -474,19 +544,28 @@ class CatalogCollectionTests(unittest.TestCase):
 
         def call(arguments):
             calls.append(arguments)
-            return json.dumps(rows if arguments[0] == "inspect" else networks).encode()
+            return json.dumps(
+                rows if arguments[0] == "inspect" else networks
+            ).encode()
 
         with patch.object(
             catalog.runtime_docker, "project_inventory", side_effect=inventory
         ):
-            groups, actual = catalog.collect(SimpleNamespace(call=call), projects)
+            groups, actual = catalog.collect(
+                SimpleNamespace(call=call), projects
+            )
         self.assertEqual(len(calls), 12)
         self.assertEqual(sum(map(len, groups.values())), 15)
         self.assertTrue(
-            all("unknown-peer" in network["Containers"] for network in actual.values())
+            all(
+                "unknown-peer" in network["Containers"]
+                for network in actual.values()
+            )
         )
 
-    def test_missing_project_member_or_network_is_rejected_before_bulk_inspect(self):
+    def test_missing_project_member_or_network_is_rejected_before_bulk_inspect(
+        self,
+    ):
         for identifiers, networks in (
             (["one", "two"], {"owned"}),
             (["one", "one", "two"], {"owned"}),

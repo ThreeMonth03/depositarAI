@@ -18,7 +18,10 @@ from unittest.mock import patch
 
 from search.operations.deployment.frontend import check
 from search.operations.deployment.frontend import policy
-from search.operations.deployment.frontend.access import ACCESS_TARGET, prepare_access
+from search.operations.deployment.frontend.access import (
+    ACCESS_TARGET,
+    prepare_access,
+)
 
 
 FRONT = "1" * 40
@@ -104,7 +107,9 @@ class Runner:
             network_names = ["website", "upstream-route" if web else "ingress"]
             service = {
                 "image": (
-                    "depositar-search-web:" if web else "depositar-search-web-nginx:"
+                    "depositar-search-web:"
+                    if web
+                    else "depositar-search-web-nginx:"
                 )
                 + FRONT,
                 "read_only": True,
@@ -143,7 +148,9 @@ class Runner:
                         else {"io.depositar.ai.frontend.version": "1"}
                     ),
                 },
-                "Cmd": ["python", "-m", "uvicorn"] if web else ["-g", "daemon off;"],
+                "Cmd": ["python", "-m", "uvicorn"]
+                if web
+                else ["-g", "daemon off;"],
                 "Entrypoint": None if web else ["nginx"],
                 "WorkingDir": "/app" if web else "",
             }
@@ -160,16 +167,25 @@ class Runner:
                 "Descriptor": descriptor,
             }
             container_config = copy.deepcopy(image_config)
-            container_config["Env"] += [k + "=" + v for k, v in environment.items()]
+            container_config["Env"] += [
+                k + "=" + v for k, v in environment.items()
+            ]
             container_config["User"] = service["user"]
             container_config["Labels"].update(
                 {
                     "com.docker.compose.project": self.project,
                     "com.docker.compose.service": role,
-                    "com.docker.compose.project.config_files": "/older/frontend/checkout/deploy/compose/compose.search-web.yaml",
+                    "com.docker.compose.project.config_files": (
+                        "/older/frontend/checkout/deploy/compose/"
+                        "compose.search-web.yaml"
+                    ),
                 }
             )
-            ports = {} if web else {"8080/tcp": [{"HostIp": address, "HostPort": port}]}
+            ports = (
+                {}
+                if web
+                else {"8080/tcp": [{"HostIp": address, "HostPort": port}]}
+            )
             self.rows[IDS[role]] = {
                 "Id": IDS[role],
                 "Image": "sha256:" + ("8" if web else "9") * 64,
@@ -256,13 +272,17 @@ class Runner:
             value = self.config
         elif args[0] == "ps":
             return SimpleNamespace(
-                returncode=0, stdout=("\n".join(self.rows) + "\n").encode(), stderr=b""
+                returncode=0,
+                stdout=("\n".join(self.rows) + "\n").encode(),
+                stderr=b"",
             )
         elif args[0] == "inspect":
             value = self.rows[args[-1]]
         elif args[:2] == ["image", "inspect"]:
             if args[2:4] != ["--platform", "linux/amd64"]:
-                raise AssertionError("platform identity was not selected explicitly")
+                raise AssertionError(
+                    "platform identity was not selected explicitly"
+                )
             value = self.images[self.locators[args[-1]]]
         elif args[:2] == ["network", "inspect"]:
             value = self.networks[args[-1]]
@@ -271,7 +291,9 @@ class Runner:
                 return SimpleNamespace(
                     returncode=0, stdout=self.mounted_acl, stderr=b""
                 )
-            if args[2:7] != ["python", "-E", "-s", "-B", "-c"] or args[-2:] != [
+            if args[2:7] != ["python", "-E", "-s", "-B", "-c"] or args[
+                -2:
+            ] != [
                 API,
                 CATALOG,
             ]:
@@ -331,11 +353,15 @@ class FrontendCheckTests(unittest.TestCase):
         self.assertEqual(result["schema_version"], 3)
         self.assertEqual(result["conversation_contract_version"], 4)
         self.assertEqual(result["deployment_mode"], "private")
-        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
+        self.assertEqual(
+            result["runtime"]["web"]["platform_manifest"], WEB_IMAGE
+        )
         self.assertNotEqual(
             result["runtime"]["web"]["container_image_index"], WEB_IMAGE
         )
-        source = next(c[c.index("-c") + 1] for c in self.runner.calls if "exec" in c)
+        source = next(
+            c[c.index("-c") + 1] for c in self.runner.calls if "exec" in c
+        )
         self.assertIn("EXPECTED_CONTRACT_VERSION=4\n", source)
 
     def test_profile_rejects_legacy_schema_protocols_and_unknown_fields(self):
@@ -363,12 +389,17 @@ class FrontendCheckTests(unittest.TestCase):
         for key in tuple(self.config):
             value = self.config.pop(key)
             self.save()
-            with self.subTest(missing=key), self.assertRaises(check.FrontendCheckError):
+            with (
+                self.subTest(missing=key),
+                self.assertRaises(check.FrontendCheckError),
+            ):
                 check.load_config(self.path)
             self.config[key] = value
         self.save()
 
-    def test_immutable_role_and_contract_labels_are_required_before_probe(self):
+    def test_immutable_role_and_contract_labels_are_required_before_probe(
+        self,
+    ):
         for role, label, value in (
             ("web", "io.depositar.ai.conversation.version", "3"),
             ("web", "io.depositar.ai.conversation.version", None),
@@ -378,7 +409,9 @@ class FrontendCheckTests(unittest.TestCase):
             ("web-nginx", "org.opencontainers.image.revision", "f" * 40),
         ):
             self.runner = Runner(self.root)
-            image = self.runner.images[WEB_IMAGE if role == "web" else NGINX_IMAGE]
+            image = self.runner.images[
+                WEB_IMAGE if role == "web" else NGINX_IMAGE
+            ]
             image["Config"]["Labels"][label] = value
             with (
                 self.subTest(role=role, label=label),
@@ -411,12 +444,16 @@ class FrontendCheckTests(unittest.TestCase):
                     self.run_check()
                 self.assertFalse(any("exec" in c for c in self.runner.calls))
 
-    def test_loaded_image_descriptor_may_omit_platform_after_image_verification(self):
+    def test_verified_loaded_image_descriptor_may_omit_platform(
+        self,
+    ):
         for image in self.runner.images.values():
             image["Descriptor"].pop("platform")
         result = self.run_check()
         self.assertEqual(result["status"], "frontend_checked")
-        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
+        self.assertEqual(
+            result["runtime"]["web"]["platform_manifest"], WEB_IMAGE
+        )
         self.assertEqual(
             result["runtime"]["web-nginx"]["platform_manifest"], NGINX_IMAGE
         )
@@ -427,7 +464,7 @@ class FrontendCheckTests(unittest.TestCase):
             )
         )
 
-    def test_loaded_image_without_platform_still_requires_body_and_manifest_identity(
+    def test_platformless_image_requires_body_and_manifest_identity(
         self,
     ):
         mutations = (
@@ -442,18 +479,28 @@ class FrontendCheckTests(unittest.TestCase):
             image = self.runner.images[WEB_IMAGE]
             descriptor = image["Descriptor"]
             descriptor.pop("platform")
-            (descriptor if field in ("digest", "mediaType") else image)[field] = value
-            with self.subTest(field=field), self.assertRaises(check.FrontendCheckError):
+            (descriptor if field in ("digest", "mediaType") else image)[
+                field
+            ] = value
+            with (
+                self.subTest(field=field),
+                self.assertRaises(check.FrontendCheckError),
+            ):
                 self.run_check()
             self.assertFalse(any("exec" in c for c in self.runner.calls))
 
-    def test_container_platform_is_required_and_explicit_image_platform_is_strict(self):
+    def test_container_platform_required_and_explicit_image_platform_strict(
+        self,
+    ):
         for target, platform in (
             ("container", "absent"),
             ("image", None),
             ("image", {}),
             ("image", {"architecture": "arm64", "os": "linux"}),
-            ("image", {"architecture": "amd64", "os": "linux", "variant": "v3"}),
+            (
+                "image",
+                {"architecture": "amd64", "os": "linux", "variant": "v3"},
+            ),
         ):
             self.runner = Runner(self.root)
             descriptor = (
@@ -482,23 +529,39 @@ class FrontendCheckTests(unittest.TestCase):
         self.assertEqual(result["deployment_mode"], "intranet-http")
         commands = [c[5:] for c in self.runner.calls]
         self.assertTrue(
-            all("depositar-search-intranet" in c for c in commands if c[0] == "compose")
+            all(
+                "depositar-search-intranet" in c
+                for c in commands
+                if c[0] == "compose"
+            )
         )
-        self.assertEqual(2, sum(c[0] == "exec" and "cat" in c for c in commands))
+        self.assertEqual(
+            2, sum(c[0] == "exec" and "cat" in c for c in commands)
+        )
         self.assertIn(
-            str(check.ROOT / "deploy/compose/compose.search-web.intranet.yaml"),
+            str(
+                check.ROOT / "deploy/compose/compose.search-web.intranet.yaml"
+            ),
             commands[0],
         )
 
     def test_intranet_rejects_origin_bind_and_host_or_mounted_acl_drift(self):
-        for mutation in ("origin", "bind", "host-acl", "mounted-acl", "writable-acl"):
+        for mutation in (
+            "origin",
+            "bind",
+            "host-acl",
+            "mounted-acl",
+            "writable-acl",
+        ):
             (self.root / "intranet-allow.conf").unlink(missing_ok=True)
             self.runner = Runner(self.root, mode="intranet-http")
             self.config["deployment_mode"] = "intranet-http"
             self.save()
             services = self.runner.config["services"]
             if mutation == "origin":
-                services["web"]["environment"]["WEB_ORIGIN"] = "http://8.8.8.8:18082"
+                services["web"]["environment"]["WEB_ORIGIN"] = (
+                    "http://8.8.8.8:18082"
+                )
             elif mutation == "bind":
                 services["web-nginx"]["ports"][0]["host_ip"] = "0.0.0.0"
             elif mutation == "host-acl":
@@ -531,9 +594,9 @@ class FrontendCheckTests(unittest.TestCase):
                             "io.depositar.ai.conversation.version"
                         ] = "3"
                     elif mutation == "manifest":
-                        self.runner.images[WEB_IMAGE]["Descriptor"]["digest"] = (
-                            "sha256:" + "f" * 64
-                        )
+                        self.runner.images[WEB_IMAGE]["Descriptor"][
+                            "digest"
+                        ] = "sha256:" + "f" * 64
                     else:
                         self.runner.mounted_acl = b"allow all;\n"
                 return result
@@ -548,7 +611,8 @@ class FrontendCheckTests(unittest.TestCase):
     def test_exact_deployment_without_mutation_or_host_key_read(
         self,
     ):
-        # The key does not exist on this host; only the existing BFF can read it.
+        # The key does not exist on this host; only the existing BFF can read
+        # it.
         with patch.dict(
             os.environ,
             {
@@ -562,7 +626,9 @@ class FrontendCheckTests(unittest.TestCase):
         ):
             result = self.run_check()
         self.assertEqual(result["frontend_revision"], FRONT)
-        self.assertEqual(result["runtime"]["web"]["platform_manifest"], WEB_IMAGE)
+        self.assertEqual(
+            result["runtime"]["web"]["platform_manifest"], WEB_IMAGE
+        )
         self.assertFalse(result["deployment_performed"])
         self.assertFalse(result["public_readiness_verified"])
         self.assertFalse(result["model_inference_verified"])
@@ -575,7 +641,9 @@ class FrontendCheckTests(unittest.TestCase):
         )
         self.assertEqual(sum("exec" in c for c in self.runner.calls), 1)
 
-    def test_compose_decimal_resource_strings_match_exact_inspect_integers(self):
+    def test_compose_decimal_resource_strings_match_exact_inspect_integers(
+        self,
+    ):
         for service in self.runner.config["services"].values():
             for key in ("mem_limit", "memswap_limit", "pids_limit"):
                 service[key] = str(service[key])
@@ -603,17 +671,21 @@ class FrontendCheckTests(unittest.TestCase):
                 with self.assertRaises(check.FrontendCheckError):
                     self.run_check()
 
-    def test_runtime_changes_and_poisoned_container_environment_reject_before_probe(
+    def test_runtime_or_poisoned_environment_rejects_before_probe(
         self,
     ):
         changes = [
-            lambda r: r["ImageManifestDescriptor"].update(digest="sha256:" + "e" * 64),
+            lambda r: r["ImageManifestDescriptor"].update(
+                digest="sha256:" + "e" * 64
+            ),
             lambda r: r["Config"]["Env"].append("SSL_CERT_FILE=/poison"),
             lambda r: r["Config"].update(User="0:0"),
             lambda r: r["HostConfig"].update(ReadonlyRootfs=False),
             lambda r: r["HostConfig"].update(CapAdd=["SYS_ADMIN"]),
             lambda r: r["HostConfig"].update(
-                PortBindings={"8000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8000"}]}
+                PortBindings={
+                    "8000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8000"}]
+                }
             ),
         ]
         for change in changes:
@@ -684,7 +756,9 @@ class HomepageFixtureTests(unittest.TestCase):
             def do_GET(self):
                 paths.append(self.path)
                 body = (
-                    b'<html><script src="/assets/index-fixture.js"></script><link rel="stylesheet" href="/assets/index-fixture.css"></html>'
+                    b'<html><script src="/assets/index-fixture.js"></script>'
+                    b'<link rel="stylesheet" '
+                    b'href="/assets/index-fixture.css"></html>'
                     if self.path == "/"
                     else b"asset"
                 )
@@ -712,7 +786,9 @@ class HomepageFixtureTests(unittest.TestCase):
 
         composition = {
             "services": {
-                "web": {"environment": {"WEB_ORIGIN": "http://10.20.30.40:18082"}},
+                "web": {
+                    "environment": {"WEB_ORIGIN": "http://10.20.30.40:18082"}
+                },
                 "web-nginx": {
                     "ports": [{"host_ip": "10.20.30.40", "published": "18082"}]
                 },
@@ -721,7 +797,8 @@ class HomepageFixtureTests(unittest.TestCase):
         with patch.object(check, "_Endpoint", Endpoint):
             self.assertEqual(check._homepage(composition), 2)
             self.assertEqual(
-                paths, ["/", "/assets/index-fixture.css", "/assets/index-fixture.js"]
+                paths,
+                ["/", "/assets/index-fixture.css", "/assets/index-fixture.js"],
             )
             redirect = True
             with self.assertRaises(check.FrontendCheckError):
@@ -731,7 +808,9 @@ class HomepageFixtureTests(unittest.TestCase):
 class VersionTLSFixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="frontend-version-tls-")
+        cls.temporary = tempfile.TemporaryDirectory(
+            prefix="frontend-version-tls-"
+        )
         cls.root = Path(cls.temporary.name)
         subprocess.run(
             [
@@ -772,7 +851,9 @@ class VersionTLSFixtureTests(unittest.TestCase):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 authorization = self.headers.get("Authorization")
-                case.calls.append((self.command, self.path, bool(authorization)))
+                case.calls.append(
+                    (self.command, self.path, bool(authorization))
+                )
                 if case.mode == "redirect":
                     status, body = 302, b"SENSITIVE_BODY"
                 elif authorization != "Bearer " + "a" * 64:
@@ -780,7 +861,9 @@ class VersionTLSFixtureTests(unittest.TestCase):
                 else:
                     status = 200
                     value = {
-                        "revision": API if case.mode != "revision" else "f" * 40,
+                        "revision": API
+                        if case.mode != "revision"
+                        else "f" * 40,
                         "catalog_manifest_sha256": CATALOG
                         if case.mode != "catalog"
                         else "f" * 64,
@@ -813,8 +896,12 @@ class VersionTLSFixtureTests(unittest.TestCase):
         context.load_cert_chain(
             str(self.root / "ca.pem"), str(self.root / "server.key")
         )
-        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server.socket = context.wrap_socket(
+            self.server.socket, server_side=True
+        )
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
         self.thread.start()
         self.addCleanup(self.thread.join, 2)
         self.addCleanup(self.server.server_close)
@@ -849,16 +936,19 @@ class VersionTLSFixtureTests(unittest.TestCase):
             timeout=15,
         )
 
-    def test_real_tls_hostname_and_key_with_poison_environment_only_gets_version(self):
+    def test_real_tls_with_poisoned_environment_only_gets_version(
+        self,
+    ):
         result = self.probe()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(json.loads(result.stdout), PROOF)
         self.assertEqual(
-            self.calls, [("GET", "/v1/version", False), ("GET", "/v1/version", True)]
+            self.calls,
+            [("GET", "/v1/version", False), ("GET", "/v1/version", True)],
         )
         self.assertNotIn(b"a" * 64, result.stdout + result.stderr)
 
-    def test_remote_contract_is_checked_without_requiring_matching_website_revision(
+    def test_remote_contract_check_allows_different_website_revision(
         self,
     ):
         result = self.probe(contract_version=4)
@@ -884,10 +974,15 @@ class VersionTLSFixtureTests(unittest.TestCase):
 
     def test_probe_generator_refuses_old_or_ambiguous_contract_selection(self):
         for value in (None, True, 1, 2, 3, 4.0, "4"):
-            with self.subTest(value=value), self.assertRaises(check.FrontendCheckError):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(check.FrontendCheckError),
+            ):
                 check._probe_source(contract_version=value)
 
-    def test_wrong_identity_redirect_and_oversized_body_fail_without_reflection(self):
+    def test_wrong_identity_redirect_or_large_body_fails_without_reflection(
+        self,
+    ):
         for mode in ("revision", "catalog", "redirect", "oversize"):
             with self.subTest(mode=mode):
                 self.mode = mode
@@ -898,7 +993,9 @@ class VersionTLSFixtureTests(unittest.TestCase):
                     json.loads(result.stdout),
                     {"error": "frontend_check_upstream_failed"},
                 )
-                self.assertNotIn(b"SENSITIVE_BODY", result.stdout + result.stderr)
+                self.assertNotIn(
+                    b"SENSITIVE_BODY", result.stdout + result.stderr
+                )
                 self.assertTrue(
                     all(c[:2] == ("GET", "/v1/version") for c in self.calls)
                 )

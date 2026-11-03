@@ -33,7 +33,9 @@ class PublicEntryCLITests(unittest.TestCase):
             "sha256:" + "b" * 64,
         ]
 
-    def test_entry_dispatch_does_not_require_model_or_product_configuration(self):
+    def test_entry_dispatch_does_not_require_model_or_product_configuration(
+        self,
+    ):
         for command, module, action in (
             ("prepare-public-entry", host, "prepare_public_entry"),
             ("up-public-entry", host, "up_public_entry"),
@@ -61,7 +63,9 @@ class PublicEntryCLITests(unittest.TestCase):
                     ]
                 )
             entry.assert_called_once_with(*expected)
-            self.assertEqual(json.loads(output.getvalue()), {"status": "prepared"})
+            self.assertEqual(
+                json.loads(output.getvalue()), {"status": "prepared"}
+            )
 
     def test_public_entry_errors_do_not_disclose_credentials(self):
         output = io.StringIO()
@@ -73,18 +77,24 @@ class PublicEntryCLITests(unittest.TestCase):
             ),
             contextlib.redirect_stderr(output),
         ):
-            self.assertEqual(1, cli.main(self.arguments("prepare-public-entry")))
+            self.assertEqual(
+                1, cli.main(self.arguments("prepare-public-entry"))
+            )
         self.assertNotIn("sentinel", output.getvalue())
         self.assertFalse(json.loads(output.getvalue())["active_changed"])
 
-    def test_remote_backend_dispatch_uses_no_product_or_release_configuration(self):
+    def test_remote_backend_dispatch_uses_no_product_or_release_configuration(
+        self,
+    ):
         for command, module, action in (
             ("prepare-public-entry", host, "prepare_public_entry"),
             ("up-public-entry", host, "up_public_entry"),
             ("update-public-entry", updates, "update_public_entry"),
         ):
             arguments = self.arguments(command)
-            arguments[arguments.index("--release-compose")] = "--backend-config"
+            arguments[arguments.index("--release-compose")] = (
+                "--backend-config"
+            )
             arguments[arguments.index("/private/release/compose.json")] = (
                 "/private/backend.json"
             )
@@ -140,7 +150,7 @@ class PublicEntryCLITests(unittest.TestCase):
                         ]
                     )
 
-    def test_failed_deployments_have_nonzero_exit_without_claiming_automatic_rollback(
+    def test_failed_deployments_exit_nonzero_without_claiming_rollback(
         self,
     ):
         report = {
@@ -166,7 +176,9 @@ class PublicEntryCLITests(unittest.TestCase):
     def test_only_known_lifecycle_error_codes_are_exposed(self):
         for error, expected in (
             (
-                updates.PublicEntryUpdateError("public_entry_pending_operation"),
+                updates.PublicEntryUpdateError(
+                    "public_entry_pending_operation"
+                ),
                 "public_entry_pending_operation",
             ),
             (updates.PublicEntryUpdateError("private-secret-sentinel"), None),
@@ -176,15 +188,21 @@ class PublicEntryCLITests(unittest.TestCase):
                 ),
                 "public_entry_backend_network_invalid",
             ),
-            (preflight.PublicEntryPreflightError("private-secret-sentinel"), None),
             (
-                remote.PublicEntryRemoteError("public_entry_remote_probe_failed"),
+                preflight.PublicEntryPreflightError("private-secret-sentinel"),
+                None,
+            ),
+            (
+                remote.PublicEntryRemoteError(
+                    "public_entry_remote_probe_failed"
+                ),
                 "public_entry_remote_probe_failed",
             ),
             (remote.PublicEntryRemoteError("private-secret-sentinel"), None),
             (
                 preflight.PublicEntryPreflightError(
-                    "public_entry_backend_network_invalid", "private-secret-sentinel"
+                    "public_entry_backend_network_invalid",
+                    "private-secret-sentinel",
                 ),
                 None,
             ),
@@ -206,7 +224,9 @@ class PublicEntryCLITests(unittest.TestCase):
         ):
             output = io.StringIO()
             with (
-                self.subTest(error_type=type(error).__name__, expected=expected),
+                self.subTest(
+                    error_type=type(error).__name__, expected=expected
+                ),
                 patch.object(
                     updates,
                     "update_public_entry",
@@ -214,7 +234,9 @@ class PublicEntryCLITests(unittest.TestCase):
                 ),
                 contextlib.redirect_stderr(output),
             ):
-                self.assertEqual(1, cli.main(self.arguments("update-public-entry")))
+                self.assertEqual(
+                    1, cli.main(self.arguments("update-public-entry"))
+                )
             report = json.loads(output.getvalue())
             self.assertEqual(report.get("error_code"), expected)
             self.assertFalse(report["active_changed"])
@@ -257,7 +279,9 @@ class PublicEntryCLITests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 with self.assertRaises(SystemExit):
-                    cli.main([*self.arguments("rollback-public-entry"), *extra])
+                    cli.main(
+                        [*self.arguments("rollback-public-entry"), *extra]
+                    )
             action.assert_not_called()
 
     def test_removed_recovery_command_cannot_invoke_a_deployment(self):
@@ -268,7 +292,11 @@ class PublicEntryCLITests(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit) as error:
                 cli.main(
-                    ["recover-public-entry", "--entry-config", "/private/public.json"]
+                    [
+                        "recover-public-entry",
+                        "--entry-config",
+                        "/private/public.json",
+                    ]
                 )
         self.assertEqual(error.exception.code, 2)
         rollback.assert_not_called()

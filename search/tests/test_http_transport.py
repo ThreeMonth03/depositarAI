@@ -16,7 +16,9 @@ from search.tests.fixtures import ClosingResponse, StaticOpener
 
 class SharedHTTPTransportTests(unittest.TestCase):
     def setUp(self):
-        self.request = http.HTTPRequest("GET", "http://127.0.0.1:8000/healthz", ())
+        self.request = http.HTTPRequest(
+            "GET", "http://127.0.0.1:8000/healthz", ()
+        )
 
     def response(self, body=b"{}"):
         return SimpleNamespace(
@@ -30,7 +32,9 @@ class SharedHTTPTransportTests(unittest.TestCase):
 
     def transport(self, response):
         transport = http.UrllibTransport()
-        transport._opener = SimpleNamespace(open=mock.Mock(return_value=response))
+        transport._opener = SimpleNamespace(
+            open=mock.Mock(return_value=response)
+        )
         return transport
 
     def test_invalid_bounds_fail_before_opening_a_connection(self):
@@ -43,14 +47,22 @@ class SharedHTTPTransportTests(unittest.TestCase):
             (1, 0),
         ):
             with self.subTest(timeout=timeout, cap=cap):
-                with self.assertRaisesRegex(OSError, "^invalid transport bound$"):
-                    transport.send(self.request, timeout=timeout, max_bytes=cap)
+                with self.assertRaisesRegex(
+                    OSError, "^invalid transport bound$"
+                ):
+                    transport.send(
+                        self.request, timeout=timeout, max_bytes=cap
+                    )
         transport._opener.open.assert_not_called()
 
     def test_connection_error_retains_the_sanitized_diagnostic(self):
         transport = self.transport(self.response())
-        transport._opener.open.side_effect = RuntimeError("private-upstream-sentinel")
-        with self.assertRaisesRegex(OSError, "^Ollama transport failed$") as caught:
+        transport._opener.open.side_effect = RuntimeError(
+            "private-upstream-sentinel"
+        )
+        with self.assertRaisesRegex(
+            OSError, "^Ollama transport failed$"
+        ) as caught:
             transport.send(self.request, timeout=1, max_bytes=64)
         self.assertTrue(caught.exception.__suppress_context__)
         transport._opener.open.assert_called_once()
@@ -60,7 +72,9 @@ class SharedHTTPTransportTests(unittest.TestCase):
         transport = self.transport(response)
         with (
             mock.patch.object(http.time, "monotonic", side_effect=[10, 11]),
-            self.assertRaisesRegex(TimeoutError, "^Ollama transport deadline expired$"),
+            self.assertRaisesRegex(
+                TimeoutError, "^Ollama transport deadline expired$"
+            ),
         ):
             transport.send(self.request, timeout=1, max_bytes=64)
         response.read1.assert_not_called()
@@ -77,12 +91,16 @@ class SharedHTTPTransportTests(unittest.TestCase):
                 expected = "cannot enforce bounded Ollama body reads"
             with self.subTest(missing=missing):
                 with self.assertRaisesRegex(OSError, "^" + expected + "$"):
-                    self.transport(response).send(self.request, timeout=1, max_bytes=64)
+                    self.transport(response).send(
+                        self.request, timeout=1, max_bytes=64
+                    )
                 response.close.assert_called_once()
 
     def test_over_cap_response_keeps_the_bound_and_closes(self):
         response = self.response(b"xx")
-        with self.assertRaisesRegex(OSError, "^Ollama response exceeded its cap$"):
+        with self.assertRaisesRegex(
+            OSError, "^Ollama response exceeded its cap$"
+        ):
             self.transport(response).send(self.request, timeout=1, max_bytes=1)
         response.read1.assert_called_once_with(2)
         response.close.assert_called_once()
@@ -90,7 +108,9 @@ class SharedHTTPTransportTests(unittest.TestCase):
     def test_close_error_does_not_replace_a_successful_response(self):
         response = self.response()
         response.close.side_effect = RuntimeError("private-close-sentinel")
-        result = self.transport(response).send(self.request, timeout=1, max_bytes=64)
+        result = self.transport(response).send(
+            self.request, timeout=1, max_bytes=64
+        )
         self.assertEqual(
             result,
             http.HTTPResponse(
@@ -102,7 +122,9 @@ class SharedHTTPTransportTests(unittest.TestCase):
 
 class UrllibTransportTests(unittest.TestCase):
     def loopback(self, status, body, *, drip=False, location=None):
-        """Use real urllib HTTPError/socket wrappers, never a model or service."""
+        """Use real urllib HTTPError/socket wrappers, never a model or
+        service.
+        """
         stop = threading.Event()
         paths = []
 
@@ -137,7 +159,8 @@ class UrllibTransportTests(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         server.daemon_threads = True
         thread = threading.Thread(
-            target=lambda: server.serve_forever(poll_interval=0.01), daemon=True
+            target=lambda: server.serve_forever(poll_interval=0.01),
+            daemon=True,
         )
         thread.start()
 
@@ -163,7 +186,9 @@ class UrllibTransportTests(unittest.TestCase):
         url = f"http://127.0.0.1:{server.server_port}/expired"
         return transport, HTTPRequest("GET", url, ()), errors, paths
 
-    def test_real_http_error_preserves_status_body_headers_url_and_closes(self):
+    def test_real_http_error_preserves_status_body_headers_url_and_closes(
+        self,
+    ):
         for body in (b'{"error":{"code":"session_expired"}}', b""):
             with self.subTest(body=body):
                 transport, request, errors, _ = self.loopback(410, body)
@@ -171,7 +196,9 @@ class UrllibTransportTests(unittest.TestCase):
                 self.assertEqual(result.status, 410)
                 self.assertEqual(result.body, body)
                 self.assertEqual(result.url, request.url)
-                self.assertIn(("X-Transport-Fixture", "loopback"), result.headers)
+                self.assertIn(
+                    ("X-Transport-Fixture", "loopback"), result.headers
+                )
                 self.assertEqual(len(errors), 1)
                 self.assertTrue(errors[0].closed)
 
@@ -183,7 +210,9 @@ class UrllibTransportTests(unittest.TestCase):
         self.assertTrue(errors[0].closed)
 
     def test_real_trickled_http_error_keeps_absolute_deadline_and_closes(self):
-        transport, request, errors, _ = self.loopback(503, b"x" * 80, drip=True)
+        transport, request, errors, _ = self.loopback(
+            503, b"x" * 80, drip=True
+        )
         started = time.monotonic()
         with self.assertRaisesRegex(OSError, "timed out|deadline expired"):
             transport.send(request, timeout=0.25, max_bytes=1024)
@@ -193,7 +222,9 @@ class UrllibTransportTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertTrue(errors[0].closed)
 
-    def test_real_redirect_is_returned_without_following_or_environment_proxy(self):
+    def test_real_redirect_is_returned_without_following_or_environment_proxy(
+        self,
+    ):
         with mock.patch.dict(
             os.environ,
             {

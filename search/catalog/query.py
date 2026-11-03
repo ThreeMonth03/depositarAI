@@ -1,4 +1,4 @@
-"""Compile literal user text into a bounded query without Fess or IO imports."""
+"""Compile literal text into bounded queries without Fess or IO imports."""
 
 from __future__ import annotations
 
@@ -28,7 +28,10 @@ def normalize_query(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value)
     if any(character in _BIDI_CONTROLS for character in normalized):
         raise UnsafeQuery("query contains a bidi control")
-    if any(unicodedata.category(character) in ("Cc", "Cf") for character in normalized):
+    if any(
+        unicodedata.category(character) in ("Cc", "Cf")
+        for character in normalized
+    ):
         raise UnsafeQuery("query contains a control character")
     if (
         len(normalized) > MAX_QUERY_CHARS
@@ -49,7 +52,8 @@ def normalize_query(value: str) -> str:
     )
     terms = literal.split()
     terms = [
-        term.casefold() if term in _QUERY_OPERATOR_WORDS else term for term in terms
+        term.casefold() if term in _QUERY_OPERATOR_WORDS else term
+        for term in terms
     ]
     if not terms or len(terms) > MAX_QUERY_TERMS:
         raise UnsafeQuery("query term count is outside its cap")

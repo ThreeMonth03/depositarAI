@@ -27,4 +27,6 @@ def _vector_event(
         except Exception:
             # Local file errors can contain paths or supplied content. Neither
             # belongs in the bounded catalog error exposed by the CLI.
-            raise VectorBuildError("vector evidence could not be committed") from None
+            raise VectorBuildError(
+                "vector evidence could not be committed"
+            ) from None

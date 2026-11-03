@@ -39,7 +39,9 @@ KEEP_ALIVE = -1
 
 
 class ProbeTransport:
-    """Private role-only diagnostics; do not widen the query-worker allowlist."""
+    """Private role-only diagnostics; do not widen the query-worker
+    allowlist.
+    """
 
     def __init__(self, role):
         if role not in {"scope", "planner"}:
@@ -55,11 +57,17 @@ class ProbeTransport:
             or parsed.query
             or parsed.fragment
             or (request.method, parsed.path)
-            not in {("GET", "/api/tags"), ("GET", "/api/ps"), ("POST", "/api/chat")}
+            not in {
+                ("GET", "/api/tags"),
+                ("GET", "/api/ps"),
+                ("POST", "/api/chat"),
+            }
         ):
             raise ValueError("probe_operation_invalid")
         upstream = dataclasses.replace(request, url=self.origin + parsed.path)
-        response = self.transport.send(upstream, timeout=timeout, max_bytes=max_bytes)
+        response = self.transport.send(
+            upstream, timeout=timeout, max_bytes=max_bytes
+        )
         if response.url != upstream.url:
             raise ValueError("probe_redirect_refused")
         return dataclasses.replace(response, url=request.url)
@@ -88,7 +96,9 @@ def _payload(role):
         "messages": [
             {
                 "role": "system",
-                "content": 'Return exactly {"ready":true}. No tools or commentary.',
+                "content": (
+                    'Return exactly {"ready":true}. No tools or commentary.'
+                ),
             },
             {"role": "user", "content": "Confirm that inference is ready."},
         ],
@@ -130,7 +140,11 @@ def _identity(value, model, digest):
 
 
 def _resident(value, model, digest):
-    rows = [row for row in _rows(value) if model in (row.get("name"), row.get("model"))]
+    rows = [
+        row
+        for row in _rows(value)
+        if model in (row.get("name"), row.get("model"))
+    ]
     if not rows:
         return None
     if len(rows) != 1 or rows[0].get("digest") != digest:
@@ -145,7 +159,10 @@ def _resident(value, model, digest):
 
 
 def probe_models(
-    *, transports=None, clock=time.monotonic, budget_seconds=TOTAL_BUDGET_SECONDS
+    *,
+    transports=None,
+    clock=time.monotonic,
+    budget_seconds=TOTAL_BUDGET_SECONDS,
 ):
     """Warm scope and planner once, return bounded sanitized evidence.
 
@@ -173,7 +190,12 @@ def probe_models(
     }
     for role, model, digest, role_budget in (
         ("scope", SCOPE_MODEL, SCOPE_MODEL_DIGEST, SCOPE_BUDGET_SECONDS),
-        ("planner", PLANNER_MODEL, PLANNER_MODEL_DIGEST, PLANNER_BUDGET_SECONDS),
+        (
+            "planner",
+            PLANNER_MODEL,
+            PLANNER_MODEL_DIGEST,
+            PLANNER_BUDGET_SECONDS,
+        ),
     ):
         row = {
             "role": role,
@@ -194,7 +216,11 @@ def probe_models(
             return min(cap, left)
 
         try:
-            transport = ProbeTransport(role) if transports is None else transports[role]
+            transport = (
+                ProbeTransport(role)
+                if transports is None
+                else transports[role]
+            )
 
             def request(method, path, *, payload=None, timeout=5):
                 body = (
@@ -217,7 +243,9 @@ def probe_models(
                     body,
                 )
                 response = transport.send(
-                    logical, timeout=remaining(timeout), max_bytes=MAX_RESPONSE_BYTES
+                    logical,
+                    timeout=remaining(timeout),
+                    max_bytes=MAX_RESPONSE_BYTES,
                 )
                 remaining(timeout)
                 if (
@@ -235,7 +263,9 @@ def probe_models(
             row["resident_before"] = before is not None
             payload = _payload(role)
             row["num_ctx"] = payload["options"]["num_ctx"]
-            raw = request("POST", "/api/chat", payload=payload, timeout=role_budget)
+            raw = request(
+                "POST", "/api/chat", payload=payload, timeout=role_budget
+            )
             if (
                 type(raw) is not dict
                 or raw.get("model") != model
@@ -251,7 +281,9 @@ def probe_models(
             ):
                 raise ValueError("probe_completion_invalid")
             visible = strict_json(message["content"].encode())
-            expected = {"decision": "search"} if role == "scope" else {"ready": True}
+            expected = (
+                {"decision": "search"} if role == "scope" else {"ready": True}
+            )
             if visible != expected or (
                 role == "planner" and type(visible["ready"]) is not bool
             ):
@@ -263,11 +295,16 @@ def probe_models(
                 "prompt_eval_count",
                 "eval_count",
             ):
-                if type(raw.get(field)) is not int or not 0 <= raw[field] <= 1024**4:
+                if (
+                    type(raw.get(field)) is not int
+                    or not 0 <= raw[field] <= 1024**4
+                ):
                     raise ValueError("probe_completion_metrics")
             if (
                 raw["prompt_eval_count"] <= 0
-                or not 0 < raw["eval_count"] <= payload["options"]["num_predict"]
+                or not 0
+                < raw["eval_count"]
+                <= payload["options"]["num_predict"]
                 or raw["prompt_eval_count"] + payload["options"]["num_predict"]
                 > row["num_ctx"]
             ):
@@ -307,11 +344,17 @@ def probe_models(
 
 
 def main():
-    """Private one-shot entry; output never contains generated text/thinking."""
+    """Private one-shot entry; output never contains generated
+    text/thinking.
+    """
     try:
         result = probe_models()
     except (OSError, ValueError, RuntimeError):
-        result = {"schema_version": 1, "status": "blocked", "code": "warmup_failed"}
+        result = {
+            "schema_version": 1,
+            "status": "blocked",
+            "code": "warmup_failed",
+        }
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0 if result["status"] == "ready" else 1
 

@@ -91,7 +91,7 @@ class IndexBoundaryTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.check_hits(changed)
 
-    def test_resource_context_projection_must_be_present_and_match_sealed_document(
+    def test_resource_context_must_match_sealed_document(
         self,
     ):
         context = {
@@ -115,7 +115,9 @@ class IndexBoundaryTests(unittest.TestCase):
         self.source["resource_context"] = [copy.deepcopy(context)]
         self.assertEqual(self.check_hits(self.response), [(IDS[0], 1.0)])
 
-    def test_native_query_requests_resource_context_for_sealed_projection_check(self):
+    def test_native_query_requests_sealed_resource_context(
+        self,
+    ):
         client = index.IndexClient.__new__(index.IndexClient)
         client.bundle = self.bundle
         client.binding = {"index": "fess.20260917120000"}
@@ -123,15 +125,23 @@ class IndexBoundaryTests(unittest.TestCase):
         client.transport = object()
         with (
             patch.object(index, "read_secret", return_value="fixture"),
-            patch.object(client, "json_request", return_value=self.response) as send,
+            patch.object(
+                client, "json_request", return_value=self.response
+            ) as send,
         ):
             self.assertEqual(
-                client.retrieve("氣候", CONDITIONS, "lexical", None), [(IDS[0], 1.0)]
+                client.retrieve("氣候", CONDITIONS, "lexical", None),
+                [(IDS[0], 1.0)],
             )
         self.assertIn("resource_context", send.call_args.args[2]["_source"])
 
-    def test_wrong_physical_index_duplicates_and_nonfinite_scores_rejected(self):
-        for field, value in (("_index", "fess.other"), ("_score", float("nan"))):
+    def test_wrong_physical_index_duplicates_and_nonfinite_scores_rejected(
+        self,
+    ):
+        for field, value in (
+            ("_index", "fess.other"),
+            ("_score", float("nan")),
+        ):
             changed = copy.deepcopy(self.response)
             changed["hits"]["hits"][0][field] = value
             with self.assertRaises(ValueError):
@@ -142,7 +152,9 @@ class IndexBoundaryTests(unittest.TestCase):
             self.check_hits(changed)
 
     def test_known_outside_fails_instead_of_being_silently_dropped(self):
-        self.bundle.condition_metadata[IDS[0]] = condition_document("2000", "2000")
+        self.bundle.condition_metadata[IDS[0]] = condition_document(
+            "2000", "2000"
+        )
         self.source[index_filters.FIELD] = index_filters.metadata(
             self.bundle.condition_metadata[IDS[0]], "a" * 64
         )
@@ -190,7 +202,10 @@ class IndexBoundaryTests(unittest.TestCase):
             )
         for rows in (
             [value["results"][0]] * 2,
-            [{**row, "searchers": ["default"]} for row in report("氣候")["results"]],
+            [
+                {**row, "searchers": ["default"]}
+                for row in report("氣候")["results"]
+            ],
             list(reversed(value["results"])),
         ):
             with self.assertRaises(ValueError):
@@ -227,7 +242,11 @@ class IndexBoundaryTests(unittest.TestCase):
             for payload in (
                 {},
                 {"query": "氣候", "top_k": True, "conditions": CONDITIONS},
-                {"query": "氣候", "top_k": 5, "conditions": {"bbox": [0, 0, 1, 1]}},
+                {
+                    "query": "氣候",
+                    "top_k": 5,
+                    "conditions": {"bbox": [0, 0, 1, 1]},
+                },
             ):
                 with self.assertRaises(ValueError):
                     index.search(payload, None)
@@ -237,22 +256,31 @@ class IndexBoundaryTests(unittest.TestCase):
         client = index.IndexClient.__new__(index.IndexClient)
         client.embedding_transport = object()
         client.embedding_origin = "http://172.18.0.2:11434"
-        tags = {"models": [{"name": index.MODEL, "digest": index.MODEL_DIGEST}]}
+        tags = {
+            "models": [{"name": index.MODEL, "digest": index.MODEL_DIGEST}]
+        }
         with patch.object(
             client,
             "json_request",
-            side_effect=[tags, {"model": index.MODEL, "embeddings": [[1.0] * 768]}],
+            side_effect=[
+                tags,
+                {"model": index.MODEL, "embeddings": [[1.0] * 768]},
+            ],
         ) as send:
             self.assertEqual(len(client.embed("水質")), 768)
             payload = send.call_args.args[2]
             self.assertIs(payload["truncate"], False)
             self.assertEqual(payload["options"]["num_gpu"], 0)
-        with patch.object(client, "json_request", return_value={"models": []}) as send:
+        with patch.object(
+            client, "json_request", return_value={"models": []}
+        ) as send:
             with self.assertRaises(ValueError):
                 client.embed("水質")
             self.assertEqual(send.call_count, 1)
 
-    def test_cards_use_sealed_coverage_without_index_or_query_date_inference(self):
+    def test_cards_use_sealed_coverage_without_index_or_query_date_inference(
+        self,
+    ):
         coverage = (
             ("2020", "2025", "complete"),
             ("2024-2", "2024-02-29", "complete"),
@@ -281,7 +309,9 @@ class IndexBoundaryTests(unittest.TestCase):
             }
             for number, (start, end, _status) in enumerate(coverage)
         ]
-        source.write_text("".join(json.dumps(record) + "\n" for record in records))
+        source.write_text(
+            "".join(json.dumps(record) + "\n" for record in records)
+        )
         source.chmod(0o600)
         output = base / "bundles"
         output.mkdir(mode=0o700)
@@ -294,7 +324,9 @@ class IndexBoundaryTests(unittest.TestCase):
             bundle_path, expected_manifest_sha256=built["manifest_sha256"]
         )
         by_id = {row["dataset_id"]: row for row in bundle.documents}
-        self.assertTrue(all("temporal_coverage" not in row for row in by_id.values()))
+        self.assertTrue(
+            all("temporal_coverage" not in row for row in by_id.values())
+        )
         fused = [
             SimpleNamespace(id=identifier, score=1 / rank)
             for rank, identifier in enumerate(by_id, 1)
@@ -304,10 +336,16 @@ class IndexBoundaryTests(unittest.TestCase):
         client = SimpleNamespace(by_id=by_id, embed=lambda _query: [0.0] * 768)
         with (
             patch.object(index, "IndexClient", return_value=client),
-            patch.dict(sys.modules, {"search.api.retrieval.pipeline": pipeline}),
+            patch.dict(
+                sys.modules, {"search.api.retrieval.pipeline": pipeline}
+            ),
         ):
             result = index.search(
-                {"query": "找 2040 年氣候", "top_k": len(coverage), "conditions": {}},
+                {
+                    "query": "找 2040 年氣候",
+                    "top_k": len(coverage),
+                    "conditions": {},
+                },
                 SimpleNamespace(
                     bundle_path=bundle_path,
                     manifest_sha256=built["manifest_sha256"],
@@ -327,9 +365,13 @@ class IndexBoundaryTests(unittest.TestCase):
             self.assertEqual(card["metadata_modified"], "2026-01-02T00:00:00")
 
 
-@unittest.skipUnless(importlib.util.find_spec("haystack"), "Pinned pipeline dependency")
+@unittest.skipUnless(
+    importlib.util.find_spec("haystack"), "Pinned pipeline dependency"
+)
 class IndexPipelineTests(unittest.TestCase):
-    def test_empty_time_format_and_combined_searches_use_the_same_pipeline(self):
+    def test_empty_time_format_and_combined_searches_use_the_same_pipeline(
+        self,
+    ):
         row = report("氣候", count=1)["results"][0]
         context = {
             "resource_id": IDS[1],
@@ -340,14 +382,18 @@ class IndexPipelineTests(unittest.TestCase):
             "excerpt": "",
         }
         row["resource_context"] = (
-            MappingProxyType({**context, "columns": tuple(context["columns"])}),
+            MappingProxyType(
+                {**context, "columns": tuple(context["columns"])}
+            ),
         )
         for field in ("tags", "groups", "resource_formats"):
             row[field] = tuple(row[field])
         row = MappingProxyType(row)
         bundle = SimpleNamespace(
             manifest_sha256="b" * 64,
-            condition_metadata={row["dataset_id"]: condition_document("2020", "2025")},
+            condition_metadata={
+                row["dataset_id"]: condition_document("2020", "2025")
+            },
         )
         for conditions in (
             {},
@@ -389,14 +435,22 @@ class IndexPipelineTests(unittest.TestCase):
                 self.assertEqual(
                     [row["dataset_id"]], [r["dataset_id"] for r in found.rows]
                 )
-                self.assertEqual({"lexical", "vector"}, {call[2] for call in calls})
+                self.assertEqual(
+                    {"lexical", "vector"}, {call[2] for call in calls}
+                )
                 self.assertTrue(
-                    all(call[0] == "氣候" and call[1] == conditions for call in calls)
+                    all(
+                        call[0] == "氣候" and call[1] == conditions
+                        for call in calls
+                    )
                 )
                 self.assertEqual(
-                    ["opensearch-bm25", "opensearch-knn"], found.rows[0]["searchers"]
+                    ["opensearch-bm25", "opensearch-knn"],
+                    found.rows[0]["searchers"],
                 )
-                self.assertEqual(found.cards()[0]["resource_context"], [context])
+                self.assertEqual(
+                    found.cards()[0]["resource_context"], [context]
+                )
                 observed = result["results"][0]
                 for field in ("tags", "groups", "resource_formats"):
                     self.assertIs(type(observed[field]), list)
@@ -405,6 +459,9 @@ class IndexPipelineTests(unittest.TestCase):
                     self.assertEqual(tuple(observed[field][:-1]), row[field])
                 observed["resource_context"][0]["columns"].clear()
                 self.assertEqual(
-                    row["resource_context"][0]["columns"], tuple(context["columns"])
+                    row["resource_context"][0]["columns"],
+                    tuple(context["columns"]),
                 )
-                self.assertEqual(found.cards()[0]["resource_context"], [context])
+                self.assertEqual(
+                    found.cards()[0]["resource_context"], [context]
+                )

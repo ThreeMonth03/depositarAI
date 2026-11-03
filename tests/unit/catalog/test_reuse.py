@@ -1,4 +1,5 @@
-"""Cross-catalog reuse with real sealed bundles, private records and fake HTTP."""
+"""Cross-catalog reuse with real sealed bundles, private records and fake
+HTTP."""
 
 from __future__ import annotations
 
@@ -14,7 +15,13 @@ from unittest.mock import patch
 from search.catalog import embedding
 from search.catalog.build import builder
 from search.catalog.bundle import CatalogBundle
-from search.operations.catalog import chunks, connection, execution, projection, reuse
+from search.operations.catalog import (
+    chunks,
+    connection,
+    execution,
+    projection,
+    reuse,
+)
 from search.operations.shared import private_io
 from tests.unit.catalog.test_projection import INDEX, ProjectionClient
 from tests.unit.catalog.test_vectors import host_context
@@ -50,7 +57,9 @@ def write_record(root, name, value):
 
 class VectorReuseTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-vector-reuse-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-vector-reuse-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.catalogs = self.root / "catalogs"
@@ -64,7 +73,9 @@ class VectorReuseTests(unittest.TestCase):
                 context["plan"]["revision"], PROFILE
             ),
         ).start()
-        patch.object(connection, "materials", return_value=("a" * 64, b"ca")).start()
+        patch.object(
+            connection, "materials", return_value=("a" * 64, b"ca")
+        ).start()
         patch.object(
             connection,
             "peers",
@@ -111,14 +122,18 @@ class VectorReuseTests(unittest.TestCase):
                 },
             }
         }
-        context["plan"]["compose_sha256"] = execution.digest_record(context["compose"])
+        context["plan"]["compose_sha256"] = execution.digest_record(
+            context["compose"]
+        )
         write_record(slot, "compose.json", context["compose"])
         write_record(slot, "plan.json", context["plan"])
         return context
 
     def client(self, context, *, done):
         client = ProjectionClient(context["bundle"])
-        documents = {row["dataset_id"]: row for row in context["bundle"].documents}
+        documents = {
+            row["dataset_id"]: row for row in context["bundle"].documents
+        }
         for row in client.rows:
             source = row["_source"]
             document = documents[source["dataset_id"]]
@@ -185,7 +200,9 @@ class VectorReuseTests(unittest.TestCase):
 
     def seed(self, context, client):
         def factory(peer, ca, admin):
-            self.assertEqual(("172.19.0.3", b"ca", "a" * 64), (peer, ca, admin))
+            self.assertEqual(
+                ("172.19.0.3", b"ca", "a" * 64), (peer, ca, admin)
+            )
             return client
 
         return reuse.seed(
@@ -198,7 +215,9 @@ class VectorReuseTests(unittest.TestCase):
     def target(self, *, changed=False, all_hits=False):
         rows = [dataset(1, metadata_modified="2026-10-29T00:00:00")]
         rows.append(
-            dataset(2, notes="Changed discovery text") if changed else dataset(2)
+            dataset(2, notes="Changed discovery text")
+            if changed
+            else dataset(2)
         )
         if not all_hits:
             rows.append(dataset(3))
@@ -212,29 +231,43 @@ class VectorReuseTests(unittest.TestCase):
             if call[:2] == ("POST", "/" + INDEX + "/_bulk")
         ]
 
-    def test_mixed_reuse_keeps_new_metadata_and_only_writes_native_vector_fields(self):
+    def test_mixed_reuse_keeps_metadata_and_writes_only_native_vectors(
+        self,
+    ):
         self.export()
         context, client = self.target(changed=True)
         before = copy.deepcopy(client.rows)
         source_before = copy.deepcopy(self.source_client.rows)
         source_calls = len(self.source_client.calls)
         self.seed(context, client)
-        self.assertEqual("done", client.rows[0]["_source"]["content_chunk_status"])
+        self.assertEqual(
+            "done", client.rows[0]["_source"]["content_chunk_status"]
+        )
         self.assertNotIn("content_chunk_status", client.rows[1]["_source"])
         self.assertNotIn("content_chunk_status", client.rows[2]["_source"])
         for old, new in zip(before, client.rows):
             self.assertEqual(
-                {k: v for k, v in old["_source"].items() if k not in NATIVE_FIELDS},
-                {k: v for k, v in new["_source"].items() if k not in NATIVE_FIELDS},
+                {
+                    k: v
+                    for k, v in old["_source"].items()
+                    if k not in NATIVE_FIELDS
+                },
+                {
+                    k: v
+                    for k, v in new["_source"].items()
+                    if k not in NATIVE_FIELDS
+                },
             )
         for call in self.bulk(client):
             lines = call[2].splitlines()
             for offset in range(1, len(lines), 2):
-                self.assertEqual(NATIVE_FIELDS, set(json.loads(lines[offset])["doc"]))
+                self.assertEqual(
+                    NATIVE_FIELDS, set(json.loads(lines[offset])["doc"])
+                )
         self.assertEqual(source_before, self.source_client.rows)
         self.assertEqual(source_calls, len(self.source_client.calls))
 
-    def test_new_bundle_project_and_revision_do_not_prevent_all_unchanged_content_hits(
+    def test_new_project_and_revision_reuse_all_unchanged_content(
         self,
     ):
         self.export()
@@ -244,7 +277,10 @@ class VectorReuseTests(unittest.TestCase):
         )
         self.seed(context, client)
         self.assertTrue(
-            all(row["_source"]["content_chunk_status"] == "done" for row in client.rows)
+            all(
+                row["_source"]["content_chunk_status"] == "done"
+                for row in client.rows
+            )
         )
 
     def assert_profile_miss(self, field, changed):
@@ -261,7 +297,8 @@ class VectorReuseTests(unittest.TestCase):
 
     def test_changed_chunk_profile_is_a_cache_miss(self):
         self.assert_profile_miss(
-            "native_chunk_profile", {**chunks.PROFILE, "length.chunk_size": "400"}
+            "native_chunk_profile",
+            {**chunks.PROFILE, "length.chunk_size": "400"},
         )
 
     def test_completed_seed_replay_does_not_write_again(self):
@@ -285,10 +322,13 @@ class VectorReuseTests(unittest.TestCase):
         self.assertTrue(any(path.name == "manifest.json" for path in files))
         for path in files:
             self.assertEqual(
-                0o600 if "started" in path.name else 0o400, path.stat().st_mode & 0o777
+                0o600 if "started" in path.name else 0o400,
+                path.stat().st_mode & 0o777,
             )
 
-    def test_later_query_ready_receipt_does_not_rewrite_original_cache_provenance(self):
+    def test_later_query_receipt_preserves_original_cache_provenance(
+        self,
+    ):
         self.export()
         manifest = self.source["root"] / "vector-cache/manifest.json"
         before = manifest.read_bytes()
@@ -311,7 +351,10 @@ class VectorReuseTests(unittest.TestCase):
     def test_source_query_history_tampering_cannot_authorize_cache(self):
         self.export()
         complete = (
-            self.source["root"] / "query-operations" / ("1" * 32) / "complete.json"
+            self.source["root"]
+            / "query-operations"
+            / ("1" * 32)
+            / "complete.json"
         )
         value = json.loads(complete.read_bytes())
         value["reports"]["projection"]["vectors_sha256"] = "0" * 64
@@ -321,7 +364,9 @@ class VectorReuseTests(unittest.TestCase):
             self.seed(context, client)
         self.assertEqual([], self.bulk(client))
 
-    def test_partial_bulk_response_keeps_intent_and_retry_observes_applied_values(self):
+    def test_partial_bulk_keeps_intent_and_retry_observes_applied_values(
+        self,
+    ):
         self.export()
         context, client = self.target(all_hits=True)
         client.bulk_fault = lambda response: response.update(errors=True)
@@ -338,7 +383,10 @@ class VectorReuseTests(unittest.TestCase):
         self.assertEqual(len(client.rows), len(written_ids))
         self.assertEqual(len(written_ids), len(set(written_ids)))
         self.assertTrue(
-            all(row["_source"]["content_chunk_status"] == "done" for row in client.rows)
+            all(
+                row["_source"]["content_chunk_status"] == "done"
+                for row in client.rows
+            )
         )
 
     def test_source_manifest_hash_covers_canonical_record_bytes(self):
@@ -363,7 +411,10 @@ class VectorReuseTests(unittest.TestCase):
             self.assertEqual(0, result["cached_documents"])
             self.assertEqual(2, result["skipped_size_limit_documents"])
             self.assertTrue(
-                all(entry["record_sha256"] is None for entry in manifest["entries"])
+                all(
+                    entry["record_sha256"] is None
+                    for entry in manifest["entries"]
+                )
             )
             self.assertEqual(
                 {"manifest.json", "export-started.json"},
@@ -373,7 +424,9 @@ class VectorReuseTests(unittest.TestCase):
             self.seed(context, client)
             self.assertEqual([], self.bulk(client))
 
-    def test_total_export_budget_skips_remaining_records_without_partial_content(self):
+    def test_export_budget_skips_remaining_records_without_partial_data(
+        self,
+    ):
         self.export()
         source_root = self.source["root"] / "vector-cache"
         sizes = sorted(
@@ -401,7 +454,9 @@ class VectorReuseTests(unittest.TestCase):
                 ),
             )
 
-    def test_duplicate_content_records_share_one_export_budget_allocation(self):
+    def test_duplicate_content_records_share_one_export_budget_allocation(
+        self,
+    ):
         rows = [
             dataset(10, name="a", title="b c", notes="shared"),
             dataset(11, name="a b", title="c", notes="shared"),
@@ -409,7 +464,9 @@ class VectorReuseTests(unittest.TestCase):
         control = self.context("single-control", rows[:1], "d" * 40)
         self.export(control, self.client(control, done=True))
         control_root = control["root"] / "vector-cache"
-        record = next(path for path in control_root.iterdir() if len(path.stem) == 64)
+        record = next(
+            path for path in control_root.iterdir() if len(path.stem) == 64
+        )
         budget = record.stat().st_size
         context = self.context("same-content", rows, "c" * 40)
         self.assertEqual(
@@ -423,29 +480,38 @@ class VectorReuseTests(unittest.TestCase):
             self.assertEqual(0, result["skipped_size_limit_documents"])
             self.assertEqual(budget, manifest["record_bytes"])
             self.assertEqual(
-                1, len({entry["record_sha256"] for entry in manifest["entries"]})
+                1,
+                len({entry["record_sha256"] for entry in manifest["entries"]}),
             )
 
     def test_failed_export_scan_never_publishes_a_manifest(self):
-        scan = projection.verify_vectors(self.source_client, self.source["bundle"])
+        scan = projection.verify_vectors(
+            self.source_client, self.source["bundle"]
+        )
         ready = self.ready(self.source, scan)
         self.source_client.search_fault = (
             lambda response, _start, _scan: response.update(timed_out=True)
         )
         with self.assertRaisesRegex(ValueError, "catalog_vector_reuse_"):
             reuse.export(self.source, self.source_client, scan, ready)
-        self.assertFalse((self.source["root"] / "vector-cache/manifest.json").exists())
+        self.assertFalse(
+            (self.source["root"] / "vector-cache/manifest.json").exists()
+        )
 
     def test_export_count_bound_is_checked_before_manifest_publication(self):
         with patch.object(reuse, "MAX_RECORDS", 1):
             with self.assertRaisesRegex(ValueError, "catalog_vector_reuse_"):
                 self.export()
-        self.assertFalse((self.source["root"] / "vector-cache/manifest.json").exists())
+        self.assertFalse(
+            (self.source["root"] / "vector-cache/manifest.json").exists()
+        )
 
-    def test_interrupted_export_reuses_immutable_records_before_publishing_manifest(
+    def test_interrupted_export_reuses_records_before_manifest(
         self,
     ):
-        scan = projection.verify_vectors(self.source_client, self.source["bundle"])
+        scan = projection.verify_vectors(
+            self.source_client, self.source["bundle"]
+        )
         ready = self.ready(self.source, scan)
         mapping_reads = []
 
@@ -459,7 +525,11 @@ class VectorReuseTests(unittest.TestCase):
             reuse.export(self.source, self.source_client, scan, ready)
         root = self.source["root"] / "vector-cache"
         before = {
-            path.name: (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+            path.name: (
+                path.stat().st_ino,
+                path.stat().st_mtime_ns,
+                path.read_bytes(),
+            )
             for path in root.iterdir()
             if len(path.stem) == 64
         }
@@ -502,7 +572,9 @@ class VectorReuseTests(unittest.TestCase):
             "record_bytes",
         ):
             value = copy.deepcopy(original)
-            value[field] = True if field == "schema_version" else float(value[field])
+            value[field] = (
+                True if field == "schema_version" else float(value[field])
+            )
             path.chmod(0o600)
             path.write_bytes(private_io.canonical(value))
             path.chmod(0o400)
@@ -521,7 +593,8 @@ class VectorReuseTests(unittest.TestCase):
         profile = {**manifest["profile"], "model_manifest_sha256": "f" * 64}
         for value in (manifest, intent):
             value.update(
-                profile=profile, profile_sha256=execution.digest_record(profile)
+                profile=profile,
+                profile_sha256=execution.digest_record(profile),
             )
         path = root / "manifest.json"
         path.chmod(0o600)
@@ -533,7 +606,9 @@ class VectorReuseTests(unittest.TestCase):
             self.seed(context, client)
         self.assertEqual([], self.bulk(client))
 
-    def test_record_boolean_version_is_rejected_even_with_updated_record_hash(self):
+    def test_record_boolean_version_is_rejected_even_with_updated_record_hash(
+        self,
+    ):
         self.export()
         root = self.source["root"] / "vector-cache"
         manifest = json.loads((root / "manifest.json").read_bytes())
@@ -559,7 +634,9 @@ class VectorReuseTests(unittest.TestCase):
             self.seed(context, client)
         self.assertEqual([], self.bulk(client))
 
-    def test_corrupt_partial_seed_intent_does_not_authorize_remaining_writes(self):
+    def test_corrupt_partial_seed_intent_does_not_authorize_remaining_writes(
+        self,
+    ):
         self.export()
         context, client = self.target(all_hits=True)
         client.bulk_fault = lambda response: response.update(errors=True)
@@ -632,7 +709,9 @@ class VectorReuseTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "catalog_vector_reuse_"):
             self.seed(context, client)
-        self.assertFalse((context["root"] / "vector-reuse/complete.json").exists())
+        self.assertFalse(
+            (context["root"] / "vector-reuse/complete.json").exists()
+        )
 
 
 if __name__ == "__main__":

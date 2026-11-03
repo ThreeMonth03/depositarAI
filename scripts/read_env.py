@@ -96,7 +96,11 @@ def parse_env(path: Path) -> dict[str, str]:
         else:
             value = strip_unquoted_comment(raw)
             if any(character.isspace() for character in value):
-                fail(path, line_number, "values containing spaces must be quoted")
+                fail(
+                    path,
+                    line_number,
+                    "values containing spaces must be quoted",
+                )
         values[key] = value
     return values
 

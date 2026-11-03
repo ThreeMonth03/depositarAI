@@ -1,7 +1,8 @@
 """Reuse verified native document vectors through bounded private exports.
 
 The caller owns the product and catalog operation locks. Cached native content
-and vectors never carry metadata, permissions or deployment authority into a new
+and vectors never carry metadata, permissions or deployment authority into a
+new
 catalog. A durable intent permits deterministic recovery before its first pass.
 """
 
@@ -17,9 +18,18 @@ import uuid
 from search.catalog import embedding
 from search.catalog.bundle import CatalogBundle
 from search.catalog.codec import _json_wire_copy
-from search.operations.catalog import backend, chunks, connection, execution, projection
+from search.operations.catalog import (
+    backend,
+    chunks,
+    connection,
+    execution,
+    projection,
+)
 from search.operations.catalog.policy import RuntimeError
-from search.operations.catalog.transport import MAX_REQUEST_BYTES, OpenSearchClient
+from search.operations.catalog.transport import (
+    MAX_REQUEST_BYTES,
+    OpenSearchClient,
+)
 from search.operations.shared import private_io
 from search.planning import index_filters as filters
 from search.serialization import strict_json
@@ -52,7 +62,9 @@ def _digest(value):
 
 
 def _content_sha256(value):
-    _require(type(value) is str and len(value) <= chunks.MAX_CONTENT_CHARACTERS)
+    _require(
+        type(value) is str and len(value) <= chunks.MAX_CONTENT_CHARACTERS
+    )
     return hashlib.sha256(value.encode("utf-8", "strict")).hexdigest()
 
 
@@ -60,7 +72,9 @@ def _read(path, *, mode=0o600, limit=MAX_MANIFEST_BYTES):
     path = Path(path)
     descriptor = private_io.open_directory(path.parent)
     try:
-        raw = private_io.read_file(descriptor, path.name, mode=mode, max_bytes=limit)
+        raw = private_io.read_file(
+            descriptor, path.name, mode=mode, max_bytes=limit
+        )
         private_io.verify_directory(descriptor, path.parent)
     finally:
         os.close(descriptor)
@@ -84,7 +98,9 @@ def _write(path, value, *, immutable=False, limit=MAX_MANIFEST_BYTES):
         except FileNotFoundError:
             if immutable:
                 temporary = ".immutable-" + uuid.uuid4().hex
-                private_io.write_file(descriptor, temporary, raw, max_bytes=limit)
+                private_io.write_file(
+                    descriptor, temporary, raw, max_bytes=limit
+                )
                 leaf = os.open(
                     temporary, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor
                 )
@@ -105,7 +121,9 @@ def _write(path, value, *, immutable=False, limit=MAX_MANIFEST_BYTES):
                     os.unlink(temporary, dir_fd=descriptor)
                 os.fsync(descriptor)
             else:
-                private_io.write_file(descriptor, path.name, raw, max_bytes=limit)
+                private_io.write_file(
+                    descriptor, path.name, raw, max_bytes=limit
+                )
         else:
             _require(previous == raw)
         private_io.verify_directory(descriptor, path.parent)
@@ -125,7 +143,10 @@ def _discard_temporaries(root):
         names = os.listdir(descriptor)
         _require(len(names) <= MAX_RECORDS + 5)
         for name in names:
-            if re.fullmatch(r"\.(?:record|immutable)-[0-9a-f]{32}", name) is None:
+            if (
+                re.fullmatch(r"\.(?:record|immutable)-[0-9a-f]{32}", name)
+                is None
+            ):
                 continue
             info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             _require(
@@ -154,7 +175,9 @@ def _profile(context):
         "fess_build_arguments": fess["build"]["args"],
         "fess_environment": fess["environment"],
         "fess_sources": {
-            name: hashlib.sha256(execution.sealed_source(context, name)).hexdigest()
+            name: hashlib.sha256(
+                execution.sealed_source(context, name)
+            ).hexdigest()
             for name in PROFILE_FILES
         },
         "embedding_image": ollama["image"],
@@ -181,21 +204,29 @@ def _query_proof(root, source, ready, vector_digest):
     started, started_sha = _read(run / "started.json")
     complete, complete_sha = _read(run / "complete.json")
     _require(
-        projection.same_json(started, {"identity": identity, "run_id": ready["run_id"]})
+        projection.same_json(
+            started, {"identity": identity, "run_id": ready["run_id"]}
+        )
         and complete_sha == ready["complete_sha256"]
         and complete.get("started_sha256") == started_sha
-        and complete.get("reports", {}).get("projection", {}).get("vectors_sha256")
+        and complete.get("reports", {})
+        .get("projection", {})
+        .get("vectors_sha256")
         == vector_digest
     )
 
 
 def _record(original, native_content, vectors):
     native = chunks.validate(native_content, vectors, original)
-    return {"schema_version": 1, "content_sha256": _content_sha256(original), **native}
+    return {
+        "schema_version": 1,
+        "content_sha256": _content_sha256(original),
+        **native,
+    }
 
 
 def _source_profile(root, plan, manifest):
-    """Bind exported logical inputs to the original completed catalog recipe."""
+    """Bind exported inputs to the original completed catalog recipe."""
     recipe, recipe_sha = _read(root / "vector-operations/recipe.json")
     compose, compose_sha = _read(root / "compose.json")
     _require(
@@ -208,7 +239,11 @@ def _source_profile(root, plan, manifest):
     native = {}
     for key in chunks.PROFILE:
         prefix = "-Dfess.system.content_chunker." + key + "="
-        values = [value[len(prefix) :] for value in options if value.startswith(prefix)]
+        values = [
+            value[len(prefix) :]
+            for value in options
+            if value.startswith(prefix)
+        ]
         _require(len(values) == 1)
         native[key] = values[0]
     sources = {name: plan["source_sha256"][name] for name in PROFILE_FILES}
@@ -247,14 +282,21 @@ def _load_record(exported, entry, original):
         actual == digest
         and type(value) is dict
         and set(value)
-        == {"schema_version", "content_sha256", "content", "content_chunk_vector"}
+        == {
+            "schema_version",
+            "content_sha256",
+            "content",
+            "content_chunk_vector",
+        }
         and type(value["schema_version"]) is int
         and value["schema_version"] == 1
         and value["content_sha256"]
         == entry["content_sha256"]
         == _content_sha256(original)
     )
-    native = chunks.validate(value["content"], value["content_chunk_vector"], original)
+    native = chunks.validate(
+        value["content"], value["content_chunk_vector"], original
+    )
     _require(chunks.digest(native) == entry["vectors_sha256"])
     return {**native, "content_chunk_status": "done"}
 
@@ -288,7 +330,8 @@ def _published(root, profile):
     )
     plan, _ = _read(root / "plan.json")
     bundle = CatalogBundle.load(
-        Path(plan["bundle_path"]), expected_manifest_sha256=plan["manifest_sha256"]
+        Path(plan["bundle_path"]),
+        expected_manifest_sha256=plan["manifest_sha256"],
     )
     _require(
         root.name == bundle.bundle_id[:12] + "-" + plan["revision"][:12]
@@ -299,7 +342,10 @@ def _published(root, profile):
         and plan["document_count"] == len(bundle.documents)
     )
     _query_proof(
-        root, manifest["source"], manifest["query_ready"], manifest["vectors_sha256"]
+        root,
+        manifest["source"],
+        manifest["query_ready"],
+        manifest["vectors_sha256"],
     )
     _source_profile(root, plan, manifest)
     documents = {row["dataset_id"]: row for row in bundle.documents}
@@ -310,7 +356,12 @@ def _published(root, profile):
         _require(
             type(entry) is dict
             and set(entry)
-            == {"dataset_id", "content_sha256", "vectors_sha256", "record_sha256"}
+            == {
+                "dataset_id",
+                "content_sha256",
+                "vectors_sha256",
+                "record_sha256",
+            }
             and entry["dataset_id"] in documents
             and entry["content_sha256"]
             == _content_sha256(documents[entry["dataset_id"]]["content"])
@@ -321,7 +372,9 @@ def _published(root, profile):
         hashes.append((entry["dataset_id"], entry["vectors_sha256"]))
         digest = entry["record_sha256"]
         if digest is not None:
-            _require(type(digest) is str and SHA256.fullmatch(digest) is not None)
+            _require(
+                type(digest) is str and SHA256.fullmatch(digest) is not None
+            )
             files.add(digest + ".json")
             cached += 1
     _require(
@@ -366,20 +419,28 @@ def _published(root, profile):
     )
     if manifest["profile"] != profile:
         return None
-    return {"root": root, "manifest": manifest, "manifest_sha256": manifest_sha}
+    return {
+        "root": root,
+        "manifest": manifest,
+        "manifest_sha256": manifest_sha,
+    }
 
 
 def _export(context, client, scan, query_ready_record):
     _require(1 <= len(context["bundle"].documents) <= MAX_RECORDS)
     profile = _profile(context)
     source = execution.catalog_identity(context)
-    _query_proof(context["root"], source, query_ready_record, scan["vectors_sha256"])
+    _query_proof(
+        context["root"], source, query_ready_record, scan["vectors_sha256"]
+    )
     exported = context["root"] / "vector-cache"
     if exported.exists():
         _discard_temporaries(exported)
     previous = _published(context["root"], profile)
     if previous is not None:
-        _require(previous["manifest"]["vectors_sha256"] == scan["vectors_sha256"])
+        _require(
+            previous["manifest"]["vectors_sha256"] == scan["vectors_sha256"]
+        )
         return {
             "status": "already-exported",
             "cached_documents": previous["manifest"]["cached_count"],
@@ -409,7 +470,10 @@ def _export(context, client, scan, query_ready_record):
             )
         )
         _query_proof(
-            context["root"], source, saved["query_ready"], scan["vectors_sha256"]
+            context["root"],
+            source,
+            saved["query_ready"],
+            scan["vectors_sha256"],
         )
         intent = saved
     entries, stored, stored_bytes = [], {}, 0
@@ -418,7 +482,9 @@ def _export(context, client, scan, query_ready_record):
         nonlocal stored_bytes
         value = _record(original, native_content, vectors)
         raw = private_io.canonical(value)
-        native = {key: value[key] for key in ("content", "content_chunk_vector")}
+        native = {
+            key: value[key] for key in ("content", "content_chunk_vector")
+        }
         digest = None
         candidate = hashlib.sha256(raw).hexdigest()
         if len(raw) <= MAX_ENTRY_BYTES and (
@@ -468,7 +534,7 @@ def _export(context, client, scan, query_ready_record):
 
 
 def export(context, client, scan, query_ready_record):
-    """Publish one complete verified catalog's immutable native-vector export."""
+    """Publish a complete verified catalog's immutable native-vector export."""
     try:
         return _export(context, client, scan, query_ready_record)
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
@@ -507,7 +573,9 @@ def _target_inventory(client, bundle):
         client, max_url_length=max(len(row["url"]) for row in bundle.documents)
     )
     documents = {row["dataset_id"]: row for row in bundle.documents}
-    hashes = {url: digest for url, _, digest in bundle.expected_inventory_entries}
+    hashes = {
+        url: digest for url, _, digest in bundle.expected_inventory_entries
+    }
     found, native_ids, previous = {}, set(), None
     for start in range(0, len(documents), projection.PAGE_SIZE):
         response = projection._ok(
@@ -542,7 +610,9 @@ def _target_inventory(client, bundle):
             _require(type(row) is dict and type(row.get("_source")) is dict)
             data = row["_source"]
             identifier = data.get("dataset_id")
-            document = documents.get(identifier) if type(identifier) is str else None
+            document = (
+                documents.get(identifier) if type(identifier) is str else None
+            )
             native_id = row.get("_id")
             _require(
                 document is not None
@@ -560,7 +630,8 @@ def _target_inventory(client, bundle):
                 and row.get("sort") == [document["url"]]
                 and (previous is None or document["url"] > previous)
                 and data.get("depositar_bundle_id") == bundle.bundle_id
-                and data.get("depositar_document_sha256") == hashes[document["url"]]
+                and data.get("depositar_document_sha256")
+                == hashes[document["url"]]
                 and all(
                     projection.same_json(data.get(key), list(document[key]))
                     for key in ("role", "label", "virtual_host")
@@ -577,7 +648,9 @@ def _target_inventory(client, bundle):
                 )
             )
             context = _json_wire_copy(document["resource_context"])
-            _require(projection.same_json(data.get("resource_context", []), context))
+            _require(
+                projection.same_json(data.get("resource_context", []), context)
+            )
             status = data.get("content_chunk_status")
             if status is None:
                 _require(
@@ -619,10 +692,12 @@ def _target_inventory(client, bundle):
 
 def _donor_record(sources, hit, original):
     donor = next(
-        (row for row in sources if row["root"].name == hit["source_slot"]), None
+        (row for row in sources if row["root"].name == hit["source_slot"]),
+        None,
     )
     _require(
-        donor is not None and donor["manifest_sha256"] == hit["source_manifest_sha256"]
+        donor is not None
+        and donor["manifest_sha256"] == hit["source_manifest_sha256"]
     )
     entry = next(
         (
@@ -632,7 +707,9 @@ def _donor_record(sources, hit, original):
         ),
         None,
     )
-    _require(entry is not None and entry["record_sha256"] == hit["record_sha256"])
+    _require(
+        entry is not None and entry["record_sha256"] == hit["record_sha256"]
+    )
     return _load_record(donor["root"] / "vector-cache", entry, original)
 
 
@@ -678,7 +755,9 @@ def _write_hit(client, index, row, native):
     )
     items = response.get("items")
     _require(
-        response.get("errors") is False and type(items) is list and len(items) == 1
+        response.get("errors") is False
+        and type(items) is list
+        and len(items) == 1
     )
     item = items[0]
     update = item.get("update") if type(item) is dict else None
@@ -733,7 +812,8 @@ def _seed(context, runtime, images, opensearch_factory):
             **base,
             "hits": hits,
             "metadata_sha256": {
-                key: row["metadata_sha256"] for key, row in sorted(rows.items())
+                key: row["metadata_sha256"]
+                for key, row in sorted(rows.items())
             },
         }
         intent_sha = _write(root / "started.json", intent)
@@ -742,7 +822,8 @@ def _seed(context, runtime, images, opensearch_factory):
             type(intent) is dict
             and set(intent) == {*base, "hits", "metadata_sha256"}
             and all(
-                projection.same_json(intent[key], value) for key, value in base.items()
+                projection.same_json(intent[key], value)
+                for key, value in base.items()
             )
         )
         hits = intent["hits"]
@@ -768,7 +849,8 @@ def _seed(context, runtime, images, opensearch_factory):
             )
             _require(
                 all(
-                    type(hit[key]) is str and SHA256.fullmatch(hit[key]) is not None
+                    type(hit[key]) is str
+                    and SHA256.fullmatch(hit[key]) is not None
                     for key in ("source_manifest_sha256", "record_sha256")
                 )
             )
@@ -796,7 +878,10 @@ def _seed(context, runtime, images, opensearch_factory):
             _require(
                 row["native_sha256"]
                 == chunks.digest(
-                    {key: native[key] for key in ("content", "content_chunk_vector")}
+                    {
+                        key: native[key]
+                        for key in ("content", "content_chunk_vector")
+                    }
                 )
             )
         else:
@@ -810,18 +895,26 @@ def _seed(context, runtime, images, opensearch_factory):
     repeated_index, repeated = _target_inventory(client, context["bundle"])
     _require(
         repeated_index == index
-        and {key: row["metadata_sha256"] for key, row in sorted(repeated.items())}
+        and {
+            key: row["metadata_sha256"]
+            for key, row in sorted(repeated.items())
+        }
         == intent["metadata_sha256"]
     )
     for identifier, row in repeated.items():
         expected = (
-            _donor_record(sources, by_id[identifier], documents[identifier]["content"])
+            _donor_record(
+                sources, by_id[identifier], documents[identifier]["content"]
+            )
             if identifier in by_id
             else None
         )
         expected_sha = (
             chunks.digest(
-                {key: expected[key] for key in ("content", "content_chunk_vector")}
+                {
+                    key: expected[key]
+                    for key in ("content", "content_chunk_vector")
+                }
             )
             if expected
             else None
@@ -847,8 +940,15 @@ def _seed(context, runtime, images, opensearch_factory):
 
 
 def seed(context, runtime, images, *, opensearch_factory=OpenSearchClient):
-    """Idempotently seed only three native fields before a target's first pass."""
+    """Seed only three native fields idempotently before the first pass."""
     try:
         return _seed(context, runtime, images, opensearch_factory)
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, StopIteration):
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RecursionError,
+        StopIteration,
+    ):
         raise RuntimeError("catalog_vector_reuse_seed_invalid") from None

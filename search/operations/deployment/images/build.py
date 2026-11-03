@@ -22,7 +22,10 @@ import time
 
 from search.operations.deployment import source_bundle
 from search.operations.shared import private_io
-from search.operations.shared.bounded_process import MAX_INPUT_BYTES, captured_pipes
+from search.operations.shared.bounded_process import (
+    MAX_INPUT_BYTES,
+    captured_pipes,
+)
 
 
 DOCKER_HOST = "unix:///var/run/docker.sock"
@@ -63,13 +66,17 @@ def _json(raw):
         raise ImageBuildError("image_build_json_invalid")
 
     try:
-        return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+        return json.loads(
+            raw, object_pairs_hook=pairs, parse_constant=constant
+        )
     except (ValueError, TypeError, UnicodeError, RecursionError):
         raise ImageBuildError("image_build_json_invalid") from None
 
 
 def _record(descriptor, name):
-    raw = private_io.read_file(descriptor, name, mode=0o600, max_bytes=MAX_RECORD_BYTES)
+    raw = private_io.read_file(
+        descriptor, name, mode=0o600, max_bytes=MAX_RECORD_BYTES
+    )
     value = _json(raw)
     if private_io.canonical(value) != raw:
         raise ImageBuildError("image_build_record_noncanonical")
@@ -77,7 +84,9 @@ def _record(descriptor, name):
 
 
 def _run(argv, *, timeout, environment, input_bytes=None):
-    """Capture bounded pipes live; isolate and always terminate the child group."""
+    """Capture bounded pipes live; isolate and always terminate the child
+    group.
+    """
     if input_bytes is not None and (
         type(input_bytes) is not bytes or len(input_bytes) > MAX_INPUT_BYTES
     ):
@@ -110,7 +119,13 @@ def _run(argv, *, timeout, environment, input_bytes=None):
 
 class _Docker:
     def __init__(self, client_root, runner):
-        self.prefix = ["docker", "--host", DOCKER_HOST, "--config", str(client_root)]
+        self.prefix = [
+            "docker",
+            "--host",
+            DOCKER_HOST,
+            "--config",
+            str(client_root),
+        ]
         self.environment = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": "C.UTF-8",
@@ -140,7 +155,10 @@ class _Docker:
                 raise ImageBuildError("image_build_command_invalid")
             size = len(stdout) + len(stderr)
             self.total_bytes += size
-            if size > MAX_OUTPUT_BYTES or self.total_bytes > MAX_TOTAL_OUTPUT_BYTES:
+            if (
+                size > MAX_OUTPUT_BYTES
+                or self.total_bytes > MAX_TOTAL_OUTPUT_BYTES
+            ):
                 raise ImageBuildError("image_build_output_limit")
             if time.monotonic() > self.deadline:
                 raise ImageBuildError("image_build_command_timeout")
@@ -167,7 +185,9 @@ def _verify_source(root_fd, context_fd, root, plan, *, lock_fd=None):
     private_io.verify_directory(context_fd, root / "context")
     if lock_fd is not None:
         _verify_lock(lock_fd, root_fd)
-    _equal(_record(root_fd, "manifest.json"), plan, "image_build_manifest_changed")
+    _equal(
+        _record(root_fd, "manifest.json"), plan, "image_build_manifest_changed"
+    )
     source_bundle._verify_context(context_fd, plan["files"])
 
 
@@ -182,7 +202,9 @@ def _iid(descriptor):
         or before.st_size not in {71, 72}
     ):
         raise ImageBuildError("image_build_iid_unsafe")
-    raw = private_io.read_file(descriptor, "image.iid", mode=mode, max_bytes=72)
+    raw = private_io.read_file(
+        descriptor, "image.iid", mode=mode, max_bytes=72
+    )
     after = os.stat("image.iid", dir_fd=descriptor, follow_symlinks=False)
     if private_io.identity(before) != private_io.identity(after):
         raise ImageBuildError("image_build_iid_changed")
@@ -240,11 +262,15 @@ def _inventory(images_fd, plan):
                 "image",
             }:
                 raise ImageBuildError("image_build_receipt_invalid")
-            _equal(complete["identity"], identity, "image_build_receipt_changed")
+            _equal(
+                complete["identity"], identity, "image_build_receipt_changed"
+            )
             if complete["tag"] != TAGS[service] + plan["revision"]:
                 raise ImageBuildError("image_build_tag_changed")
             image = complete["image"]
-            if type(image) is not dict or image.get("image_id") != _iid(descriptor):
+            if type(image) is not dict or image.get("image_id") != _iid(
+                descriptor
+            ):
                 raise ImageBuildError("image_build_receipt_changed")
             completed[service] = complete
         finally:
@@ -327,19 +353,27 @@ def _lock(root_fd):
 
 
 def build_product_images(
-    staged_root, expected_revision, runner=None, *, expected_manifest_sha256=None
+    staged_root,
+    expected_revision,
+    runner=None,
+    *,
+    expected_manifest_sha256=None,
 ):
     """Build/reverify the four fixed recipes from a trusted staged source root.
 
-    No registry push, services, GPU allocation, port or Docker daemon setting is
+    No registry push, services, GPU allocation, port or Docker daemon setting
+    is
     changed. Build RUN steps use Docker's normal temporary builder; this is not
-    a sandbox for untrusted source/daemon/root. Context identity is rechecked at
+    a sandbox for untrusted source/daemon/root. Context identity is rechecked
+    at
     every mutation boundary. Failed/uncertain build intents require operator
     investigation or a separately staged new root, not blind retry/cleanup.
 
     Injected runner(argv, *, timeout, environment) must honor those bounds and
-    return CompletedProcess. The default runner uses a clean per-call child Env,
-    private empty client config, local Unix socket and bounded live pipe capture.
+    return CompletedProcess. The default runner uses a clean per-call child
+    Env,
+    private empty client config, local Unix socket and bounded live pipe
+    capture.
 
     Product adapters must supply the digest of an independently authenticated
     committed source plan. The optional default preserves the trusted-staged-
@@ -378,12 +412,16 @@ def build_product_images(
         )
         completed = _inventory(images_fd, plan)
         result = {}
-        with tempfile.TemporaryDirectory(prefix="depositar-image-client-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-image-client-"
+        ) as temporary:
             client = Path(temporary)
             client_fd = private_io.open_directory(client)
             try:
                 if os.listdir(client_fd):
-                    raise ImageBuildError("image_build_client_config_not_empty")
+                    raise ImageBuildError(
+                        "image_build_client_config_not_empty"
+                    )
                 docker = _Docker(client, runner)
                 if (
                     _json(
@@ -396,7 +434,9 @@ def build_product_images(
                 ):
                     raise ImageBuildError("image_build_daemon_unsupported")
                 for service in SERVICES:
-                    _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+                    _verify_source(
+                        root_fd, context_fd, root, plan, lock_fd=lock_fd
+                    )
                     private_io.verify_directory(images_fd, root / "images")
                     fresh = service not in completed
                     slot = root / "images" / service
@@ -414,7 +454,11 @@ def build_product_images(
                             )
                             private_io.verify_directory(descriptor, slot)
                             _verify_source(
-                                root_fd, context_fd, root, plan, lock_fd=lock_fd
+                                root_fd,
+                                context_fd,
+                                root,
+                                plan,
+                                lock_fd=lock_fd,
                             )
                             docker.call(
                                 _build_arguments(root, plan, service, slot),
@@ -424,7 +468,9 @@ def build_product_images(
                         image_id = _iid(descriptor)
                         image = _inspect_image(docker, plan, service, image_id)
                         private_io.verify_directory(descriptor, slot)
-                        _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+                        _verify_source(
+                            root_fd, context_fd, root, plan, lock_fd=lock_fd
+                        )
                         record = {
                             "identity": identity,
                             "tag": TAGS[service] + plan["revision"],
@@ -446,7 +492,9 @@ def build_product_images(
                         result[service] = image
                     finally:
                         os.close(descriptor)
-                _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+                _verify_source(
+                    root_fd, context_fd, root, plan, lock_fd=lock_fd
+                )
                 private_io.verify_directory(images_fd, root / "images")
                 final = _inventory(images_fd, plan)
                 if set(final) != set(SERVICES):

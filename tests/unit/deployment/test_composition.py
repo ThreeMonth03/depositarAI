@@ -21,7 +21,9 @@ from search.operations.deployment.composition import (
 REVISION = "a" * 40
 INFERENCE_SOURCE = "6" * 64
 BUNDLE_ID = "b" * 64
-UUIDS = tuple(f"GPU-0000000{index}-0000-4000-8000-000000000001" for index in range(4))
+UUIDS = tuple(
+    f"GPU-0000000{index}-0000-4000-8000-000000000001" for index in range(4)
+)
 
 
 def product():
@@ -66,7 +68,13 @@ class CompositionTests(unittest.TestCase):
         self.query = QueryBindingPaths.for_catalog(self.config, self.catalog)
 
     def render(
-        self, *, config=None, plan=None, paths=None, revision=REVISION, **options
+        self,
+        *,
+        config=None,
+        plan=None,
+        paths=None,
+        revision=REVISION,
+        **options,
     ):
         return render_composition(
             self.config if config is None else config,
@@ -83,34 +91,51 @@ class CompositionTests(unittest.TestCase):
 
     def test_volume_configuration_renders_without_io(self):
         with (
-            mock.patch("builtins.open", side_effect=AssertionError("no file reads")),
-            mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
+            mock.patch(
+                "builtins.open", side_effect=AssertionError("no file reads")
+            ),
+            mock.patch(
+                "subprocess.run", side_effect=AssertionError("no processes")
+            ),
         ):
             result = self.render()
-        self.assertEqual("sealed_reference_only", result["catalog_reference"]["status"])
+        self.assertEqual(
+            "sealed_reference_only", result["catalog_reference"]["status"]
+        )
         self.assertEqual(2, self.config.to_dict()["schema_version"])
-        self.assertEqual("docker-volume", self.config.to_dict()["catalog_storage"])
+        self.assertEqual(
+            "docker-volume", self.config.to_dict()["catalog_storage"]
+        )
 
     def test_product_schema_and_catalog_storage_pairing_is_closed(self):
         for schema in (True, False, 1, 1.0, 2.0, "1", "2", None, 0, -1, 3):
             with (
                 self.subTest(schema=schema),
-                self.assertRaisesRegex(ValueError, "composition_config_invalid"),
+                self.assertRaisesRegex(
+                    ValueError, "composition_config_invalid"
+                ),
             ):
                 self.render(config=replace(self.config, schema_version=schema))
         for storage in ("bind", "unknown", True, 1, None):
             with (
                 self.subTest(storage=storage),
-                self.assertRaisesRegex(ValueError, "composition_config_invalid"),
+                self.assertRaisesRegex(
+                    ValueError, "composition_config_invalid"
+                ),
             ):
-                self.render(config=replace(self.config, catalog_storage=storage))
+                self.render(
+                    config=replace(self.config, catalog_storage=storage)
+                )
 
     def test_volume_configuration_keeps_root_gpu_and_catalog_guards(self):
         for changed in (
             replace(self.config, api_model_root=Path("/srv/../models")),
-            replace(self.config, api_model_root=self.config.state_root / "models"),
             replace(
-                self.config, gpus=GPUConfig(UUIDS[0], (UUIDS[0], UUIDS[2]), UUIDS[3])
+                self.config, api_model_root=self.config.state_root / "models"
+            ),
+            replace(
+                self.config,
+                gpus=GPUConfig(UUIDS[0], (UUIDS[0], UUIDS[2]), UUIDS[3]),
             ),
         ):
             with self.subTest(config=changed), self.assertRaises(ValueError):
@@ -118,10 +143,13 @@ class CompositionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.render(plan={**self.catalog, "schema_version": 2})
 
-    def test_returns_separate_catalog_inference_release_and_singleton_gateway(self):
+    def test_returns_separate_catalog_inference_release_and_singleton_gateway(
+        self,
+    ):
         result = self.render()
         self.assertEqual(
-            {"catalog_reference", "inference", "release", "gateway"}, set(result)
+            {"catalog_reference", "inference", "release", "gateway"},
+            set(result),
         )
         self.assertEqual(
             {"scope-model", "answer-model", "reranker"},
@@ -142,13 +170,17 @@ class CompositionTests(unittest.TestCase):
         self.assertFalse(reference["runtime_verified"])
         self.assertTrue(reference["client_lease_required"])
 
-    def test_old_catalog_paths_and_new_application_images_remain_separate(self):
+    def test_old_catalog_paths_and_new_application_images_remain_separate(
+        self,
+    ):
         origin = "1" * 40
         old_catalog = catalog(self.config, revision=origin)
         before = copy.deepcopy(old_catalog)
         with (
             mock.patch("builtins.open", side_effect=AssertionError("no IO")),
-            mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
+            mock.patch(
+                "subprocess.run", side_effect=AssertionError("no processes")
+            ),
         ):
             result = self.render(
                 plan=old_catalog,
@@ -158,7 +190,9 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(origin, result["catalog_reference"]["revision"])
         release = result["release"]
         self.assertEqual(REVISION, release["x-depositar-plan"]["revision"])
-        self.assertEqual(origin, release["x-depositar-plan"]["catalog_revision"])
+        self.assertEqual(
+            origin, release["x-depositar-plan"]["catalog_revision"]
+        )
         self.assertTrue(release["name"].endswith(REVISION[:12]))
         self.assertEqual(
             old_catalog["project"] + "_search_backend",
@@ -180,22 +214,28 @@ class CompositionTests(unittest.TestCase):
     def test_render_is_pure_and_deterministic_and_does_not_mutate_inputs(self):
         before = copy.deepcopy(self.catalog)
         with (
-            mock.patch("builtins.open", side_effect=AssertionError("no file reads")),
             mock.patch(
-                "pathlib.Path.open", side_effect=AssertionError("no file reads")
+                "builtins.open", side_effect=AssertionError("no file reads")
             ),
             mock.patch(
-                "pathlib.Path.stat", side_effect=AssertionError("no file stats")
+                "pathlib.Path.open",
+                side_effect=AssertionError("no file reads"),
             ),
-            mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
+            mock.patch(
+                "pathlib.Path.stat",
+                side_effect=AssertionError("no file stats"),
+            ),
+            mock.patch(
+                "subprocess.run", side_effect=AssertionError("no processes")
+            ),
         ):
             first, second = self.render(), self.render()
         self.assertEqual(first, second)
         self.assertEqual(before, self.catalog)
         json.dumps(first, allow_nan=False)
-        first["release"]["services"]["web"]["networks"]["website"]["aliases"].append(
-            "untrusted"
-        )
+        first["release"]["services"]["web"]["networks"]["website"][
+            "aliases"
+        ].append("untrusted")
         self.assertNotEqual(first, self.render())
 
     def test_all_cpu_services_have_bounded_unprivileged_runc_and_no_gpu(self):
@@ -206,12 +246,22 @@ class CompositionTests(unittest.TestCase):
                 self.assertEqual("1000:1000", service["user"])
                 self.assertIs(service["read_only"], True)
                 self.assertEqual(["ALL"], service["cap_drop"])
-                self.assertEqual(["no-new-privileges:true"], service["security_opt"])
-                self.assertEqual(service["mem_limit"], service["memswap_limit"])
+                self.assertEqual(
+                    ["no-new-privileges:true"], service["security_opt"]
+                )
+                self.assertEqual(
+                    service["mem_limit"], service["memswap_limit"]
+                )
                 self.assertGreater(service["mem_limit"], 0)
                 self.assertGreater(service["cpus"], 0)
                 self.assertGreater(service["pids_limit"], 0)
-                for key in ("deploy", "gpus", "devices", "network_mode", "privileged"):
+                for key in (
+                    "deploy",
+                    "gpus",
+                    "devices",
+                    "network_mode",
+                    "privileged",
+                ):
                     self.assertNotIn(key, service)
 
     def test_only_singleton_gateway_publishes_fixed_loopback_port(self):
@@ -265,14 +315,24 @@ class CompositionTests(unittest.TestCase):
                         "capabilities": ["gpu"],
                     }
                 ],
-                services[name]["deploy"]["resources"]["reservations"]["devices"],
+                services[name]["deploy"]["resources"]["reservations"][
+                    "devices"
+                ],
             )
         self.assertEqual(
             4,
-            len({identifier for values in expected.values() for identifier in values}),
+            len(
+                {
+                    identifier
+                    for values in expected.values()
+                    for identifier in values
+                }
+            ),
         )
 
-    def test_same_commit_metadata_update_reuses_inference_but_has_new_cpu_release(self):
+    def test_metadata_update_reuses_inference_with_new_cpu_release(
+        self,
+    ):
         other = catalog(self.config, bundle_id="1" * 64)
         other["manifest_sha256"] = "2" * 64
         new = self.render(
@@ -290,18 +350,21 @@ class CompositionTests(unittest.TestCase):
             self.assertNotIn("ports", service)
             self.assertNotIn("deploy", service)
 
-    def test_operator_model_path_gpu_or_source_change_requires_new_inference_identity(
+    def test_model_path_gpu_and_source_changes_require_new_identity(
         self,
     ):
         base = self.render()["inference"]["name"]
         options = (
             replace(self.config, api_model_root=Path("/srv/other-api-models")),
             replace(
-                self.config, gpus=GPUConfig(UUIDS[3], (UUIDS[1], UUIDS[2]), UUIDS[0])
+                self.config,
+                gpus=GPUConfig(UUIDS[3], (UUIDS[1], UUIDS[2]), UUIDS[0]),
             ),
         )
         for config in options:
-            self.assertNotEqual(base, self.render(config=config)["inference"]["name"])
+            self.assertNotEqual(
+                base, self.render(config=config)["inference"]["name"]
+            )
         self.assertNotEqual(base, self.render(uid=2000)["inference"]["name"])
         other = catalog(self.config, revision="1" * 40)
         result = self.render(
@@ -311,10 +374,13 @@ class CompositionTests(unittest.TestCase):
         )
         self.assertEqual(base, result["inference"]["name"])
         self.assertNotEqual(
-            base, self.render(inference_source_sha256="7" * 64)["inference"]["name"]
+            base,
+            self.render(inference_source_sha256="7" * 64)["inference"]["name"],
         )
 
-    def test_ui_only_revision_preserves_immutable_gpu_recipe_and_networks(self):
+    def test_ui_only_revision_preserves_immutable_gpu_recipe_and_networks(
+        self,
+    ):
         before = self.render()["inference"]
         after = self.render(revision="1" * 40)["inference"]
         self.assertNotEqual(
@@ -326,7 +392,9 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertNotIn("revision", before["x-depositar-plan"])
 
-    def test_model_pin_or_runtime_recipe_change_requires_new_gpu_identity(self):
+    def test_model_pin_or_runtime_recipe_change_requires_new_gpu_identity(
+        self,
+    ):
         base = self.render()["inference"]["name"]
         with mock.patch("search.model_policy.SCOPE_MODEL_DIGEST", "9" * 64):
             self.assertNotEqual(base, self.render()["inference"]["name"])
@@ -345,7 +413,9 @@ class CompositionTests(unittest.TestCase):
                 result["pids_limit"] += 1
             return result
 
-        with mock.patch.object(composition, "_runtime", side_effect=changed_runtime):
+        with mock.patch.object(
+            composition, "_runtime", side_effect=changed_runtime
+        ):
             self.assertNotEqual(base, self.render()["inference"]["name"])
 
     def test_inference_source_fingerprint_is_required_and_bounded(self):
@@ -356,7 +426,9 @@ class CompositionTests(unittest.TestCase):
             ):
                 self.render(inference_source_sha256=value)
 
-    def test_registry_images_are_pinned_and_built_images_are_source_tagged_only(self):
+    def test_registry_pins_and_build_source_tags_are_enforced(
+        self,
+    ):
         result = self.render()
         ollama_services = (
             result["inference"]["services"]["scope-model"],
@@ -373,10 +445,14 @@ class CompositionTests(unittest.TestCase):
             ("gateway", "web-nginx"),
         ):
             self.assertTrue(
-                result[plane]["services"][name]["image"].endswith(":" + REVISION)
+                result[plane]["services"][name]["image"].endswith(
+                    ":" + REVISION
+                )
             )
             self.assertTrue(
-                result[plane]["x-depositar-plan"]["immutable_built_images_required"]
+                result[plane]["x-depositar-plan"][
+                    "immutable_built_images_required"
+                ]
             )
         self.assertNotIn("depositar-catalog", json.dumps(result))
         self.assertNotIn("depositar-search-api_inference", json.dumps(result))
@@ -395,19 +471,28 @@ class CompositionTests(unittest.TestCase):
         result = self.render()
         pins = result["inference"]["x-depositar-plan"]["models"]
         self.assertEqual(
-            {"model": SCOPE_MODEL, "manifest_sha256": SCOPE_MODEL_DIGEST}, pins["scope"]
+            {"model": SCOPE_MODEL, "manifest_sha256": SCOPE_MODEL_DIGEST},
+            pins["scope"],
         )
         self.assertEqual(
             {"model": PLANNER_MODEL, "manifest_sha256": PLANNER_MODEL_DIGEST},
             pins["planner"],
         )
         self.assertEqual(
-            {"model": MODEL_ID, "revision": MODEL_REVISION, "files": MODEL_HASHES},
+            {
+                "model": MODEL_ID,
+                "revision": MODEL_REVISION,
+                "files": MODEL_HASHES,
+            },
             pins["reranker"],
         )
         self.assertIsNot(MODEL_HASHES, pins["reranker"]["files"])
         self.assertEqual(
-            {"model": MODEL, "manifest_sha256": MODEL_DIGEST, "dimensions": 768},
+            {
+                "model": MODEL,
+                "manifest_sha256": MODEL_DIGEST,
+                "dimensions": 768,
+            },
             result["release"]["x-depositar-plan"]["embedding"],
         )
 
@@ -415,14 +500,19 @@ class CompositionTests(unittest.TestCase):
         service = self.render()["release"]["services"]["filtered-embedding"]
         self.assertEqual(["website"], service["networks"])
         self.assertEqual("-1", service["environment"]["CUDA_VISIBLE_DEVICES"])
-        self.assertEqual("void", service["environment"]["NVIDIA_VISIBLE_DEVICES"])
+        self.assertEqual(
+            "void", service["environment"]["NVIDIA_VISIBLE_DEVICES"]
+        )
         self.assertEqual("1", service["environment"]["OLLAMA_NO_CLOUD"])
         self.assertEqual(
-            str(self.config.embedding_model_root), service["volumes"][0]["source"]
+            str(self.config.embedding_model_root),
+            service["volumes"][0]["source"],
         )
         self.assertNotIn("network_mode", service)
 
-    def test_existing_dns_contract_is_preserved_and_internal_bridges_are_explicit(self):
+    def test_dns_contract_and_explicit_internal_bridges_are_preserved(
+        self,
+    ):
         result = self.render()
         inference, release = result["inference"], result["release"]
         self.assertEqual(
@@ -431,7 +521,9 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(
             ["inference"], inference["services"]["answer-model"]["networks"]
         )
-        self.assertEqual(["ranking"], inference["services"]["reranker"]["networks"])
+        self.assertEqual(
+            ["ranking"], inference["services"]["reranker"]["networks"]
+        )
         for network in inference["networks"].values():
             self.assertIs(network["internal"], True)
             self.assertIs(network["attachable"], False)
@@ -450,7 +542,8 @@ class CompositionTests(unittest.TestCase):
             release["networks"]["ranking"]["name"],
         )
         self.assertEqual(
-            release["name"] + "_website", result["gateway"]["networks"]["route"]["name"]
+            release["name"] + "_website",
+            result["gateway"]["networks"]["route"]["name"],
         )
 
     def test_api_gets_only_canonical_query_secrets_binding_ca_and_bundle(self):
@@ -467,12 +560,17 @@ class CompositionTests(unittest.TestCase):
             },
             set(mounts),
         )
-        self.assertEqual(target, service["environment"]["SEARCH_API_BUNDLE_PATH"])
+        self.assertEqual(
+            target, service["environment"]["SEARCH_API_BUNDLE_PATH"]
+        )
         self.assertEqual(self.catalog["bundle_path"], mounts[target]["source"])
         self.assertNotIn("SEARCH_API_INDEX_PREFILTER", service["environment"])
         self.assertNotIn("admin", json.dumps(mounts).lower())
         self.assertEqual(
-            str(Path(self.catalog["work_root"]) / "query-access/index-query-password"),
+            str(
+                Path(self.catalog["work_root"])
+                / "query-access/index-query-password"
+            ),
             mounts["/run/secrets/index_query_password"]["source"],
         )
 
@@ -485,7 +583,9 @@ class CompositionTests(unittest.TestCase):
                     self.assertIs(mount["bind"]["create_host_path"], False)
                     self.assertNotIn("docker.sock", mount["source"])
 
-    def test_gateway_route_is_operator_owned_directory_and_unique_fixed_alias(self):
+    def test_gateway_route_is_operator_owned_directory_and_unique_fixed_alias(
+        self,
+    ):
         result = self.render()
         gateway = result["gateway"]
         service = gateway["services"]["web-nginx"]
@@ -506,33 +606,46 @@ class CompositionTests(unittest.TestCase):
             service["command"],
         )
         plan = gateway["x-depositar-plan"]
-        alias = result["release"]["services"]["web"]["networks"]["website"]["aliases"][
-            0
-        ]
+        alias = result["release"]["services"]["web"]["networks"]["website"][
+            "aliases"
+        ][0]
         self.assertEqual(alias + ":8000", plan["approved_upstream"])
         self.assertIn("server " + alias + ":8000 resolve;", plan["route_text"])
         self.assertIn("include /etc/nginx/http.conf;", plan["route_text"])
         self.assertIn("include /etc/nginx/website.conf;", plan["route_text"])
         self.assertIs(plan["route_publication_required"], True)
 
-    def test_renderer_never_claims_provisioning_ownership_lease_or_health_success(self):
+    def test_renderer_claims_no_provisioning_lease_or_health_success(
+        self,
+    ):
         result = self.render()
         for plane in ("inference", "release", "gateway"):
             plan = result[plane]["x-depositar-plan"]
             self.assertEqual("plan_only", plan["status"])
             self.assertIs(plan["runtime_verified"], False)
         self.assertIs(
-            result["inference"]["x-depositar-plan"]["ownership_verified"], False
+            result["inference"]["x-depositar-plan"]["ownership_verified"],
+            False,
         )
         self.assertIs(
-            result["release"]["x-depositar-plan"]["catalog_client_lease_required"], True
+            result["release"]["x-depositar-plan"][
+                "catalog_client_lease_required"
+            ],
+            True,
         )
         self.assertIs(
-            result["release"]["x-depositar-plan"]["query_provisioning_required"], True
+            result["release"]["x-depositar-plan"][
+                "query_provisioning_required"
+            ],
+            True,
         )
-        self.assertIs(result["release"]["x-depositar-plan"]["generated_answers"], False)
+        self.assertIs(
+            result["release"]["x-depositar-plan"]["generated_answers"], False
+        )
 
-    def test_strict_nonroot_operator_ids_reject_boolean_and_permissive_values(self):
+    def test_strict_nonroot_operator_ids_reject_boolean_and_permissive_values(
+        self,
+    ):
         for name in ("uid", "gid"):
             for value in (True, False, 0, -1, "1000", 1.0, 2**31):
                 with (
@@ -541,7 +654,9 @@ class CompositionTests(unittest.TestCase):
                 ):
                     self.render(**{name: value})
 
-    def test_catalog_schema_source_bounds_and_identity_cannot_be_relabelled(self):
+    def test_catalog_schema_source_bounds_and_identity_cannot_be_relabelled(
+        self,
+    ):
         mutations = {
             "schema_version": True,
             "status": "ready",
@@ -552,7 +667,9 @@ class CompositionTests(unittest.TestCase):
             "source_sha256": {"../secret": "d" * 64},
             "work_root": "/srv/other-catalog",
             "data_root": self.catalog["work_root"] + "/other-data",
-            "bundle_path": self.catalog["bundle_path"].replace("sha256-", "alias-"),
+            "bundle_path": self.catalog["bundle_path"].replace(
+                "sha256-", "alias-"
+            ),
         }
         for name, value in mutations.items():
             with self.subTest(name=name), self.assertRaises(ValueError):
@@ -574,11 +691,14 @@ class CompositionTests(unittest.TestCase):
             with self.subTest(revision=value), self.assertRaises(ValueError):
                 self.render(revision=value)
 
-    def test_alternative_credentials_and_admin_paths_are_rejected_not_mounted(self):
+    def test_alternative_credentials_and_admin_paths_are_rejected_not_mounted(
+        self,
+    ):
         for field in vars(self.query):
             for path in (
                 Path("/tmp/credential"),
-                Path(self.catalog["data_root"]) / "secrets/opensearch_admin_password",
+                Path(self.catalog["data_root"])
+                / "secrets/opensearch_admin_password",
             ):
                 with (
                     self.subTest(field=field, path=path),
@@ -600,14 +720,17 @@ class CompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "roots_overlap"):
             self.render(
                 config=replace(
-                    self.config, api_model_root=self.config.state_root / "models"
+                    self.config,
+                    api_model_root=self.config.state_root / "models",
                 )
             )
         for gpus in (
             None,
             GPUConfig(UUIDS[0], (UUIDS[0], UUIDS[2]), UUIDS[3]),
             GPUConfig(
-                UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[0].lower().replace("gpu-", "GPU-")
+                UUIDS[0],
+                (UUIDS[1], UUIDS[2]),
+                UUIDS[0].lower().replace("gpu-", "GPU-"),
             ),
             GPUConfig("0", (UUIDS[1], UUIDS[2]), UUIDS[3]),
             GPUConfig(UUIDS[0], (UUIDS[1],), UUIDS[3]),

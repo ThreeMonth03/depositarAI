@@ -27,7 +27,12 @@ from .admin import (
 )
 from .bundle import CatalogBundle
 from .codec import _exact_int
-from .errors import CatalogError, ConfigurationError, ProtocolError, VectorBuildError
+from .errors import (
+    CatalogError,
+    ConfigurationError,
+    ProtocolError,
+    VectorBuildError,
+)
 from .inventory import InventorySnapshot, _search_list_rows
 from .journal import VectorJournal, _vector_event
 from .policy import ID_RE, NONCE_RE, SHA256_RE
@@ -78,7 +83,8 @@ MAX_VECTOR_TOKEN_API_SECONDS = (
 
 
 if (
-    MAX_VECTOR_DEADLINE_SECONDS + VECTOR_RECOVERY_SECONDS > MAX_VECTOR_TOKEN_API_SECONDS
+    MAX_VECTOR_DEADLINE_SECONDS + VECTOR_RECOVERY_SECONDS
+    > MAX_VECTOR_TOKEN_API_SECONDS
     or VECTOR_START_QUIESCENCE_SECONDS + VECTOR_VERIFICATION_SECONDS
     > VECTOR_RECOVERY_SECONDS
 ):
@@ -105,12 +111,19 @@ class VectorProgressSnapshot:
             or type(self.done_entries) is not tuple
             or type(self.pending_entries) is not tuple
         ):
-            raise ProtocolError("vector progress adapter returned an unsupported shape")
+            raise ProtocolError(
+                "vector progress adapter returned an unsupported shape"
+            )
         InventorySnapshot(self.done_entries)
         InventorySnapshot(self.pending_entries)
         done, pending = set(self.done_entries), set(self.pending_entries)
-        if done & pending or tuple(sorted(done | pending)) != self.inventory.entries:
-            raise ProtocolError("vector progress does not partition its inventory")
+        if (
+            done & pending
+            or tuple(sorted(done | pending)) != self.inventory.entries
+        ):
+            raise ProtocolError(
+                "vector progress does not partition its inventory"
+            )
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -154,7 +167,9 @@ def _vector_options(
         valid = False
         if not isinstance(value, bool) and isinstance(value, (int, float)):
             try:
-                valid = math.isfinite(float(value)) and 0 < float(value) <= maximum
+                valid = (
+                    math.isfinite(float(value)) and 0 < float(value) <= maximum
+                )
             except (OverflowError, ValueError):
                 pass
         if not valid:
@@ -175,7 +190,9 @@ class SearchListVectorProgress:
     ) -> VectorProgressSnapshot:
         rows = _search_list_rows(session, token, deadline)
         if any(status not in (None, "done") for *_entry, status in rows):
-            raise ProtocolError("vector progress contains a non-resumable status")
+            raise ProtocolError(
+                "vector progress contains a non-resumable status"
+            )
         return VectorProgressSnapshot(
             inventory=InventorySnapshot(tuple(row[:3] for row in rows)),
             done_entries=tuple(row[:3] for row in rows if row[3] == "done"),
@@ -259,7 +276,9 @@ class VectorBuilder:
             raise VectorBuildError("scheduler response shape is invalid")
         seen = set()
         for candidate in settings:
-            identifier = candidate.get("id") if isinstance(candidate, Mapping) else None
+            identifier = (
+                candidate.get("id") if isinstance(candidate, Mapping) else None
+            )
             if (
                 not isinstance(identifier, str)
                 or ID_RE.fullmatch(identifier) is None
@@ -275,7 +294,9 @@ class VectorBuilder:
             if isinstance(row, Mapping) and row.get("name") == VECTOR_JOB_NAME
         ]
         if len(matches) != 1:
-            raise VectorBuildError("vector scheduler is not uniquely configured")
+            raise VectorBuildError(
+                "vector scheduler is not uniquely configured"
+            )
         row = matches[0]
         if (
             not isinstance(row.get("id"), str)
@@ -291,7 +312,9 @@ class VectorBuilder:
             or row.get("sort_order") != 14
             or not _exact_int(row.get("version_no"), minimum=-1)
         ):
-            raise VectorBuildError("vector scheduler is not disabled and stopped")
+            raise VectorBuildError(
+                "vector scheduler is not disabled and stopped"
+            )
         return row
 
     @staticmethod
@@ -303,7 +326,9 @@ class VectorBuilder:
     ) -> Mapping[str, Any]:
         setting = response.get("setting")
         if not isinstance(setting, Mapping):
-            raise VectorBuildError("scheduler detail response shape is invalid")
+            raise VectorBuildError(
+                "scheduler detail response shape is invalid"
+            )
         required = {
             "id",
             "version_no",
@@ -438,22 +463,30 @@ class VectorBuilder:
             or row.get("script_data") != VECTOR_SCRIPT_DATA
             or row.get("target") != "all"
         ):
-            raise VectorBuildError("vector job failed or its immutable fields changed")
+            raise VectorBuildError(
+                "vector job failed or its immutable fields changed"
+            )
         return True
 
     @classmethod
-    def _completed_vector_job(cls, row: Mapping[str, Any], job_id: str) -> bool:
+    def _completed_vector_job(
+        cls, row: Mapping[str, Any], job_id: str
+    ) -> bool:
         if not cls._terminal_vector_job(row, job_id):
             return False
         if row.get("job_status") != "ok":
-            raise VectorBuildError("vector job failed or its immutable fields changed")
+            raise VectorBuildError(
+                "vector job failed or its immutable fields changed"
+            )
         script_result = row.get("script_result")
         if (
             not isinstance(script_result, str)
             or len(script_result) > 4096
             or script_result.strip() != VECTOR_SCRIPT_RESULT
         ):
-            raise VectorBuildError("vector job did not return the exact success marker")
+            raise VectorBuildError(
+                "vector job did not return the exact success marker"
+            )
         return True
 
     def _restore_vector_scheduler(
@@ -519,7 +552,9 @@ class VectorBuilder:
                             stop_job_id,
                         )
                         if len(rows) == 1:
-                            terminal = self._terminal_vector_job(rows[0], stop_job_id)
+                            terminal = self._terminal_vector_job(
+                                rows[0], stop_job_id
+                            )
                     except CatalogError:
                         terminal = False
                     try:
@@ -540,7 +575,9 @@ class VectorBuilder:
 
             quiet_since: Optional[float] = None
             while True:
-                response = session.scheduler_setting(token, scheduler_id, recovery)
+                response = session.scheduler_setting(
+                    token, scheduler_id, recovery
+                )
                 checked = self._scheduler_detail(
                     response,
                     scheduler_id,
@@ -583,7 +620,8 @@ class VectorBuilder:
         journal: Optional[VectorJournal] = None,
         scheduler_id: Optional[str] = None,
     ) -> Tuple[Mapping[str, Any], str]:
-        """One non-retried start and bounded recovery, shared by both contracts."""
+        """One non-retried start and bounded recovery, shared by both
+        contracts."""
 
         if scheduler_id is None:
             scheduler = self._vector_scheduler(
@@ -596,7 +634,9 @@ class VectorBuilder:
             expected_available="false",
         )
         if checked["running"] is not False:
-            raise VectorBuildError("vector scheduler is not disabled and stopped")
+            raise VectorBuildError(
+                "vector scheduler is not disabled and stopped"
+            )
         declared_job_id: Optional[str] = None
         completed: Optional[Mapping[str, Any]] = None
         failure: Optional[CatalogError] = None
@@ -605,7 +645,9 @@ class VectorBuilder:
         start_response_confirmed = False
         try:
             _vector_event(
-                journal, "scheduler-enable-intent", {"scheduler_id": scheduler_id}
+                journal,
+                "scheduler-enable-intent",
+                {"scheduler_id": scheduler_id},
             )
             scheduler_may_be_enabled = True
             enabled = self._set_vector_scheduler_available(
@@ -615,13 +657,19 @@ class VectorBuilder:
                 raise VectorBuildError(
                     "vector scheduler became active before explicit start"
                 )
-            _vector_event(journal, "scheduler-enabled", {"scheduler_id": scheduler_id})
+            _vector_event(
+                journal, "scheduler-enabled", {"scheduler_id": scheduler_id}
+            )
             # The asynchronous Fess monitor registers DB-enabled schedules.
             # Never retry a start, including a generic status-9 response.
             self.access.sleep(deadline.remaining(VECTOR_REGISTRATION_SECONDS))
-            _vector_event(journal, "job-start-intent", {"scheduler_id": scheduler_id})
+            _vector_event(
+                journal, "job-start-intent", {"scheduler_id": scheduler_id}
+            )
             start_dispatched = True
-            start_response = session.start_scheduler(token, scheduler_id, deadline)
+            start_response = session.start_scheduler(
+                token, scheduler_id, deadline
+            )
             if start_response.get("status") != 0:
                 raise VectorBuildError("vector scheduler start failed")
             raw_declared_job_id = start_response.get("job_log_id")
@@ -642,21 +690,30 @@ class VectorBuilder:
             while True:
                 deadline.remaining(self.access.request_timeout)
                 rows = self._job_rows(
-                    session.job_logs(token, declared_job_id, deadline), declared_job_id
+                    session.job_logs(token, declared_job_id, deadline),
+                    declared_job_id,
                 )
-                if rows and self._completed_vector_job(rows[0], declared_job_id):
+                if rows and self._completed_vector_job(
+                    rows[0], declared_job_id
+                ):
                     completed = rows[0]
                     _vector_event(
                         journal,
                         "job-completed",
-                        {"scheduler_id": scheduler_id, "job_id": declared_job_id},
+                        {
+                            "scheduler_id": scheduler_id,
+                            "job_id": declared_job_id,
+                        },
                     )
                     break
                 self.access.sleep(float(poll_seconds))
         except CatalogError as exc:
             failure = exc
         recovery_deadline = Deadline(
-            min(token_api_deadline.end, self.access.clock() + VECTOR_RECOVERY_SECONDS),
+            min(
+                token_api_deadline.end,
+                self.access.clock() + VECTOR_RECOVERY_SECONDS,
+            ),
             self.access.clock,
         )
         evidence_ok = True
@@ -675,7 +732,8 @@ class VectorBuilder:
                 scheduler_id,
                 float(poll_seconds),
                 recovery_deadline=recovery_deadline,
-                require_quiescence=start_dispatched and not start_response_confirmed,
+                require_quiescence=start_dispatched
+                and not start_response_confirmed,
                 stop_job_id=(
                     declared_job_id
                     if failure is not None and start_response_confirmed
@@ -704,7 +762,8 @@ class VectorBuilder:
             or not evidence_ok
         ):
             raise VectorBuildError(
-                "vector build failed or scheduler isolation could not be re-established",
+                "vector build failed or scheduler isolation "
+                "could not be re-established",
                 possibly_polluted=not scheduler_safe,
             ) from None
         return completed, scheduler_id
@@ -715,7 +774,8 @@ class VectorBuilder:
         state = self.vector_progress.snapshot(session, token, deadline)
         if (
             not isinstance(state, VectorProgressSnapshot)
-            or state.inventory.entries != self.bundle.expected_inventory_entries
+            or state.inventory.entries
+            != self.bundle.expected_inventory_entries
         ):
             raise VectorBuildError(
                 "vector progress requires the exact sealed inventory"
@@ -724,9 +784,15 @@ class VectorBuilder:
 
     @staticmethod
     def _verify_vector_progress(
-        before: VectorProgressSnapshot, after: VectorProgressSnapshot, *, no_op: bool
+        before: VectorProgressSnapshot,
+        after: VectorProgressSnapshot,
+        *,
+        no_op: bool,
     ) -> int:
-        before_done, after_done = set(before.done_entries), set(after.done_entries)
+        before_done, after_done = (
+            set(before.done_entries),
+            set(after.done_entries),
+        )
         before_pending, after_pending = (
             set(before.pending_entries),
             set(after.pending_entries),
@@ -778,11 +844,14 @@ class VectorBuilder:
                 expected_before_state_sha256 is not None
                 and (
                     not isinstance(expected_before_state_sha256, str)
-                    or SHA256_RE.fullmatch(expected_before_state_sha256) is None
+                    or SHA256_RE.fullmatch(expected_before_state_sha256)
+                    is None
                 )
             )
         ):
-            raise ConfigurationError("vector pass identity or evidence sink is invalid")
+            raise ConfigurationError(
+                "vector pass identity or evidence sink is invalid"
+            )
         expected_identity = {
             "schema_version": 1,
             "run_id": run_id,
@@ -826,11 +895,17 @@ class VectorBuilder:
                 expected_available="false",
             )
             if checked["running"] is not False:
-                raise VectorBuildError("vector scheduler is not disabled and stopped")
+                raise VectorBuildError(
+                    "vector scheduler is not disabled and stopped"
+                )
             _vector_event(
                 journal,
                 "scheduler-verified",
-                {"scheduler_id": scheduler_id, "available": "false", "running": False},
+                {
+                    "scheduler_id": scheduler_id,
+                    "available": "false",
+                    "running": False,
+                },
             )
             before = self._progress_snapshot(session, token, deadline)
             _vector_event(journal, "before-state", before.as_dict())
@@ -886,7 +961,9 @@ class VectorBuilder:
             _vector_event(journal, "after-state", after.as_dict())
         # Exiting the context has already proved token revocation and logout.
         report = VectorPassReport(
-            status="partial-clean" if after.pending_entries else "complete-clean",
+            status="partial-clean"
+            if after.pending_entries
+            else "complete-clean",
             run_id=run_id,
             recipe_sha256=recipe_sha256,
             bundle_id=self.bundle.bundle_id,

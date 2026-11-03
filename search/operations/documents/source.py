@@ -1,4 +1,6 @@
-"""Acquire bounded public CSV/PDF files through curl and verified private cache."""
+"""Acquire bounded public CSV/PDF files through curl and verified private
+cache.
+"""
 
 import hashlib
 import http.client
@@ -48,7 +50,8 @@ def source_identity(resource):
             and not parts.fragment
             and parts.path.startswith("/")
             and not any(
-                ord(character) <= 32 or ord(character) == 127 for character in url
+                ord(character) <= 32 or ord(character) == 127
+                for character in url
             )
         )
     except ValueError:
@@ -81,7 +84,9 @@ def source_identity(resource):
             modified.encode("utf-8")
     except UnicodeError:
         raise SourceError("document_source_metadata_invalid") from None
-    if modified is not None and any(ord(character) < 32 for character in modified):
+    if modified is not None and any(
+        ord(character) < 32 for character in modified
+    ):
         raise SourceError("document_source_metadata_invalid")
     size = resource.get("size")
     if size is not None and (
@@ -165,7 +170,9 @@ def _response(raw):
         if code != 200:
             raise SourceError("document_source_http_failed")
         try:
-            headers = http.client.parse_headers(io.BytesIO(header_bytes + b"\r\n\r\n"))
+            headers = http.client.parse_headers(
+                io.BytesIO(header_bytes + b"\r\n\r\n")
+            )
         except (http.client.HTTPException, ValueError):
             raise SourceError("document_source_headers_invalid") from None
         length = _header_value(headers, "Content-Length", 20)
@@ -198,7 +205,9 @@ def _response(raw):
 
 
 def fetch(resource):
-    """Fetch one complete allowed resource, returning bytes and safe headers."""
+    """Fetch one complete allowed resource, returning bytes and safe
+    headers.
+    """
     identity = source_identity(resource)
     if (
         identity["declared_size"] is not None
@@ -274,7 +283,9 @@ def acquire(cache_root, resource, *, refresh=False, now=None):
             )
             if not hit:
                 body, response = fetch(resource)
-                record = cache.store(descriptor, key, identity, body, response, now)
+                record = cache.store(
+                    descriptor, key, identity, body, response, now
+                )
             return {
                 "local_path": root / cache.body_name(record["sha256"]),
                 "sha256": record["sha256"],

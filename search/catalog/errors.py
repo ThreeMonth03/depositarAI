@@ -11,7 +11,7 @@ import urllib.request
 
 
 class CatalogError(RuntimeError):
-    """Base class whose messages deliberately contain no remote response data."""
+    """Base error whose messages contain no remote response data."""
 
 
 class ConfigurationError(CatalogError):
@@ -61,7 +61,9 @@ class ImportFailed(CatalogError):
 
 
 class TokenCleanupError(CatalogError):
-    def __init__(self, message: str, *, possibly_polluted: bool = False) -> None:
+    def __init__(
+        self, message: str, *, possibly_polluted: bool = False
+    ) -> None:
         super().__init__(message)
         self.possibly_polluted = bool(possibly_polluted)
 
@@ -71,7 +73,9 @@ class VectorBuildError(CatalogError):
 
     generation_enabled = False
 
-    def __init__(self, message: str, *, possibly_polluted: bool = False) -> None:
+    def __init__(
+        self, message: str, *, possibly_polluted: bool = False
+    ) -> None:
         super().__init__(message)
         self.possibly_polluted = bool(possibly_polluted)
 
@@ -126,9 +130,11 @@ _DIAGNOSTIC_TYPES = {
 }
 
 
-_IMPORT_CAUSES = {"unknown", "bulk_response_partial", "inventory_mismatch"}.union(
-    *(causes for _default, causes in _DIAGNOSTIC_TYPES.values())
-)
+_IMPORT_CAUSES = {
+    "unknown",
+    "bulk_response_partial",
+    "inventory_mismatch",
+}.union(*(causes for _default, causes in _DIAGNOSTIC_TYPES.values()))
 
 
 _DIAGNOSTIC_TYPES.update(
@@ -153,13 +159,18 @@ _IMPORT_STAGES = {
     "bulk_after_prior_batch": _IMPORT_CAUSES
     - {"unknown", "bulk_response_partial", "inventory_mismatch"},
     "bulk_response": {"api_rejected", "bulk_response_partial"},
-    "post_import_inventory": _IMPORT_CAUSES - {"unknown", "bulk_response_partial"},
+    "post_import_inventory": _IMPORT_CAUSES
+    - {"unknown", "bulk_response_partial"},
 }
 
 
 def _diagnosed(error, *, stage="operation", cause=None):
     policy = next(
-        (policy for kind, policy in _DIAGNOSTIC_TYPES.items() if type(error) is kind),
+        (
+            policy
+            for kind, policy in _DIAGNOSTIC_TYPES.items()
+            if type(error) is kind
+        ),
         None,
     )
     if (
@@ -175,13 +186,19 @@ def _diagnosed(error, *, stage="operation", cause=None):
 
 def _failure_detail(error, *, stage=None):
     policy = next(
-        (policy for kind, policy in _DIAGNOSTIC_TYPES.items() if type(error) is kind),
+        (
+            policy
+            for kind, policy in _DIAGNOSTIC_TYPES.items()
+            if type(error) is kind
+        ),
         None,
     )
     if policy is None:
         return None
     selected_stage = (
-        error.__dict__.get("diagnostic_stage", "operation") if stage is None else stage
+        error.__dict__.get("diagnostic_stage", "operation")
+        if stage is None
+        else stage
     )
     cause = error.__dict__.get("diagnostic_cause")
     cause = policy[0] if cause is None else cause
@@ -193,7 +210,11 @@ def _failure_detail(error, *, stage=None):
         or cause == "unknown"
     ):
         return None
-    return {"error_type": type(error).__name__, "stage": selected_stage, "cause": cause}
+    return {
+        "error_type": type(error).__name__,
+        "stage": selected_stage,
+        "cause": cause,
+    }
 
 
 def _failure_cause(error):
@@ -224,7 +245,7 @@ def _valid_failure_detail(value):
 
 
 def valid_failure_record(value):
-    """Validate a decoded, bounded helper failure; unknown shapes stay generic."""
+    """Validate bounded helper failures; keep unknown shapes generic."""
     if (
         type(value) is not dict
         or any(type(key) is not str for key in value)
@@ -265,7 +286,10 @@ def valid_failure_record(value):
         return False
     if kind == "ImportFailed" and not value["possibly_polluted"]:
         return False
-    if kind not in {"ImportFailed", "TokenCleanupError"} and value["possibly_polluted"]:
+    if (
+        kind not in {"ImportFailed", "TokenCleanupError"}
+        and value["possibly_polluted"]
+    ):
         return False
     for name in ("primary_diagnostic", "cleanup_diagnostic"):
         detail = value[name]
@@ -282,7 +306,10 @@ def valid_failure_record(value):
     ] not in {"token_cleanup", "token_recovery", "token_journal", "logout"}:
         return False
     if kind == "TokenCleanupError":
-        primary, cleanup = value["primary_diagnostic"], value["cleanup_diagnostic"]
+        primary, cleanup = (
+            value["primary_diagnostic"],
+            value["cleanup_diagnostic"],
+        )
         if (
             primary is not None
             and primary["error_type"] == "ImportFailed"
@@ -302,7 +329,9 @@ def failure_record(error, *, possibly_polluted):
     value = {
         "schema_version": 1,
         "status": "failed",
-        "error_type": detail["error_type"] if detail is not None else "unknown",
+        "error_type": detail["error_type"]
+        if detail is not None
+        else "unknown",
         "possibly_polluted": possibly_polluted,
         "diagnostic": detail,
         "primary_diagnostic": None,
@@ -323,7 +352,8 @@ def failure_record(error, *, possibly_polluted):
 
 def _transport_failure(error):
     timeout = type(error) is TimeoutError or (
-        type(error) is urllib.error.URLError and type(error.reason) is TimeoutError
+        type(error) is urllib.error.URLError
+        and type(error.reason) is TimeoutError
     )
     return _diagnosed(
         TransportError("Fess transport failed"),

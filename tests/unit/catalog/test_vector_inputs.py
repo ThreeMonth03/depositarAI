@@ -21,7 +21,9 @@ class VectorInputTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.root = Path(
+            self.stack.enter_context(tempfile.TemporaryDirectory())
+        )
         self.context = host_context(
             self.root, SimpleNamespace(bundle_id="f" * 64), "c" * 64, 2
         )
@@ -49,16 +51,23 @@ class VectorInputTests(unittest.TestCase):
             "image_id": "sha256:" + "4" * 64,
             "reference": self.context["plan"]["project"] + "-catalog-admin:1",
             "labels": execution.image_labels(
-                self.context, "catalog-admin", sources, administration.ADMIN_BASE
+                self.context,
+                "catalog-admin",
+                sources,
+                administration.ADMIN_BASE,
             ),
             "sources": sources,
         }
         execution.write_record(self.root, "admin-image.json", self.admin_image)
-        self.load = self.patch(execution, "load_context", return_value=self.context)
+        self.load = self.patch(
+            execution, "load_context", return_value=self.context
+        )
         self.runtime_check = self.patch(
             execution, "require_runtime", side_effect=self.require_runtime
         )
-        self.patch(execution, "sealed_source", return_value=b"sealed fixture\n")
+        self.patch(
+            execution, "sealed_source", return_value=b"sealed fixture\n"
+        )
         self.patch(execution, "verify_image", return_value={})
         self.image_build = self.patch(
             execution, "build_image", side_effect=AssertionError("image build")
@@ -77,7 +86,9 @@ class VectorInputTests(unittest.TestCase):
         return self.stack.enter_context(patch.object(target, name, **options))
 
     def save_images(self):
-        execution.write_record(self.root, "images.json", self.images, replace=True)
+        execution.write_record(
+            self.root, "images.json", self.images, replace=True
+        )
         self.runtime["images_sha256"] = execution.digest_record(self.images)
 
     def require_runtime(self, context):
@@ -85,7 +96,9 @@ class VectorInputTests(unittest.TestCase):
         with self.assertRaises(BlockingIOError):
             with execution.operation_lock(context):
                 self.fail("catalog lock was not retained")
-        return copy.deepcopy(self.runtime), copy.deepcopy(self.images["images"])
+        return copy.deepcopy(self.runtime), copy.deepcopy(
+            self.images["images"]
+        )
 
     def lookup(self):
         return vectors.inputs(None, self.context["plan"], repo_root=self.root)
@@ -112,9 +125,13 @@ class VectorInputTests(unittest.TestCase):
         ):
             operation.assert_not_called()
 
-    def test_lookup_is_locked_read_only_and_does_not_require_a_vector_pass(self):
+    def test_lookup_is_locked_read_only_and_does_not_require_a_vector_pass(
+        self,
+    ):
         before = {
-            path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()
+            path: path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
         }
         recipe = vectors._recipe(self.context)
         plan = copy.deepcopy(self.context["plan"])
@@ -166,7 +183,9 @@ class VectorInputTests(unittest.TestCase):
         self.pass_work.assert_called_once()
         self.image_build.assert_not_called()
 
-    def test_full_static_identity_rejects_catalog_source_model_and_recipe_changes(self):
+    def test_static_identity_rejects_catalog_model_and_recipe_changes(
+        self,
+    ):
         for kind in ("catalog", "source", "model", "recipe"):
             with self.subTest(kind=kind), ExitStack() as changes:
                 expected = self.lookup()["inputs_sha256"]
@@ -178,11 +197,16 @@ class VectorInputTests(unittest.TestCase):
                         self.context["plan"]["project"] = self.context["plan"][
                             "project"
                         ].replace("a" * 12, "9" * 12)
-                        self.images["project"] = self.context["plan"]["project"]
-                        self.runtime.update(execution.catalog_identity(self.context))
+                        self.images["project"] = self.context["plan"][
+                            "project"
+                        ]
+                        self.runtime.update(
+                            execution.catalog_identity(self.context)
+                        )
                         self.save_images()
                         self.admin_image["reference"] = (
-                            self.context["plan"]["project"] + "-catalog-admin:1"
+                            self.context["plan"]["project"]
+                            + "-catalog-admin:1"
                         )
                         self.admin_image["labels"] = execution.image_labels(
                             self.context,
@@ -200,7 +224,10 @@ class VectorInputTests(unittest.TestCase):
                         self.context["source_revision"] = "b" * 40
                     elif kind == "model":
                         changes.enter_context(
-                            patch("search.catalog.embedding.MODEL_DIGEST", "6" * 64)
+                            patch(
+                                "search.catalog.embedding.MODEL_DIGEST",
+                                "6" * 64,
+                            )
                         )
                     else:
                         recipe = vectors._recipe(self.context)
@@ -217,18 +244,28 @@ class VectorInputTests(unittest.TestCase):
                         self.build(expected)
                 finally:
                     for current, original in zip(
-                        (self.context, self.images, self.runtime, self.admin_image),
+                        (
+                            self.context,
+                            self.images,
+                            self.runtime,
+                            self.admin_image,
+                        ),
                         originals,
                     ):
                         current.clear()
                         current.update(original)
                     self.save_images()
                     execution.write_record(
-                        self.root, "admin-image.json", self.admin_image, replace=True
+                        self.root,
+                        "admin-image.json",
+                        self.admin_image,
+                        replace=True,
                     )
                 self.assert_no_work()
 
-    def test_same_plan_valid_image_admin_and_runtime_resealing_changes_identity(self):
+    def test_image_admin_and_runtime_resealing_changes_identity(
+        self,
+    ):
         for kind in ("images", "admin", "runtime"):
             with self.subTest(kind=kind):
                 expected = self.lookup()["inputs_sha256"]
@@ -241,7 +278,10 @@ class VectorInputTests(unittest.TestCase):
                 elif kind == "admin":
                     self.admin_image["image_id"] = "sha256:" + "8" * 64
                     execution.write_record(
-                        self.root, "admin-image.json", self.admin_image, replace=True
+                        self.root,
+                        "admin-image.json",
+                        self.admin_image,
+                        replace=True,
                     )
                 else:
                     self.runtime["network_id"] = "9" * 64
@@ -268,13 +308,16 @@ class VectorInputTests(unittest.TestCase):
                         patch.object(
                             administration,
                             "_admin_image",
-                            return_value=self.admin_image | {"future": {"version": 2}},
+                            return_value=self.admin_image
+                            | {"future": {"version": 2}},
                         )
                     )
                 self.assertNotEqual(expected, self.lookup()["inputs_sha256"])
                 self.assert_no_work()
 
-    def test_advanced_checkpoint_progress_does_not_change_expected_inputs(self):
+    def test_advanced_checkpoint_progress_does_not_change_expected_inputs(
+        self,
+    ):
         expected = self.lookup()["inputs_sha256"]
         self.history.return_value = (
             self.root,
@@ -296,7 +339,9 @@ class VectorInputTests(unittest.TestCase):
         self.assertEqual(2, result["completed_passes"])
         self.assertEqual(expected, self.lookup()["inputs_sha256"])
 
-    def test_missing_admin_prerequisite_never_builds_on_lookup_or_expected_run(self):
+    def test_missing_admin_prerequisite_never_builds_on_lookup_or_expected_run(
+        self,
+    ):
         expected = self.lookup()["inputs_sha256"]
         (self.root / "admin-image.json").unlink()
         for action in (self.lookup, lambda: self.build(expected)):
@@ -309,7 +354,9 @@ class VectorInputTests(unittest.TestCase):
                 action()
         self.assert_no_work()
 
-    def test_expectation_does_not_override_the_existing_plan_schema_guard(self):
+    def test_expectation_does_not_override_the_existing_plan_schema_guard(
+        self,
+    ):
         expected = self.lookup()["inputs_sha256"]
         self.context["plan"]["schema_version"] = True
         with patch.object(execution, "load_context", side_effect=LOAD_CONTEXT):
@@ -322,14 +369,20 @@ class VectorInputTests(unittest.TestCase):
         with patch.object(
             execution,
             "require_runtime",
-            side_effect=vectors.RuntimeError("catalog_runtime_receipt_changed"),
+            side_effect=vectors.RuntimeError(
+                "catalog_runtime_receipt_changed"
+            ),
         ):
-            with self.assertRaisesRegex(ValueError, "catalog_runtime_receipt_changed"):
+            with self.assertRaisesRegex(
+                ValueError, "catalog_runtime_receipt_changed"
+            ):
                 self.build(expected)
         self.context["compose"]["services"]["fess-search"]["environment"][
             "FESS_JAVA_OPTS"
         ] = "unreviewed profile"
-        with self.assertRaisesRegex(ValueError, "catalog_vector_profile_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "catalog_vector_profile_changed"
+        ):
             self.build(expected)
         self.assert_no_work()
 
@@ -341,11 +394,15 @@ class VectorInputTests(unittest.TestCase):
             self.admin_image | {"unrecognized": True},
             replace=True,
         )
-        with self.assertRaisesRegex(ValueError, "catalog_admin_image_receipt_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "catalog_admin_image_receipt_changed"
+        ):
             self.build(expected)
         self.assert_no_work()
 
-    def test_matching_expectation_still_checks_model_bytes_and_clean_history(self):
+    def test_matching_expectation_still_checks_model_bytes_and_clean_history(
+        self,
+    ):
         expected = self.lookup()["inputs_sha256"]
         self.deep_model.side_effect = ValueError("synthetic bad model bytes")
         with self.assertRaisesRegex(ValueError, "synthetic bad model bytes"):
@@ -367,8 +424,12 @@ class VectorInputTests(unittest.TestCase):
     def test_runtime_or_images_record_drift_is_refused_before_model_work(self):
         expected = self.lookup()["inputs_sha256"]
         self.images["future"] = 1
-        execution.write_record(self.root, "images.json", self.images, replace=True)
-        with self.assertRaisesRegex(ValueError, "catalog_vector_inputs_changed"):
+        execution.write_record(
+            self.root, "images.json", self.images, replace=True
+        )
+        with self.assertRaisesRegex(
+            ValueError, "catalog_vector_inputs_changed"
+        ):
             self.build(expected)
         self.assert_no_work()
 
@@ -388,7 +449,16 @@ class VectorInputTests(unittest.TestCase):
 
     def test_malformed_expected_digest_is_refused_before_loading_catalog(self):
         self.load.reset_mock()
-        for value in ("", "a" * 63, "A" * 64, "g" * 64, "a" * 64 + "\n", True, 1, {}):
+        for value in (
+            "",
+            "a" * 63,
+            "A" * 64,
+            "g" * 64,
+            "a" * 64 + "\n",
+            True,
+            1,
+            {},
+        ):
             with (
                 self.subTest(value=value),
                 self.assertRaisesRegex(

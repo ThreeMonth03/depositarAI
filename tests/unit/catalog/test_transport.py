@@ -67,10 +67,14 @@ class OperatorTransportTests(unittest.TestCase):
         self.factory = self.factory_patch.start()
         self.factory.return_value = self.connection
         self.addCleanup(self.factory_patch.stop)
-        self.client = transport.OpenSearchClient(PEER, b"synthetic CA", PASSWORD)
+        self.client = transport.OpenSearchClient(
+            PEER, b"synthetic CA", PASSWORD
+        )
 
     def request(self, **kwargs):
-        return self.client.request("POST", "/" + INDEX + "/_search", {}, **kwargs)
+        return self.client.request(
+            "POST", "/" + INDEX + "/_search", {}, **kwargs
+        )
 
     def test_tls_context_enforces_hostname_and_certificate(self):
         self.context.load_verify_locations.assert_called_once_with(
@@ -87,7 +91,9 @@ class OperatorTransportTests(unittest.TestCase):
         self.assertEqual(b"{}\n", kwargs["body"])
         self.assertEqual("identity", kwargs["headers"]["Accept-Encoding"])
         expected = base64.b64encode(("admin:" + PASSWORD).encode()).decode()
-        self.assertEqual("Basic " + expected, kwargs["headers"]["Authorization"])
+        self.assertEqual(
+            "Basic " + expected, kwargs["headers"]["Authorization"]
+        )
         self.connection.finish.assert_called_once()
         self.assertEqual(1, self.response.close_count)
 
@@ -131,7 +137,9 @@ class OperatorTransportTests(unittest.TestCase):
         ):
             with self.subTest(method=method, path=path):
                 self.response = Response(status=status)
-                expected = (200, {"ok": True}) if status == 200 else (403, None)
+                expected = (
+                    (200, {"ok": True}) if status == 200 else (403, None)
+                )
                 self.assertEqual(
                     expected,
                     self.client.request(
@@ -149,7 +157,12 @@ class OperatorTransportTests(unittest.TestCase):
             ("GET", "/fess.search/_mapping", None, False),
             ("POST", "/" + INDEX + "/_bulk", "{}\n", True),
             ("POST", "/" + INDEX + "/_refresh", None, False),
-            ("GET", transport.SECURITY + "roles/depositar_filtered", None, False),
+            (
+                "GET",
+                transport.SECURITY + "roles/depositar_filtered",
+                None,
+                False,
+            ),
             (
                 "PUT",
                 transport.SECURITY + "roles/depositar_filtered",
@@ -206,12 +219,21 @@ class OperatorTransportTests(unittest.TestCase):
 
     def test_peer_and_budget_fail_before_tls(self):
         self.context.load_verify_locations.reset_mock()
-        for peer in ("127.0.0.1", "192.0.2.20", "::1", "172.030.0.2", "host", None):
+        for peer in (
+            "127.0.0.1",
+            "192.0.2.20",
+            "::1",
+            "172.030.0.2",
+            "host",
+            None,
+        ):
             with self.subTest(peer=peer), self.assertRaises(ValueError):
                 transport.OpenSearchClient(peer, b"CA", PASSWORD)
         for budget in (True, 0, -1, 601, float("nan"), "20"):
             with self.subTest(budget=budget), self.assertRaises(ValueError):
-                transport.OpenSearchClient(PEER, b"CA", PASSWORD, budget_seconds=budget)
+                transport.OpenSearchClient(
+                    PEER, b"CA", PASSWORD, budget_seconds=budget
+                )
         self.context.load_verify_locations.assert_not_called()
 
     def test_invalid_operations_never_open_connection(self):
@@ -247,7 +269,9 @@ class OperatorTransportTests(unittest.TestCase):
         )
         self.assertEqual(
             "application/x-ndjson",
-            self.connection.request.call_args.kwargs["headers"]["Content-Type"],
+            self.connection.request.call_args.kwargs["headers"][
+                "Content-Type"
+            ],
         )
         for method, path, payload, ndjson in (
             ("POST", "/" + INDEX + "/_bulk", {}, False),
@@ -309,7 +333,9 @@ class OperatorTransportTests(unittest.TestCase):
 
     def test_failed_network_is_closed_without_echoing_error(self):
         self.connection.request.side_effect = OSError("private diagnostic")
-        with self.assertRaisesRegex(ValueError, "catalog_transport_request_failed$"):
+        with self.assertRaisesRegex(
+            ValueError, "catalog_transport_request_failed$"
+        ):
             self.request()
         self.connection.finish.assert_called_once()
 
@@ -362,7 +388,9 @@ class OperatorTransportTests(unittest.TestCase):
         self.assertEqual(1, self.response.close_count)
 
     def test_deep_wire_json_fails_before_decoder_recursion(self):
-        self.response = Response(b'{"value":' + b"[" * 64 + b"0" + b"]" * 64 + b"}")
+        self.response = Response(
+            b'{"value":' + b"[" * 64 + b"0" + b"]" * 64 + b"}"
+        )
         with (
             patch.object(transport, "strict_json") as decoder,
             self.assertRaisesRegex(
@@ -375,7 +403,8 @@ class OperatorTransportTests(unittest.TestCase):
 
     def test_vector_floats_escaped_text_and_long_quoted_digits_are_valid(self):
         value = {
-            "vectors": [1.23456789012345, -2.220446049e-20, 1.25e-8, 0.0] * 192,
+            "vectors": [1.23456789012345, -2.220446049e-20, 1.25e-8, 0.0]
+            * 192,
             "text": '\\"[{' + "1" * 100000,
             "integer_boundary": int("1" * 64),
         }
@@ -431,14 +460,18 @@ class OperatorTransportTests(unittest.TestCase):
 
     def test_expired_or_backwards_clock_never_opens_connection(self):
         for clock in (iter((0, 600)).__next__, iter((1, 0)).__next__):
-            client = transport.OpenSearchClient(PEER, b"CA", PASSWORD, clock=clock)
+            client = transport.OpenSearchClient(
+                PEER, b"CA", PASSWORD, clock=clock
+            )
             with self.assertRaisesRegex(ValueError, "deadline_exceeded"):
                 client.request("POST", "/" + INDEX + "/_search", {})
         self.factory.assert_not_called()
 
     def test_total_budget_includes_body_reading(self):
         ticks = iter((0, 0, 0, 599, 600))
-        client = transport.OpenSearchClient(PEER, b"CA", PASSWORD, clock=ticks.__next__)
+        client = transport.OpenSearchClient(
+            PEER, b"CA", PASSWORD, clock=ticks.__next__
+        )
         with self.assertRaisesRegex(ValueError, "request_failed"):
             client.request("POST", "/" + INDEX + "/_search", {})
         self.connection.finish.assert_called_once()
@@ -465,10 +498,14 @@ class OperatorTransportTests(unittest.TestCase):
         context.wrap_socket.return_value.do_handshake.assert_called_once_with()
 
 
-@unittest.skipUnless(shutil.which("openssl"), "loopback TLS fixture requires OpenSSL")
+@unittest.skipUnless(
+    shutil.which("openssl"), "loopback TLS fixture requires OpenSSL"
+)
 class RealTLSContracts(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-operator-tls-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-operator-tls-"
+        )
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         key, certificate = root / "key.pem", root / "ca.pem"
@@ -515,8 +552,12 @@ class RealTLSContracts(unittest.TestCase):
         self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(str(certificate), str(key))
-        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
-        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server.socket = context.wrap_socket(
+            self.server.socket, server_side=True
+        )
+        thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
         thread.start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -562,24 +603,29 @@ class RealTLSContracts(unittest.TestCase):
             try:
                 handler.connection.sendall(prefix)
                 # Each byte arrives faster than the socket inactivity timeout.
-                # The complete frame takes 3.2 seconds without an absolute stop.
+                # The complete frame takes 3.2 seconds without an absolute
+                # stop.
                 for byte in b"x" * 160:
                     if stopped.wait(0.02):
                         return
                     handler.connection.sendall(bytes((byte,)))
                 handler.connection.sendall(suffix)
             except OSError:
-                # The watchdog's expected shutdown must not print handler errors.
+                # The watchdog's expected shutdown must not print handler
+                # errors.
                 pass
 
-        with patch.object(self.server.RequestHandlerClass, "do_POST", slow_response):
+        with patch.object(
+            self.server.RequestHandlerClass, "do_POST", slow_response
+        ):
             client = transport.OpenSearchClient(
                 PEER, self.ca, PASSWORD, budget_seconds=1
             )
             started = time.monotonic()
             try:
                 with self.assertRaisesRegex(
-                    transport.TransportError, "catalog_transport_request_failed$"
+                    transport.TransportError,
+                    "catalog_transport_request_failed$",
                 ):
                     client.request("POST", "/" + INDEX + "/_search", {})
                 elapsed = time.monotonic() - started

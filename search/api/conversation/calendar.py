@@ -61,7 +61,9 @@ _LUNAR_SPAN = re.compile(
 
 
 def number(value):
-    """Arabic, digit-by-digit Chinese, and ordinary Chinese numbers up to 9999."""
+    """Arabic, digit-by-digit Chinese, and
+    ordinary Chinese numbers up to 9999.
+    """
     if value == "元":
         return 1
     if value.isascii() and value.isdecimal():
@@ -118,7 +120,9 @@ def calendar_text(query):
         if match["year"] or "-" in match["iso"] or match[0] == query:
             matches.append(match)
     for match in _SHORT_YEAR.finditer(query):
-        if any(start.start() <= match.start() < start.end() for start in matches):
+        if any(
+            start.start() <= match.start() < start.end() for start in matches
+        ):
             continue
         before, after = query[: match.start()], query[match.end() :]
         if match["number"] in {"百", "千", "一百", "一千"} and re.match(
@@ -147,7 +151,10 @@ def calendar_text(query):
             return CalendarText(
                 query,
                 "ambiguous_era",
-                f"「{match['number']}年」尚未註明紀年。若指民國{year}年，請回覆「民國{year}年」（西元{year + 1911}年）；若指西元，請明寫「西元{year}年」。",
+                f"「{match['number']}年」尚未註明紀年。"
+                f"若指民國{year}年，請回覆「民國{year}年」"
+                f"（西元{year + 1911}年）；若指西元，"
+                f"請明寫「西元{year}年」。",
             )
     replacements, dates, notices = [], [], []
     try:
@@ -167,7 +174,8 @@ def calendar_text(query):
                         value += f"-{number(match[part]):02d}"
                 if roc:
                     notices.append(
-                        f"{match[0]}已換算為西元 {value}；月份與日期按國曆處理。"
+                        f"{match[0]}已換算為西元 {value}；"
+                        "月份與日期按國曆處理。"
                     )
                 text = value + ("年" if not match["month"] else "")
                 replacements.append((match.start(), match.end(), text))
@@ -183,7 +191,8 @@ def calendar_text(query):
             "invalid_date",
             "日期無效或超出支援範圍，請檢查年份、月份與日期；民國與西元請明確標示。",
         )
-    # Never widen an unconsumed month/day or an incomplete slash date to a year.
+    # Never widen an unconsumed month/day or an incomplete slash date to a
+    # year.
     suffix = query[matches[0].end() :] if len(matches) == 1 else ""
     exact = (
         dates[0]
@@ -195,7 +204,8 @@ def calendar_text(query):
     literal = len(matches) == 1 and matches[0].span() == (0, len(query))
     return CalendarText(
         # Keep source text for semantic calendar classification. An independent
-        # civil year may still apply when lunar words name the research subject.
+        # civil year may still apply when lunar words name the research
+        # subject.
         query if lunar_mentioned else normalized,
         notices=tuple(notices[:4]),
         exact=exact,
@@ -206,10 +216,11 @@ def calendar_text(query):
 def corrected_pending(pending, latest):
     """Replace one superseded date in a planner-only copy of pending text.
 
-    Only an entire date reply can resolve this narrow adapter. Keep all subject,
-    format and instruction text; do not erase other constraints or convert lunar
-    dates ourselves. Complex/unrecognized corrections stay with the planner.
-    The session's pending/state are not mutated before a successful search.
+    Only an entire date reply can resolve this narrow adapter. Keep all
+    subject, format and instruction text; do not erase other constraints or
+    convert lunar dates ourselves. Complex/unrecognized corrections stay with
+    the planner. The session's pending/state are not mutated before a
+    successful search.
     """
     if not pending or not latest.literal or not latest.exact:
         return pending
@@ -230,9 +241,15 @@ def corrected_pending(pending, latest):
     ):
         return pending
     replacement = latest.exact + ("年" if len(latest.exact) == 4 else "")
-    revised = old.query[: match.start()] + replacement + old.query[match.end() :]
+    revised = (
+        old.query[: match.start()] + replacement + old.query[match.end() :]
+    )
     try:
         parsed = calendar_text(revised)
     except ValueError:
         return pending
-    return revised if not parsed.reason and parsed.exact == latest.exact else pending
+    return (
+        revised
+        if not parsed.reason and parsed.exact == latest.exact
+        else pending
+    )

@@ -1,4 +1,6 @@
-"""Production vector-pass proofs using only local files and scripted Fess IO."""
+"""Production vector-pass proofs using only local files and scripted
+Fess IO.
+"""
 
 from __future__ import annotations
 
@@ -79,7 +81,9 @@ class VectorPassTests(unittest.TestCase):
     def setUp(self):
         self.built = BuiltBundle(count=3)
         self.addCleanup(self.built.close)
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-vector-pass-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-vector-pass-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.transport = PartialTransport()
@@ -146,7 +150,9 @@ class VectorPassTests(unittest.TestCase):
         self.assertFalse(self.transport.scheduler_available)
         self.assertFalse(self.transport.vector_job_running)
 
-    def test_partial_clean_has_document_identity_progress_and_durable_cleanup(self):
+    def test_partial_clean_has_document_identity_progress_and_durable_cleanup(
+        self,
+    ):
         with self.journal() as journal:
             report = self.run_pass(journal)
             self.assertEqual("partial-clean", report.status)
@@ -182,11 +188,15 @@ class VectorPassTests(unittest.TestCase):
             report = self.run_pass(journal)
             self.assertTrue(report.no_op)
             self.assertEqual((None, 0), (report.job_id, report.progress_count))
-            self.assertEqual(report.before_state_sha256, report.after_state_sha256)
+            self.assertEqual(
+                report.before_state_sha256, report.after_state_sha256
+            )
             self.assert_clean(journal, report)
             self.assertEqual(
                 evidence.NOOP_EVENTS,
-                tuple(row["event"] for row in evidence.read_events(journal.path)),
+                tuple(
+                    row["event"] for row in evidence.read_events(journal.path)
+                ),
             )
         self.assertEqual(starts, len(self.transport.scheduler_updates))
 
@@ -202,11 +212,14 @@ class VectorPassTests(unittest.TestCase):
     def test_correct_expected_checkpoint_can_run(self):
         with self.journal() as journal:
             report = self.run_pass(
-                journal, expected_before_state_sha256=self.progress(set()).sha256
+                journal,
+                expected_before_state_sha256=self.progress(set()).sha256,
             )
             self.assert_clean(journal, report)
 
-    def test_evidence_identity_and_invalid_budgets_are_rejected_before_login(self):
+    def test_evidence_identity_and_invalid_budgets_are_rejected_before_login(
+        self,
+    ):
         with self.journal() as journal:
             journal.identity["recipe_sha256"] = "f" * 64
             with self.assertRaises(ConfigurationError):
@@ -220,7 +233,9 @@ class VectorPassTests(unittest.TestCase):
                     self.run_pass(journal, deadline_seconds=value)
         self.assertEqual([], self.transport.requests)
 
-    def test_nonresumable_status_is_rejected_before_enable_not_guessed_pending(self):
+    def test_nonresumable_status_is_rejected_before_enable_not_guessed_pending(
+        self,
+    ):
         for status in ("fail", "skipped", "pending", "", "processing", "DONE"):
             with self.subTest(status=status):
                 row = next(iter(self.transport.documents.values()))
@@ -228,12 +243,16 @@ class VectorPassTests(unittest.TestCase):
                 with self.journal(
                     "status-" + str(len(list(self.root.iterdir())))
                 ) as journal:
-                    with self.assertRaisesRegex(ProtocolError, "non-resumable"):
+                    with self.assertRaisesRegex(
+                        ProtocolError, "non-resumable"
+                    ):
                         self.run_pass(journal)
                 self.assertEqual([], self.transport.scheduler_updates)
                 self.assertFalse(self.transport.token_active)
 
-    def test_zero_progress_and_success_marker_only_do_not_create_clean_result(self):
+    def test_zero_progress_and_success_marker_only_do_not_create_clean_result(
+        self,
+    ):
         self.transport.limit = 0
         with self.journal() as journal:
             with self.assertRaisesRegex(VectorBuildError, "empty"):
@@ -245,7 +264,9 @@ class VectorPassTests(unittest.TestCase):
         self.assertFalse(self.transport.token_active)
         self.assertFalse(self.transport.scheduler_available)
 
-    def test_done_count_growth_cannot_hide_regression_or_changed_after_reads(self):
+    def test_done_count_growth_cannot_hide_regression_or_changed_after_reads(
+        self,
+    ):
         entries = self.built.bundle.expected_inventory_entries
         before = self.progress({entries[0][0]})
         after = self.progress({entries[1][0], entries[2][0]})
@@ -254,7 +275,9 @@ class VectorPassTests(unittest.TestCase):
             ([self.progress(set()), before, after], "proof reads"),
         )
         for number, (values, error) in enumerate(cases):
-            self.client = self.make_client(vector_progress=ScriptedProgress(values))
+            self.client = self.make_client(
+                vector_progress=ScriptedProgress(values)
+            )
             with self.journal("regression-" + str(number)) as journal:
                 with self.assertRaisesRegex(VectorBuildError, error):
                     self.run_pass(journal)
@@ -278,9 +301,15 @@ class VectorPassTests(unittest.TestCase):
             self.run_pass(journal)
         self.assertEqual([], self.transport.scheduler_updates)
 
-    def test_progress_larger_than_the_fixed_production_pass_is_not_success(self):
+    def test_progress_larger_than_the_fixed_production_pass_is_not_success(
+        self,
+    ):
         entries = tuple(
-            (f"https://data.depositar.io/dataset/{number:04d}", "a" * 64, "b" * 64)
+            (
+                f"https://data.depositar.io/dataset/{number:04d}",
+                "a" * 64,
+                "b" * 64,
+            )
             for number in range(MAX_VECTOR_PASS_DOCUMENTS + 1)
         )
         inventory = InventorySnapshot(entries)
@@ -289,12 +318,16 @@ class VectorPassTests(unittest.TestCase):
         with self.assertRaisesRegex(VectorBuildError, "cap"):
             self.client._verify_vector_progress(before, after, no_op=False)
 
-    def test_scheduler_detail_running_state_is_checked_not_just_the_listing(self):
+    def test_scheduler_detail_running_state_is_checked_not_just_the_listing(
+        self,
+    ):
         # The listing fixture says false; the exact detail says running. Do not
         # turn that inconsistent observation into a scheduler-verified record.
         self.transport.vector_job_running = True
         with self.journal() as journal:
-            with self.assertRaisesRegex(VectorBuildError, "disabled and stopped"):
+            with self.assertRaisesRegex(
+                VectorBuildError, "disabled and stopped"
+            ):
                 self.run_pass(journal)
             self.assertNotIn(
                 "scheduler-verified",
@@ -310,13 +343,15 @@ class VectorPassTests(unittest.TestCase):
                 self.run_pass(journal, deadline_seconds=61)
             self.assertFalse(error.exception.possibly_polluted)
             rows = evidence.read_events(journal.path)
-            self.assertIn("scheduler-stop-intent", [row["event"] for row in rows])
+            self.assertIn(
+                "scheduler-stop-intent", [row["event"] for row in rows]
+            )
             self.assertNotIn("pass-result", [row["event"] for row in rows])
         self.assertEqual(1, self.transport.stop_calls)
         self.assertFalse(self.transport.vector_job_running)
         self.assertFalse(self.transport.token_active)
 
-    def test_lost_start_keeps_quarantine_without_restarting_or_stopping_unknown_child(
+    def test_lost_start_quarantines_without_touching_unknown_child(
         self,
     ):
         self.transport.start_commits_then_times_out = True
@@ -346,7 +381,10 @@ class VectorPassTests(unittest.TestCase):
                 expected = None
                 if path == "/admin/accesstoken/" and request.method == "POST":
                     expected = "token-create-intent"
-                elif path == "/api/admin/scheduler/setting" and request.method == "PUT":
+                elif (
+                    path == "/api/admin/scheduler/setting"
+                    and request.method == "PUT"
+                ):
                     body = json.loads(request.body)
                     expected = (
                         "scheduler-enable-intent"
@@ -363,7 +401,10 @@ class VectorPassTests(unittest.TestCase):
                 elif path == "/api/v2/auth/logout":
                     expected = "logout-intent"
                 if expected:
-                    names = [row["event"] for row in evidence.read_events(journal.path)]
+                    names = [
+                        row["event"]
+                        for row in evidence.read_events(journal.path)
+                    ]
                     self.assertIn(expected, names)
                 return original(request, **kwargs)
 
@@ -371,7 +412,7 @@ class VectorPassTests(unittest.TestCase):
             report = self.run_pass(journal)
             self.assert_clean(journal, report)
 
-    def test_failed_start_intent_does_not_start_and_still_cleans_existing_resources(
+    def test_failed_start_intent_cleans_without_starting(
         self,
     ):
         with self.journal() as journal:
@@ -409,7 +450,7 @@ class VectorPassTests(unittest.TestCase):
         self.assertFalse(self.transport.token_active)
         self.assertFalse(self.transport.scheduler_available)
 
-    def test_failed_restore_intent_still_disables_scheduler_but_cannot_return_clean(
+    def test_failed_restore_intent_disables_scheduler_and_quarantines(
         self,
     ):
         with self.journal() as journal:
@@ -430,7 +471,9 @@ class VectorPassTests(unittest.TestCase):
         self.assertFalse(self.transport.token_active)
         self.assertFalse(self.transport.scheduler_available)
 
-    def test_failed_token_creation_intent_never_creates_remote_credential(self):
+    def test_failed_token_creation_intent_never_creates_remote_credential(
+        self,
+    ):
         with self.journal() as journal:
             append = journal.append
 
@@ -457,7 +500,9 @@ class VectorPassTests(unittest.TestCase):
 
     def test_new_cli_has_private_identity_arguments_and_1200_default(self):
         script = Path(__file__).resolve().parents[1] / "catalog_admin.py"
-        spec = importlib.util.spec_from_file_location("vector_pass_cli", script)
+        spec = importlib.util.spec_from_file_location(
+            "vector_pass_cli", script
+        )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         prefix = [

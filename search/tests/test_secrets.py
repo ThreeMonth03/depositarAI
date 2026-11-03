@@ -49,7 +49,9 @@ class SecretTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("fifo rejected\n", result.stdout)
 
-    def test_private_keys_accept_both_modes_with_or_without_final_newline(self):
+    def test_private_keys_accept_both_modes_with_or_without_final_newline(
+        self,
+    ):
         for mode in (0o400, 0o600):
             for ending in ("", "\n"):
                 with self.subTest(mode=oct(mode), newline=bool(ending)):
@@ -62,7 +64,9 @@ class SecretTests(unittest.TestCase):
         for mode in (0o644, 0o440, 0o660, 0o700):
             with self.subTest(mode=oct(mode)):
                 self.path.chmod(mode)
-                with self.assertRaisesRegex(ValueError, "^invalid secret file$"):
+                with self.assertRaisesRegex(
+                    ValueError, "^invalid secret file$"
+                ):
                     read_secret(self.path)
 
     def test_symbolic_link_to_a_valid_key_is_rejected(self):
@@ -97,7 +101,9 @@ class SecretTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     read_secret(self.path)
 
-    def test_identity_change_during_read_is_rejected_and_descriptor_closed(self):
+    def test_identity_change_during_read_is_rejected_and_descriptor_closed(
+        self,
+    ):
         original_read = os.read
         descriptors = []
 
@@ -108,7 +114,9 @@ class SecretTests(unittest.TestCase):
             return raw
 
         with (
-            patch("search.secrets.os.read", side_effect=change_mode_after_read),
+            patch(
+                "search.secrets.os.read", side_effect=change_mode_after_read
+            ),
             self.assertRaisesRegex(ValueError, "^secret changed during read$"),
         ):
             read_secret(self.path)

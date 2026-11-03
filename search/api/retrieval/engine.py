@@ -26,7 +26,9 @@ def public_conditions(plan):
             "start": date.fromordinal(interval[0]).isoformat()
             if value["start"]
             else None,
-            "end": date.fromordinal(interval[1]).isoformat() if value["end"] else None,
+            "end": date.fromordinal(interval[1]).isoformat()
+            if value["end"]
+            else None,
             "field": "data_coverage",
             "relation": "overlaps",
             "endpoints": "inclusive",
@@ -41,7 +43,9 @@ def public_conditions(plan):
 def executable_conditions(parsed):
     conditions = {}
     if parsed["time"] is not None:
-        conditions["time"] = {key: parsed["time"][key] for key in ("start", "end")}
+        conditions["time"] = {
+            key: parsed["time"][key] for key in ("start", "end")
+        }
     if parsed["formats"]:
         conditions["formats"] = parsed["formats"]
     validate_conditions(conditions)
@@ -103,7 +107,8 @@ class RetrievalEngine:
                 type(states) is not dict
                 or set(states) != set(ids)
                 or any(
-                    type(s) is not str or s not in {"match", "outside", "unknown"}
+                    type(s) is not str
+                    or s not in {"match", "outside", "unknown"}
                     for s in states.values()
                 )
             ):
@@ -159,7 +164,9 @@ class RetrievalEngine:
             "decision": "search",
             "cards": [],
             "ranking": RANKING,
-            "rerank_status": "not_run" if self.settings.rerank_enabled else "disabled",
+            "rerank_status": "not_run"
+            if self.settings.rerank_enabled
+            else "disabled",
             "candidate_count": 0,
             "warnings": [],
             "timing_ms": {},
@@ -181,13 +188,19 @@ class RetrievalEngine:
                 remaining = 120 - (clock - start)
                 if remaining <= 0:
                     raise BackendTimeout("request deadline exhausted")
-                return await self.backend.call(stage, payload, min(timeout, remaining))
+                return await self.backend.call(
+                    stage, payload, min(timeout, remaining)
+                )
             finally:
-                result["timing_ms"][stage] = round((time.monotonic() - clock) * 1000, 3)
+                result["timing_ms"][stage] = round(
+                    (time.monotonic() - clock) * 1000, 3
+                )
 
         def finish():
             result.pop("_condition_states", None)
-            result["timing_ms"]["total"] = round((time.monotonic() - start) * 1000, 3)
+            result["timing_ms"]["total"] = round(
+                (time.monotonic() - start) * 1000, 3
+            )
             return result
 
         try:
@@ -196,7 +209,9 @@ class RetrievalEngine:
         except Busy:
             raise
         except (BackendFailure, ValueError, TypeError, KeyError):
-            result.update(status="unavailable", warnings=["retrieval_unavailable"])
+            result.update(
+                status="unavailable", warnings=["retrieval_unavailable"]
+            )
             return finish()
         result["candidate_count"] = len(found.rows)
         try:
@@ -206,9 +221,13 @@ class RetrievalEngine:
             result["warnings"].append("condition_filter_unavailable")
             return finish()
         found = await self.rerank_candidates(request, result, found, call)
-        found = ValidatedSearch(found.rows[: request.top_k], found.query_sha256)
+        found = ValidatedSearch(
+            found.rows[: request.top_k], found.query_sha256
+        )
         result["cards"] = found.cards()
         states = result.get("_condition_states", {})
         for card in result["cards"]:
-            card["condition_status"] = states.get(card["dataset_id"], "not_checked")
+            card["condition_status"] = states.get(
+                card["dataset_id"], "not_checked"
+            )
         return finish()

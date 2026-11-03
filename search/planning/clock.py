@@ -11,14 +11,18 @@ _TIMESTAMP = re.compile(
 
 
 def normalize_context(value):
-    """Validate an RFC3339 instant and named zone before placing them in a prompt."""
+    """Validate an RFC3339 instant and named
+    zone before placing them in a prompt.
+    """
     if value is None:
         return None
     if type(value) is not dict or set(value) != {"reference_time", "timezone"}:
         raise ValueError("reference_time and timezone are both required")
     stamp, zone = value["reference_time"], value["timezone"]
     if not isinstance(stamp, str) or not _TIMESTAMP.fullmatch(stamp):
-        raise ValueError("reference_time must be an offset-aware RFC3339 timestamp")
+        raise ValueError(
+            "reference_time must be an offset-aware RFC3339 timestamp"
+        )
     if not isinstance(zone, str) or not 1 <= len(zone) <= 64:
         raise ValueError("invalid timezone")
     try:

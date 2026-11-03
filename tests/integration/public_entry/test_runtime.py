@@ -29,7 +29,8 @@ from search.operations.deployment.public_entry.profile import (
 
 ROOT = Path(__file__).resolve().parents[3]
 NGINX_IMAGE = (
-    "nginx@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae650cd66104c"
+    "nginx@sha256:dc5069ad14f19660b141b21236140b91656bf89bbc3e2417c70ae6"
+    "50cd66104c"
 )
 ORIGIN = "https://public.test:9443"
 ISSUER = "https://oidc.test:9443"
@@ -55,7 +56,10 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         if check and result.returncode:
             # Command arguments contain paths and test fixture values only.
             diagnostic = result.stderr[-2000:]
-            for secret in ("fixture-oidc-client-secret", *(c * 64 for c in "cdef")):
+            for secret in (
+                "fixture-oidc-client-secret",
+                *(c * 64 for c in "cdef"),
+            ):
                 diagnostic = diagnostic.replace(secret, "[redacted]")
             raise AssertionError(
                 "isolated runtime command failed: "
@@ -93,17 +97,27 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
 
     @classmethod
     def networks(cls):
-        """Avoid exhausted default pools without removing any existing network."""
+        """Avoid exhausted default pools without removing any existing
+        network.
+        """
         pool = ipaddress.ip_network(
-            os.environ.get("DEPOSITAR_TEST_PUBLIC_SUBNET_POOL", "198.18.0.0/15")
+            os.environ.get(
+                "DEPOSITAR_TEST_PUBLIC_SUBNET_POOL", "198.18.0.0/15"
+            )
         )
         if pool.version != 4 or not 8 <= pool.prefixlen <= 24:
-            raise AssertionError("test subnet pool must be an IPv4 /8 through /24")
+            raise AssertionError(
+                "test subnet pool must be an IPv4 /8 through /24"
+            )
         used = []
-        identifiers = cls.command(["docker", "network", "ls", "--quiet"]).stdout.split()
+        identifiers = cls.command(
+            ["docker", "network", "ls", "--quiet"]
+        ).stdout.split()
         if identifiers:
             networks = json.loads(
-                cls.command(["docker", "network", "inspect", *identifiers]).stdout
+                cls.command(
+                    ["docker", "network", "inspect", *identifiers]
+                ).stdout
             )
             used.extend(
                 ipaddress.ip_network(item["Subnet"])
@@ -112,7 +126,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 if item.get("Subnet")
             )
         if shutil.which("ip"):
-            routes = json.loads(cls.command(["ip", "-j", "route", "show"]).stdout)
+            routes = json.loads(
+                cls.command(["ip", "-j", "route", "show"]).stdout
+            )
             used.extend(
                 ipaddress.ip_network(route["dst"], strict=False)
                 for route in routes
@@ -122,7 +138,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         start = uuid.uuid4().int % count
         selected = []
         for offset in range(min(count, 4096)):
-            address = int(pool.network_address) + ((start + offset) % count) * 16
+            address = (
+                int(pool.network_address) + ((start + offset) % count) * 16
+            )
             candidate = ipaddress.ip_network((address, 28))
             if any(candidate.overlaps(existing) for existing in used):
                 continue
@@ -134,7 +152,10 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "no three nonoverlapping disposable test subnets available"
             )
         return {
-            name: {"internal": True, "ipam": {"config": [{"subnet": str(subnet)}]}}
+            name: {
+                "internal": True,
+                "ipam": {"config": [{"subnet": str(subnet)}]},
+            }
             for name, subnet in zip(
                 ("website", "quota", "outbound", "antibot-gateway"), selected
             )
@@ -142,7 +163,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="depositar-public-runtime-")
+        cls.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-public-runtime-"
+        )
         cls.addClassCleanup(cls.temporary.cleanup)
         root = Path(cls.temporary.name)
         root.chmod(0o700)
@@ -150,13 +173,17 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         # Boundary resets are covered separately by the deterministic Lua test.
         now = int(time.time())
         cls.quota_window_seconds = next(
-            seconds for seconds in range(3600, 86401) if seconds - now % seconds >= 900
+            seconds
+            for seconds in range(3600, 86401)
+            if seconds - now % seconds >= 900
         )
         cls.project = "depositar-public-test-" + uuid.uuid4().hex[:12]
         cls.compose_file = root / "runtime-compose.json"
         uid, gid = os.geteuid(), os.getegid()
         if uid == 0:
-            raise unittest.SkipTest("runtime fixture must run as a non-root operator")
+            raise unittest.SkipTest(
+                "runtime fixture must run as a non-root operator"
+            )
         images = {
             "apisix": cls.image("DEPOSITAR_TEST_APISIX_IMAGE", APISIX_IMAGE),
             "redis": cls.image("DEPOSITAR_TEST_REDIS_IMAGE", REDIS_IMAGE),
@@ -164,11 +191,13 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "DEPOSITAR_TEST_PUBLIC_WEB_IMAGE", "depositar-search-web:ci"
             ),
             "python": cls.image(
-                "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE", "depositar-search-api:ci"
+                "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE",
+                "depositar-search-api:ci",
             ),
             "nginx": cls.image("DEPOSITAR_TEST_PUBLIC_TLS_IMAGE", NGINX_IMAGE),
             "frontend": cls.image(
-                "DEPOSITAR_TEST_PUBLIC_FRONTEND_IMAGE", "depositar-search-web-nginx:ci"
+                "DEPOSITAR_TEST_PUBLIC_FRONTEND_IMAGE",
+                "depositar-search-web-nginx:ci",
             ),
         }
         for name in ("idp", "attacker"):
@@ -237,7 +266,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 **(
                     {
                         "access_mode": "mixed",
-                        "guest_session_secret_file": str(root / "guest-secret"),
+                        "guest_session_secret_file": str(
+                            root / "guest-secret"
+                        ),
                         "quota_per_guest": 1,
                         "quota_guest_pool": 2,
                         "quota_user_pool": 4,
@@ -360,7 +391,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "CMD",
                 "python",
                 "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__calls', timeout=2).read()",
+                "import urllib.request; urllib.request."
+                "urlopen('http://127.0.0.1:8000/__calls', "
+                "timeout=2).read()",
             ],
             "interval": "1s",
             "timeout": "3s",
@@ -374,7 +407,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
                 "CMD",
                 "python",
                 "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()",
+                "import urllib.request; urllib.request."
+                "urlopen('http://127.0.0.1:8000/healthz', "
+                "timeout=2).read()",
             ],
             "interval": "1s",
             "timeout": "3s",
@@ -432,7 +467,13 @@ http {
             **common,
             "image": images["nginx"],
             "volumes": [mounts[1]],
-            "entrypoint": ["nginx", "-c", "/fixture/nginx.conf", "-g", "daemon off;"],
+            "entrypoint": [
+                "nginx",
+                "-c",
+                "/fixture/nginx.conf",
+                "-g",
+                "daemon off;",
+            ],
             "networks": {"outbound": {"aliases": ["public.test"]}},
             "depends_on": {"public-entry": {"condition": "service_healthy"}},
         }
@@ -447,8 +488,12 @@ http {
         }
         cls.compose_file.write_text(json.dumps(composition))
         cls.compose_file.chmod(0o600)
-        cls.addClassCleanup(lambda: cls.compose("down", "--timeout", "2", timeout=30))
-        cls.compose("up", "--detach", "--pull", "never", "--no-build", timeout=60)
+        cls.addClassCleanup(
+            lambda: cls.compose("down", "--timeout", "2", timeout=30)
+        )
+        cls.compose(
+            "up", "--detach", "--pull", "never", "--no-build", timeout=60
+        )
         cls.wait_ready()
 
     @classmethod
@@ -469,7 +514,9 @@ http {
         if payload is not None:
             command.extend(["--payload", json.dumps(payload)])
         return json.loads(
-            cls.compose(*command, timeout=25 if action == "burst" else 15).stdout
+            cls.compose(
+                *command, timeout=25 if action == "burst" else 15
+            ).stdout
         )
 
     @classmethod
@@ -478,7 +525,10 @@ http {
         last = None
         while time.monotonic() < deadline:
             try:
-                last = (cls.probe("access")["status"], cls.probe("health")["status"])
+                last = (
+                    cls.probe("access")["status"],
+                    cls.probe("health")["status"],
+                )
                 if last == (200 if cls.mixed else 401, 200):
                     return
             except (AssertionError, ValueError):
@@ -590,7 +640,9 @@ class PublicEntryRuntimeTests(PublicEntryRuntimeFixture):
             "number-audience",
         ):
             self.probe("login", account)
-            self.assertEqual(self.probe("access", account)["status"], 401, account)
+            self.assertEqual(
+                self.probe("access", account)["status"], 401, account
+            )
             self.assertEqual(self.calls(), 3)
         self.assertEqual(self.probe("login", "array-audience")["status"], 200)
         self.assertEqual(self.probe("access", "array-audience")["status"], 200)
@@ -672,14 +724,17 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
             payload={
                 "action": action,
                 "requests": [
-                    {"account": account, "payload": payload} for account in accounts
+                    {"account": account, "payload": payload}
+                    for account in accounts
                 ],
             },
         )["results"]
         self.assertEqual(len(results), len(accounts))
         # IP limits run after count limits. Any IP rejection would spend quota
         # while obscuring whether the admission counter itself was correct.
-        self.assertNotIn("rate_limited", [result["code"] for result in results])
+        self.assertNotIn(
+            "rate_limited", [result["code"] for result in results]
+        )
         return results
 
     def turn_admissions(self, results):
@@ -719,7 +774,9 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
             "turn", "alice", {"query": {"bad": "input"}, "version": 0}
         )
         self.assertEqual(malformed["status"], 422)
-        self.assertEqual(malformed["value"], {"error": {"code": "invalid_request"}})
+        self.assertEqual(
+            malformed["value"], {"error": {"code": "invalid_request"}}
+        )
         self.assertEqual(self.calls(), 0)
         admissions = Counter({"alice": 1})
 
@@ -731,7 +788,9 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
         # Refill the shared 3r/s IP bucket, then race twelve valid requests for
         # the two remaining global admissions. The production limits are kept.
         time.sleep(2)
-        others = self.turn_admissions(self.burst("turn", ["bob", "carol", "dave"] * 4))
+        others = self.turn_admissions(
+            self.burst("turn", ["bob", "carol", "dave"] * 4)
+        )
         self.assertEqual(sum(others.values()), 2)
         admissions.update(others)
         self.assertEqual(sum(admissions.values()), 4)
@@ -742,13 +801,19 @@ class PublicEntryConcurrencyTests(PublicEntryRuntimeFixture):
         # BFF busy/version failures count as admitted HTTP requests. Comparing
         # only successful model calls would let its single slot hide overshoot.
         for account in ("alice", "bob", "carol", "dave"):
-            rejected = self.probe("turn", account, {"query": "氣候", "version": 0})
+            rejected = self.probe(
+                "turn", account, {"query": "氣候", "version": 0}
+            )
             self.assertEqual(rejected["status"], 429)
-            self.assertEqual(rejected["value"], {"error": {"code": "quota_exceeded"}})
+            self.assertEqual(
+                rejected["value"], {"error": {"code": "quota_exceeded"}}
+            )
         self.assertEqual(self.calls(), calls)
 
         sessions = self.burst("session", ["alice"] * 12)
-        self.assertEqual(sum(result["status"] == 200 for result in sessions), 1)
+        self.assertEqual(
+            sum(result["status"] == 200 for result in sessions), 1
+        )
         for result in sessions:
             self.assertTrue(
                 result["status"] == 200
@@ -775,11 +840,14 @@ class PublicEntryMixedAccessTests(PublicEntryRuntimeFixture):
         self.assertEqual(access["mode"], "mixed")
         self.assertEqual(access["principal"]["kind"], "guest")
         self.assertEqual(
-            access["limits"], {"turns": 1, "window_seconds": self.quota_window_seconds}
+            access["limits"],
+            {"turns": 1, "window_seconds": self.quota_window_seconds},
         )
         self.assertEqual(self.probe("access", "visitor-one")["value"], access)
         flags = next(
-            c for c in first["cookies"] if c["name"] == "__Host-depositar-guest"
+            c
+            for c in first["cookies"]
+            if c["name"] == "__Host-depositar-guest"
         )
         self.assertTrue(flags["secure"] and flags["http_only"])
         self.assertFalse(flags["domain_specified"])
@@ -794,18 +862,26 @@ class PublicEntryMixedAccessTests(PublicEntryRuntimeFixture):
         )
         # A new search session retains the visitor's budget.
         self.assertEqual(self.probe("session", "visitor-one")["status"], 200)
-        rejected = self.probe("turn", "visitor-one", {"query": "氣候", "version": 0})
+        rejected = self.probe(
+            "turn", "visitor-one", {"query": "氣候", "version": 0}
+        )
         self.assertEqual(rejected["status"], 429)
-        self.assertEqual(rejected["value"]["error"]["code"], "guest_quota_exceeded")
+        self.assertEqual(
+            rejected["value"]["error"]["code"], "guest_quota_exceeded"
+        )
         self.assertEqual(
             self.probe("turn", "visitor-two", {"query": "氣候", "version": 0})[
                 "status"
             ],
             200,
         )
-        rejected = self.probe("turn", "visitor-three", {"query": "氣候", "version": 0})
+        rejected = self.probe(
+            "turn", "visitor-three", {"query": "氣候", "version": 0}
+        )
         self.assertEqual(rejected["status"], 429)
-        self.assertEqual(rejected["value"]["error"]["code"], "pool_quota_exceeded")
+        self.assertEqual(
+            rejected["value"]["error"]["code"], "pool_quota_exceeded"
+        )
         self.assertEqual(self.calls(), 2)
         # Exhausting the guest pool leaves the configured user reservation.
         self.assertEqual(self.probe("login", "alice")["status"], 200)
@@ -815,24 +891,31 @@ class PublicEntryMixedAccessTests(PublicEntryRuntimeFixture):
         self.assertEqual(self.probe("session", "alice")["status"], 200)
         for version in range(3):
             self.assertEqual(
-                self.probe("turn", "alice", {"query": "氣候", "version": version})[
-                    "status"
-                ],
+                self.probe(
+                    "turn", "alice", {"query": "氣候", "version": version}
+                )["status"],
                 200,
             )
         rejected = self.probe("turn", "alice", {"query": "氣候", "version": 3})
-        self.assertEqual(rejected["value"]["error"]["code"], "user_quota_exceeded")
+        self.assertEqual(
+            rejected["value"]["error"]["code"], "user_quota_exceeded"
+        )
         self.assertEqual(self.calls(), 5)
-        # Caller identity headers and another principal's bearer cannot claim it.
+        # Caller identity headers and another principal's bearer cannot claim
+        # it.
         denied = self.probe("path", "attacker-guest", {"path": "/api/turn"})
         self.assertIn(denied["status"], (401, 429))
         self.assertEqual(self.calls(), 5)
         self.compose("restart", "public-entry", timeout=30)
         self.wait_ready()
         rejected = self.probe("turn", "alice", {"query": "氣候", "version": 3})
-        self.assertEqual(rejected["value"]["error"]["code"], "user_quota_exceeded")
+        self.assertEqual(
+            rejected["value"]["error"]["code"], "user_quota_exceeded"
+        )
         self.compose("stop", "--timeout", "2", "quota-redis", timeout=15)
-        rejected = self.probe("turn", "visitor-one", {"query": "氣候", "version": 0})
+        rejected = self.probe(
+            "turn", "visitor-one", {"query": "氣候", "version": 0}
+        )
         self.assertIn(rejected["status"], (500, 503))
         self.assertEqual(self.calls(), 5)
 

@@ -1,4 +1,5 @@
-"""Operator-only conditions/source projection of a complete vector-ready catalog.
+"""Operator-only conditions/source projection of a complete vector-ready
+catalog.
 
 The caller holds the catalog operation lock and supplies a private, bounded
 transport. Its request(method, path, payload=None, **kwargs) returns (status,
@@ -46,7 +47,7 @@ SOURCE_FIELDS = (
 
 
 class ProjectionError(ValueError):
-    """A fixed-code failure; never includes transport output or catalog text."""
+    """Fixed-code failure without transport output or catalog text."""
 
 
 def require_index(index):
@@ -56,7 +57,8 @@ def require_index(index):
 
 
 def request(client, method, path, payload=None, **kwargs):
-    """Sanitize transport failures; raw upstream output never enters exceptions."""
+    """Sanitize transport failures; raw upstream output never enters
+    exceptions."""
     try:
         response = client.request(method, path, payload, **kwargs)
     except Exception:
@@ -91,7 +93,8 @@ def _bundle(bundle):
     if (
         not isinstance(bundle, CatalogBundle)
         or not 1 <= len(bundle.documents) <= MAX_DOCUMENTS
-        or len({row["dataset_id"] for row in bundle.documents}) != len(bundle.documents)
+        or len({row["dataset_id"] for row in bundle.documents})
+        != len(bundle.documents)
     ):
         raise ProjectionError("catalog_projection_bundle_invalid")
 
@@ -145,9 +148,9 @@ def _mapping(client, index=None, *, projected=False, max_url_length):
     ):
         raise ProjectionError("catalog_projection_mapping_changed")
     has_projection = filters.FIELD in properties
-    if (has_projection and not _condition_mapping(properties[filters.FIELD])) or (
-        projected and not has_projection
-    ):
+    if (
+        has_projection and not _condition_mapping(properties[filters.FIELD])
+    ) or (projected and not has_projection):
         raise ProjectionError("catalog_projection_mapping_changed")
     return physical, has_projection
 
@@ -175,7 +178,9 @@ def _native_chunks(source, original_content):
     ):
         raise ProjectionError("catalog_projection_vectors_incomplete")
     try:
-        native = chunks.validate(source.get("content"), vectors, original_content)
+        native = chunks.validate(
+            source.get("content"), vectors, original_content
+        )
     except ValueError as error:
         code = (
             "catalog_projection_vector_invalid"
@@ -189,7 +194,8 @@ def _native_chunks(source, original_content):
 def _inventory(client, bundle, index, *, projected, capture=None):
     expected = {row["dataset_id"]: row for row in bundle.documents}
     expected_hashes = {
-        url: digest for url, _bundle, digest in bundle.expected_inventory_entries
+        url: digest
+        for url, _bundle, digest in bundle.expected_inventory_entries
     }
     count = len(expected)
     found, native_ids = {}, set()
@@ -203,7 +209,8 @@ def _inventory(client, bundle, index, *, projected, capture=None):
             {
                 "from": start,
                 "size": PAGE_SIZE,
-                # Canonical, unique URLs retain their order across segment merges.
+                # Canonical, unique URLs retain their order across segment
+                # merges.
                 "sort": [{"url": "asc"}],
                 "track_total_hits": True,
                 "seq_no_primary_term": True,
@@ -231,7 +238,9 @@ def _inventory(client, bundle, index, *, projected, capture=None):
                 raise ProjectionError("catalog_projection_document_invalid")
             source = row["_source"]
             identifier, native_id = source.get("dataset_id"), row.get("_id")
-            document = expected.get(identifier) if type(identifier) is str else None
+            document = (
+                expected.get(identifier) if type(identifier) is str else None
+            )
             if (
                 document is None
                 or identifier in found
@@ -267,16 +276,21 @@ def _inventory(client, bundle, index, *, projected, capture=None):
                 raise ProjectionError("catalog_projection_document_changed")
             context = _json_wire_copy(document["resource_context"])
             has_context = "resource_context" in source
-            if (has_context and not same_json(source["resource_context"], context)) or (
-                not has_context and (projected or context)
-            ):
-                raise ProjectionError("catalog_projection_resource_context_changed")
+            if (
+                has_context
+                and not same_json(source["resource_context"], context)
+            ) or (not has_context and (projected or context)):
+                raise ProjectionError(
+                    "catalog_projection_resource_context_changed"
+                )
             native = _native_chunks(source, document["content"])
             vectors = native[filters.VECTOR_PATH]
             chunk_count += len(vectors)
             vector_hashes[identifier] = chunks.digest(native)
             if capture is not None:
-                capture(identifier, document["content"], native["content"], vectors)
+                capture(
+                    identifier, document["content"], native["content"], vectors
+                )
             found[identifier] = {
                 "id": native_id,
                 "seq_no": row["_seq_no"],
@@ -323,7 +337,11 @@ def _update(client, index, rows):
             )
         )
     response = _ok(
-        client, "POST", "/" + index + "/_bulk", "\n".join(lines) + "\n", ndjson=True
+        client,
+        "POST",
+        "/" + index + "/_bulk",
+        "\n".join(lines) + "\n",
+        ndjson=True,
     )
     items = response.get("items")
     if (
@@ -386,7 +404,8 @@ def _report(bundle, index, count, vector_digest, updated):
 
 
 def verify_vectors(client, bundle, index=None, *, capture=None):
-    """Read all actual vectors and catalog identities, without changing the index.
+    """Read all actual vectors and catalog identities, without changing the
+    index.
 
     The caller independently binds this bounded client to the sealed catalog
     runtime and holds the operation lock. This proves the observed index, not
@@ -405,11 +424,15 @@ def verify_vectors(client, bundle, index=None, *, capture=None):
     if index is not None:
         require_index(index)
     max_url_length = max(len(row["url"]) for row in bundle.documents)
-    physical, _projected = _mapping(client, index, max_url_length=max_url_length)
+    physical, _projected = _mapping(
+        client, index, max_url_length=max_url_length
+    )
     _rows, chunks, digest = _inventory(
         client, bundle, physical, projected=False, capture=capture
     )
-    repeated, _projected = _mapping(client, index, max_url_length=max_url_length)
+    repeated, _projected = _mapping(
+        client, index, max_url_length=max_url_length
+    )
     if repeated != physical:
         raise ProjectionError("catalog_projection_index_changed")
     entries = bundle.expected_inventory_entries
@@ -426,7 +449,7 @@ def verify_vectors(client, bundle, index=None, *, capture=None):
 
 
 def verify_projection(client, bundle, index):
-    """Read every document and its vectors/projection; never writes the index."""
+    """Read all documents and vectors/projection without index writes."""
     _bundle(bundle)
     require_index(index)
     max_url_length = max(len(row["url"]) for row in bundle.documents)
@@ -437,18 +460,22 @@ def verify_projection(client, bundle, index):
 
 
 def provision_projection(client, bundle):
-    """Project only a fully verified catalog; partial deterministic reruns are safe.
+    """Project only a fully verified catalog; partial deterministic reruns are
+    safe.
 
     The fixed alias is resolved once; all subsequent writes use that physical
     index. Optimistic sequence/term checks reject concurrent content changes.
-    No returned readiness proof is issued until the full post-write scan passes.
+    No returned readiness proof is issued until the full post-write scan
+    passes.
     """
     _bundle(bundle)
     max_url_length = max(len(row["url"]) for row in bundle.documents)
     index, already_mapped = _mapping(client, max_url_length=max_url_length)
     rows, chunks, digest = _inventory(client, bundle, index, projected=False)
     if not already_mapped:
-        response = _ok(client, "PUT", "/" + index + "/_mapping", filters.mapping())
+        response = _ok(
+            client, "PUT", "/" + index + "/_mapping", filters.mapping()
+        )
         if response.get("acknowledged") is not True:
             raise ProjectionError("catalog_projection_mapping_unconfirmed")
     pending = [rows[key] for key in sorted(rows) if not rows[key]["projected"]]
@@ -458,6 +485,9 @@ def provision_projection(client, bundle):
         response = _ok(client, "POST", "/" + index + "/_refresh")
         require_complete_shards(response)
     proof = verify_projection(client, bundle, index)
-    if proof["vector_chunk_count"] != chunks or proof["vectors_sha256"] != digest:
+    if (
+        proof["vector_chunk_count"] != chunks
+        or proof["vectors_sha256"] != digest
+    ):
         raise ProjectionError("catalog_projection_vectors_changed")
     return {**proof, "projection_updated_count": len(pending)}

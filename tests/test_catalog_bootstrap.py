@@ -37,9 +37,15 @@ SECRET_NAMES = (
     "fess_initial_admin_password",
 )
 MODEL_MANIFEST = "manifests/registry.ollama.ai/library/granite-embedding/278m"
-MODEL_DIGEST = "a658c903bf83a9d84fe1b9869874229ddfdfc1c88b04f958f17dd24e243d262c"
-CONFIG_DIGEST = "eb0753f1773ea272958bcbd3d5c2a248b6edc665e02274fc720b1dbd58b02153"
-LICENSE_DIGEST = "492069a62c2545ecde9f8cbc5c3d46adadaa3f95c0e1f68aea7ed2cca548484b"
+MODEL_DIGEST = (
+    "a658c903bf83a9d84fe1b9869874229ddfdfc1c88b04f958f17dd24e243d262c"
+)
+CONFIG_DIGEST = (
+    "eb0753f1773ea272958bcbd3d5c2a248b6edc665e02274fc720b1dbd58b02153"
+)
+LICENSE_DIGEST = (
+    "492069a62c2545ecde9f8cbc5c3d46adadaa3f95c0e1f68aea7ed2cca548484b"
+)
 
 
 def write_file(path: Path, value: str, mode: int) -> None:
@@ -58,7 +64,9 @@ def sha256(path: Path) -> str:
 
 class CatalogBootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-bootstrap-test-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-bootstrap-test-"
+        )
         self.base = Path(self.temporary.name)
 
     def tearDown(self) -> None:
@@ -149,7 +157,8 @@ set -eu
 if [[ $# -eq 1 ]]; then
   case "$1" in
     */ollama/models/{MODEL_MANIFEST})
-      printf '%s  %s\\n' '1a37926bf842899cbf90583e3932f3820548716d9d07661ba622199ffe95c552' "$1"
+      printf '%s  %s\\n' '1a37926bf842899cbf90583e3932f3820"""
+            f"""548716d9d07661ba622199ffe95c552' "$1"
       exit 0
       ;;
     */ollama/models/blobs/sha256-*)
@@ -191,14 +200,18 @@ exec /usr/bin/sha256sum "$@"
         return values
 
     @staticmethod
-    def prepare_security(root: Path, values: dict[str, str], schema: int) -> None:
+    def prepare_security(
+        root: Path, values: dict[str, str], schema: int
+    ) -> None:
         config = root / "opensearch" / "config"
         config.mkdir(parents=True, mode=0o700)
         templates = REPOSITORY / "deploy" / "config" / "opensearch"
         for name in ("opensearch.yml", "roles.yml", "roles_mapping.yml"):
             shutil.copyfile(templates / name, config / name)
             (config / name).chmod(0o400)
-        internal = (templates / "internal_users.yml.in").read_text(encoding="utf-8")
+        internal = (templates / "internal_users.yml.in").read_text(
+            encoding="utf-8"
+        )
         internal = internal.replace("__ADMIN_HASH__", "$2y$12$" + "A" * 53)
         internal = internal.replace("__FESS_HASH__", "$2y$12$" + "B" * 53)
         write_file(config / "internal_users.yml", internal, 0o400)
@@ -213,9 +226,16 @@ exec /usr/bin/sha256sum "$@"
         lines = [f"schema={schema}"]
         for name in secret_subset:
             lines.append(f"{name}_sha256={sha256(root / 'secrets' / name)}")
-        for name in ("root-ca.pem", "node.pem", "node-key.pem", "internal_users.yml"):
+        for name in (
+            "root-ca.pem",
+            "node.pem",
+            "node-key.pem",
+            "internal_users.yml",
+        ):
             lines.append(f"{name}_sha256={sha256(config / name)}")
-        write_file(config / "security-material.sha256", "\n".join(lines) + "\n", 0o600)
+        write_file(
+            config / "security-material.sha256", "\n".join(lines) + "\n", 0o600
+        )
 
     @staticmethod
     def prepare_model(root: Path) -> Path:
@@ -284,7 +304,7 @@ exec /usr/bin/sha256sum "$@"
             check=False,
         )
 
-    def test_pristine_secret_set_is_atomic_and_missing_secret_is_not_regenerated(
+    def test_pristine_secrets_are_atomic_and_missing_stays_missing(
         self,
     ) -> None:
         project, root, fake_bin = self.workspace("secret-set")
@@ -313,20 +333,24 @@ exec /usr/bin/sha256sum "$@"
         self.assertNotEqual(second.returncode, 0)
         self.assertIn("incomplete", second.stderr)
         self.assertFalse(
-            missing.exists(), "bootstrap must never regenerate a missing secret"
+            missing.exists(),
+            "bootstrap must never regenerate a missing secret",
         )
 
     def test_legacy_64_character_fess_cipher_key_is_rejected(self) -> None:
         project, root, fake_bin = self.workspace("legacy-fess-cipher-key")
         self.prepare_managed_root(root)
         self.prepare_secrets(root)
-        write_file(root / "secrets" / "fess_app_cipher_key", "c" * 64 + "\n", 0o600)
+        write_file(
+            root / "secrets" / "fess_app_cipher_key", "c" * 64 + "\n", 0o600
+        )
 
         result = self.run_bootstrap(project, fake_bin)
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "fess_app_cipher_key must contain exactly 32 lowercase hexadecimal characters",
+            "fess_app_cipher_key must contain exactly 32 lowercase "
+            "hexadecimal characters",
             result.stderr,
         )
 
@@ -371,11 +395,16 @@ exec /usr/bin/sha256sum "$@"
                 (secret_dir / name).read_text(encoding="ascii"),
             )
 
-    def test_absent_secret_set_is_blocked_when_any_managed_state_is_used(self) -> None:
+    def test_absent_secret_set_is_blocked_when_any_managed_state_is_used(
+        self,
+    ) -> None:
         mutations = {
             "opensearch-data": ("opensearch/data/node-state", "used\n"),
             "opensearch-config": ("opensearch/config/config.yml", "used\n"),
-            "opensearch-dictionary": ("opensearch/dictionary/words.txt", "used\n"),
+            "opensearch-dictionary": (
+                "opensearch/dictionary/words.txt",
+                "used\n",
+            ),
             "fess-data": ("fess/data/fess.db", "used\n"),
             "ollama-model": ("ollama/models/blob", "used\n"),
             "unexpected-state": ("state/unexpected", "used\n"),
@@ -396,10 +425,14 @@ exec /usr/bin/sha256sum "$@"
                 )
                 self.assertFalse((root / "secrets").exists())
 
-    def test_existing_index_volume_or_unknown_inventory_cannot_regenerate_secrets(self):
+    def test_index_or_unknown_inventory_prevents_secret_regeneration(
+        self,
+    ):
         for existing in (True, False):
             with self.subTest(existing=existing):
-                project, root, fake_bin = self.workspace(f"volume-guard-{existing}")
+                project, root, fake_bin = self.workspace(
+                    f"volume-guard-{existing}"
+                )
                 log = fake_bin.parent / "docker.log"
                 volume_result = (
                     f"printf '%s\\n' '{PROJECT}-index'; exit 0"
@@ -429,7 +462,8 @@ esac
                 self.assertIn(expected, result.stderr)
                 self.assertFalse((root / "secrets").exists())
                 self.assertIn(
-                    f"volume ls --quiet --filter name={PROJECT}-index", log.read_text()
+                    f"volume ls --quiet --filter name={PROJECT}-index",
+                    log.read_text(),
                 )
 
     def test_all_product_flags_are_required_before_any_state_creation(self):
@@ -465,7 +499,9 @@ esac
         self.assertFalse((root / ".depositar-catalog-root").exists())
         self.assertFalse((root / "secrets").exists())
 
-    def test_absent_secret_set_is_blocked_when_catalog_container_exists(self) -> None:
+    def test_absent_secret_set_is_blocked_when_catalog_container_exists(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("existing-container")
         self.prepare_managed_root(root)
         write_file(
@@ -507,7 +543,7 @@ esac
         )
         return log
 
-    def test_isolated_catalog_initializes_its_own_secrets_with_another_catalog_running(
+    def test_isolated_catalog_creates_secrets_beside_running_peer(
         self,
     ) -> None:
         project, root, fake_bin = self.workspace("isolated-old-live")
@@ -517,23 +553,30 @@ esac
         old_secret = self.base / "old-live-secret"
         write_file(old_secret, "must remain unchanged\n", 0o600)
 
-        result = self.run_bootstrap(project, fake_bin, "--isolated-project", isolated)
+        result = self.run_bootstrap(
+            project, fake_bin, "--isolated-project", isolated
+        )
 
         # The fake daemon deliberately stops after the credential check, before
-        # any bcrypt helper. New-slot secrets prove the old project did not block.
+        # any bcrypt helper. New-slot secrets prove the old project did not
+        # block.
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("working Docker daemon", result.stderr)
         self.assertNotIn("container exists", result.stderr)
         self.assertEqual(
-            set(SECRET_NAMES), {entry.name for entry in (root / "secrets").iterdir()}
+            set(SECRET_NAMES),
+            {entry.name for entry in (root / "secrets").iterdir()},
         )
         self.assertIn(
             "project=" + isolated + "\n",
             (root / ".depositar-catalog-root").read_text(),
         )
-        self.assertIn("label=com.docker.compose.project=" + isolated, log.read_text())
+        self.assertIn(
+            "label=com.docker.compose.project=" + isolated, log.read_text()
+        )
         self.assertNotIn(
-            "label=com.docker.compose.project=" + other_project, log.read_text()
+            "label=com.docker.compose.project=" + other_project,
+            log.read_text(),
         )
         self.assertEqual("must remain unchanged\n", old_secret.read_text())
 
@@ -544,14 +587,18 @@ esac
         isolated = PROJECT
         log = self.fake_existing_project(fake_bin, isolated)
 
-        result = self.run_bootstrap(project, fake_bin, "--isolated-project", isolated)
+        result = self.run_bootstrap(
+            project, fake_bin, "--isolated-project", isolated
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("container exists", result.stderr)
         self.assertFalse((root / "secrets").exists())
-        self.assertIn("label=com.docker.compose.project=" + isolated, log.read_text())
+        self.assertIn(
+            "label=com.docker.compose.project=" + isolated, log.read_text()
+        )
 
-    def test_isolated_project_option_is_narrow_and_duplicate_flags_are_rejected(
+    def test_isolated_project_rejects_unknown_or_duplicate_flags(
         self,
     ) -> None:
         project, root, fake_bin = self.workspace("isolated-invalid")
@@ -569,7 +616,9 @@ esac
                 self.assertIn("--isolated-project", result.stderr)
                 self.assertFalse(root.exists())
 
-    def test_missing_sealed_environment_is_rejected_without_creating_it(self) -> None:
+    def test_missing_sealed_environment_is_rejected_without_creating_it(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("missing-sealed-env")
         env = project / ".env.catalog"
         env.unlink()
@@ -604,7 +653,9 @@ exit 46
     def test_deleted_secret_set_is_not_recreated_after_security_state_exists(
         self,
     ) -> None:
-        project, root, fake_bin = self.workspace("deleted-committed-secret-set")
+        project, root, fake_bin = self.workspace(
+            "deleted-committed-secret-set"
+        )
         self.prepare_managed_root(root)
         values = self.prepare_secrets(root)
         self.prepare_security(root, values, schema=2)
@@ -622,7 +673,9 @@ exit 46
         )
         self.assertFalse(secret_dir.exists())
 
-    def test_failed_generation_leaves_no_partial_secret_directory(self) -> None:
+    def test_failed_generation_leaves_no_partial_secret_directory(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("atomic-failure")
         counter = self.base / "openssl-count"
         write_file(
@@ -646,7 +699,10 @@ esac
         environment["PATH"] = f"{fake_bin}:/usr/bin:/bin"
         environment["FAKE_OPENSSL_COUNT"] = str(counter)
         result = subprocess.run(
-            [str(project / "scripts" / "bootstrap-catalog.sh"), *BOOTSTRAP_OPTIONS],
+            [
+                str(project / "scripts" / "bootstrap-catalog.sh"),
+                *BOOTSTRAP_OPTIONS,
+            ],
             cwd=project,
             env=environment,
             text=True,
@@ -659,44 +715,54 @@ esac
         self.assertFalse((root / "secrets").exists())
         self.assertEqual([], list((root / "state").glob(".secret-set.tmp.*")))
 
-    def test_bcrypt_helper_runs_as_the_validated_invoking_uid_and_gid(self) -> None:
+    def test_bcrypt_helper_runs_as_the_validated_invoking_uid_and_gid(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("bcrypt-user")
         docker_log = self.base / "bcrypt-docker.log"
         docker_count = self.base / "bcrypt-docker-count"
         write_file(
             fake_bin / "docker",
-            """#!/usr/bin/env bash
-set -eu
-{
-  printf 'CALL'
-  for argument in "$@"; do
-    printf '\t%s' "$argument"
-  done
-  printf '\n'
-} >>"$FAKE_DOCKER_LOG"
-case "${1:-}" in
-  ps|volume|version) exit 0 ;;
-  image)
-    printf '%s\n' '{"id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
-    exit 0
-    ;;
-  run)
-    IFS= read -r password
-    [[ "$password" =~ ^[0-9a-f]{64}$ ]] || exit 44
-    count=0
-    [[ ! -f "$FAKE_DOCKER_COUNT" ]] || count=$(<"$FAKE_DOCKER_COUNT")
-    count=$((count + 1))
-    printf '%s' "$count" >"$FAKE_DOCKER_COUNT"
-    if [[ "$count" == 1 ]]; then
-      printf '%s\n' '$2y$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-    else
-      printf '%s\n' '$2y$12$BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
-    fi
-    exit 0
-    ;;
-  *) exit 42 ;;
-esac
-""",
+            "#!/usr/bin/env bash\n"
+            "set -eu\n"
+            "{\n"
+            "  printf 'CALL'\n"
+            '  for argument in "$@"; do\n'
+            "    printf '\t%s' \"$argument\"\n"
+            "  done\n"
+            "  printf '\n"
+            "'\n"
+            '} >>"$FAKE_DOCKER_LOG"\n'
+            'case "${1:-}" in\n'
+            "  ps|volume|version) exit 0 ;;\n"
+            "  image)\n"
+            "    printf '%s\n"
+            '\' \'{"id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+            'bbbbbbbbbbbbbbbbbbbbbbbbbb","revision":'
+            '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\'\n'
+            "    exit 0\n"
+            "    ;;\n"
+            "  run)\n"
+            "    IFS= read -r password\n"
+            '    [[ "$password" =~ ^[0-9a-f]{64}$ ]] || exit 44\n'
+            "    count=0\n"
+            '    [[ ! -f "$FAKE_DOCKER_COUNT" ]] || '
+            'count=$(<"$FAKE_DOCKER_COUNT")\n'
+            "    count=$((count + 1))\n"
+            '    printf \'%s\' "$count" >"$FAKE_DOCKER_COUNT"\n'
+            '    if [[ "$count" == 1 ]]; then\n'
+            "      printf '%s\n"
+            "' '$2y$12$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "AAAAAAAA'\n"
+            "    else\n"
+            "      printf '%s\n"
+            "' '$2y$12$BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+            "BBBBBBBB'\n"
+            "    fi\n"
+            "    exit 0\n"
+            "    ;;\n"
+            "  *) exit 42 ;;\n"
+            "esac\n",
             0o700,
         )
         environment = os.environ.copy()
@@ -744,35 +810,44 @@ esac
         ):
             self.assertIn(required, docker_calls)
         runs = [
-            line for line in docker_calls.splitlines() if line.startswith("CALL\trun\t")
+            line
+            for line in docker_calls.splitlines()
+            if line.startswith("CALL\trun\t")
         ]
         self.assertEqual(2, len(runs))
         for line in runs:
             self.assertIn("\t" + HASH_IMAGE_ID + "\t", line)
             self.assertNotIn(HASH_IMAGE, line)
             self.assertNotIn(APPROVED_OS_IMAGE, line)
-        bootstrap_source = (project / "scripts" / "bootstrap-catalog.sh").read_text(
-            encoding="utf-8"
-        )
+        bootstrap_source = (
+            project / "scripts" / "bootstrap-catalog.sh"
+        ).read_text(encoding="utf-8")
         self.assertNotIn("--user 1000:1000", bootstrap_source)
         self.assertIn(
             '--user "$SEARCH_CATALOG_RUNTIME_UID:$SEARCH_CATALOG_RUNTIME_GID"',
             bootstrap_source,
         )
         for name in SECRET_NAMES:
-            secret = (root / "secrets" / name).read_text(encoding="ascii").strip()
+            secret = (
+                (root / "secrets" / name).read_text(encoding="ascii").strip()
+            )
             self.assertNotIn(secret, docker_calls)
 
     def test_new_security_refuses_legacy_upstream_hash_helper_without_flag(
         self,
     ) -> None:
         project, root, fake_bin = self.workspace("bcrypt-no-qualified-image")
-        result = self.run_bootstrap(project, fake_bin, include_hash_image=False)
+        result = self.run_bootstrap(
+            project, fake_bin, include_hash_image=False
+        )
         self.assertNotEqual(0, result.returncode)
         self.assertIn(
-            "--hash-image and --hash-image-id are required together", result.stderr
+            "--hash-image and --hash-image-id are required together",
+            result.stderr,
         )
-        self.assertFalse((root / "opensearch/config/internal_users.yml").exists())
+        self.assertFalse(
+            (root / "opensearch/config/internal_users.yml").exists()
+        )
 
     def test_hash_image_option_rejects_unqualified_or_duplicate_references(
         self,
@@ -796,7 +871,7 @@ esac
                 self.assertIn("--hash-image", result.stderr)
                 self.assertFalse(root.exists())
 
-    def test_hash_image_inspection_rejects_untrusted_metadata_before_reading_secrets(
+    def test_untrusted_hash_image_is_rejected_before_secret_read(
         self,
     ) -> None:
         mutations = (
@@ -804,7 +879,11 @@ esac
             {"id": "sha256:" + "c" * 64, "revision": HASH_REVISION},
             {"id": "sha256:short", "revision": HASH_REVISION},
             {"id": True, "revision": HASH_REVISION},
-            {"id": HASH_IMAGE_ID, "revision": HASH_REVISION, "extra": "unsafe"},
+            {
+                "id": HASH_IMAGE_ID,
+                "revision": HASH_REVISION,
+                "extra": "unsafe",
+            },
         )
         for number, metadata in enumerate(mutations):
             with self.subTest(metadata=metadata):
@@ -829,7 +908,9 @@ esac
                     (root / "opensearch/config/internal_users.yml").exists()
                 )
 
-    def test_schema_one_security_manifest_is_rejected_without_migration(self) -> None:
+    def test_schema_one_security_manifest_is_rejected_without_migration(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("schema-one-rejected")
         self.prepare_managed_root(root)
         values = self.prepare_secrets(root)
@@ -857,7 +938,9 @@ esac
         return project, root, fake_bin, model_root
 
     def test_exact_model_tree_is_accepted(self) -> None:
-        project, root, fake_bin, _model_root = self.model_workspace("model-exact")
+        project, root, fake_bin, _model_root = self.model_workspace(
+            "model-exact"
+        )
         result = self.run_bootstrap(project, fake_bin)
         self.assertEqual(0, result.returncode, result.stderr)
         for path in (root / "catalog", root / "state" / "catalog-imports"):
@@ -865,7 +948,9 @@ esac
             self.assertFalse(path.is_symlink())
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
 
-    def test_private_home_subdirectory_is_allowed_without_platform_integration(self):
+    def test_private_home_subdirectory_is_allowed_without_platform_integration(
+        self,
+    ):
         project, root, fake_bin, _ = self.model_workspace("private-home")
         root.parent.chmod(0o700)
         # The product helper has no dependency on the base platform dotenv.
@@ -889,10 +974,14 @@ esac
         with patch.dict(os.environ, {"HOME": str(self.base)}):
             result = self.run_bootstrap(project, fake_bin)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("product control state parent must have mode 700", result.stderr)
+        self.assertIn(
+            "product control state parent must have mode 700", result.stderr
+        )
         self.assertFalse(root.exists())
 
-    def test_real_stdlib_helper_seeds_all_four_pinned_fixture_files(self) -> None:
+    def test_real_stdlib_helper_seeds_all_four_pinned_fixture_files(
+        self,
+    ) -> None:
         project, root, fake_bin = self.workspace("model-source-seeding")
         self.prepare_managed_root(root)
         values = self.prepare_secrets(root)
@@ -904,10 +993,15 @@ esac
         source = allocated / "private-models"
         source.mkdir(mode=0o700)
         payloads = ("fixture model", "fixture config", "fixture license")
-        digests = [hashlib.sha256(value.encode()).hexdigest() for value in payloads]
+        digests = [
+            hashlib.sha256(value.encode()).hexdigest() for value in payloads
+        ]
         manifest = {
             "schemaVersion": 2,
-            "config": {"digest": "sha256:" + digests[1], "size": len(payloads[1])},
+            "config": {
+                "digest": "sha256:" + digests[1],
+                "size": len(payloads[1]),
+            },
             "layers": [
                 {"digest": "sha256:" + digests[0], "size": len(payloads[0])},
                 {"digest": "sha256:" + digests[2], "size": len(payloads[2])},
@@ -948,17 +1042,24 @@ esac
 
         self.assertEqual(0, result.returncode, result.stderr)
         destination = root / "ollama/models"
-        expected = {MODEL_MANIFEST, *("blobs/sha256-" + digest for digest in digests)}
+        expected = {
+            MODEL_MANIFEST,
+            *("blobs/sha256-" + digest for digest in digests),
+        }
         for relative in expected:
             copied = destination / relative
-            self.assertEqual((source / relative).read_bytes(), copied.read_bytes())
+            self.assertEqual(
+                (source / relative).read_bytes(), copied.read_bytes()
+            )
             self.assertEqual(0o400, stat.S_IMODE(copied.stat().st_mode))
             self.assertEqual(1, copied.stat().st_nlink)
         self.assertEqual(0o1770, stat.S_IMODE(allocated.stat().st_mode))
         self.assertEqual(0o700, stat.S_IMODE(source.stat().st_mode))
 
     def test_roles_mapping_requires_exact_reviewed_bytes(self) -> None:
-        project, root, fake_bin, _model_root = self.model_workspace("roles-mapping")
+        project, root, fake_bin, _model_root = self.model_workspace(
+            "roles-mapping"
+        )
         accepted = self.run_bootstrap(project, fake_bin)
         self.assertEqual(0, accepted.returncode, accepted.stderr)
         roles_mapping = root / "opensearch/config/roles_mapping.yml"
@@ -972,8 +1073,12 @@ esac
             rejected.stderr,
         )
 
-    def test_private_catalog_directories_converge_and_reject_symlinks(self) -> None:
-        project, root, fake_bin, _model_root = self.model_workspace("catalog-modes")
+    def test_private_catalog_directories_converge_and_reject_symlinks(
+        self,
+    ) -> None:
+        project, root, fake_bin, _model_root = self.model_workspace(
+            "catalog-modes"
+        )
         (root / "catalog").mkdir(mode=0o750)
         (root / "state").mkdir(mode=0o700)
         (root / "state" / "catalog-imports").mkdir(mode=0o500)
@@ -981,7 +1086,9 @@ esac
         result = self.run_bootstrap(project, fake_bin)
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(stat.S_IMODE((root / "catalog").stat().st_mode), 0o700)
+        self.assertEqual(
+            stat.S_IMODE((root / "catalog").stat().st_mode), 0o700
+        )
         self.assertEqual(
             stat.S_IMODE((root / "state" / "catalog-imports").stat().st_mode),
             0o700,
@@ -993,9 +1100,13 @@ esac
         (blocked_root / "catalog").symlink_to(self.base)
         blocked = self.run_bootstrap(blocked_project, blocked_bin)
         self.assertNotEqual(0, blocked.returncode)
-        self.assertIn("runtime path must be a non-symlink directory", blocked.stderr)
+        self.assertIn(
+            "runtime path must be a non-symlink directory", blocked.stderr
+        )
 
-    def test_model_tree_rejects_extra_file_directory_symlink_and_hardlink(self) -> None:
+    def test_model_tree_rejects_extra_file_directory_symlink_and_hardlink(
+        self,
+    ) -> None:
         mutations = ("file", "directory", "symlink", "hardlink")
         for mutation in mutations:
             with self.subTest(mutation=mutation):
@@ -1003,7 +1114,9 @@ esac
                     f"model-extra-{mutation}"
                 )
                 if mutation == "file":
-                    write_file(model_root / "unexpected", "unexpected\n", 0o400)
+                    write_file(
+                        model_root / "unexpected", "unexpected\n", 0o400
+                    )
                 elif mutation == "directory":
                     (model_root / "unexpected").mkdir(mode=0o700)
                 elif mutation == "symlink":

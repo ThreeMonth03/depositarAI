@@ -1,4 +1,6 @@
-"""Keep request handlers and dependency-light primitives outside operator policy."""
+"""Keep request handlers and dependency-light primitives outside operator
+policy.
+"""
 
 from __future__ import annotations
 
@@ -108,14 +110,18 @@ def imported_attributes(tree, package):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 bindings[alias.asname or alias.name.partition(".")[0]] = (
-                    alias.name if alias.asname else alias.name.partition(".")[0]
+                    alias.name
+                    if alias.asname
+                    else alias.name.partition(".")[0]
                 )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if node.level:
                 module = resolve_name("." * node.level + module, package)
             for alias in node.names:
-                bindings[alias.asname or alias.name] = module + "." + alias.name
+                bindings[alias.asname or alias.name] = (
+                    module + "." + alias.name
+                )
 
     def qualified(node):
         if isinstance(node, ast.Name):
@@ -144,8 +150,14 @@ def neutral_dependency(name):
 class ProductModuleBoundaryTests(unittest.TestCase):
     def test_import_parser_resolves_package_and_module_contexts(self):
         for relative, expected in (
-            ("search/transport/__init__.py", ("search.transport", "search.transport")),
-            ("search/transport/http.py", ("search.transport.http", "search.transport")),
+            (
+                "search/transport/__init__.py",
+                ("search.transport", "search.transport"),
+            ),
+            (
+                "search/transport/http.py",
+                ("search.transport.http", "search.transport"),
+            ),
             (
                 "search/api/shared/readiness.py",
                 ("search.api.shared.readiness", "search.api.shared"),
@@ -154,7 +166,9 @@ class ProductModuleBoundaryTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertEqual(expected, module_context(relative))
 
-    def test_import_parser_catches_absolute_relative_aliased_and_deferred_edges(self):
+    def test_import_parser_catches_all_import_forms(
+        self,
+    ):
         for source, package, forbidden in (
             (
                 "import search.operations.catalog.runtime as runtime",
@@ -201,10 +215,16 @@ class ProductModuleBoundaryTests(unittest.TestCase):
             ),
             "search.web",
         )
-        self.assertEqual([], forbidden_dependencies(found, OPERATOR_NAMESPACES))
-        self.assertEqual([], forbidden_dependencies(found, ("search.api.engine",)))
+        self.assertEqual(
+            [], forbidden_dependencies(found, OPERATOR_NAMESPACES)
+        )
+        self.assertEqual(
+            [], forbidden_dependencies(found, ("search.api.engine",))
+        )
 
-    def test_request_handlers_cannot_import_operator_jobs_directly_or_lazily(self):
+    def test_request_handlers_cannot_import_operator_jobs_directly_or_lazily(
+        self,
+    ):
         for source in (
             "import search.operations.documents.batches",
             "from search.operations import documents",
@@ -215,9 +235,13 @@ class ProductModuleBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 found = dependencies(ast.parse(source), "search.api.shared")
-                self.assertTrue(forbidden_dependencies(found, OPERATOR_NAMESPACES))
+                self.assertTrue(
+                    forbidden_dependencies(found, OPERATOR_NAMESPACES)
+                )
 
-    def test_neutral_policy_rejects_application_operator_research_and_model_edges(self):
+    def test_neutral_policy_rejects_cross_domain_dependencies(
+        self,
+    ):
         for namespace in (
             "search.api.app",
             "search.api.engine",
@@ -250,9 +274,12 @@ class ProductModuleBoundaryTests(unittest.TestCase):
                 )
                 self.assertEqual([], unexpected, relative)
 
-    def test_neutral_imports_need_no_site_packages_or_application_modules(self):
+    def test_neutral_imports_need_no_site_packages_or_application_modules(
+        self,
+    ):
         # A fresh interpreter for each primitive catches transitive imports and
-        # package initializer side effects, without installed model/framework IO.
+        # package initializer side effects, without installed model/framework
+        # IO.
         for module in sorted(NEUTRAL_MODULES):
             with self.subTest(module=module):
                 script = (
@@ -266,22 +293,29 @@ class ProductModuleBoundaryTests(unittest.TestCase):
                     "if name == 'search' or name.startswith('search.'))\n"
                     "foreign = []\n"
                     "for name, item in sys.modules.items():\n"
-                    "    if name == '__main__' or name.partition('.')[0] == 'search':\n"
+                    "    if name == '__main__' or name.partition('.')[0] == "
+                    "'search':\n"
                     "        continue\n"
-                    "    origin = getattr(getattr(item, '__spec__', None), 'origin', None)\n"
+                    "    origin = getattr(getattr(item, '__spec__', None), "
+                    "'origin', None)\n"
                     # Python 3.9 typing.io/typing.re are virtual children of a
                     # stdlib module, without their own module specifications.
                     "    if origin is None and '.' in name:\n"
-                    "        parent = sys.modules.get(name.partition('.')[0])\n"
-                    "        origin = getattr(getattr(parent, '__spec__', None), 'origin', None)\n"
+                    "        parent = sys.modules.get(name.partition('.')[0])"
+                    "\n"
+                    "        origin = getattr(getattr(parent, '__spec__', "
+                    "None), 'origin', None)\n"
                     "    if origin in ('built-in', 'frozen'):\n"
                     "        continue\n"
                     "    path = Path(origin).resolve() if origin else None\n"
                     "    if path is None or "
-                    "{'site-packages', 'dist-packages'}.intersection(path.parts) "
-                    "or not any(path.is_relative_to(root) for root in stdlib):\n"
+                    "{'site-packages', 'dist-packages'}"
+                    ".intersection(path.parts) "
+                    "or not any(path.is_relative_to(root) for root in "
+                    "stdlib):\n"
                     "        foreign.append(name)\n"
-                    "print(json.dumps({'loaded': loaded, 'foreign': foreign}))\n"
+                    "print(json.dumps({'loaded': loaded, 'foreign': "
+                    "foreign}))\n"
                 )
                 completed = subprocess.run(
                     [sys.executable, "-I", "-S", "-B", "-c", script],
@@ -303,7 +337,12 @@ class ProductModuleBoundaryTests(unittest.TestCase):
     def test_request_modules_do_not_import_operator_control_planes(self):
         # Shared runtime_probe remains an allowed operator/request integration;
         # catalog, deployment, metadata and lifecycle authority stay separate.
-        for directory in ("search/http", "search/api", "search/web", "search/reranker"):
+        for directory in (
+            "search/http",
+            "search/api",
+            "search/web",
+            "search/reranker",
+        ):
             paths = sorted((ROOT / directory).rglob("*.py"))
             self.assertTrue(paths, directory)
             for path in paths:
@@ -353,7 +392,8 @@ class ProductModuleBoundaryTests(unittest.TestCase):
                 continue
             with self.subTest(source=str(path.relative_to(ROOT))):
                 self.assertEqual(
-                    [], forbidden_dependencies(source_dependencies(path), retired)
+                    [],
+                    forbidden_dependencies(source_dependencies(path), retired),
                 )
 
     def test_bff_and_readiness_do_not_import_execution_engines(self):
@@ -376,7 +416,9 @@ class ProductModuleBoundaryTests(unittest.TestCase):
 
 
 class HostToolBoundaryTests(unittest.TestCase):
-    def test_quality_domain_is_independent_of_cli_operators_and_model_execution(self):
+    def test_quality_is_independent_of_operators_and_models(
+        self,
+    ):
         paths = sorted((ROOT / "search/quality").glob("*.py"))
         self.assertTrue(paths)
         for path in paths:
@@ -397,7 +439,9 @@ class HostToolBoundaryTests(unittest.TestCase):
                     ),
                 )
 
-    def test_batch_quality_consumers_do_not_depend_on_script_entry_points(self):
+    def test_batch_quality_consumers_do_not_depend_on_script_entry_points(
+        self,
+    ):
         for relative in (
             "search/operations/deployment/candidate/batch/execution.py",
             "search/operations/deployment/candidate/batch/capture.py",
@@ -433,7 +477,8 @@ class HostToolBoundaryTests(unittest.TestCase):
                     f"sys.path.insert(0, {str(ROOT)!r})\n"
                     f"importlib.import_module({module!r})\n"
                     "loaded = sorted(name for name in sys.modules "
-                    "if name == 'search.api' or name.startswith('search.api.'))\n"
+                    "if name == 'search.api' or name.startswith('search.api.')"
+                    ")\n"
                     "assert not loaded, loaded\n"
                 )
                 completed = subprocess.run(
@@ -450,7 +495,9 @@ class HostToolBoundaryTests(unittest.TestCase):
 
 
 class RuntimeDockerBoundaryTests(unittest.TestCase):
-    def test_runtime_client_does_not_import_reverse_orchestration_or_models(self):
+    def test_runtime_client_does_not_import_reverse_orchestration_or_models(
+        self,
+    ):
         forbidden = (
             "search.operations.deployment.inference",
             "search.operations.deployment.release",
@@ -478,7 +525,9 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertTrue(
                     forbidden_dependencies(
-                        dependencies(ast.parse(source), "search.operations.deployment"),
+                        dependencies(
+                            ast.parse(source), "search.operations.deployment"
+                        ),
                         forbidden,
                     )
                 )
@@ -492,7 +541,9 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
             ),
         )
 
-    def test_client_member_parser_catches_legacy_aliases_without_banning_builds(self):
+    def test_client_parser_rejects_legacy_aliases_and_allows_builds(
+        self,
+    ):
         package = "search.operations.deployment"
         forbidden = (package + ".inference._Docker",)
         for source in (
@@ -505,10 +556,14 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 tree = ast.parse(source)
-                found = dependencies(tree, package) | imported_attributes(tree, package)
+                found = dependencies(tree, package) | imported_attributes(
+                    tree, package
+                )
                 self.assertTrue(forbidden_dependencies(found, forbidden))
         tree = ast.parse("from .images import build\nclient = build._Docker")
-        found = dependencies(tree, package) | imported_attributes(tree, package)
+        found = dependencies(tree, package) | imported_attributes(
+            tree, package
+        )
         self.assertEqual([], forbidden_dependencies(found, forbidden))
 
     def test_external_runtime_controllers_use_canonical_client(self):
@@ -531,11 +586,15 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
                         ("search.operations.deployment.inference._Docker",),
                     ),
                 )
-                self.assertIn("search.operations.deployment.runtime_docker", imports)
+                self.assertIn(
+                    "search.operations.deployment.runtime_docker", imports
+                )
 
 
 class ImageAuthorityBoundaryTests(unittest.TestCase):
-    def test_completed_image_reader_does_not_import_controllers_or_models(self):
+    def test_completed_image_reader_does_not_import_controllers_or_models(
+        self,
+    ):
         package = "search.operations.deployment"
         forbidden = tuple(
             package + "." + name
@@ -577,12 +636,15 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
         for source in (
             "from . import inference as old\nreader = old._image_authority",
             "from .inference import _image_authority as reader",
-            "def later():\n    import search.operations.deployment.inference as old\n"
+            "def later():\n"
+            "    import search.operations.deployment.inference as old\n"
             "    return old._image_authority",
         ):
             with self.subTest(source=source):
                 tree = ast.parse(source)
-                found = dependencies(tree, package) | imported_attributes(tree, package)
+                found = dependencies(tree, package) | imported_attributes(
+                    tree, package
+                )
                 self.assertIn(legacy, found)
         tree = ast.parse(
             "from .images import authority as image_evidence\n"
@@ -609,9 +671,12 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
                 tree, package
             )
             with self.subTest(consumer=name):
-                self.assertNotIn(owner + ".inference._image_authority", references)
+                self.assertNotIn(
+                    owner + ".inference._image_authority", references
+                )
                 self.assertIn(
-                    owner + ".images.authority.read_completed_images", references
+                    owner + ".images.authority.read_completed_images",
+                    references,
                 )
 
 
@@ -627,9 +692,12 @@ class ImageFixtureConsumerBoundaryTests(unittest.TestCase):
             )
             with self.subTest(consumer=name):
                 self.assertNotIn(
-                    owner + ".test_staging.ProductImageStagingTests", references
+                    owner + ".test_staging.ProductImageStagingTests",
+                    references,
                 )
-                self.assertIn(owner + ".fixtures.ImageStagingFixture", references)
+                self.assertIn(
+                    owner + ".fixtures.ImageStagingFixture", references
+                )
 
 
 if __name__ == "__main__":

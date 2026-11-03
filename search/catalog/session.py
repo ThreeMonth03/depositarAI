@@ -1,4 +1,4 @@
-"""Cookie authentication and bounded fixed-origin Fess administration requests."""
+"""Cookie authentication and bounded fixed-origin Fess admin requests."""
 
 from __future__ import annotations
 
@@ -80,7 +80,9 @@ def _validate_base_url(base_url: str) -> Tuple[str, Tuple[str, str, int]]:
         or parsed.query
         or parsed.fragment
     ):
-        raise ConfigurationError("Fess base URL is outside the private HTTP boundary")
+        raise ConfigurationError(
+            "Fess base URL is outside the private HTTP boundary"
+        )
     normalized = "http://%s:8080" % address.compressed
     return normalized, ("http", address.compressed, 8080)
 
@@ -103,7 +105,9 @@ class FessSession:
             or not math.isfinite(float(request_timeout))
             or not 0 < float(request_timeout) <= 60
         ):
-            raise ConfigurationError("request timeout must be finite and in (0, 60]")
+            raise ConfigurationError(
+                "request timeout must be finite and in (0, 60]"
+            )
         self.transport = transport or UrllibTransport()
         self.request_timeout = float(request_timeout)
         self.clock = clock
@@ -133,7 +137,9 @@ class FessSession:
             ("POST", "/api/v2/auth/login"),
             ("POST", "/api/v2/auth/logout"),
         }:
-            raise ConfigurationError("internal Fess endpoint is not allowlisted")
+            raise ConfigurationError(
+                "internal Fess endpoint is not allowlisted"
+            )
 
     def _request(
         self,
@@ -153,7 +159,9 @@ class FessSession:
         on_dispatch: Optional[Callable[[], None]] = None,
     ) -> HTTPResponse:
         if json_body is not None and form_body is not None:
-            raise ConfigurationError("internal request has multiple body encodings")
+            raise ConfigurationError(
+                "internal request has multiple body encodings"
+            )
         if method not in ("GET", "POST", "PUT", "DELETE"):
             raise ConfigurationError("internal request method is invalid")
         self._assert_allowlisted_endpoint(method, path)
@@ -169,16 +177,22 @@ class FessSession:
             body = _canonical_json(json_body)
             headers.append(("Content-Type", "application/json"))
         elif form_body is not None:
-            body = urllib.parse.urlencode(tuple(form_body.items())).encode("utf-8")
+            body = urllib.parse.urlencode(tuple(form_body.items())).encode(
+                "utf-8"
+            )
             headers[0] = ("Accept", "text/html")
-            headers.append(("Content-Type", "application/x-www-form-urlencoded"))
+            headers.append(
+                ("Content-Type", "application/x-www-form-urlencoded")
+            )
         elif path.startswith("/admin/"):
             headers[0] = ("Accept", "text/html")
         if body is not None and len(body) > MAX_BULK_REQUEST_BYTES:
             raise ProtocolError("Fess request body exceeded its byte cap")
         if token is not None:
             if TOKEN_RE.fullmatch(token) is None:
-                raise AuthenticationError("ephemeral access token is malformed")
+                raise AuthenticationError(
+                    "ephemeral access token is malformed"
+                )
             headers.append(("Authorization", "Bearer " + token))
         if require_session:
             if (
@@ -188,11 +202,16 @@ class FessSession:
                 raise AuthenticationError("Fess session is unavailable")
             headers.append(("Cookie", "JSESSIONID=" + self._session_id))
         if csrf:
-            if self._csrf_token is None or CSRF_RE.fullmatch(self._csrf_token) is None:
+            if (
+                self._csrf_token is None
+                or CSRF_RE.fullmatch(self._csrf_token) is None
+            ):
                 raise AuthenticationError("Fess CSRF state is unavailable")
             headers.append(("X-Fess-CSRF-Token", self._csrf_token))
         url = self._fixed_url(path, query)
-        request = HTTPRequest(method=method, url=url, headers=tuple(headers), body=body)
+        request = HTTPRequest(
+            method=method, url=url, headers=tuple(headers), body=body
+        )
         timeout = deadline.remaining(self.request_timeout)
         if on_dispatch is not None:
             on_dispatch()
@@ -202,10 +221,15 @@ class FessSession:
             max_bytes=max_bytes,
         )
         if not isinstance(response, HTTPResponse):
-            raise ProtocolError("Fess transport returned an unsupported response")
+            raise ProtocolError(
+                "Fess transport returned an unsupported response"
+            )
         if not _exact_int(response.status, minimum=100, maximum=599):
             raise ProtocolError("Fess response status is malformed")
-        if not isinstance(response.body, bytes) or len(response.body) > max_bytes:
+        if (
+            not isinstance(response.body, bytes)
+            or len(response.body) > max_bytes
+        ):
             raise ProtocolError("Fess response exceeded its byte cap")
         if not isinstance(response.headers, tuple):
             raise ProtocolError("Fess response headers are malformed")
@@ -246,8 +270,12 @@ class FessSession:
         if 300 <= response.status < 400:
             locations = response.header_values("Location")
             if len(locations) != 1 or allow_redirect_path is None:
-                raise ProtocolError("Fess redirect was not explicitly expected")
-            redirected = urllib.parse.urlsplit(urllib.parse.urljoin(url, locations[0]))
+                raise ProtocolError(
+                    "Fess redirect was not explicitly expected"
+                )
+            redirected = urllib.parse.urlsplit(
+                urllib.parse.urljoin(url, locations[0])
+            )
             if (
                 redirected.scheme != self.origin[0]
                 or redirected.hostname != self.origin[1]
@@ -290,11 +318,15 @@ class FessSession:
     ) -> Mapping[str, Any]:
         root = _strict_json(response.body)
         value = root.get("response") if isinstance(root, Mapping) else None
-        if not isinstance(value, Mapping) or type(value.get("status")) is not int:
+        if (
+            not isinstance(value, Mapping)
+            or type(value.get("status")) is not int
+        ):
             raise ProtocolError("Fess returned an invalid API envelope")
         if value["status"] not in accepted_statuses:
             raise _diagnosed(
-                ProtocolError("Fess API operation was rejected"), cause="api_rejected"
+                ProtocolError("Fess API operation was rejected"),
+                cause="api_rejected",
             )
         return value
 
@@ -306,7 +338,9 @@ class FessSession:
             try:
                 jar.load(raw)
             except http.cookies.CookieError:
-                raise AuthenticationError("Fess login cookie is malformed") from None
+                raise AuthenticationError(
+                    "Fess login cookie is malformed"
+                ) from None
             if "JSESSIONID" in jar:
                 values.append(jar["JSESSIONID"].value)
         if len(values) != 1 or SESSION_RE.fullmatch(values[0]) is None:

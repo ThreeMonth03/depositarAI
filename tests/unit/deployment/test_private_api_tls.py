@@ -1,4 +1,6 @@
-"""TLS identity and unchanged-backend admission for the private API endpoint."""
+"""TLS identity and unchanged-backend admission for the private API
+endpoint.
+"""
 
 import copy
 import json
@@ -20,11 +22,17 @@ INNER_NAME = "api-inner.example.test"
 
 
 def certificates(root, *, outer_name=OUTER_NAME, inner_name=INNER_NAME):
-    """Disposable, locally signed test identities; never use product material."""
+    """Disposable, locally signed test identities; never use product
+    material.
+    """
 
     def run(*args):
         subprocess.run(
-            ["openssl", *args], check=True, capture_output=True, timeout=15, umask=0o077
+            ["openssl", *args],
+            check=True,
+            capture_output=True,
+            timeout=15,
+            umask=0o077,
         )
 
     run(
@@ -56,7 +64,9 @@ def certificates(root, *, outer_name=OUTER_NAME, inner_name=INNER_NAME):
             "/CN=" + name,
         )
         ext = root / (role + ".ext")
-        ext.write_text("subjectAltName=DNS:" + name + "\nextendedKeyUsage=serverAuth\n")
+        ext.write_text(
+            "subjectAltName=DNS:" + name + "\nextendedKeyUsage=serverAuth\n"
+        )
         run(
             "x509",
             "-req",
@@ -93,7 +103,9 @@ class Runner:
             value = [self.network]
         elif argv[:3] == ["docker", "image", "inspect"]:
             return SimpleNamespace(
-                returncode=0, stdout=("sha256:" + "f" * 64 + "\n").encode(), stderr=b""
+                returncode=0,
+                stdout=("sha256:" + "f" * 64 + "\n").encode(),
+                stderr=b"",
             )
         elif argv[:2] == ["docker", "inspect"]:
             value = [self.owned] if '"NetworkMode"' in argv[3] else self.rows
@@ -110,13 +122,17 @@ class Runner:
 
 
 class TLSProofRunner:
-    """Exercise real TLS plan/ownership checks against one local-daemon fixture."""
+    """Exercise real TLS plan/ownership checks against one local-daemon
+    fixture.
+    """
 
     def __init__(self, backend, path):
         self.backend, self.calls = backend, []
         self.projected, self.owned, self.runtime = {}, {}, []
         compose = json.loads((path / "compose.json").read_bytes())
-        for index, (role, service) in enumerate(compose["services"].items(), 8):
+        for index, (role, service) in enumerate(
+            compose["services"].items(), 8
+        ):
             identifier = str(index) * 64
             row = container(identifier, pid=1000 + index)
             row["Image"] = "sha256:" + "f" * 64
@@ -133,7 +149,8 @@ class TLSProofRunner:
                 for m in service["volumes"]
             ]
             row["HostConfig"]["Binds"] = [
-                f"{m['Source']}:{m['Destination']}:ro,rprivate" for m in row["Mounts"]
+                f"{m['Source']}:{m['Destination']}:ro,rprivate"
+                for m in row["Mounts"]
             ]
             self.projected[identifier] = row
             self.runtime.append({"Service": role, "ID": identifier})
@@ -170,7 +187,9 @@ class TLSProofRunner:
         local_prefix = gpu_ownership.DOCKER_PREFIX
         if argv[0] == "docker":
             if tuple(argv[: len(local_prefix)]) != local_prefix:
-                raise AssertionError("TLS ownership must use the fixed local daemon")
+                raise AssertionError(
+                    "TLS ownership must use the fixed local daemon"
+                )
             argv = ["docker", *argv[len(local_prefix) :]]
         if (
             argv[:2] == ["docker", "inspect"]
@@ -189,7 +208,9 @@ class TLSProofRunner:
             )
         if argv[:2] == ["docker", "compose"] and "ps" in argv:
             return SimpleNamespace(
-                returncode=0, stdout=json.dumps(self.runtime).encode(), stderr=b""
+                returncode=0,
+                stdout=json.dumps(self.runtime).encode(),
+                stderr=b"",
             )
         return self.backend(argv, **kwargs)
 
@@ -197,7 +218,9 @@ class TLSProofRunner:
 class PrivateApiTlsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.certdir = tempfile.TemporaryDirectory(prefix="private-api-cert-unit-")
+        cls.certdir = tempfile.TemporaryDirectory(
+            prefix="private-api-cert-unit-"
+        )
         certificates(Path(cls.certdir.name))
 
     @classmethod
@@ -208,7 +231,13 @@ class PrivateApiTlsTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="private-api-unit-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        for name in ("ca.pem", "outer.crt", "outer.key", "inner.crt", "inner.key"):
+        for name in (
+            "ca.pem",
+            "outer.crt",
+            "outer.key",
+            "inner.crt",
+            "inner.key",
+        ):
             p = self.root / name
             p.write_bytes((Path(self.certdir.name) / name).read_bytes())
             p.chmod(0o600)
@@ -229,7 +258,9 @@ class PrivateApiTlsTests(unittest.TestCase):
         routes.mkdir(mode=0o700)
         (routes / "active.conf").write_text("unchanged private gateway")
         (routes / "active.conf").chmod(0o600)
-        for index, role in enumerate(("web", "filtered-embedding", "web-nginx"), 1):
+        for index, role in enumerate(
+            ("web", "filtered-embedding", "web-nginx"), 1
+        ):
             row = copy.deepcopy(api)
             row["Id"] = str(index) * 64
             row["Labels"]["com.docker.compose.service"] = role
@@ -282,7 +313,9 @@ class PrivateApiTlsTests(unittest.TestCase):
         self.output = self.root / "prepared"
 
     def prepare(self):
-        return endpoint.prepare(self.config_path, self.output, runner=self.runner)
+        return endpoint.prepare(
+            self.config_path, self.output, runner=self.runner
+        )
 
     def test_prepare_and_check_never_read_or_mount_service_key(self):
         original = endpoint._read
@@ -300,7 +333,8 @@ class PrivateApiTlsTests(unittest.TestCase):
         self.assertNotIn("networks", compose)
         self.assertNotIn("ports", compose["services"]["outer"])
         self.assertEqual(
-            compose["services"]["inner"]["network_mode"], "container:" + self.api["Id"]
+            compose["services"]["inner"]["network_mode"],
+            "container:" + self.api["Id"],
         )
         self.assertNotIn("ca.key", json.dumps(compose))
         self.assertNotIn("service-key", json.dumps(compose))
@@ -308,21 +342,26 @@ class PrivateApiTlsTests(unittest.TestCase):
         inner = compose["services"]["inner"]
         self.assertEqual(outer["user"], "0:0")
         self.assertEqual(
-            set(outer["cap_add"]), {"SETUID", "SETGID", "DAC_OVERRIDE", "CHOWN"}
+            set(outer["cap_add"]),
+            {"SETUID", "SETGID", "DAC_OVERRIDE", "CHOWN"},
         )
         self.assertEqual(inner["user"], f"{os.geteuid()}:{os.getegid()}")
         self.assertNotIn("cap_add", inner)
         for service in (outer, inner):
             self.assertEqual(service["cap_drop"], ["ALL"])
             self.assertTrue(service["read_only"])
-            self.assertEqual(service["security_opt"], ["no-new-privileges:true"])
+            self.assertEqual(
+                service["security_opt"], ["no-new-privileges:true"]
+            )
 
-    def test_gpu_producer_authenticates_real_plan_and_healthy_pair_without_mutation(
+    def test_gpu_producer_authenticates_plan_and_pair_without_mutation(
         self,
     ):
         self.prepare()
         runner = TLSProofRunner(self.runner, self.output)
-        proofs = endpoint.gpu_ownership_proofs(self.output / "plan.json", runner=runner)
+        proofs = endpoint.gpu_ownership_proofs(
+            self.output / "plan.json", runner=runner
+        )
         self.assertEqual(len(proofs), 2)
         self.assertEqual({p.role for p in proofs}, gpu_ownership.TLS_CPU_ROLES)
         for proof in proofs:
@@ -340,7 +379,9 @@ class PrivateApiTlsTests(unittest.TestCase):
             )
         )
 
-    def test_gpu_producer_rejects_missing_unhealthy_or_changed_tls_profile(self):
+    def test_gpu_producer_rejects_missing_unhealthy_or_changed_tls_profile(
+        self,
+    ):
         self.prepare()
         for case in (
             "missing",
@@ -353,10 +394,14 @@ class PrivateApiTlsTests(unittest.TestCase):
             with self.subTest(case=case):
                 runner = TLSProofRunner(self.runner, self.output)
                 inner = next(
-                    row["ID"] for row in runner.runtime if row["Service"] == "inner"
+                    row["ID"]
+                    for row in runner.runtime
+                    if row["Service"] == "inner"
                 )
                 outer = next(
-                    row["ID"] for row in runner.runtime if row["Service"] == "outer"
+                    row["ID"]
+                    for row in runner.runtime
+                    if row["Service"] == "outer"
                 )
                 if case == "missing":
                     runner.runtime.pop()
@@ -388,15 +433,21 @@ class PrivateApiTlsTests(unittest.TestCase):
             return value
 
         with self.assertRaises(endpoint.EndpointError):
-            endpoint.gpu_ownership_proofs(self.output / "plan.json", runner=changed)
+            endpoint.gpu_ownership_proofs(
+                self.output / "plan.json", runner=changed
+            )
 
-    def test_tls_configs_have_exact_methods_verified_inner_tls_and_no_retry(self):
+    def test_tls_configs_have_exact_methods_verified_inner_tls_and_no_retry(
+        self,
+    ):
         self.prepare()
         outer = (self.output / "outer.conf").read_text()
         inner = (self.output / "inner.conf").read_text()
         self.assertIn("listen 172.30.0.4:8443 ssl", inner)
         self.assertIn("proxy_ssl_verify on", outer)
-        self.assertIn("proxy_ssl_name " + self.config["inner_server_name"], outer)
+        self.assertIn(
+            "proxy_ssl_name " + self.config["inner_server_name"], outer
+        )
         self.assertIn("allow 127.0.0.1/32; deny all", outer)
         for text in (outer, inner):
             self.assertIn("$request_method != GET", text)
@@ -405,7 +456,9 @@ class PrivateApiTlsTests(unittest.TestCase):
             self.assertIn("proxy_next_upstream off", text)
             self.assertNotIn("Authorization", text)
 
-    def test_deployment_names_bind_certificate_verification_proxy_and_plan(self):
+    def test_deployment_names_bind_certificate_verification_proxy_and_plan(
+        self,
+    ):
         self.config.update(
             outer_server_name="tenant-api.example.test",
             inner_server_name="tenant-inner.example.test",
@@ -433,13 +486,17 @@ class PrivateApiTlsTests(unittest.TestCase):
                 )
             )
         self.assertIn("proxy_ssl_name tenant-inner.example.test;", outer)
-        self.assertIn("proxy_set_header Host tenant-inner.example.test;", outer)
+        self.assertIn(
+            "proxy_set_header Host tenant-inner.example.test;", outer
+        )
         plan["config"]["inner_server_name"] = "different-inner.example.test"
         (self.output / "plan.json").write_text(json.dumps(plan))
         with self.assertRaises(ValueError):
             endpoint.check(self.output / "plan.json", runner=self.runner)
 
-    def test_cn_fallback_and_wildcard_san_do_not_replace_explicit_identity(self):
+    def test_cn_fallback_and_wildcard_san_do_not_replace_explicit_identity(
+        self,
+    ):
         source = Path(self.certdir.name)
         for san in (None, "*.example.test"):
             with self.subTest(san=san):
@@ -475,13 +532,18 @@ class PrivateApiTlsTests(unittest.TestCase):
                 with self.assertRaises(endpoint.EndpointError):
                     self.prepare()
                 self.assertFalse(self.output.exists())
-        self.assertFalse(any(call[0] == "docker" for call in self.runner.calls))
+        self.assertFalse(
+            any(call[0] == "docker" for call in self.runner.calls)
+        )
 
     def test_server_names_are_required_distinct_bounded_dns_names(self):
         for field in ("outer_server_name", "inner_server_name"):
             missing = dict(self.config)
             del missing[field]
-            with self.subTest(field=field, missing=True), self.assertRaises(ValueError):
+            with (
+                self.subTest(field=field, missing=True),
+                self.assertRaises(ValueError),
+            ):
                 endpoint.validate_config(missing)
             for bad in (
                 None,
@@ -512,14 +574,17 @@ class PrivateApiTlsTests(unittest.TestCase):
                     else "outer_server_name"
                 ],
             ):
-                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                with (
+                    self.subTest(field=field, bad=bad),
+                    self.assertRaises(ValueError),
+                ):
                     endpoint.validate_config({**self.config, field: bad})
         longest = ".".join(["a" * 63] * 3 + ["b" * 61])
         self.assertEqual(len(longest), 253)
         self.assertEqual(
-            endpoint.validate_config({**self.config, "outer_server_name": longest})[
-                "outer_server_name"
-            ],
+            endpoint.validate_config(
+                {**self.config, "outer_server_name": longest}
+            )["outer_server_name"],
             longest,
         )
 
@@ -532,7 +597,10 @@ class PrivateApiTlsTests(unittest.TestCase):
         ):
             previous = self.api[field]
             self.api[field] = bad
-            with self.subTest(field=field), self.assertRaises(endpoint.EndpointError):
+            with (
+                self.subTest(field=field),
+                self.assertRaises(endpoint.EndpointError),
+            ):
                 endpoint.check(self.output / "plan.json", runner=self.runner)
             self.api[field] = previous
         network_name = self.runner.network["Name"]
@@ -545,7 +613,9 @@ class PrivateApiTlsTests(unittest.TestCase):
             endpoint.check(self.output / "plan.json", runner=self.runner)
 
     def test_leaf_key_mismatch_fails_before_writing(self):
-        (self.root / "inner.key").write_bytes((self.root / "outer.key").read_bytes())
+        (self.root / "inner.key").write_bytes(
+            (self.root / "outer.key").read_bytes()
+        )
         with self.assertRaises(ValueError):
             self.prepare()
         self.assertFalse(self.output.exists())
@@ -588,7 +658,9 @@ class PrivateApiTlsTests(unittest.TestCase):
             endpoint.check(self.output / "plan.json", runner=self.runner)
         self.assertFalse(any("up" in call for call in self.runner.calls))
 
-    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(self):
+    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(
+        self,
+    ):
         gateway = self.rows.pop()
         del self.runner.network["Containers"][gateway["Id"]]
         with self.assertRaises(endpoint.EndpointError):
@@ -608,8 +680,13 @@ class PrivateApiTlsTests(unittest.TestCase):
             "Healthy": "healthy",
         }
         for action in ("up", "stop"):
-            with self.subTest(action=action), self.assertRaises(endpoint.EndpointError):
-                endpoint.operate(action, self.output / "plan.json", runner=self.runner)
+            with (
+                self.subTest(action=action),
+                self.assertRaises(endpoint.EndpointError),
+            ):
+                endpoint.operate(
+                    action, self.output / "plan.json", runner=self.runner
+                )
         self.assertFalse(
             any(
                 any(x in call for x in ("up", "stop", "rm"))
@@ -621,7 +698,9 @@ class PrivateApiTlsTests(unittest.TestCase):
         self.prepare()
         self.runner.network["Containers"].clear()
         (self.root / "outer.crt").unlink()
-        result = endpoint.operate("stop", self.output / "plan.json", runner=self.runner)
+        result = endpoint.operate(
+            "stop", self.output / "plan.json", runner=self.runner
+        )
         self.assertEqual(result["status"], "private_api_tls_stopped")
 
     def test_invalid_config_ip_image_path_and_source_refuse(self):
@@ -637,7 +716,9 @@ class PrivateApiTlsTests(unittest.TestCase):
 
 
 class IsolatedReleaseTlsTests(PrivateApiTlsTests):
-    """Run the same TLS safety contract with an explicit, gateway-free backend."""
+    """Run the same TLS safety contract with an explicit, gateway-free
+    backend.
+    """
 
     def setUp(self):
         super().setUp()
@@ -666,10 +747,13 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         self.addCleanup(guard.stop)
 
     def test_material_and_active_route_changes_refuse(self):
-        # Gateway state is outside this mode's authority, including when present
+        # Gateway state is outside this mode's authority, including when
+        # present
         # elsewhere on the host. Certificate material remains authenticated.
         self.prepare()
-        (self.root / "routes" / "active.conf").write_text("unrelated gateway changed")
+        (self.root / "routes" / "active.conf").write_text(
+            "unrelated gateway changed"
+        )
         plan = endpoint.check(self.output / "plan.json", runner=self.runner)
         self.assertEqual(plan["schema_version"], 2)
         self.assertEqual(plan["backend"]["backend_mode"], "isolated-release")
@@ -679,7 +763,9 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         with self.assertRaises(ValueError):
             endpoint.check(self.output / "plan.json", runner=self.runner)
 
-    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(self):
+    def test_schema1_still_requires_gateway_and_does_not_infer_isolated_mode(
+        self,
+    ):
         self.config_path.write_text(
             json.dumps(
                 {
@@ -702,7 +788,10 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
             {"backend_mode": None},
             {"backend_mode": "gateway"},
         ):
-            with self.subTest(change=change), self.assertRaises(endpoint.EndpointError):
+            with (
+                self.subTest(change=change),
+                self.assertRaises(endpoint.EndpointError),
+            ):
                 endpoint.validate_config({**self.config, **change})
         missing = dict(self.config)
         del missing["backend_mode"]
@@ -714,15 +803,22 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         original = self.release.read_bytes()
         for changed in (
             original + b"\n",
-            json.dumps(json.loads(original) | {"unrelated": "changed"}).encode(),
+            json.dumps(
+                json.loads(original) | {"unrelated": "changed"}
+            ).encode(),
         ):
             self.release.write_bytes(changed)
-            with self.subTest(changed=changed[-30:]), self.assertRaises(ValueError):
+            with (
+                self.subTest(changed=changed[-30:]),
+                self.assertRaises(ValueError),
+            ):
                 endpoint.check(self.output / "plan.json", runner=self.runner)
         self.release.write_bytes(original)
         endpoint.check(self.output / "plan.json", runner=self.runner)
 
-    def test_all_three_peers_bind_images_processes_namespaces_and_networks(self):
+    def test_all_three_peers_bind_images_processes_namespaces_and_networks(
+        self,
+    ):
         self.prepare()
         network = self.runner.network["Name"]
         for row in self.rows:
@@ -735,10 +831,13 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
                 old = row[field]
                 row[field] = changed
                 with self.subTest(
-                    role=row["Labels"]["com.docker.compose.service"], field=field
+                    role=row["Labels"]["com.docker.compose.service"],
+                    field=field,
                 ):
                     with self.assertRaises(ValueError):
-                        endpoint.check(self.output / "plan.json", runner=self.runner)
+                        endpoint.check(
+                            self.output / "plan.json", runner=self.runner
+                        )
                 row[field] = old
             old = row["Networks"][network]["NetworkID"]
             row["Networks"][network]["NetworkID"] = "f" * 64
@@ -752,13 +851,18 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
                 endpoint.check(self.output / "plan.json", runner=self.runner)
             row["PortBindings"] = {}
 
-    def test_unknown_or_duplicate_role_and_extra_gateway_are_not_accepted(self):
+    def test_unknown_or_duplicate_role_and_extra_gateway_are_not_accepted(
+        self,
+    ):
         self.prepare()
         web = self.rows[1]
         for field, changed in (
             ("com.docker.compose.service", "foreign"),
             ("com.docker.compose.service", "conversation-api"),
-            ("com.docker.compose.project", endpoint.composition.GATEWAY_PROJECT),
+            (
+                "com.docker.compose.project",
+                endpoint.composition.GATEWAY_PROJECT,
+            ),
         ):
             previous = web["Labels"][field]
             web["Labels"][field] = changed
@@ -770,10 +874,14 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
             web["Labels"][field] = previous
         self.runner.network["Containers"]["9" * 64] = {"Name": "web-nginx"}
         with self.assertRaises(ValueError):
-            endpoint.operate("up", self.output / "plan.json", runner=self.runner)
+            endpoint.operate(
+                "up", self.output / "plan.json", runner=self.runner
+            )
         self.assertFalse(any("up" in call for call in self.runner.calls))
 
-    def test_actual_attachable_or_ingress_network_refuses_prepare_and_check(self):
+    def test_actual_attachable_or_ingress_network_refuses_prepare_and_check(
+        self,
+    ):
         for flag in ("Attachable", "Ingress"):
             self.runner.network[flag] = True
             with (
@@ -786,12 +894,17 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
         self.prepare()
         for flag in ("Attachable", "Ingress"):
             self.runner.network[flag] = True
-            with self.subTest(stage="check", flag=flag), self.assertRaises(ValueError):
+            with (
+                self.subTest(stage="check", flag=flag),
+                self.assertRaises(ValueError),
+            ):
                 endpoint.check(self.output / "plan.json", runner=self.runner)
             self.runner.network[flag] = False
         self.assertFalse(any("up" in call for call in self.runner.calls))
 
-    def test_up_rechecks_backend_after_start_and_quarantines_changed_peer(self):
+    def test_up_rechecks_backend_after_start_and_quarantines_changed_peer(
+        self,
+    ):
         self.prepare()
 
         def changed(_argv, _runner):
@@ -800,11 +913,15 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
 
         with (
             patch.object(endpoint, "_owned", return_value=[]),
-            patch.object(endpoint, "_compose_output", side_effect=changed) as started,
+            patch.object(
+                endpoint, "_compose_output", side_effect=changed
+            ) as started,
             patch.object(endpoint, "_stop_owned") as stopped,
             self.assertRaises(ValueError),
         ):
-            endpoint.operate("up", self.output / "plan.json", runner=self.runner)
+            endpoint.operate(
+                "up", self.output / "plan.json", runner=self.runner
+            )
         self.assertEqual(started.call_count, 1)
         stopped.assert_called_once()
 
@@ -817,7 +934,9 @@ class IsolatedReleaseTlsTests(PrivateApiTlsTests):
             if kind == "schema":
                 value["schema_version"] = 1
             else:
-                value["backend"]["active_route"] = str(self.root / "routes/active.conf")
+                value["backend"]["active_route"] = str(
+                    self.root / "routes/active.conf"
+                )
             path.write_text(json.dumps(value))
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 endpoint.operate("stop", path, runner=self.runner)

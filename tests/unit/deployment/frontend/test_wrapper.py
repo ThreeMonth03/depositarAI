@@ -1,4 +1,6 @@
-"""Exercise frontend admission boundaries with Git and Docker fixture commands."""
+"""Exercise frontend admission boundaries with Git and Docker fixture
+commands.
+"""
 
 import json
 from pathlib import Path
@@ -71,7 +73,9 @@ else:
 
 class FrontendWrapperTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="frontend-wrapper-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="frontend-wrapper-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.root.chmod(0o700)
@@ -81,7 +85,8 @@ class FrontendWrapperTests(unittest.TestCase):
         for name, program in (("git", GIT), ("docker", DOCKER)):
             target = self.bin / name
             target.write_text(
-                f"#!{sys.executable}\n" + textwrap.dedent(program), encoding="utf-8"
+                f"#!{sys.executable}\n" + textwrap.dedent(program),
+                encoding="utf-8",
             )
             target.chmod(0o700)
         self.calls_file = self.root / "calls.jsonl"
@@ -120,7 +125,10 @@ class FrontendWrapperTests(unittest.TestCase):
             check=False,
         )
         self.assertTrue(self.calls_file.exists(), result.stderr)
-        calls = [json.loads(line) for line in self.calls_file.read_text().splitlines()]
+        calls = [
+            json.loads(line)
+            for line in self.calls_file.read_text().splitlines()
+        ]
         return result, calls
 
     def operations(self, calls):
@@ -128,7 +136,9 @@ class FrontendWrapperTests(unittest.TestCase):
             "build"
             if call[0] == "build"
             else next(
-                name for name in ("config", "stop", "up", "down", "ps") if name in call
+                name
+                for name in ("config", "stop", "up", "down", "ps")
+                if name in call
             )
             for call in calls
         ]
@@ -147,7 +157,8 @@ class FrontendWrapperTests(unittest.TestCase):
         self.assertIn("config", operations[stop + 1 : up])
         current = self.access_file.stat()
         self.assertEqual(
-            (original.st_dev, original.st_ino), (current.st_dev, current.st_ino)
+            (original.st_dev, original.st_ino),
+            (current.st_dev, current.st_ino),
         )
         self.assertEqual(rules, self.access_file.read_bytes())
         self.assertEqual(0o444, current.st_mode & 0o777)
@@ -159,7 +170,9 @@ class FrontendWrapperTests(unittest.TestCase):
         finally:
             self.root.chmod(0o700)
         self.assertNotEqual(0, result.returncode)
-        self.assertTrue(all(name == "config" for name in self.operations(calls)))
+        self.assertTrue(
+            all(name == "config" for name in self.operations(calls))
+        )
 
     def test_drift_during_build_stops_before_admission_changes(self):
         result, calls = self.run_wrapper("up", fault="build")
@@ -192,11 +205,15 @@ class FrontendWrapperTests(unittest.TestCase):
                         self.access_file.chmod(0o444)
                     result, calls = self.run_wrapper(command)
                     self.assertEqual(0, result.returncode, result.stderr)
-                    self.assertEqual(["config", expected], self.operations(calls))
+                    self.assertEqual(
+                        ["config", expected], self.operations(calls)
+                    )
                     if admission == "missing":
                         self.assertFalse(self.access_file.exists())
                     else:
-                        self.assertEqual(b"allow all;\n", self.access_file.read_bytes())
+                        self.assertEqual(
+                            b"allow all;\n", self.access_file.read_bytes()
+                        )
 
     def test_private_up_does_not_require_an_intranet_admission_file(self):
         self.access_file.unlink()

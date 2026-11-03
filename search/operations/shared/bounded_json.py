@@ -1,10 +1,11 @@
 """Fixed predecoder limits shared by trusted operator transports.
 
 Callers separately bound their response bytes. Limits are not request options:
-JSON nesting is at most 64 and a numeric token is at most 64 bytes. In particular
-Python 3.9 must not convert a megabyte integer before discovering it is invalid.
-Quoted text is excluded from token/nesting checks; the strict decoder remains
-responsible for JSON syntax, UTF-8, duplicate keys and invalid constants.
+JSON nesting is at most 64 and a numeric token is at most 64 bytes. In
+particular Python 3.9 must not convert a megabyte integer before discovering it
+is invalid. Quoted text is excluded from token/nesting checks; the strict
+decoder remains responsible for JSON syntax, UTF-8, duplicate keys and invalid
+constants.
 """
 
 from __future__ import annotations

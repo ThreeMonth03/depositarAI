@@ -24,7 +24,9 @@ class InferenceError(ValueError):
 
 
 class Docker:
-    """Reuse shared bounded pipe capture, with this workflow's closed budget."""
+    """Reuse shared bounded pipe capture, with this workflow's closed
+    budget.
+    """
 
     def __init__(
         self,
@@ -76,7 +78,9 @@ class Docker:
                 self.prefix + arguments,
                 timeout=min(timeout, remaining),
                 environment=dict(self.environment),
-                **({} if input_bytes is None else {"input_bytes": input_bytes}),
+                **(
+                    {} if input_bytes is None else {"input_bytes": input_bytes}
+                ),
             )
             if self.verify_client is not None:
                 self.verify_client()
@@ -163,6 +167,8 @@ def project_inventory(docker, project):
     if len(networks) > 2 or any(type(value) is not dict for value in networks):
         raise InferenceError("inference_network_inventory_invalid")
     names = [value.get("Name") for value in networks]
-    if any(type(name) is not str for name in names) or len(set(names)) != len(names):
+    if any(type(name) is not str for name in names) or len(set(names)) != len(
+        names
+    ):
         raise InferenceError("inference_network_inventory_invalid")
     return ids, set(names)

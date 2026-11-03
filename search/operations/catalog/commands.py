@@ -15,7 +15,7 @@ MAX_OUTPUT_BYTES = 4 * 1024**2
 
 
 class BackendError(ValueError):
-    """A preparation invariant failed; the preserved slot must not be started."""
+    """An invariant failed; never start the preserved preparation slot."""
 
 
 def default_runner(repo_root):

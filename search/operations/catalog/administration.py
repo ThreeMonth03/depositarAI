@@ -23,7 +23,10 @@ from search.operations.shared import private_io
 from search.catalog.errors import valid_failure_record
 
 MAX_OPERATIONS = 128
-ADMIN_BASE = "python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d"
+ADMIN_BASE = (
+    "python:3.13.7-slim-bookworm@sha256:"
+    "adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d"
+)
 ADMIN_FILES = (
     "deploy/docker/importer/Dockerfile",
     "deploy/docker/importer/Dockerfile.dockerignore",
@@ -79,12 +82,15 @@ def _admin_failure_diagnostic(outcome, state):
 
 
 def _admin_image(context, *, read_only=False):
-    """Verify the existing image, or build it only in the normal admin workflow."""
+    """Verify the existing image, or build it only in the normal admin
+    workflow."""
     if type(read_only) is not bool:
         raise RuntimeError("catalog_admin_readonly_invalid")
     path = context["root"] / "admin-image.json"
     expected_sources = {
-        name: hashlib.sha256(execution.sealed_source(context, name)).hexdigest()
+        name: hashlib.sha256(
+            execution.sealed_source(context, name)
+        ).hexdigest()
         for name in ADMIN_FILES
     }
     if path.exists():
@@ -104,7 +110,8 @@ def _admin_image(context, *, read_only=False):
     if (
         type(entry) is not dict
         or set(entry) != {"image_id", "reference", "labels", "sources"}
-        or entry["reference"] != context["plan"]["project"] + "-catalog-admin:1"
+        or entry["reference"]
+        != context["plan"]["project"] + "-catalog-admin:1"
         or entry["sources"] != expected_sources
         or entry["labels"]
         != execution.image_labels(
@@ -128,7 +135,10 @@ def _admin_ids(context):
             "--no-trunc",
             "--quiet",
             "--filter",
-            "label=" + LABEL_PREFIX + "admin-project=" + context["plan"]["project"],
+            "label="
+            + LABEL_PREFIX
+            + "admin-project="
+            + context["plan"]["project"],
         ],
     )
     ids = raw.split()
@@ -222,7 +232,10 @@ def _admin_create(context, image, identity, fess_id, secret, *, journal=None):
     ]
     if journal is not None:
         command.extend(
-            ["--mount", "type=bind,src=" + str(journal) + ",dst=/vector-journal"]
+            [
+                "--mount",
+                "type=bind,src=" + str(journal) + ",dst=/vector-journal",
+            ]
         )
     return [
         *command,
@@ -236,7 +249,9 @@ def _inspect_admin(
 ):
     if _secret(context) != secret:
         raise RuntimeError("catalog_admin_secret_changed")
-    rows = execution.run_json(context["runner"], ["docker", "inspect", container_id])
+    rows = execution.run_json(
+        context["runner"], ["docker", "inspect", container_id]
+    )
     if (
         type(rows) is not list
         or len(rows) != 1
@@ -269,7 +284,11 @@ def _admin_records(context, *, read_only=False, image=None):
     directory = context["root"] / "admin-operations"
     os.close(private_io.open_directory(directory, create=not read_only))
     if read_only:
-        image = image if image is not None else _admin_image(context, read_only=True)
+        image = (
+            image
+            if image is not None
+            else _admin_image(context, read_only=True)
+        )
     entries = list(directory.iterdir())
     names = {path.name for path in entries}
     if any(
@@ -283,9 +302,16 @@ def _admin_records(context, *, read_only=False, image=None):
         raise RuntimeError("catalog_admin_unknown_evidence")
     starts = [path for path in entries if path.name.endswith("-started.json")]
     start_ids = {path.name[:32] for path in starts}
-    if any(name != "reconciled.json" and name[:32] not in start_ids for name in names):
+    if any(
+        name != "reconciled.json" and name[:32] not in start_ids
+        for name in names
+    ):
         raise RuntimeError("catalog_admin_orphan_evidence")
-    if len(starts) > MAX_OPERATIONS or not read_only and len(starts) == MAX_OPERATIONS:
+    if (
+        len(starts) > MAX_OPERATIONS
+        or not read_only
+        and len(starts) == MAX_OPERATIONS
+    ):
         raise RuntimeError("catalog_admin_retention_limit")
     pending = set()
     complete_records = {}
@@ -295,7 +321,9 @@ def _admin_records(context, *, read_only=False, image=None):
         _validate_admin_receipt(context, started, run_id, status="started")
         if read_only and started["admin_image_id"] != image["image_id"]:
             raise RuntimeError("catalog_admin_evidence_image_changed")
-        fixed = {key: value for key, value in started.items() if key != "status"}
+        fixed = {
+            key: value for key, value in started.items() if key != "status"
+        }
         container = None
         container_name = run_id + "-container.json"
         if container_name in names:
@@ -322,7 +350,8 @@ def _admin_records(context, *, read_only=False, image=None):
             error_type = failure.get("error_type")
             if (
                 type(error_type) is not str
-                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,99}", error_type) is None
+                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,99}", error_type)
+                is None
                 or read_only
                 and (
                     type(failure.get("schema_version")) is not int
@@ -337,7 +366,9 @@ def _admin_records(context, *, read_only=False, image=None):
             if read_only and failure_name in names:
                 raise RuntimeError("catalog_admin_operation_requires_recovery")
             complete = execution.read_record(directory, complete_name)
-            _validate_admin_receipt(context, complete, run_id, status="completed")
+            _validate_admin_receipt(
+                context, complete, run_id, status="completed"
+            )
             if (
                 container is None
                 or complete["container_id"] != container["container_id"]
@@ -364,7 +395,8 @@ def _admin_records(context, *, read_only=False, image=None):
         if (
             type(resolved) is not list
             or any(
-                type(value) is not str or re.fullmatch(r"[0-9a-f]{32}", value) is None
+                type(value) is not str
+                or re.fullmatch(r"[0-9a-f]{32}", value) is None
                 for value in resolved
             )
             or resolved != sorted(set(resolved))
@@ -418,12 +450,16 @@ def _validate_admin_receipt(context, receipt, run_id, *, status):
             context["plan"]["manifest_sha256"],
             operation=receipt["operation"],
         )
-        if receipt["result"]["document_count"] != context["plan"]["document_count"]:
+        if (
+            receipt["result"]["document_count"]
+            != context["plan"]["document_count"]
+        ):
             raise RuntimeError("catalog_admin_document_count_changed")
 
 
 def admin(config, plan, *, repo_root, operation, runner=None):
-    """One bounded import or read-only reconcile, never retry an uncertain write.
+    """One bounded import or read-only reconcile, never retry an uncertain
+    write.
 
     Empty/partial/foreign inventory is not accepted as a completed catalog by
     reconcile. A timeout with a still-running helper requires separate explicit
@@ -431,12 +467,16 @@ def admin(config, plan, *, repo_root, operation, runner=None):
     """
     if operation not in {"import", "reconcile"}:
         raise RuntimeError("catalog_admin_operation_not_supported")
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     runner = context["runner"]
     with execution.operation_lock(context):
         runtime, _images = execution.require_runtime(context)
         if _admin_ids(context):
-            raise RuntimeError("catalog_admin_helper_requires_explicit_recovery")
+            raise RuntimeError(
+                "catalog_admin_helper_requires_explicit_recovery"
+            )
         directory, pending, resolved_runs = _admin_records(context)
         if operation == "import" and pending:
             raise RuntimeError("catalog_import_requires_readonly_reconcile")
@@ -450,7 +490,9 @@ def admin(config, plan, *, repo_root, operation, runner=None):
         }
         run_id = identity["run_id"]
         execution.write_record(
-            directory, run_id + "-started.json", {**identity, "status": "started"}
+            directory,
+            run_id + "-started.json",
+            {**identity, "status": "started"},
         )
         container_id = None
         try:
@@ -523,14 +565,18 @@ def admin(config, plan, *, repo_root, operation, runner=None):
                 "container_id": container_id,
                 "result": result,
             }
-            execution.write_record(directory, run_id + "-complete.json", receipt)
+            execution.write_record(
+                directory, run_id + "-complete.json", receipt
+            )
             if operation == "reconcile":
                 execution.write_record(
                     directory,
                     "reconciled.json",
                     {
                         **receipt,
-                        "resolved_import_runs": sorted(pending | resolved_runs),
+                        "resolved_import_runs": sorted(
+                            pending | resolved_runs
+                        ),
                     },
                     replace=True,
                 )
@@ -547,9 +593,12 @@ def admin(config, plan, *, repo_root, operation, runner=None):
             )
             raise
         finally:
-            if container_id is not None and CONTAINER_ID.fullmatch(container_id):
-                # Never force-remove a running or identity/resource-mismatched helper.
-                # Failure evidence remains immutable even after an exited helper is removed.
+            if container_id is not None and CONTAINER_ID.fullmatch(
+                container_id
+            ):
+                # Never force-remove a running or identity/resource-mismatched
+                # helper. Failure evidence remains immutable even after an
+                # exited helper is removed.
                 try:
                     _inspect_admin(
                         context,
@@ -559,6 +608,8 @@ def admin(config, plan, *, repo_root, operation, runner=None):
                         runtime["container_ids"]["fess-search"],
                         secret,
                     )
-                    commands.command_output(runner, ["docker", "rm", container_id])
+                    commands.command_output(
+                        runner, ["docker", "rm", container_id]
+                    )
                 except (OSError, ValueError, subprocess.SubprocessError):
                     pass

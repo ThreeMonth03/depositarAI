@@ -1,4 +1,6 @@
-"""Private inference start/reuse tests with real Git/files and fake Docker/GPU."""
+"""Private inference start/reuse tests with real Git/files and fake
+Docker/GPU.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +43,10 @@ class FakeInferenceDocker:
                 "ollama/ollama@" + composition.OLLAMA_IMAGE.split("@", 1)[1]
             ],
             "Config": {
-                "Env": ["PATH=/usr/bin", "PRIVATE_SENTINEL=never-save-this-value"],
+                "Env": [
+                    "PATH=/usr/bin",
+                    "PRIVATE_SENTINEL=never-save-this-value",
+                ],
                 "Cmd": None,
                 "Entrypoint": ["/bin/ollama"],
             },
@@ -89,14 +94,17 @@ class FakeInferenceDocker:
                     "never", arguments[arguments.index("--pull") + 1]
                 )
                 self.fixture.test.assertEqual(
-                    {"scope-model", "answer-model", "reranker"}, set(arguments[-3:])
+                    {"scope-model", "answer-model", "reranker"},
+                    set(arguments[-3:]),
                 )
                 image_records = {
                     "scope-model": self.ollama,
                     "answer-model": self.ollama,
                     "reranker": self.fixture.docker.images["reranker"],
                 }
-                self.containers, self.networks = snapshot(self.compose, image_records)
+                self.containers, self.networks = snapshot(
+                    self.compose, image_records
+                )
                 if self.on_up:
                     self.on_up(slot)
                 if self.up_failed:
@@ -114,13 +122,16 @@ class FakeInferenceDocker:
         return subprocess.CompletedProcess(argv, 0, value, b"")
 
 
-@unittest.skipIf(os.geteuid() == 0, "production inference operator requires non-root")
+@unittest.skipIf(
+    os.geteuid() == 0, "production inference operator requires non-root"
+)
 class PrivateInferenceTests(unittest.TestCase):
     def setUp(self):
         base = ImageStagingFixture(self)
         self.fixture = base
         base.config = replace(
-            base.config, gpus=GPUConfig(UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[3])
+            base.config,
+            gpus=GPUConfig(UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[3]),
         )
         self.config = base.config
         base.invoke()
@@ -138,11 +149,18 @@ class PrivateInferenceTests(unittest.TestCase):
             manifest = private_io.canonical(
                 {
                     "schemaVersion": 2,
-                    "config": {"digest": "sha256:" + digest, "size": len(blob)},
-                    "layers": [{"digest": "sha256:" + digest, "size": len(blob)}],
+                    "config": {
+                        "digest": "sha256:" + digest,
+                        "size": len(blob),
+                    },
+                    "layers": [
+                        {"digest": "sha256:" + digest, "size": len(blob)}
+                    ],
                 }
             )
-            relative = "manifests/registry.ollama.ai/library/" + model.replace(":", "/")
+            relative = "manifests/registry.ollama.ai/library/" + model.replace(
+                ":", "/"
+            )
             self.model_bytes[relative] = manifest
             pins[model] = hashlib.sha256(manifest).hexdigest()
         self.config.api_model_root.mkdir(mode=0o700)
@@ -160,7 +178,9 @@ class PrivateInferenceTests(unittest.TestCase):
             path.chmod(0o400)
             reranker_pins[name] = hashlib.sha256(raw).hexdigest()
         self.addCleanup(mock.patch.stopall)
-        mock.patch.object(inference.prepare_search_models, "PINS", pins).start()
+        mock.patch.object(
+            inference.prepare_search_models, "PINS", pins
+        ).start()
         mock.patch("search.reranker.model.MODEL_HASHES", reranker_pins).start()
         mock.patch.object(
             inference.gpu_ownership, "run_gpu_ownership", side_effect=self.gpu
@@ -198,9 +218,13 @@ class PrivateInferenceTests(unittest.TestCase):
         return children[0]
 
     def commands(self, name):
-        return [argv[5:] for argv, _, _ in self.docker.calls if argv[5] == name]
+        return [
+            argv[5:] for argv, _, _ in self.docker.calls if argv[5] == name
+        ]
 
-    def test_fresh_start_seals_source_models_images_resources_and_gpu_roles(self):
+    def test_fresh_start_seals_source_models_images_resources_and_gpu_roles(
+        self,
+    ):
         result = self.invoke()
         self.assertEqual("runtime_running", result["status"])
         self.assertFalse(result["runtime_reused"])
@@ -211,15 +235,26 @@ class PrivateInferenceTests(unittest.TestCase):
         self.assertFalse(result["website_started"])
         self.assertFalse(result["active_changed"])
         self.assertEqual(self.revision, result["revision"])
-        self.assertEqual([0, 0, 3], [len(allowed) for allowed in self.gpu_calls])
+        self.assertEqual(
+            [0, 0, 3], [len(allowed) for allowed in self.gpu_calls]
+        )
         self.assertEqual(
             {"scope", "planner", "reranker"},
             {proof.role for proof in self.gpu_calls[-1]},
         )
         self.assertEqual(
-            4, len({uuid for proof in self.gpu_calls[-1] for uuid in proof.gpu_uuids})
+            4,
+            len(
+                {
+                    uuid
+                    for proof in self.gpu_calls[-1]
+                    for uuid in proof.gpu_uuids
+                }
+            ),
         )
-        self.assertEqual(1, sum("up" in call for call in self.commands("compose")))
+        self.assertEqual(
+            1, sum("up" in call for call in self.commands("compose"))
+        )
         self.assertEqual(3, len(result["container_ids"]))
         slot = self.slot()
         self.assertEqual(
@@ -235,12 +270,14 @@ class PrivateInferenceTests(unittest.TestCase):
             del expected["runtime_reused"]
             self.assertEqual(expected, store.read("inference-candidate.json"))
 
-    def test_completed_reuse_rehashes_models_reinspects_runtime_and_never_restarts(
+    def test_reuse_rehashes_models_and_runtime_without_restart(
         self,
     ):
         first = self.invoke()
         slot = self.slot()
-        before = {path.name: path.stat().st_mtime_ns for path in slot.iterdir()}
+        before = {
+            path.name: path.stat().st_mtime_ns for path in slot.iterdir()
+        }
         self.docker.calls.clear()
         self.gpu_calls.clear()
         second = self.invoke()
@@ -249,20 +286,26 @@ class PrivateInferenceTests(unittest.TestCase):
         self.assertEqual([], self.commands("compose"))
         self.assertEqual([3], [len(allowed) for allowed in self.gpu_calls])
         self.assertEqual(
-            before, {path.name: path.stat().st_mtime_ns for path in slot.iterdir()}
+            before,
+            {path.name: path.stat().st_mtime_ns for path in slot.iterdir()},
         )
         model = next(self.config.api_model_root.glob("blobs/*"))
         model.chmod(0o600)
         raw = model.read_bytes()
         model.write_bytes(b"x" * len(raw))
         model.chmod(0o400)
-        with self.assertRaisesRegex(inference.InferenceError, "model_digest_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "model_digest_changed"
+        ):
             self.invoke()
         self.assertEqual(
-            before, {path.name: path.stat().st_mtime_ns for path in slot.iterdir()}
+            before,
+            {path.name: path.stat().st_mtime_ns for path in slot.iterdir()},
         )
 
-    def test_ui_only_commit_reuses_original_gpu_images_ids_and_provenance(self):
+    def test_ui_only_commit_reuses_original_gpu_images_ids_and_provenance(
+        self,
+    ):
         first = self.invoke()
         origin = self.revision
         slot = self.slot()
@@ -301,7 +344,10 @@ class PrivateInferenceTests(unittest.TestCase):
             any(image_build.TAGS["reranker"] + origin in call for call in tag)
         )
         self.assertFalse(
-            any(image_build.TAGS["reranker"] + self.revision in call for call in tag)
+            any(
+                image_build.TAGS["reranker"] + self.revision in call
+                for call in tag
+            )
         )
 
     def test_reranker_code_commit_cannot_reuse_old_image_authority(self):
@@ -320,13 +366,17 @@ class PrivateInferenceTests(unittest.TestCase):
             "Reranker changed",
         )
         revision = self.fixture.git("rev-parse", "HEAD").strip()
-        plan = inference.source_bundle.committed_source_plan(self.repo, revision)
+        plan = inference.source_bundle.committed_source_plan(
+            self.repo, revision
+        )
         composed = composition._inference(
             self.config,
             revision,
             os.geteuid(),
             os.getegid(),
-            inference_source_sha256=plan["services"]["reranker"]["source_sha256"],
+            inference_source_sha256=plan["services"]["reranker"][
+                "source_sha256"
+            ],
         )
         self.assertNotEqual(first["project"], composed["name"])
         self.docker.calls.clear()
@@ -334,7 +384,9 @@ class PrivateInferenceTests(unittest.TestCase):
             self.invoke(revision=revision)
         self.assertEqual([], self.docker.calls)
 
-    def test_legacy_app_sha_state_requires_explicit_transition_without_adoption(self):
+    def test_legacy_app_state_requires_explicit_transition(
+        self,
+    ):
         self.invoke()
         slot = self.slot()
         started = json.loads((slot / "started.json").read_bytes())
@@ -348,7 +400,9 @@ class PrivateInferenceTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.docker.calls)
 
-    def test_dirty_or_wrong_source_rejected_before_docker_or_inference_state(self):
+    def test_dirty_or_wrong_source_rejected_before_docker_or_inference_state(
+        self,
+    ):
         with self.assertRaises(inference.InferenceError):
             self.invoke(revision="a" * 40)
         self.assertFalse((self.config.state_root / "inference").exists())
@@ -387,7 +441,10 @@ class PrivateInferenceTests(unittest.TestCase):
         root = self.config.embedding_model_root
         root.mkdir(mode=0o700)
         blob = root / "blobs" / ("sha256-" + digest)
-        entry = root / "manifests/registry.ollama.ai/library/fixture-embedding/tiny"
+        entry = (
+            root
+            / "manifests/registry.ollama.ai/library/fixture-embedding/tiny"
+        )
         for path, content in ((blob, raw), (entry, manifest)):
             path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
             path.write_bytes(content)
@@ -399,7 +456,9 @@ class PrivateInferenceTests(unittest.TestCase):
                 hashlib.sha256(manifest).hexdigest(),
             ),
         ):
-            with inference._verified_models(self.config, include_embedding=True) as (
+            with inference._verified_models(
+                self.config, include_embedding=True
+            ) as (
                 plans,
                 verify,
             ):
@@ -411,7 +470,9 @@ class PrivateInferenceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 inference.InferenceError, "model_digest_changed"
             ):
-                with inference._verified_models(self.config, include_embedding=True):
+                with inference._verified_models(
+                    self.config, include_embedding=True
+                ):
                     self.fail("corrupted CPU embedding bytes were accepted")
         self.assertEqual([], self.docker.calls)
 
@@ -423,13 +484,17 @@ class PrivateInferenceTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.commands("compose"))
 
-    def test_missing_image_receipt_or_tampered_source_stage_blocks_before_docker(self):
+    def test_missing_receipt_or_tampered_source_blocks_before_docker(
+        self,
+    ):
         (self.fixture.slot / "images/reranker/complete.json").unlink()
         with self.assertRaises(inference.InferenceError):
             self.invoke()
         self.assertEqual([], self.docker.calls)
 
-    def test_image_candidate_cannot_attest_its_own_source_or_allow_extra_proof(self):
+    def test_image_candidate_cannot_attest_its_own_source_or_allow_extra_proof(
+        self,
+    ):
         with locked_state(self.config) as store:
             candidate = store.read("image-candidate.json")
             candidate["source_manifest_sha256"] = "f" * 64
@@ -440,7 +505,9 @@ class PrivateInferenceTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.docker.calls)
 
-    def test_stage_context_bytes_must_match_independent_committed_sources(self):
+    def test_stage_context_bytes_must_match_independent_committed_sources(
+        self,
+    ):
         (self.fixture.slot / "context/search/reranker/server.py").write_text(
             "tampered\n"
         )
@@ -476,9 +543,11 @@ class PrivateInferenceTests(unittest.TestCase):
             ):
                 self.invoke()
         self.assertEqual([], self.commands("compose"))
-        self.assertEqual([], list((self.config.state_root / "inference").iterdir()))
+        self.assertEqual(
+            [], list((self.config.state_root / "inference").iterdir())
+        )
 
-    def test_actual_start_pid_or_container_change_on_reuse_fails_before_gpu_allowance(
+    def test_changed_start_pid_or_container_blocks_gpu_allowance(
         self,
     ):
         self.invoke()
@@ -493,7 +562,9 @@ class PrivateInferenceTests(unittest.TestCase):
     def test_extra_release_peer_is_not_silently_accepted_without_lease(self):
         self.invoke()
         self.docker.networks[0]["Containers"]["f" * 64] = {}
-        with self.assertRaises(inference.inference_runtime.InferenceRuntimeError):
+        with self.assertRaises(
+            inference.inference_runtime.InferenceRuntimeError
+        ):
             self.invoke()
 
     def test_mutating_runtime_after_gpu_snapshot_prevents_completion(self):
@@ -508,7 +579,9 @@ class PrivateInferenceTests(unittest.TestCase):
             self.invoke()
         self.assertFalse((self.slot() / "complete.json").exists())
 
-    def test_model_file_replacement_during_up_is_detected_and_quarantined(self):
+    def test_model_file_replacement_during_up_is_detected_and_quarantined(
+        self,
+    ):
         def change(_slot):
             path = next(self.config.api_model_root.glob("blobs/*"))
             old = path.with_suffix(".saved")
@@ -517,20 +590,28 @@ class PrivateInferenceTests(unittest.TestCase):
             path.chmod(0o400)
 
         self.docker.on_up = change
-        with self.assertRaisesRegex(inference.InferenceError, "model_file_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "model_file_changed"
+        ):
             self.invoke()
         self.assertFalse((self.slot() / "complete.json").exists())
 
-    def test_final_model_context_exit_failure_precedes_success_publication(self):
+    def test_final_model_context_exit_failure_precedes_success_publication(
+        self,
+    ):
         original = inference._verified_models
 
         @contextmanager
         def fail_on_exit(config, **options):
             with original(config, **options) as value:
                 yield value
-            raise inference.InferenceError("inference_model_late_verification_failed")
+            raise inference.InferenceError(
+                "inference_model_late_verification_failed"
+            )
 
-        with mock.patch.object(inference, "_verified_models", side_effect=fail_on_exit):
+        with mock.patch.object(
+            inference, "_verified_models", side_effect=fail_on_exit
+        ):
             with self.assertRaisesRegex(
                 inference.InferenceError, "late_verification_failed"
             ):
@@ -540,7 +621,9 @@ class PrivateInferenceTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 store.read("inference-candidate.json")
 
-    def test_final_compose_or_started_replacement_does_not_get_completed_receipt(self):
+    def test_compose_or_started_replacement_blocks_complete_receipt(
+        self,
+    ):
         def change(slot):
             path = slot / "started.json"
             value = json.loads(path.read_bytes())
@@ -548,7 +631,9 @@ class PrivateInferenceTests(unittest.TestCase):
             path.write_bytes(private_io.canonical(value))
 
         self.docker.on_up = change
-        with self.assertRaisesRegex(inference.InferenceError, "start_identity_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "start_identity_changed"
+        ):
             self.invoke()
         self.assertFalse((self.slot() / "complete.json").exists())
 
@@ -575,7 +660,9 @@ class PrivateInferenceTests(unittest.TestCase):
                     )
         self.assertEqual([], self.docker.calls)
 
-    def test_runtime_child_environment_never_inherits_docker_context_or_tokens(self):
+    def test_runtime_child_environment_never_inherits_docker_context_or_tokens(
+        self,
+    ):
         with mock.patch.dict(
             os.environ,
             DOCKER_HOST="tcp://remote",
@@ -599,7 +686,9 @@ class PrivateInferenceTests(unittest.TestCase):
 
 class InferenceDockerBoundsTests(unittest.TestCase):
     def client(self, runner):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-inference-bounds-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-inference-bounds-"
+        )
         self.addCleanup(temporary.cleanup)
         return runtime_docker.Docker(Path(temporary.name), runner)
 
@@ -626,25 +715,37 @@ class InferenceDockerBoundsTests(unittest.TestCase):
         )
         for runner, code in fixtures:
             with self.subTest(code=code):
-                with self.assertRaisesRegex(inference.InferenceError, code) as caught:
+                with self.assertRaisesRegex(
+                    inference.InferenceError, code
+                ) as caught:
                     self.client(runner).call(["info"])
                 self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
         client = self.client(
-            lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, b"", b"")
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args[0], 0, b"", b""
+            )
         )
         client.calls = runtime_docker.MAX_COMMANDS
-        with self.assertRaisesRegex(inference.InferenceError, "command_budget"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "command_budget"
+        ):
             client.call(["info"])
         client.calls = 0
         client.deadline = 0
-        with self.assertRaisesRegex(inference.InferenceError, "command_budget"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "command_budget"
+        ):
             client.call(["info"])
 
-    def test_default_capture_is_shared_and_timeout_does_not_reveal_output(self):
+    def test_default_capture_is_shared_and_timeout_does_not_reveal_output(
+        self,
+    ):
         def timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired("PRIVATE_SENTINEL", 1)
 
-        with mock.patch.object(image_build, "_run", side_effect=timeout) as runner:
+        with mock.patch.object(
+            image_build, "_run", side_effect=timeout
+        ) as runner:
             with self.assertRaisesRegex(
                 inference.InferenceError, "command_timeout"
             ) as caught:
@@ -652,8 +753,12 @@ class InferenceDockerBoundsTests(unittest.TestCase):
             self.assertEqual(1, runner.call_count)
             self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
 
-    def test_client_guard_rejects_configuration_drift_before_and_after_command(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-client-guard-")
+    def test_client_guard_rejects_configuration_drift_before_and_after_command(
+        self,
+    ):
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-client-guard-"
+        )
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         descriptor = private_io.open_directory(root)
@@ -662,11 +767,15 @@ class InferenceDockerBoundsTests(unittest.TestCase):
         def verify():
             private_io.verify_directory(descriptor, root)
             if os.listdir(descriptor):
-                raise inference.InferenceError("inference_client_configuration_changed")
+                raise inference.InferenceError(
+                    "inference_client_configuration_changed"
+                )
 
         def inject(argv, **options):
             (root / "config.json").write_text("{}")
-            return subprocess.CompletedProcess(argv, 0, b"PRIVATE_SENTINEL", b"")
+            return subprocess.CompletedProcess(
+                argv, 0, b"PRIVATE_SENTINEL", b""
+            )
 
         runner = mock.Mock(side_effect=inject)
         client = runtime_docker.Docker(root, runner, verify_client=verify)
@@ -697,7 +806,9 @@ class PrivateInferenceTLSOwnershipTests(unittest.TestCase):
         runner = FakeRunner([row])
         inference._gpu(CONFIG, (), runner, cpu_proofs=(proof,))
         self.assertEqual(runner.inspect_count[row["Id"]], 2)
-        with self.assertRaisesRegex(inference.InferenceError, "gpu_ownership_blocked"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "gpu_ownership_blocked"
+        ):
             inference._gpu(CONFIG, (), FakeRunner([row]))
 
     def test_gpu_gate_requires_cpu_count_in_the_verified_result(self):

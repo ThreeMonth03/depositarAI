@@ -1,4 +1,6 @@
-"""Bounded subprocess calls keep synchronous adapters off the HTTP event loop."""
+"""Bounded subprocess calls keep synchronous
+adapters off the HTTP event loop.
+"""
 
 import asyncio
 import json
@@ -7,7 +9,8 @@ import sys
 from search.serialization import strict_json
 
 
-# Up to twenty bounded metadata records; still capped independently of HTTP input.
+# Up to twenty bounded metadata records; still capped independently of HTTP
+# input.
 MAX_WORKER_BYTES = 4 * 1024 * 1024
 
 
@@ -40,7 +43,9 @@ class SubprocessBackend:
             raise BackendFailure("worker unavailable") from None
 
         async def exchange():
-            encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+            encoded = json.dumps(
+                payload, ensure_ascii=False, allow_nan=False
+            ).encode()
             if len(encoded) > MAX_WORKER_BYTES:
                 raise BackendFailure("worker input exceeds limit")
             proc.stdin.write(encoded)

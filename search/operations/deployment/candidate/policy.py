@@ -49,7 +49,9 @@ def _one(values):
 
 
 def _named(body, kind, name):
-    return _one(node for node in body if isinstance(node, kind) and node.name == name)
+    return _one(
+        node for node in body if isinstance(node, kind) and node.name == name
+    )
 
 
 def _assignment(body, name):
@@ -66,7 +68,10 @@ def _assignment(body, name):
 def _fields(node):
     _require(isinstance(node, ast.Dict))
     names = [ast.literal_eval(key) for key in node.keys]
-    _require(all(type(key) is str for key in names) and len(set(names)) == len(names))
+    _require(
+        all(type(key) is str for key in names)
+        and len(set(names)) == len(names)
+    )
     return dict(zip(names, node.values))
 
 
@@ -92,7 +97,15 @@ def _request(node, constants, attributes=None):
     _require(
         set(fields)
         in (
-            {"model", "messages", "stream", "think", "format", "options", "keep_alive"},
+            {
+                "model",
+                "messages",
+                "stream",
+                "think",
+                "format",
+                "options",
+                "keep_alive",
+            },
             {
                 "model",
                 "messages",
@@ -150,17 +163,26 @@ def _projection(root):
         trees[relative] = ast.parse(raw)
     policy = trees[SOURCE_FILES[0]]
     constants = {
-        name: ast.literal_eval(_assignment(policy.body, name)) for name in MODEL_FIELDS
+        name: ast.literal_eval(_assignment(policy.body, name))
+        for name in MODEL_FIELDS
     }
     classifier = _named(
         trees[SOURCE_FILES[1]].body, ast.ClassDef, "OllamaScopeClassifier"
     )
     attributes = {
         name: _value(_assignment(classifier.body, name), constants)
-        for name in ("model", "model_digest", "num_ctx", "num_predict", "thinking")
+        for name in (
+            "model",
+            "model_digest",
+            "num_ctx",
+            "num_predict",
+            "thinking",
+        )
     }
     complete = _named(classifier.body, ast.FunctionDef, "_complete")
-    scope = _request(_assignment(complete.body, "payload"), constants, attributes)
+    scope = _request(
+        _assignment(complete.body, "payload"), constants, attributes
+    )
     scope["model_digest"] = attributes["model_digest"]
     _require(
         scope["stream"] is False
@@ -170,7 +192,9 @@ def _projection(root):
     )
 
     planner_module = trees[SOURCE_FILES[2]]
-    constants["OPTIONS"] = ast.literal_eval(_assignment(planner_module.body, "OPTIONS"))
+    constants["OPTIONS"] = ast.literal_eval(
+        _assignment(planner_module.body, "OPTIONS")
+    )
     planner_class = _named(planner_module.body, ast.ClassDef, "LocalPlanner")
     generate = _named(planner_class.body, ast.FunctionDef, "generate")
     constants["think"] = (
@@ -209,26 +233,36 @@ def _projection(root):
         and call.keywords[0].arg == "think"
         and ast.literal_eval(call.keywords[0].value) == "low"
     )
-    planner["production_keep_alive"] = _transport(call.func.value.args[0], "answer")
-    transport = _named(trees[SOURCE_FILES[5]].body, ast.ClassDef, "ModelTransport")
+    planner["production_keep_alive"] = _transport(
+        call.func.value.args[0], "answer"
+    )
+    transport = _named(
+        trees[SOURCE_FILES[5]].body, ast.ClassDef, "ModelTransport"
+    )
     methods = [
-        _named(transport.body, ast.FunctionDef, name) for name in ("__init__", "send")
+        _named(transport.body, ast.FunctionDef, name)
+        for name in ("__init__", "send")
     ]
     transport_sha256 = hashlib.sha256(
         private_io.canonical(
             [ast.dump(node, include_attributes=False) for node in methods]
         )
     ).hexdigest()
-    return {"scope": scope, "planner": planner, "transport_sha256": transport_sha256}
+    return {
+        "scope": scope,
+        "planner": planner,
+        "transport_sha256": transport_sha256,
+    }
 
 
 def validate_shared_request_policy(baseline_source, candidate_source):
     """Compare reviewed fixed model requests without importing either source.
 
-    Baseline is the host-verified production source (currently 9701e7b). The host
-    separately checks Ollama's queue/parallel settings and the existing reranker
-    lock. Matching request context/options avoids incompatible shared residency;
-    this check neither schedules requests nor prevents model management traffic.
+    Baseline is the host-verified production source (currently 9701e7b). The
+    host separately checks Ollama's queue/parallel settings and the existing
+    reranker lock. Matching request context/options avoids incompatible shared
+    residency; this check neither schedules requests nor prevents model
+    management traffic.
     """
     try:
         baseline = _projection(baseline_source)
@@ -253,4 +287,6 @@ def validate_shared_request_policy(baseline_source, candidate_source):
         SyntaxError,
         RecursionError,
     ):
-        raise SharedRequestPolicyError("shared_request_policy_unsupported") from None
+        raise SharedRequestPolicyError(
+            "shared_request_policy_unsupported"
+        ) from None

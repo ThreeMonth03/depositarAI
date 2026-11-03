@@ -25,11 +25,15 @@ def error_response(status, request_id):
 
 
 class PrivateView(APIView):
-    """Keep every framework and validation error within the private contract."""
+    """Keep every framework and validation
+    error within the private contract.
+    """
 
     def handle_exception(self, error):
         status = error.status_code if isinstance(error, APIException) else 500
-        return error_response(status, self.request.scope["state"]["request_id"])
+        return error_response(
+            status, self.request.scope["state"]["request_id"]
+        )
 
 
 def create_app(settings=None, backend=None):
@@ -53,7 +57,9 @@ def create_app(settings=None, backend=None):
                 {
                     "revision": settings.revision,
                     "catalog_manifest_sha256": settings.manifest_sha256,
-                    "conversation_contract_version": CONVERSATION_CONTRACT_VERSION,
+                    "conversation_contract_version": (
+                        CONVERSATION_CONTRACT_VERSION
+                    ),
                     "geography": False,
                     "persistent_memory": False,
                     "generated_answers": False,
@@ -68,7 +74,9 @@ def create_app(settings=None, backend=None):
             try:
                 return Response(await readiness.check())
             except (BackendFailure, Busy):
-                return error_response(503, request.scope["state"]["request_id"])
+                return error_response(
+                    503, request.scope["state"]["request_id"]
+                )
 
     class Turn(PrivateView):
         http_method_names = ["post"]
@@ -89,7 +97,9 @@ def create_app(settings=None, backend=None):
             )
 
     async def missing_endpoint(request):
-        data, headers = error_details(404, request.scope["state"]["request_id"])
+        data, headers = error_details(
+            404, request.scope["state"]["request_id"]
+        )
         return JsonResponse(data, status=404, headers=headers)
 
     app = application(
@@ -101,4 +111,6 @@ def create_app(settings=None, backend=None):
             re_path(r"^", missing_endpoint),
         ]
     )
-    return BoundaryMiddleware(app, key_file=settings.key_file, max_body_bytes=8192)
+    return BoundaryMiddleware(
+        app, key_file=settings.key_file, max_body_bytes=8192
+    )

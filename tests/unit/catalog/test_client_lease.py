@@ -31,9 +31,14 @@ CORE_IDS = {"fess-search": "2" * 64, "opensearch-search": "3" * 64}
 
 
 def evidence(
-    *, catalog_revision=REVISION, revision=REVISION, api_id=API_ID, image_id=IMAGE
+    *,
+    catalog_revision=REVISION,
+    revision=REVISION,
+    api_id=API_ID,
+    image_id=IMAGE,
 ):
-    """Use the actual renderer; only a future trusted host seal adds ID/labels."""
+    """Use the actual renderer; only a future trusted host seal adds
+    ID/labels."""
     config = ProductConfig(
         2,
         Path("/srv/private/depositar-ai"),
@@ -58,7 +63,9 @@ def evidence(
         "data_root": str(work / "data"),
         "tooling_root": str(work / "tooling"),
         "compose_file": str(work / "compose.json"),
-        "bundle_path": str(config.state_root / "cache/bundles" / ("sha256-" + BUNDLE)),
+        "bundle_path": str(
+            config.state_root / "cache/bundles" / ("sha256-" + BUNDLE)
+        ),
         "manifest_sha256": MANIFEST,
         "revision": catalog_revision,
         "document_count": 3618,
@@ -148,7 +155,9 @@ def evidence(
             },
             "Env": [
                 f"{name}={value}"
-                for name, value in (inherited_env | service["environment"]).items()
+                for name, value in (
+                    inherited_env | service["environment"]
+                ).items()
             ],
             "Healthcheck": {
                 "Test": list(service["healthcheck"]["test"]),
@@ -175,7 +184,10 @@ def evidence(
             "Memory": 2 * 1024**3,
             "MemorySwap": 2 * 1024**3,
             "PidsLimit": 96,
-            "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+            "RestartPolicy": {
+                "Name": "unless-stopped",
+                "MaximumRetryCount": 0,
+            },
             "LogConfig": {
                 "Type": "json-file",
                 "Config": {"max-size": "5m", "max-file": "3"},
@@ -203,7 +215,8 @@ def evidence(
         "NetworkSettings": {
             "Ports": {"8000/tcp": None},
             "Networks": {
-                name: {"NetworkID": value} for name, value in network_ids.items()
+                name: {"NetworkID": value}
+                for name, value in network_ids.items()
             },
         },
     }
@@ -223,14 +236,17 @@ def evidence(
         "catalog_identity": identity,
         "release_compose": compose,
         "image_proof": image,
-        "image_environment": [f"{key}={value}" for key, value in inherited_env.items()],
+        "image_environment": [
+            f"{key}={value}" for key, value in inherited_env.items()
+        ],
         "api_container": api,
         "catalog_network": network,
     }
 
 
 def shared_evidence(*, separate_catalogs=False):
-    """Two sealed CPU APIs, with real renderer plans and unfiltered snapshots."""
+    """Two sealed CPU APIs, with real renderer plans and unfiltered
+    snapshots."""
     first = evidence()
     second = evidence(
         catalog_revision="7" * 40 if separate_catalogs else REVISION,
@@ -241,9 +257,9 @@ def shared_evidence(*, separate_catalogs=False):
     # Each release has its own website; inference/ranking IDs remain shared.
     website = second["release_compose"]["networks"]["website"]["name"]
     second["lease"]["network_ids"][website] = "a" * 64
-    second["api_container"]["NetworkSettings"]["Networks"][website]["NetworkID"] = (
-        "a" * 64
-    )
+    second["api_container"]["NetworkSettings"]["Networks"][website][
+        "NetworkID"
+    ] = "a" * 64
     if separate_catalogs:
         cores = {"fess-search": "c" * 64, "opensearch-search": "e" * 64}
         for value in (second["catalog_identity"], second["lease"]):
@@ -253,12 +269,15 @@ def shared_evidence(*, separate_catalogs=False):
         network["Id"] = "b" * 64
         network["Containers"] = {
             identifier: {}
-            for identifier in (*cores.values(), second["lease"]["api_container_id"])
+            for identifier in (
+                *cores.values(),
+                second["lease"]["api_container_id"],
+            )
         }
         second["lease"]["network_ids"][network["Name"]] = "b" * 64
-        second["api_container"]["NetworkSettings"]["Networks"][network["Name"]][
-            "NetworkID"
-        ] = "b" * 64
+        second["api_container"]["NetworkSettings"]["Networks"][
+            network["Name"]
+        ]["NetworkID"] = "b" * 64
     else:
         network = first["catalog_network"]
         network["Containers"][second["lease"]["api_container_id"]] = {
@@ -269,9 +288,12 @@ def shared_evidence(*, separate_catalogs=False):
 
 
 def leased_runtime_evidence(*, catalog_revision=REVISION):
-    """Share the real core fixture; preserve the full three-peer network input."""
+    """Share the real core fixture; preserve the full three-peer network
+    input."""
     values = evidence(catalog_revision=catalog_revision)
-    values["catalog_network"].update(Driver="bridge", Scope="local", Ingress=False)
+    values["catalog_network"].update(
+        Driver="bridge", Scope="local", Ingress=False
+    )
     project = values["catalog_identity"]["catalog_project"]
     work = Path("/srv/private/depositar-ai/catalogs") / project.removeprefix(
         "depositar-ai-catalog-"
@@ -283,7 +305,9 @@ def leased_runtime_evidence(*, catalog_revision=REVISION):
         "manifest_sha256": MANIFEST,
         "work_root": str(work),
         "data_root": str(work / "data"),
-        "bundle_path": str(work.parent.parent / "cache/bundles" / ("sha256-" + BUNDLE)),
+        "bundle_path": str(
+            work.parent.parent / "cache/bundles" / ("sha256-" + BUNDLE)
+        ),
     }
     compose = backend_fixture.adapted_config(work / "data", project)
     for role, service in compose["services"].items():
@@ -311,7 +335,9 @@ def leased_runtime_evidence(*, catalog_revision=REVISION):
                 "NetworkID": values["catalog_network"]["Id"]
             }
         else:
-            row["HostConfig"]["NetworkMode"] = "container:" + CORE_IDS["fess-search"]
+            row["HostConfig"]["NetworkMode"] = (
+                "container:" + CORE_IDS["fess-search"]
+            )
         images[role] = {"image_id": row["Image"]}
         inspections[role] = {
             "Id": row["Image"],
@@ -330,7 +356,9 @@ def leased_runtime_evidence(*, catalog_revision=REVISION):
 def shared_leased_runtime_evidence():
     values = leased_runtime_evidence()
     second = shared_evidence()[1]
-    values["catalog_network"]["Containers"][second["lease"]["api_container_id"]] = {}
+    values["catalog_network"]["Containers"][
+        second["lease"]["api_container_id"]
+    ] = {}
     second["catalog_network"] = copy.deepcopy(values["catalog_network"])
     first = {key: values[key] for key in client_lease.CLIENT_FIELDS}
     values["shared_clients"] = [copy.deepcopy(first), second]
@@ -351,7 +379,9 @@ class LeasedRuntimeTests(unittest.TestCase):
         if error is not None:
             self.assertEqual(error, str(caught.exception))
 
-    def test_combines_actual_core_profiles_with_unfiltered_three_peer_network(self):
+    def test_combines_actual_core_profiles_with_unfiltered_three_peer_network(
+        self,
+    ):
         before = copy.deepcopy(self.values)
         result = self.verify()
         self.assertEqual("verified", result["status"])
@@ -374,7 +404,9 @@ class LeasedRuntimeTests(unittest.TestCase):
         ):
             self.assertNotIn(key, result)
 
-    def test_new_api_can_use_the_same_origin_catalog_with_an_explicit_revision(self):
+    def test_new_api_can_use_the_same_origin_catalog_with_an_explicit_revision(
+        self,
+    ):
         self.values = leased_runtime_evidence(catalog_revision="f" * 40)
         before = copy.deepcopy(self.values)
         result = self.verify()
@@ -386,7 +418,9 @@ class LeasedRuntimeTests(unittest.TestCase):
         self.reject("catalog_client_core_catalog_binding_changed")
 
     def test_does_not_weaken_baseline_exact_two_peer_contract(self):
-        with self.assertRaisesRegex(policy.RuntimeError, "network_peers_changed"):
+        with self.assertRaisesRegex(
+            policy.RuntimeError, "network_peers_changed"
+        ):
             policy.validate_runtime(
                 self.values["core_plan"],
                 self.values["core_compose"],
@@ -396,12 +430,16 @@ class LeasedRuntimeTests(unittest.TestCase):
             )
         self.verify()
 
-    def test_passes_the_original_network_object_without_fabricating_a_baseline(self):
+    def test_passes_the_original_network_object_without_fabricating_a_baseline(
+        self,
+    ):
         original = client_lease.validate_client_lease
         network = self.values["catalog_network"]
         with (
             mock.patch.object(
-                policy, "validate_runtime", side_effect=AssertionError("no baseline")
+                policy,
+                "validate_runtime",
+                side_effect=AssertionError("no baseline"),
             ),
             mock.patch.object(
                 client_lease, "validate_client_lease", wraps=original
@@ -424,7 +462,9 @@ class LeasedRuntimeTests(unittest.TestCase):
                     peers.pop(API_ID)
                 self.reject("catalog_client_network_peers_changed")
 
-    def test_actual_core_network_ids_must_match_the_same_catalog_snapshot(self):
+    def test_actual_core_network_ids_must_match_the_same_catalog_snapshot(
+        self,
+    ):
         for role in client_lease.CORES:
             for value in ("f" * 64, None, False, "missing"):
                 with self.subTest(role=role, value=value):
@@ -432,9 +472,15 @@ class LeasedRuntimeTests(unittest.TestCase):
                     row = next(
                         row
                         for row in self.values["core_containers"]
-                        if row["Config"]["Labels"]["com.docker.compose.service"] == role
+                        if row["Config"]["Labels"][
+                            "com.docker.compose.service"
+                        ]
+                        == role
                     )
-                    name = self.values["lease"]["catalog_project"] + "_search_backend"
+                    name = (
+                        self.values["lease"]["catalog_project"]
+                        + "_search_backend"
+                    )
                     attachment = row["NetworkSettings"]["Networks"][name]
                     if value == "missing":
                         attachment.pop("NetworkID")
@@ -460,10 +506,14 @@ class LeasedRuntimeTests(unittest.TestCase):
                 self.values["catalog_network"].pop(field)
                 self.reject("catalog_client_network_driver_changed")
 
-    def test_every_core_retains_resource_mount_health_and_gpu_restrictions(self):
+    def test_every_core_retains_resource_mount_health_and_gpu_restrictions(
+        self,
+    ):
         mutations = (
             lambda row: row["HostConfig"].update(Memory=1),
-            lambda row: row["HostConfig"].update(DeviceRequests=[{"Driver": "nvidia"}]),
+            lambda row: row["HostConfig"].update(
+                DeviceRequests=[{"Driver": "nvidia"}]
+            ),
             lambda row: row["HostConfig"].update(Runtime="nvidia"),
             lambda row: row["HostConfig"].update(
                 PortBindings={"8080/tcp": [{"HostPort": "8080"}]}
@@ -486,20 +536,27 @@ class LeasedRuntimeTests(unittest.TestCase):
                     row = next(
                         row
                         for row in self.values["core_containers"]
-                        if row["Config"]["Labels"]["com.docker.compose.service"] == role
+                        if row["Config"]["Labels"][
+                            "com.docker.compose.service"
+                        ]
+                        == role
                     )
                     if case == "image":
                         row["Image"] = "sha256:" + "f" * 64
                         self.reject("catalog_client_core_runtime_changed")
                     else:
                         if case == "inspection":
-                            self.values["core_image_inspections"][role]["Id"] = (
-                                "sha256:" + "f" * 64
-                            )
+                            self.values["core_image_inspections"][role][
+                                "Id"
+                            ] = "sha256:" + "f" * 64
                         else:
-                            field = "Cmd" if case == "command" else "Entrypoint"
+                            field = (
+                                "Cmd" if case == "command" else "Entrypoint"
+                            )
                             row["Config"][field] = ["sh"]
-                        self.reject("catalog_client_core_image_startup_changed")
+                        self.reject(
+                            "catalog_client_core_image_startup_changed"
+                        )
 
     def test_native_image_omitted_command_matches_container_null(self):
         role = "fess-search"
@@ -518,7 +575,9 @@ class LeasedRuntimeTests(unittest.TestCase):
         self.assertEqual("verified", self.verify()["status"])
         self.assertEqual(before, self.values)
 
-    def test_optional_null_startup_fields_can_be_omitted_without_mutation(self):
+    def test_optional_null_startup_fields_can_be_omitted_without_mutation(
+        self,
+    ):
         for role in policy.SERVICES:
             for field in ("Cmd", "Entrypoint"):
                 for omitted in ("image", "container", "both"):
@@ -527,7 +586,9 @@ class LeasedRuntimeTests(unittest.TestCase):
                         row = next(
                             row
                             for row in self.values["core_containers"]
-                            if row["Config"]["Labels"]["com.docker.compose.service"]
+                            if row["Config"]["Labels"][
+                                "com.docker.compose.service"
+                            ]
                             == role
                         )
                         image = self.values["core_image_inspections"][role]
@@ -542,7 +603,9 @@ class LeasedRuntimeTests(unittest.TestCase):
                         self.assertEqual("verified", self.verify()["status"])
                         self.assertEqual(before, self.values)
 
-    def test_nonempty_startup_fields_cannot_be_missing_or_changed_on_either_side(self):
+    def test_startup_fields_cannot_be_missing_or_changed_on_either_side(
+        self,
+    ):
         for role in policy.SERVICES:
             for field in ("Cmd", "Entrypoint"):
                 for changed_side in ("image", "container"):
@@ -557,7 +620,9 @@ class LeasedRuntimeTests(unittest.TestCase):
                             row = next(
                                 row
                                 for row in self.values["core_containers"]
-                                if row["Config"]["Labels"]["com.docker.compose.service"]
+                                if row["Config"]["Labels"][
+                                    "com.docker.compose.service"
+                                ]
                                 == role
                             )
                             image = self.values["core_image_inspections"][role]
@@ -574,7 +639,9 @@ class LeasedRuntimeTests(unittest.TestCase):
                             else:
                                 config[field] = ["/changed-command"]
                             before = copy.deepcopy(self.values)
-                            self.reject("catalog_client_core_image_startup_changed")
+                            self.reject(
+                                "catalog_client_core_image_startup_changed"
+                            )
                             self.assertEqual(before, self.values)
 
     def test_empty_startup_lists_are_not_normalized_to_null(self):
@@ -583,10 +650,14 @@ class LeasedRuntimeTests(unittest.TestCase):
                 with self.subTest(field=field, side=changed_side):
                     self.values = leased_runtime_evidence()
                     row = self.values["core_containers"][0]
-                    role = row["Config"]["Labels"]["com.docker.compose.service"]
+                    role = row["Config"]["Labels"][
+                        "com.docker.compose.service"
+                    ]
                     image = self.values["core_image_inspections"][role]
                     config = (
-                        image["Config"] if changed_side == "image" else row["Config"]
+                        image["Config"]
+                        if changed_side == "image"
+                        else row["Config"]
                     )
                     config[field] = []
                     before = copy.deepcopy(self.values)
@@ -628,7 +699,9 @@ class LeasedRuntimeTests(unittest.TestCase):
         embedding["Id"] = API_ID
         self.reject("catalog_client_core_catalog_binding_changed")
 
-    def test_catalog_manifest_source_and_project_bindings_are_not_interchangeable(self):
+    def test_catalog_manifest_source_and_project_bindings_are_distinct(
+        self,
+    ):
         for field, changed in (
             ("schema_version", True),
             ("manifest_sha256", "f" * 64),
@@ -642,14 +715,18 @@ class LeasedRuntimeTests(unittest.TestCase):
         self.values["core_plan"]["project"] = "another-catalog"
         self.reject("catalog_client_core_runtime_changed")
 
-    def test_core_paths_and_api_mounts_must_name_the_same_prepared_catalog(self):
+    def test_core_paths_and_api_mounts_must_name_the_same_prepared_catalog(
+        self,
+    ):
         for field in ("work_root", "data_root", "bundle_path"):
             with self.subTest(field=field):
                 self.values = leased_runtime_evidence()
                 self.values["core_plan"][field] = "/srv/another-catalog"
                 self.reject("catalog_client_core_catalog_paths_changed")
 
-    def test_other_api_container_or_wrong_lease_retains_existing_rejections(self):
+    def test_other_api_container_or_wrong_lease_retains_existing_rejections(
+        self,
+    ):
         for case in ("container", "lease"):
             with self.subTest(case=case):
                 self.values = leased_runtime_evidence()
@@ -670,8 +747,8 @@ class ClientLeaseTests(unittest.TestCase):
         return client_lease.validate_client_lease(lease, **values)
 
     def reseal_compose(self):
-        self.values["lease"]["release_compose_sha256"] = client_lease.lease_digest(
-            self.values["release_compose"]
+        self.values["lease"]["release_compose_sha256"] = (
+            client_lease.lease_digest(self.values["release_compose"])
         )
 
     def reject(self, error=None):
@@ -688,11 +765,18 @@ class ClientLeaseTests(unittest.TestCase):
             sorted([API_ID, *CORE_IDS.values()]), result["expected_peer_ids"]
         )
         self.assertEqual(
-            client_lease.lease_digest(self.values["lease"]), result["lease_sha256"]
+            client_lease.lease_digest(self.values["lease"]),
+            result["lease_sha256"],
         )
         self.assertEqual(SOURCE, result["source_sha256"])
         encoded = private_io.canonical(result).decode()
-        for private in ("/srv/", "SEARCH_API_", "not-an-authority", "Env", "Mounts"):
+        for private in (
+            "/srv/",
+            "SEARCH_API_",
+            "not-an-authority",
+            "Env",
+            "Mounts",
+        ):
             self.assertNotIn(private, encoded)
 
     def test_origin_revision_is_bound_separately_from_current_api_source(self):
@@ -704,7 +788,9 @@ class ClientLeaseTests(unittest.TestCase):
         self.assertTrue(result["catalog_project"].endswith("f" * 12))
         self.assertTrue(result["release_project"].endswith(REVISION[:12]))
 
-    def test_cross_revision_records_cannot_omit_change_or_invent_provenance(self):
+    def test_cross_revision_records_cannot_omit_change_or_invent_provenance(
+        self,
+    ):
         for record in ("lease", "catalog_identity"):
             for value in (None, True, "f" * 12, "e" * 40, REVISION):
                 with self.subTest(record=record, value=value):
@@ -715,11 +801,15 @@ class ClientLeaseTests(unittest.TestCase):
                         self.values[record]["catalog_revision"] = value
                     self.reject()
         self.values = evidence(catalog_revision="f" * 40)
-        self.values["release_compose"]["x-depositar-plan"].pop("catalog_revision")
+        self.values["release_compose"]["x-depositar-plan"].pop(
+            "catalog_revision"
+        )
         self.reseal_compose()
         self.reject("catalog_client_compose_binding_changed")
 
-    def test_reused_catalog_does_not_relax_api_images_or_actual_network_peers(self):
+    def test_reused_catalog_does_not_relax_api_images_or_actual_network_peers(
+        self,
+    ):
         self.values = evidence(catalog_revision="f" * 40)
         self.values["image_proof"]["revision"] = "f" * 40
         self.reject("catalog_client_release_identity_changed")
@@ -727,7 +817,9 @@ class ClientLeaseTests(unittest.TestCase):
         self.values["catalog_network"]["Containers"]["9" * 64] = {}
         self.reject("catalog_client_network_peers_changed")
 
-    def test_legacy_same_revision_records_keep_the_existing_output_schema(self):
+    def test_legacy_same_revision_records_keep_the_existing_output_schema(
+        self,
+    ):
         self.assertNotIn("catalog_revision", self.values["lease"])
         self.assertNotIn("catalog_revision", self.values["catalog_identity"])
         self.assertNotIn("catalog_revision", self.verify())
@@ -736,9 +828,13 @@ class ClientLeaseTests(unittest.TestCase):
         original = copy.deepcopy(self.values)
         with (
             mock.patch("builtins.open", side_effect=AssertionError("no IO")),
-            mock.patch("pathlib.Path.stat", side_effect=AssertionError("no IO")),
+            mock.patch(
+                "pathlib.Path.stat", side_effect=AssertionError("no IO")
+            ),
             mock.patch("subprocess.run", side_effect=AssertionError("no IO")),
-            mock.patch("subprocess.Popen", side_effect=AssertionError("no IO")),
+            mock.patch(
+                "subprocess.Popen", side_effect=AssertionError("no IO")
+            ),
         ):
             result = self.verify()
             self.assertEqual(result, self.verify())
@@ -773,9 +869,12 @@ class ClientLeaseTests(unittest.TestCase):
     def test_closed_startup_profile_matches_reviewed_dockerfile(self):
         root = Path(__file__).resolve().parents[3]
         source = (root / "deploy/docker/api/Dockerfile").read_text()
-        commands = [line[4:] for line in source.splitlines() if line.startswith("CMD ")]
+        commands = [
+            line[4:] for line in source.splitlines() if line.startswith("CMD ")
+        ]
         self.assertEqual(
-            [list(client_lease.API_COMMAND)], [json.loads(value) for value in commands]
+            [list(client_lease.API_COMMAND)],
+            [json.loads(value) for value in commands],
         )
         self.assertIn("WORKDIR /app", source.splitlines())
         self.assertFalse(
@@ -783,7 +882,12 @@ class ClientLeaseTests(unittest.TestCase):
         )
 
     def test_closed_lease_catalog_image_and_composition_records(self):
-        for key in ("lease", "catalog_identity", "image_proof", "release_compose"):
+        for key in (
+            "lease",
+            "catalog_identity",
+            "image_proof",
+            "release_compose",
+        ):
             with self.subTest(record=key):
                 self.values = evidence()
                 self.values[key]["extra"] = "untrusted"
@@ -793,7 +897,9 @@ class ClientLeaseTests(unittest.TestCase):
                 self.reject()
 
     def test_tags_and_legacy_source_label_namespace_never_grant_access(self):
-        service = self.values["release_compose"]["services"]["conversation-api"]
+        service = self.values["release_compose"]["services"][
+            "conversation-api"
+        ]
         service["image"] = "depositar-search-conversation:" + REVISION
         self.reseal_compose()
         self.reject()
@@ -815,7 +921,9 @@ class ClientLeaseTests(unittest.TestCase):
                     self.values[record][key] = value
                     self.reject()
 
-    def test_all_catalog_summary_fields_must_match_host_verified_identity(self):
+    def test_all_catalog_summary_fields_must_match_host_verified_identity(
+        self,
+    ):
         for key in client_lease.CATALOG_FIELDS:
             with self.subTest(field=key):
                 self.values = evidence()
@@ -834,7 +942,9 @@ class ClientLeaseTests(unittest.TestCase):
                 self.values["image_proof"][key] = value
                 self.reject("catalog_client_release_identity_changed")
 
-    def test_identity_format_duplicate_ids_and_project_names_are_rejected(self):
+    def test_identity_format_duplicate_ids_and_project_names_are_rejected(
+        self,
+    ):
         for key, value in (
             ("revision", "a" * 12),
             ("api_container_id", "1" * 12),
@@ -852,7 +962,9 @@ class ClientLeaseTests(unittest.TestCase):
         self.values["lease"]["core_container_ids"]["fess-search"] = API_ID
         self.reject("catalog_client_core_identity_invalid")
 
-    def test_unknown_missing_or_copied_name_network_peers_are_not_filtered(self):
+    def test_unknown_missing_or_copied_name_network_peers_are_not_filtered(
+        self,
+    ):
         for change in ("extra", "missing", "replacement"):
             with self.subTest(change=change):
                 self.values = evidence()
@@ -881,7 +993,9 @@ class ClientLeaseTests(unittest.TestCase):
         with mock.patch("builtins.open", side_effect=AssertionError("no IO")):
             self.verify()
         self.assertEqual(
-            frozenset({"fess-search", "opensearch-search", "ollama-embedding"}),
+            frozenset(
+                {"fess-search", "opensearch-search", "ollama-embedding"}
+            ),
             policy.SERVICES,
         )
         self.assertNotIn("conversation-api", policy.SERVICES)
@@ -900,14 +1014,18 @@ class ClientLeaseTests(unittest.TestCase):
                 elif case == "external":
                     networks["catalog"]["external"] = False
                 elif case == "duplicate_id":
-                    ids[networks["ranking"]["name"]] = ids[networks["website"]["name"]]
+                    ids[networks["ranking"]["name"]] = ids[
+                        networks["website"]["name"]
+                    ]
                 else:
                     ids.pop(networks["website"]["name"])
                 self.reseal_compose()
                 self.reject()
 
     def test_composition_bytes_and_required_binding_flags_are_verified(self):
-        self.values["release_compose"]["services"]["web"]["environment"]["extra"] = "x"
+        self.values["release_compose"]["services"]["web"]["environment"][
+            "extra"
+        ] = "x"
         self.reject("catalog_client_composition_changed")
         for key in (
             "catalog_client_lease_required",
@@ -922,7 +1040,9 @@ class ClientLeaseTests(unittest.TestCase):
                 self.reseal_compose()
                 self.reject("catalog_client_compose_binding_changed")
 
-    def test_renderer_api_fields_are_closed_and_required_source_labels_exact(self):
+    def test_renderer_api_fields_are_closed_and_required_source_labels_exact(
+        self,
+    ):
         for field, value in (
             ("ports", ["0.0.0.0:8000:8000"]),
             ("privileged", True),
@@ -942,12 +1062,16 @@ class ClientLeaseTests(unittest.TestCase):
                 self.reject("catalog_client_api_plan_invalid")
 
     def test_fixed_health_probe_cannot_be_replaced_by_arbitrary_command(self):
-        service = self.values["release_compose"]["services"]["conversation-api"]
+        service = self.values["release_compose"]["services"][
+            "conversation-api"
+        ]
         service["healthcheck"]["test"][-1] = "print('healthy')"
         self.reseal_compose()
         self.reject("catalog_client_health_plan_invalid")
 
-    def test_five_ro_query_mounts_are_exact_canonical_and_exclude_admin_data(self):
+    def test_five_ro_query_mounts_are_exact_canonical_and_exclude_admin_data(
+        self,
+    ):
         for case in (
             "missing",
             "duplicate",
@@ -960,9 +1084,9 @@ class ClientLeaseTests(unittest.TestCase):
         ):
             with self.subTest(case=case):
                 self.values = evidence()
-                mounts = self.values["release_compose"]["services"]["conversation-api"][
-                    "volumes"
-                ]
+                mounts = self.values["release_compose"]["services"][
+                    "conversation-api"
+                ]["volumes"]
                 if case == "missing":
                     mounts.pop()
                 elif case == "duplicate":
@@ -981,11 +1105,15 @@ class ClientLeaseTests(unittest.TestCase):
                 self.reseal_compose()
                 self.reject("catalog_client_mount_plan_invalid")
 
-    def test_retired_fess_query_mount_and_prefilter_flag_are_not_lease_inputs(self):
+    def test_retired_fess_query_mount_and_prefilter_flag_are_not_lease_inputs(
+        self,
+    ):
         for case in ("fess_mount", "prefilter_flag"):
             with self.subTest(case=case):
                 self.values = evidence()
-                service = self.values["release_compose"]["services"]["conversation-api"]
+                service = self.values["release_compose"]["services"][
+                    "conversation-api"
+                ]
                 if case == "fess_mount":
                     mount = copy.deepcopy(service["volumes"][1])
                     mount["target"] = "/run/secrets/fess_query_password"
@@ -1063,13 +1191,19 @@ class ClientLeaseTests(unittest.TestCase):
                 self.reject()
 
     def test_actual_root_user_tty_or_stdin_is_rejected(self):
-        for field, value in (("User", "0:0"), ("Tty", True), ("OpenStdin", True)):
+        for field, value in (
+            ("User", "0:0"),
+            ("Tty", True),
+            ("OpenStdin", True),
+        ):
             with self.subTest(field=field):
                 self.values = evidence()
                 self.values["api_container"]["Config"][field] = value
                 self.reject("catalog_client_resource_policy_changed")
 
-    def test_unsealed_extra_hosts_and_dns_cannot_redirect_query_credentials(self):
+    def test_unsealed_extra_hosts_and_dns_cannot_redirect_query_credentials(
+        self,
+    ):
         for field, value in (
             ("ExtraHosts", ["opensearch-search:192.168.1.1"]),
             ("Dns", ["192.168.1.1"]),
@@ -1081,13 +1215,17 @@ class ClientLeaseTests(unittest.TestCase):
                 self.values["api_container"]["HostConfig"][field] = value
                 self.reject("catalog_client_resource_policy_changed")
 
-    def test_runtime_annotations_cannot_add_unsealed_cdi_or_device_access(self):
+    def test_runtime_annotations_cannot_add_unsealed_cdi_or_device_access(
+        self,
+    ):
         self.values["api_container"]["HostConfig"]["Annotations"] = {
             "cdi.k8s.io/devices": "nvidia.com/gpu=all"
         }
         self.reject("catalog_client_resource_policy_changed")
 
-    def test_same_image_cannot_override_its_command_entrypoint_or_workdir(self):
+    def test_same_image_cannot_override_its_command_entrypoint_or_workdir(
+        self,
+    ):
         for field, value in (
             ("Cmd", ["python", "-m", "http.server"]),
             ("Entrypoint", ["sh"]),
@@ -1117,10 +1255,14 @@ class ClientLeaseTests(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 self.values = evidence()
-                self.values["api_container"]["Config"]["Healthcheck"][field] = value
+                self.values["api_container"]["Config"]["Healthcheck"][
+                    field
+                ] = value
                 self.reject("catalog_client_healthcheck_changed")
 
-    def test_exposed_unpublished_ports_are_ok_but_all_host_bindings_rejected(self):
+    def test_exposed_unpublished_ports_are_ok_but_all_host_bindings_rejected(
+        self,
+    ):
         self.verify()
         for section, field in (
             ("HostConfig", "PortBindings"),
@@ -1133,7 +1275,7 @@ class ClientLeaseTests(unittest.TestCase):
                 }
                 self.reject("catalog_client_publishes_a_port")
 
-    def test_image_inherited_environment_is_allowed_but_extra_or_override_env_fail(
+    def test_inherited_env_passes_but_extra_or_override_env_fails(
         self,
     ):
         self.verify()
@@ -1156,7 +1298,9 @@ class ClientLeaseTests(unittest.TestCase):
         env.append("SOURCE_REVISION=development")
         self.reject("catalog_client_environment_changed")
 
-    def test_environment_overrides_cannot_hide_as_nonduplicate_inherited_keys(self):
+    def test_environment_overrides_cannot_hide_as_nonduplicate_inherited_keys(
+        self,
+    ):
         for key, value in (
             ("HAYSTACK_TELEMETRY_ENABLED", "true"),
             ("HAYSTACK_CONTENT_TRACING_ENABLED", "true"),
@@ -1165,21 +1309,29 @@ class ClientLeaseTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.values = evidence()
                 env = self.values["api_container"]["Config"]["Env"]
-                env[:] = [entry for entry in env if not entry.startswith(key + "=")]
+                env[:] = [
+                    entry for entry in env if not entry.startswith(key + "=")
+                ]
                 env.append(key + "=" + value)
                 self.reject("catalog_client_environment_changed")
 
-    def test_image_environment_map_digest_is_independent_of_container_env(self):
+    def test_image_environment_map_digest_is_independent_of_container_env(
+        self,
+    ):
         inherited = self.values["image_environment"]
         inherited.reverse()
         self.verify()
         inherited.append("NEW_VARIABLE=unsealed")
         self.reject("catalog_client_image_environment_changed")
         self.values = evidence()
-        self.values["image_environment"] = self.values["api_container"]["Config"]["Env"]
+        self.values["image_environment"] = self.values["api_container"][
+            "Config"
+        ]["Env"]
         self.reject("catalog_client_image_environment_changed")
 
-    def test_image_environment_parser_bounds_duplicate_and_malformed_entries(self):
+    def test_image_environment_parser_bounds_duplicate_and_malformed_entries(
+        self,
+    ):
         for invalid in (
             None,
             {},
@@ -1197,8 +1349,17 @@ class ClientLeaseTests(unittest.TestCase):
                 self.values["image_environment"] = invalid
                 self.reject("catalog_client_image_environment_invalid")
 
-    def test_actual_mounts_cannot_add_admin_named_volume_rw_or_unknown_tmpfs(self):
-        for case in ("extra", "rw", "volume", "replacement", "tmpfs", "duplicate"):
+    def test_actual_mounts_cannot_add_admin_named_volume_rw_or_unknown_tmpfs(
+        self,
+    ):
+        for case in (
+            "extra",
+            "rw",
+            "volume",
+            "replacement",
+            "tmpfs",
+            "duplicate",
+        ):
             with self.subTest(case=case):
                 self.values = evidence()
                 mounts = self.values["api_container"]["Mounts"]
@@ -1262,13 +1423,16 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
             client_lease.validate_leased_runtime(**values)
         self.assertEqual(str(caught.exception), error)
 
-    def test_full_catalog_core_and_shared_clients_are_proved_without_mutation(self):
+    def test_full_catalog_core_and_shared_clients_are_proved_without_mutation(
+        self,
+    ):
         values = shared_leased_runtime_evidence()
         original = copy.deepcopy(values)
         proof = client_lease.validate_leased_runtime(**values)
         self.assertTrue(proof["core_runtime_verified"])
         self.assertEqual(
-            proof["catalog_container_ids"], {**CORE_IDS, "ollama-embedding": "c" * 64}
+            proof["catalog_container_ids"],
+            {**CORE_IDS, "ollama-embedding": "c" * 64},
         )
         self.assertEqual(
             set(proof["expected_peer_ids"]),
@@ -1278,7 +1442,9 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
         values.pop("shared_clients")
         self.reject(values, "catalog_client_network_peers_changed")
 
-    def test_shared_collection_is_verified_once_and_old_single_path_is_not_used(self):
+    def test_shared_collection_is_verified_once_without_legacy_path(
+        self,
+    ):
         values = shared_leased_runtime_evidence()
         original = client_lease.validate_clients
         with (
@@ -1295,7 +1461,9 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
         self.assertEqual(checker.call_count, 1)
         self.assertIs(checker.call_args.args[0], values["shared_clients"])
 
-    def test_selected_member_must_match_actual_snapshot_environment_and_plan(self):
+    def test_selected_member_must_match_actual_snapshot_environment_and_plan(
+        self,
+    ):
         for kind in ("snapshot", "environment", "plan", "network"):
             with self.subTest(kind=kind):
                 values = shared_leased_runtime_evidence()
@@ -1307,9 +1475,9 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
                 elif kind == "environment":
                     member["image_environment"].reverse()
                 elif kind == "plan":
-                    member["release_compose"]["services"]["web"]["healthcheck"][
-                        "interval"
-                    ] = "30s"
+                    member["release_compose"]["services"]["web"][
+                        "healthcheck"
+                    ]["interval"] = "30s"
                     member["lease"]["release_compose_sha256"] = (
                         client_lease.lease_digest(member["release_compose"])
                     )
@@ -1320,12 +1488,16 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
                         ] = "another-snapshot"
                 self.reject(values, "catalog_client_shared_member_changed")
 
-    def test_original_core_command_mount_and_network_guards_remain_required(self):
+    def test_original_core_command_mount_and_network_guards_remain_required(
+        self,
+    ):
         for kind in ("command", "mount", "driver"):
             with self.subTest(kind=kind):
                 values = shared_leased_runtime_evidence()
                 if kind == "command":
-                    values["core_containers"][0]["Config"]["Cmd"] = ["unreviewed"]
+                    values["core_containers"][0]["Config"]["Cmd"] = [
+                        "unreviewed"
+                    ]
                     error = "catalog_client_core_image_startup_changed"
                 elif kind == "mount":
                     values["core_containers"][0]["Mounts"][0]["RW"] = True
@@ -1337,7 +1509,9 @@ class SharedLeasedRuntimeTests(unittest.TestCase):
                     error = "catalog_client_network_driver_changed"
                 self.reject(values, error)
 
-    def test_no_registered_api_may_collide_with_the_cpu_embedding_container(self):
+    def test_no_registered_api_may_collide_with_the_cpu_embedding_container(
+        self,
+    ):
         values = shared_leased_runtime_evidence()
         second = values["shared_clients"][1]
         old, new = second["lease"]["api_container_id"], "c" * 64
@@ -1364,7 +1538,9 @@ class RegisteredClientsTests(unittest.TestCase):
         expected = client_lease.validate_client_lease(**values)
         self.assertEqual(client_lease.validate_clients([values]), [expected])
 
-    def test_two_clients_keep_input_order_and_full_unfiltered_catalog_peers(self):
+    def test_two_clients_keep_input_order_and_full_unfiltered_catalog_peers(
+        self,
+    ):
         for separate in (False, True):
             with self.subTest(separate_catalogs=separate):
                 clients = shared_evidence(separate_catalogs=separate)
@@ -1414,12 +1590,12 @@ class RegisteredClientsTests(unittest.TestCase):
             with self.subTest(duplicate=duplicate):
                 clients = shared_evidence()
                 if duplicate == "api":
-                    clients[1]["lease"]["api_container_id"] = clients[0]["lease"][
-                        "api_container_id"
-                    ]
-                    clients[1]["api_container"]["Id"] = clients[0]["api_container"][
-                        "Id"
-                    ]
+                    clients[1]["lease"]["api_container_id"] = clients[0][
+                        "lease"
+                    ]["api_container_id"]
+                    clients[1]["api_container"]["Id"] = clients[0][
+                        "api_container"
+                    ]["Id"]
                 else:
                     clients[1] = copy.deepcopy(clients[0])
                     clients[1]["lease"]["api_container_id"] = "d" * 64
@@ -1446,7 +1622,9 @@ class RegisteredClientsTests(unittest.TestCase):
                     else "catalog_client_network_peers_changed",
                 )
 
-    def test_every_member_requires_full_source_capability_and_catalog_proof(self):
+    def test_every_member_requires_full_source_capability_and_catalog_proof(
+        self,
+    ):
         for kind in ("source", "gpu", "environment", "role", "catalog"):
             with self.subTest(kind=kind):
                 clients = shared_evidence()

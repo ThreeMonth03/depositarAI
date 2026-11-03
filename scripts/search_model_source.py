@@ -53,7 +53,12 @@ def _ancestor_policy(info, uid, gid):
         return False
     if info.st_uid == 0 and mode & stat.S_ISVTX:
         return False  # Preserve the reviewed root-owned /tmp-style exception.
-    if mode & stat.S_ISVTX and mode & 0o020 and not mode & 0o002 and info.st_gid == gid:
+    if (
+        mode & stat.S_ISVTX
+        and mode & 0o020
+        and not mode & 0o002
+        and info.st_gid == gid
+    ):
         return True
     raise ModelSourceError("model_source_ancestor_unsafe")
 
@@ -90,7 +95,9 @@ class _PinnedRoot:
                 raise ModelSourceError("model_source_directory_changed")
 
     def relative_parent(self, relative, *, private=False, create=False):
-        """Retain every parent FD; private creation never repairs existing modes."""
+        """Retain every parent FD; private creation never repairs existing
+        modes.
+        """
         if (
             type(private) is not bool
             or type(create) is not bool
@@ -142,7 +149,9 @@ class _PinnedRoot:
             _source_directory_policy(opened, self.uid)
             if private:
                 _private_directory_policy(opened, self.uid)
-            self.records.append((parent, name, child, _directory_identity(opened)))
+            self.records.append(
+                (parent, name, child, _directory_identity(opened))
+            )
             self.directory_fds[key] = child
             parent = child
         self.verify()
@@ -180,12 +189,17 @@ def open_source_root(path):
             if final:
                 _source_directory_policy(opened, uid)
                 if allocated and (
-                    opened.st_uid != uid or stat.S_IMODE(opened.st_mode) != 0o700
+                    opened.st_uid != uid
+                    or stat.S_IMODE(opened.st_mode) != 0o700
                 ):
-                    raise ModelSourceError("model_source_allocated_root_not_private")
+                    raise ModelSourceError(
+                        "model_source_allocated_root_not_private"
+                    )
             else:
                 allocated = _ancestor_policy(opened, uid, gid) or allocated
-            records.append((descriptor, name, child, _directory_identity(opened)))
+            records.append(
+                (descriptor, name, child, _directory_identity(opened))
+            )
             descriptor = child
         pinned = _PinnedRoot(root, descriptor, uid, records, descriptors)
         pinned.verify()
@@ -306,17 +320,28 @@ def copy_verified_file(
             _source_file_policy(opened, source.uid, expected_size)
             if _file_identity(opened) != _file_identity(before):
                 raise ModelSourceError("model_source_file_changed")
-            staged = os.stat(destination.name, dir_fd=target.fd, follow_symlinks=False)
+            staged = os.stat(
+                destination.name, dir_fd=target.fd, follow_symlinks=False
+            )
             _destination_policy(staged, source.uid)
-            if (staged.st_dev, staged.st_ino) == (opened.st_dev, opened.st_ino):
+            if (staged.st_dev, staged.st_ino) == (
+                opened.st_dev,
+                opened.st_ino,
+            ):
                 raise ModelSourceError("model_staging_overlaps_source")
-            destination_fd = os.open(destination.name, WRITE_FLAGS, dir_fd=target.fd)
-            if _file_identity(os.fstat(destination_fd)) != _file_identity(staged):
+            destination_fd = os.open(
+                destination.name, WRITE_FLAGS, dir_fd=target.fd
+            )
+            if _file_identity(os.fstat(destination_fd)) != _file_identity(
+                staged
+            ):
                 raise ModelSourceError("model_staging_file_changed")
             os.ftruncate(destination_fd, 0)
             digest, size = hashlib.sha256(), 0
             while size <= expected_size:
-                block = os.read(source_fd, min(CHUNK_BYTES, expected_size + 1 - size))
+                block = os.read(
+                    source_fd, min(CHUNK_BYTES, expected_size + 1 - size)
+                )
                 if not block:
                     break
                 size += len(block)
@@ -332,9 +357,9 @@ def copy_verified_file(
             os.fsync(destination_fd)
             after = os.fstat(source_fd)
             named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if _file_identity(opened) != _file_identity(after) or _file_identity(
+            if _file_identity(opened) != _file_identity(
                 after
-            ) != _file_identity(named):
+            ) or _file_identity(after) != _file_identity(named):
                 raise ModelSourceError("model_source_file_changed")
             if size != expected_size or digest.hexdigest() != expected_sha256:
                 raise ModelSourceError("model_source_sha256_mismatch")

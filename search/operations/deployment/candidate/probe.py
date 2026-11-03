@@ -2,8 +2,9 @@
 
 Scripts use only the standard library, including in the older production image.
 The host proves container ownership before supplying IDs. Model residency uses
-GET only; a query creates one RAM session, sends one turn and resets in finally.
-Only public model metadata or the requested result/context leave the namespace.
+GET only; a query creates one RAM session, sends one turn and resets in
+finally. Only public model metadata or the requested result/context leave the
+namespace.
 """
 
 from __future__ import annotations
@@ -44,7 +45,8 @@ class SharedBackendProbeError(ValueError):
     """Closed diagnostics without HTTP bodies, tokens or subprocess output."""
 
 
-_RESIDENCY_SCRIPT = r"""
+_RESIDENCY_SCRIPT = (
+    r"""
 import http.client
 import json
 import os
@@ -69,7 +71,8 @@ try:
         code = "shared_backend_residency_failed"
         connection = http.client.HTTPConnection(host, 11434, timeout=5)
         try:
-            connection.request("GET", "/api/ps", headers={"Connection": "close"})
+            connection.request("GET", "/api/ps", """
+    r"""headers={"Connection": "close"})
             response = connection.getresponse()
             raw = response.read(65537)
             if response.status != 200 or len(raw) > 65536:
@@ -91,13 +94,15 @@ try:
             or row.get("digest") != item["digest"]
             or type(row.get("context_length")) is not int
             or row["context_length"] != item["num_ctx"]
-            or any(type(row.get(key)) is not int or not 0 < row[key] <= 1024**4
+            or any(type(row.get(key)) is not int or not 0 < """
+    r"""row[key] <= 1024**4
                    for key in ("size", "size_vram"))):
             raise ValueError()
         if row["size_vram"] != row["size"]:
             code = "shared_backend_not_resident"
             raise ValueError()
-        models.append({**item, "size_bytes": row["size"], "vram_bytes": row["size_vram"]})
+        models.append({**item, "size_bytes": row["size"], """
+    r""""vram_bytes": row["size_vram"]})
     report = {"schema_version": 1, "status": "resident",
               "full_gpu_residency_verified": True, "models": models}
 except Exception:
@@ -105,9 +110,11 @@ except Exception:
 watchdog.cancel()
 print(json.dumps(report, sort_keys=True, allow_nan=False), flush=True)
 """
+)
 
 
-_QUERY_SCRIPT = r"""
+_QUERY_SCRIPT = (
+    r"""
 import http.client
 import json
 import os
@@ -129,7 +136,8 @@ class ProbeError(Exception):
 def interrupt():
     timed_out[0] = True
     connection = active[0]
-    sock = active_socket[0] or (connection.sock if connection is not None else None)
+    sock = active_socket[0] or (connection.sock if connection is """
+    r"""not None else None)
     if sock is not None:
         try:
             sock.shutdown(socket.SHUT_RDWR)
@@ -152,13 +160,15 @@ def request(method, path, *, payload=None, token=None, cleanup=False):
     left = started + (129 if cleanup else 124) - time.monotonic()
     if left <= 0:
         raise ProbeError("shared_backend_query_timeout")
-    connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=min(left, 3 if cleanup else 123))
+    connection = http.client.HTTPConnection("127.0.0.1", 8000, """
+    r"""timeout=min(left, 3 if cleanup else 123))
     active[0] = connection
     headers = {"Host": "127.0.0.1:18083", "Origin": ORIGIN,
                "Accept": "application/json", "Connection": "close"}
     body = None
     if payload is not None:
-        body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+        body = json.dumps(payload, ensure_ascii=False, """
+    r"""allow_nan=False).encode()
         headers["Content-Type"] = "application/json"
     if token is not None:
         headers["Authorization"] = "Bearer " + token
@@ -209,24 +219,32 @@ try:
         or re.fullmatch(r"[A-Za-z0-9_-]{43}", session["token"]) is None):
         raise ProbeError("shared_backend_query_failed")
     token = session["token"]
-    if (set(session) != {"token", "version", "expires_in", "max_turns", "revision"}
+    if (set(session) != {"token", "version", "expires_in", """
+    r""""max_turns", "revision"}
         or type(session["version"]) is not int or session["version"] != 0
-        or type(session["expires_in"]) is not int or not 1 <= session["expires_in"] <= 3600
-        or type(session["max_turns"]) is not int or not 1 <= session["max_turns"] <= 20
+        or type(session["expires_in"]) is not int or not 1 <= """
+    r"""session["expires_in"] <= 3600
+        or type(session["max_turns"]) is not int or not 1 <= """
+    r"""session["max_turns"] <= 20
         or session["revision"] != revision):
         raise ProbeError("shared_backend_query_identity_changed")
     value = request("POST", "/api/turn", token=token,
-                    payload={"query": text, "version": 0, "top_k": 5, "timezone": "Asia/Taipei"})
-    if (type(value) is not dict or set(value) != {"version", "result", "context_used"}
+                    payload={"query": text, "version": 0, "top_k": """
+    r"""5, "timezone": "Asia/Taipei"})
+    if (type(value) is not dict or set(value) != {"version", """
+    r""""result", "context_used"}
         or type(value["version"]) is not int or value["version"] != 1
-        or type(value["result"]) is not dict or type(value["context_used"]) is not dict):
+        or type(value["result"]) is not dict or """
+    r"""type(value["context_used"]) is not dict):
         raise ProbeError("shared_backend_query_failed")
     result, context = value["result"], value["context_used"]
     if (result.get("revision") != revision
         or (result.get("search") is not None
-            and (type(result["search"]) is not dict or result["search"].get("revision") != revision))):
+            and (type(result["search"]) is not dict or """
+    r"""result["search"].get("revision") != revision))):
         raise ProbeError("shared_backend_query_identity_changed")
-    if result.get("status") not in {"ok", "rejected", "clarification_required"}:
+    if result.get("status") not in {"ok", "rejected", """
+    r""""clarification_required"}:
         raise ProbeError("shared_backend_query_failed")
     if context.get("timezone") != "Asia/Taipei":
         raise ProbeError("shared_backend_query_failed")
@@ -234,23 +252,27 @@ try:
 except ProbeError as error:
     report = {"error": str(error)}
 except Exception:
-    report = {"error": "shared_backend_query_timeout" if timed_out[0] else "shared_backend_query_failed"}
+    report = {"error": "shared_backend_query_timeout" if """
+    r"""timed_out[0] else "shared_backend_query_failed"}
 finally:
     interrupter.cancel()
     if token is not None:
         try:
-            if request("DELETE", "/api/session", token=token, cleanup=True) != {"status": "cleared"}:
+            if request("DELETE", "/api/session", token=token, """
+    r"""cleanup=True) != {"status": "cleared"}:
                 raise ValueError()
         except Exception:
             report = {"error": "shared_backend_query_reset_failed"}
     token = None
 watchdog.cancel()
 try:
-    encoded = json.dumps(report, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    encoded = json.dumps(report, sort_keys=True, ensure_ascii=False,"""
+    r""" allow_nan=False)
 except Exception:
     encoded = '{"error":"shared_backend_query_failed"}'
 print(encoded, flush=True)
 """
+)
 
 
 def _invoke(docker, container, script, payload, *, timeout, maximum, failure):
@@ -267,7 +289,17 @@ def _invoke(docker, container, script, payload, *, timeout, maximum, failure):
         if len(encoded) > MAX_INPUT_BYTES:
             raise ValueError()
         raw = docker.call(
-            ["exec", "-i", container, "python", "-I", "-S", "-B", "-c", script],
+            [
+                "exec",
+                "-i",
+                container,
+                "python",
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                script,
+            ],
             timeout=timeout,
             input_bytes=encoded,
         )
@@ -285,7 +317,8 @@ def _invoke(docker, container, script, payload, *, timeout, maximum, failure):
     except InferenceError as error:
         code = (
             "query_timeout"
-            if failure == "query_failed" and str(error) == "inference_command_timeout"
+            if failure == "query_failed"
+            and str(error) == "inference_command_timeout"
             else failure
         )
         raise SharedBackendProbeError("shared_backend_" + code) from None
@@ -324,9 +357,16 @@ def _expected(policy):
         raise SharedBackendProbeError("shared_backend_probe_invalid") from None
 
 
-def verify_residency(docker, api_container_id, policy, *, timeout=RESIDENCY_SECONDS):
-    """GET existing model residency; never load, warm, generate or stop models."""
-    if type(timeout) not in {int, float} or not 0 < timeout <= RESIDENCY_SECONDS:
+def verify_residency(
+    docker, api_container_id, policy, *, timeout=RESIDENCY_SECONDS
+):
+    """GET existing model residency; never load, warm, generate or stop
+    models.
+    """
+    if (
+        type(timeout) not in {int, float}
+        or not 0 < timeout <= RESIDENCY_SECONDS
+    ):
         raise SharedBackendProbeError("shared_backend_probe_invalid")
     expected = _expected(policy)
     value = _invoke(
@@ -341,7 +381,12 @@ def verify_residency(docker, api_container_id, policy, *, timeout=RESIDENCY_SECO
     try:
         if (
             set(value)
-            != {"schema_version", "status", "full_gpu_residency_verified", "models"}
+            != {
+                "schema_version",
+                "status",
+                "full_gpu_residency_verified",
+                "models",
+            }
             or type(value["schema_version"]) is not int
             or value["schema_version"] != 1
             or value["status"] != "resident"
@@ -363,7 +408,9 @@ def verify_residency(docker, api_container_id, policy, *, timeout=RESIDENCY_SECO
                 raise ValueError()
         return value
     except (ValueError, KeyError, TypeError):
-        raise SharedBackendProbeError("shared_backend_residency_failed") from None
+        raise SharedBackendProbeError(
+            "shared_backend_residency_failed"
+        ) from None
 
 
 def query(docker, bff_container_id, text, revision):

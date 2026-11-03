@@ -1,8 +1,9 @@
 """Private metadata record IO shared by sync and catalog preparation.
 
 The source adapter owns the bounded JSON policy. Private IO owns descriptor,
-identity and durable-publication checks; this layer preserves cache diagnostics.
-It does not download metadata, lock caches or authorize catalog promotion.
+identity and durable-publication checks; this layer preserves cache
+diagnostics. It does not download metadata, lock caches or authorize catalog
+promotion.
 """
 
 from pathlib import Path
@@ -15,7 +16,9 @@ MAX_RECORD_BYTES = 4 * 1024**2
 
 
 class SyncError(ValueError):
-    """A cache boundary failed; callers must not promote any intermediate data."""
+    """A cache boundary failed; callers must not promote any intermediate
+    data.
+    """
 
 
 def real_path(path):
@@ -34,7 +37,9 @@ def same_file(left, right):
 def file_bytes(parent_fd, name, *, mode, limit):
     """Read a bounded private file using the cache's diagnostic contract."""
     try:
-        return private_io.read_file(parent_fd, name, mode=mode, max_bytes=limit)
+        return private_io.read_file(
+            parent_fd, name, mode=mode, max_bytes=limit
+        )
     except ValueError as error:
         raise SyncError(
             "cache file ownership, mode, links or size are unsafe"
@@ -49,7 +54,9 @@ def read_record(parent_fd, name):
 
 
 def write_record(parent_fd, name, value, *, replace=False):
-    """Publish a private cache record, replacing it only when explicitly allowed."""
+    """Publish a private cache record, replacing it only when explicitly
+    allowed.
+    """
     try:
         private_io.write_json(
             parent_fd, name, value, replace=replace, max_bytes=MAX_RECORD_BYTES

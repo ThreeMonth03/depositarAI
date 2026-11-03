@@ -46,79 +46,101 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('0.0.0.0',9080),Handler).serve_forever()
 """
 
-PROBE = r"""
-import hashlib,http.client,json,re,time,urllib.parse
-from http.cookies import SimpleCookie
-from html import unescape
-jar={}
-def request(method,path,body=None,headers=None,cookies=None):
-    h={'Host':'public.test:9443','Origin':'https://public.test:9443',
-       'Accept-Encoding':'gzip','User-Agent':'runtime-probe'}
-    h.update(headers or {})
-    selected=jar if cookies is None else cookies
-    if selected: h['Cookie']='; '.join(k+'='+v for k,v in selected.items())
-    c=http.client.HTTPConnection('public-edge',8080,timeout=10)
-    c.request(method,path,body=body,headers=h)
-    r=c.getresponse(); raw=r.read(); fields=r.getheaders()
-    if r.getheader('Content-Encoding')=='gzip':
-        import gzip
-        raw=gzip.decompress(raw)
-    for name,value in fields:
-        if name.lower()=='set-cookie':
-            parsed=SimpleCookie();parsed.load(value)
-            if cookies is None:
-                for key,m in parsed.items():
-                    if m['max-age']=='-1': jar.pop(key,None)
-                    else: jar[key]=m.value
-    result=(r.status,dict((k.lower(),v) for k,v in fields),raw.decode())
-    c.close(); return result
-def stats(): return json.loads(request('GET','/stats')[2])['calls']
-assert request('GET','/')[0]==200
-baseline=len(stats())
-for path in ['/api/session','/api/turn']:
-    code,headers,body=request('POST',path,'{}',{'X-Anubis-Status':'PASS','X-Real-IP':'8.8.8.8'})
-    assert code==403,(path,code,body)
-    assert headers['content-type'].startswith('application/json'),headers
-    assert json.loads(body)['error']=={'code':'challenge_required','verification_path':'/verify'},body
-assert len(stats())==baseline
-assert request('DELETE','/api/session')[0]==200
-assert request('GET','/auth/callback?code=fixture&state=fixture')[0]==200
-assert request('POST','/auth/callback','state=fixture&code=fixture')[0]==200
-assert stats()[-1]['body']=='state=fixture&code=fixture'
-assert request('GET','/auth/login')[0:2][0]==302
-code,headers,body=request('GET','/verify?redir=https://untrusted.invalid/')
-assert code==403 and '<html' in body.lower(),(code,body[:200])
-match=re.search(r'<script[^>]*id="anubis_challenge"[^>]*>(.*?)</script>',body,re.S)
-assert match,body[:1000]
-challenge=json.loads(unescape(match.group(1)))
-data=challenge['challenge']; difficulty=challenge['rules']['difficulty']
-nonce=0
-while True:
-    response=hashlib.sha256((data['randomData']+str(nonce)).encode()).hexdigest()
-    if response.startswith('0'*difficulty): break
-    nonce+=1
-assert nonce<1000000,nonce
-query=urllib.parse.urlencode({'id':data['id'],'response':response,'nonce':nonce,
-    'redir':'https://public.test:9443/verify','elapsedTime':1000})
-code,headers,body=request('GET','/.within.website/x/cmd/anubis/api/pass-challenge?'+query)
-assert code==302,(code,body)
-assert 'Secure' in headers['set-cookie'] and 'HttpOnly' in headers['set-cookie'],headers
-code,headers,body=request('GET','/verify?redir=https://untrusted.invalid/')
-assert code==302 and headers['location']=='/',(code,headers,body)
-time.sleep(1)
-assert request('POST','/api/session','{"query":"fixture"}')[0]==200
-assert stats()[-1]['method']=='POST' and stats()[-1]['body']=='{"query":"fixture"}'
-assert stats()[-1]['client_ip']!='8.8.8.8'
-assert request('POST','/api/turn','{}')[0]==200
-valid=dict(jar)
-bad={k:('invalid' if 'auth' in k else v) for k,v in valid.items()}
-assert request('POST','/api/turn','{}',cookies=bad)[0]==403
-assert request('GET','/.within.website/x/cmd/anubis/api/check')[0]==404
-assert request('GET','/_antibot_check')[0]==404
-print(json.dumps({'status':'passed','cookie':valid,'upstream_calls':len(stats()),
-    'challenge_required_json':True,'post_preserved':True,'callback_preserved':True,
-    'fixed_redirect':True,'spoofed_pass_rejected':True}))
-"""
+PROBE = (
+    "\n"
+    "import hashlib,http.client,json,re,time,urllib.parse\n"
+    "from http.cookies import SimpleCookie\n"
+    "from html import unescape\n"
+    "jar={}\n"
+    "def request(method,path,body=None,headers=None,cookies=None):\n"
+    "    h={'Host':'public.test:9443','Origin':'https://public.test:"
+    "9443',\n"
+    "       'Accept-Encoding':'gzip','User-Agent':'runtime-probe'}\n"
+    "    h.update(headers or {})\n"
+    "    selected=jar if cookies is None else cookies\n"
+    "    if selected: h['Cookie']='; '.join(k+'='+v for k,v in selected."
+    "items())\n"
+    "    c=http.client.HTTPConnection('public-edge',8080,timeout=10)\n"
+    "    c.request(method,path,body=body,headers=h)\n"
+    "    r=c.getresponse(); raw=r.read(); fields=r.getheaders()\n"
+    "    if r.getheader('Content-Encoding')=='gzip':\n"
+    "        import gzip\n"
+    "        raw=gzip.decompress(raw)\n"
+    "    for name,value in fields:\n"
+    "        if name.lower()=='set-cookie':\n"
+    "            parsed=SimpleCookie();parsed.load(value)\n"
+    "            if cookies is None:\n"
+    "                for key,m in parsed.items():\n"
+    "                    if m['max-age']=='-1': jar.pop(key,None)\n"
+    "                    else: jar[key]=m.value\n"
+    "    result=(r.status,dict((k.lower(),v) for k,v in fields),raw."
+    "decode())\n"
+    "    c.close(); return result\n"
+    "def stats(): return json.loads(request('GET','/stats')[2])['calls']\n"
+    "assert request('GET','/')[0]==200\n"
+    "baseline=len(stats())\n"
+    "for path in ['/api/session','/api/turn']:\n"
+    "    code,headers,body=request('POST',path,'{}',{'X-Anubis-Status':"
+    "'PASS','X-Real-IP':'8.8.8.8'})\n"
+    "    assert code==403,(path,code,body)\n"
+    "    assert headers['content-type'].startswith('application/json'),"
+    "headers\n"
+    "    assert json.loads(body)['error']=={'code':'challenge_required',"
+    "'verification_path':'/verify'},body\n"
+    "assert len(stats())==baseline\n"
+    "assert request('DELETE','/api/session')[0]==200\n"
+    "assert request('GET','/auth/callback?code=fixture&state=fixture')[0"
+    "]==200\n"
+    "assert request('POST','/auth/callback',"
+    "'state=fixture&code=fixture')[0]==200\n"
+    "assert stats()[-1]['body']=='state=fixture&code=fixture'\n"
+    "assert request('GET','/auth/login')[0:2][0]==302\n"
+    "code,headers,body=request('GET','/verify?redir=https://untrusted."
+    "invalid/')\n"
+    "assert code==403 and '<html' in body.lower(),(code,body[:200])\n"
+    'match=re.search(r\'<script[^>]*id="anubis_challenge"[^>]*>(.'
+    "*?)</script>',body,re.S)\n"
+    "assert match,body[:1000]\n"
+    "challenge=json.loads(unescape(match.group(1)))\n"
+    "data=challenge['challenge']; difficulty=challenge['rules']['difficu"
+    "lty']\n"
+    "nonce=0\n"
+    "while True:\n"
+    "    response=hashlib.sha256((data['randomData']+str(nonce))."
+    "encode()).hexdigest()\n"
+    "    if response.startswith('0'*difficulty): break\n"
+    "    nonce+=1\n"
+    "assert nonce<1000000,nonce\n"
+    "query=urllib.parse.urlencode({'id':data['id'],'response':response,"
+    "'nonce':nonce,\n"
+    "    'redir':'https://public.test:9443/verify','elapsedTime':1000})\n"
+    "code,headers,body=request('GET','/.within."
+    "website/x/cmd/anubis/api/pass-challenge?'+query)\n"
+    "assert code==302,(code,body)\n"
+    "assert 'Secure' in headers['set-cookie'] and 'HttpOnly' in "
+    "headers['set-cookie'],headers\n"
+    "code,headers,body=request('GET','/verify?redir=https://untrusted."
+    "invalid/')\n"
+    "assert code==302 and headers['location']=='/',(code,headers,body)\n"
+    "time.sleep(1)\n"
+    "assert request('POST','/api/session','{\"query\":"
+    '"fixture"}\')[0]==200\n'
+    "assert stats()[-1]['method']=='POST' and "
+    "stats()[-1]['body']=='{\"query\":\"fixture\"}'\n"
+    "assert stats()[-1]['client_ip']!='8.8.8.8'\n"
+    "assert request('POST','/api/turn','{}')[0]==200\n"
+    "valid=dict(jar)\n"
+    "bad={k:('invalid' if 'auth' in k else v) for k,v in valid.items()}\n"
+    "assert request('POST','/api/turn','{}',cookies=bad)[0]==403\n"
+    "assert request('GET','/.within.website/x/cmd/anubis/api/check')[0]="
+    "=404\n"
+    "assert request('GET','/_antibot_check')[0]==404\n"
+    "print(json.dumps({'status':'passed','cookie':valid,"
+    "'upstream_calls':len(stats()),\n"
+    "    'challenge_required_json':True,'post_preserved':True,"
+    "'callback_preserved':True,\n"
+    "    'fixed_redirect':True,'spoofed_pass_rejected':True}))\n"
+)
 
 
 @unittest.skipUnless(
@@ -131,7 +153,9 @@ class AntibotRuntimeTests(unittest.TestCase):
             argv, text=True, capture_output=True, timeout=timeout, check=False
         )
         if result.returncode:
-            self.fail("isolated antibot command failed: " + result.stderr[-2000:])
+            self.fail(
+                "isolated antibot command failed: " + result.stderr[-2000:]
+            )
         return result.stdout
 
     def compose(self, *args, timeout=45):
@@ -146,11 +170,15 @@ class AntibotRuntimeTests(unittest.TestCase):
             timeout=timeout,
         )
 
-    def test_real_challenge_gate_keeps_json_and_post_boundaries_across_restart(self):
+    def test_real_challenge_gate_keeps_json_and_post_boundaries_across_restart(
+        self,
+    ):
         uid, gid = os.geteuid(), os.getegid()
         if uid == 0:
             self.skipTest("disposable runtime requires a non-root operator")
-        with tempfile.TemporaryDirectory(prefix="depositar-antibot-runtime-") as tmp:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-antibot-runtime-"
+        ) as tmp:
             root = Path(tmp)
             root.chmod(0o700)
             private = root / "public-entry"
@@ -172,7 +200,10 @@ class AntibotRuntimeTests(unittest.TestCase):
                 path.write_text(content)
                 path.chmod(0o600)
             (private / "antibot-data").mkdir(mode=0o700)
-            for name, content in (("gateway.py", GATEWAY), ("probe.py", PROBE)):
+            for name, content in (
+                ("gateway.py", GATEWAY),
+                ("probe.py", PROBE),
+            ):
                 path = root / name
                 path.write_text(content)
                 path.chmod(0o600)
@@ -180,7 +211,8 @@ class AntibotRuntimeTests(unittest.TestCase):
                 "anubis": ANUBIS_IMAGE,
                 "nginx": NGINX_BASE,
                 "python": os.environ.get(
-                    "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE", "depositar-search-api:ci"
+                    "DEPOSITAR_TEST_PUBLIC_FIXTURE_IMAGE",
+                    "depositar-search-api:ci",
                 ),
             }
             for name, image in images.items():
@@ -219,14 +251,18 @@ class AntibotRuntimeTests(unittest.TestCase):
             services["public-entry"] = {
                 **common,
                 "entrypoint": ["python", "/fixture/gateway.py"],
-                "depends_on": {"public-edge": {"condition": "service_healthy"}},
+                "depends_on": {
+                    "public-edge": {"condition": "service_healthy"}
+                },
             }
             services["probe"] = {
                 **common,
                 "entrypoint": ["python", "-c", "import time; time.sleep(600)"],
             }
             services["second-probe"] = dict(services["probe"])
-            network = runtime_fixture.PublicEntryRuntimeFixture.networks()["website"]
+            network = runtime_fixture.PublicEntryRuntimeFixture.networks()[
+                "website"
+            ]
             self.project = "depositar-antibot-test-" + uuid.uuid4().hex[:12]
             self.compose_file = root / "compose.json"
             self.compose_file.write_text(
@@ -241,42 +277,69 @@ class AntibotRuntimeTests(unittest.TestCase):
             try:
                 self.compose("up", "--detach", "--wait", timeout=90)
                 outcome = json.loads(
-                    self.compose("exec", "-T", "probe", "python", "/fixture/probe.py")
+                    self.compose(
+                        "exec", "-T", "probe", "python", "/fixture/probe.py"
+                    )
                 )
                 self.assertEqual(outcome.pop("status"), "passed")
                 cookie = outcome.pop("cookie")
-                cookie_header = "; ".join(k + "=" + v for k, v in cookie.items())
-                request_script = (
-                    "import http.client,json; c=http.client.HTTPConnection('public-edge',8080,timeout=10); "
-                    "c.request('POST','/api/turn',body='{}',headers="
-                    + repr({"Host": "public.test:9443", "Cookie": cookie_header})
-                    + "); r=c.getresponse(); print(json.dumps({'status':r.status,'body':r.read().decode()}))"
+                cookie_header = "; ".join(
+                    k + "=" + v for k, v in cookie.items()
                 )
-                # Another socket address cannot reuse the first browser's proof.
+                request_script = (
+                    "import http.client,json; c=http.client."
+                    "HTTPConnection('public-edge',8080,timeout=10); "
+                    "c.request('POST','/api/turn',body='{}',headers="
+                    + repr(
+                        {"Host": "public.test:9443", "Cookie": cookie_header}
+                    )
+                    + "); r=c.getresponse(); print(json."
+                    "dumps({'status':r.status,'body':r.read()."
+                    "decode()}))"
+                )
+                # Another socket address cannot reuse the first browser's
+                # proof.
                 second = json.loads(
                     self.compose(
-                        "exec", "-T", "second-probe", "python", "-c", request_script
+                        "exec",
+                        "-T",
+                        "second-probe",
+                        "python",
+                        "-c",
+                        request_script,
                     )
                 )
                 self.assertEqual(second["status"], 403)
                 self.assertEqual(
-                    json.loads(second["body"])["error"]["code"], "challenge_required"
+                    json.loads(second["body"])["error"]["code"],
+                    "challenge_required",
                 )
                 time.sleep(1)
                 self.compose("stop", "antibot")
                 unavailable = json.loads(
-                    self.compose("exec", "-T", "probe", "python", "-c", request_script)
+                    self.compose(
+                        "exec", "-T", "probe", "python", "-c", request_script
+                    )
                 )
                 self.assertEqual(unavailable["status"], 503)
                 self.compose("up", "--detach", "--wait", "antibot", timeout=60)
                 recovered = json.loads(
-                    self.compose("exec", "-T", "probe", "python", "-c", request_script)
+                    self.compose(
+                        "exec", "-T", "probe", "python", "-c", request_script
+                    )
                 )
                 self.assertEqual(recovered["status"], 200)
-                self.assertTrue((private / "antibot-data" / "anubis.bdb").is_file())
+                self.assertTrue(
+                    (private / "antibot-data" / "anubis.bdb").is_file()
+                )
             except AssertionError as error:
                 logs = self.compose(
-                    "logs", "--no-color", "--tail", "30", "public-edge", "antibot"
+                    "logs",
+                    "--no-color",
+                    "--tail",
+                    "30",
+                    "public-edge",
+                    "antibot",
                 )
                 self.fail(str(error) + "\n" + logs[-4000:])
             finally:

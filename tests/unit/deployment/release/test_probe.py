@@ -1,8 +1,9 @@
 """Closed host receipts and private probe control flow; no Docker/GPU/secrets.
 
-The web control-flow fixtures stand in for Pydantic's already-tested wire models.
-They test chaining, state/refinement/reset and sanitization independently of model
-inference; production probe code always uses the real strict runtime models.
+The web control-flow fixtures stand in for Pydantic's already-tested wire
+models. They test chaining, state/refinement/reset and sanitization
+independently of model inference; production probe code always uses the real
+strict runtime models.
 """
 
 from __future__ import annotations
@@ -25,7 +26,11 @@ from search.operations.deployment.release import probe
 REVISION = "a" * 40
 BUNDLE = "b" * 64
 MANIFEST = "c" * 64
-IDS = {"web": "1" * 64, "conversation-api": "2" * 64, "filtered-embedding": "3" * 64}
+IDS = {
+    "web": "1" * 64,
+    "conversation-api": "2" * 64,
+    "filtered-embedding": "3" * 64,
+}
 PRIVATE = "never-emit-private-http-body"
 
 
@@ -159,7 +164,9 @@ class HostProbeTests(unittest.TestCase):
         for (args, _), service in zip(
             docker.calls, ("conversation-api", "conversation-api", "web")
         ):
-            self.assertEqual(args[:5], ["exec", IDS[service], "python", "-B", "-c"])
+            self.assertEqual(
+                args[:5], ["exec", IDS[service], "python", "-B", "-c"]
+            )
             self.assertEqual(args[-3:], [REVISION, BUNDLE, MANIFEST])
             self.assertNotIn("--network", args)
             self.assertNotIn("--privileged", args)
@@ -167,7 +174,9 @@ class HostProbeTests(unittest.TestCase):
         self.assertNotIn("token", json.dumps(result))
         self.assertNotIn("query", json.dumps(result))
 
-    def test_readiness_only_does_not_warm_models_or_claim_search_or_gateway(self):
+    def test_readiness_only_does_not_warm_models_or_claim_search_or_gateway(
+        self,
+    ):
         docker = FakeDocker()
         docker.outputs.pop(0)
         result = self.verify(docker, search=False)
@@ -279,7 +288,9 @@ class HostProbeTests(unittest.TestCase):
             docker = FakeDocker()
             with (
                 self.subTest(kwargs=kwargs),
-                self.assertRaisesRegex(probe.ReleaseProbeError, "identity_invalid"),
+                self.assertRaisesRegex(
+                    probe.ReleaseProbeError, "identity_invalid"
+                ),
             ):
                 self.verify(docker, **kwargs)
             self.assertFalse(docker.calls)
@@ -311,7 +322,10 @@ class HostProbeTests(unittest.TestCase):
             {"documents": 10001},
             {"backend_ready": 1},
             {"api_version_verified": False, "code": "api_probe_failed"},
-            {"pinned_backend_models_verified": False, "code": "api_probe_failed"},
+            {
+                "pinned_backend_models_verified": False,
+                "code": "api_probe_failed",
+            },
             {"reranker_ready": False},
             {"code": PRIVATE},
             {"revision": "f" * 40},
@@ -319,7 +333,9 @@ class HostProbeTests(unittest.TestCase):
         for changes in cases:
             with (
                 self.subTest(changes=changes),
-                self.assertRaisesRegex(probe.ReleaseProbeError, "api_contract_invalid"),
+                self.assertRaisesRegex(
+                    probe.ReleaseProbeError, "api_contract_invalid"
+                ),
             ):
                 self.verify(FakeDocker(api={**api_ready(), **changes}))
 
@@ -349,7 +365,10 @@ class HostProbeTests(unittest.TestCase):
             value["turns"][0].update(changes)
             values.append(value)
         for value in values:
-            with self.subTest(value=value), self.assertRaises(probe.ReleaseProbeError):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(probe.ReleaseProbeError),
+            ):
                 self.verify(FakeDocker(website=value))
 
     def test_command_failure_is_sanitized(self):
@@ -395,13 +414,16 @@ def execute(script, fixture, *, modules=None):
     output = io.StringIO()
     with (
         mock.patch.object(sys, "argv", ["probe", REVISION, BUNDLE, MANIFEST]),
-        mock.patch("search.transport.http.UrllibTransport", return_value=fixture),
+        mock.patch(
+            "search.transport.http.UrllibTransport", return_value=fixture
+        ),
         mock.patch.dict(sys.modules, {} if modules is None else modules),
         mock.patch("time.sleep"),
         redirect_stdout(output),
     ):
         exec(
-            compile(script, "<private-release-probe>", "exec"), {"__name__": "__main__"}
+            compile(script, "<private-release-probe>", "exec"),
+            {"__name__": "__main__"},
         )
     raw = output.getvalue()
     if PRIVATE in raw:
@@ -450,7 +472,9 @@ class WarmupScriptTests(unittest.TestCase):
         probe._warmup(result, REVISION, BUNDLE, MANIFEST)
         return result
 
-    def test_fixed_helper_runs_once_and_only_closed_residency_summary_escapes(self):
+    def test_fixed_helper_runs_once_and_only_closed_residency_summary_escapes(
+        self,
+    ):
         value = self.run_script()
         self.assertEqual(value, warmup_ready())
         for row in value["models"]:
@@ -461,7 +485,9 @@ class WarmupScriptTests(unittest.TestCase):
         self.assertNotIn("/api/chat", probe._WARMUP_SCRIPT)
         self.assertNotIn("http://", probe._WARMUP_SCRIPT)
 
-    def test_incomplete_or_partial_gpu_helper_cannot_pass_and_is_not_retried(self):
+    def test_incomplete_or_partial_gpu_helper_cannot_pass_and_is_not_retried(
+        self,
+    ):
         values = []
         for changes in (
             {"status": "blocked"},
@@ -491,7 +517,9 @@ class WarmupScriptTests(unittest.TestCase):
         for value in values:
             with self.subTest(value=value):
                 self.assertEqual(self.run_script(value), warmup_failed())
-        self.assertEqual(self.run_script(error=RuntimeError(PRIVATE)), warmup_failed())
+        self.assertEqual(
+            self.run_script(error=RuntimeError(PRIVATE)), warmup_failed()
+        )
 
 
 class APIScriptTests(unittest.TestCase):
@@ -517,11 +545,15 @@ class APIScriptTests(unittest.TestCase):
     def run_script(self, responses, *, bundle_id=BUNDLE):
         fixture = ScriptFixture(responses)
         with (
-            mock.patch.object(Settings, "from_environment", return_value=self.settings),
+            mock.patch.object(
+                Settings, "from_environment", return_value=self.settings
+            ),
             mock.patch.object(
                 CatalogBundle,
                 "load",
-                return_value=SimpleNamespace(bundle_id=bundle_id, documents=range(7)),
+                return_value=SimpleNamespace(
+                    bundle_id=bundle_id, documents=range(7)
+                ),
             ),
             mock.patch("search.secrets.read_secret", return_value=PRIVATE),
         ):
@@ -562,11 +594,25 @@ class APIScriptTests(unittest.TestCase):
         versions = [missing, {**self.version, "private": PRIVATE}]
         versions.extend(
             {**self.version, "conversation_contract_version": invalid}
-            for invalid in (None, True, False, 0, 2, 3, 5, -1, "4", 4.0, PRIVATE)
+            for invalid in (
+                None,
+                True,
+                False,
+                0,
+                2,
+                3,
+                5,
+                -1,
+                "4",
+                4.0,
+                PRIVATE,
+            )
         )
         for version in versions:
             with self.subTest(version=version):
-                value, fixture = self.run_script([("/v1/version", 200, version)])
+                value, fixture = self.run_script(
+                    [("/v1/version", 200, version)]
+                )
                 self.assertIs(value["api_version_verified"], False)
                 self.assertIs(value["backend_ready"], False)
                 self.assertIs(value["pinned_backend_models_verified"], False)
@@ -574,7 +620,9 @@ class APIScriptTests(unittest.TestCase):
                 self.assertEqual(value["documents"], 0)
                 self.assertEqual(value["code"], "api_probe_failed")
                 self.assertEqual(len(fixture.calls), 1)
-                self.assertTrue(fixture.calls[0][0].url.endswith("/v1/version"))
+                self.assertTrue(
+                    fixture.calls[0][0].url.endswith("/v1/version")
+                )
                 probe._api(value, REVISION, BUNDLE, MANIFEST)
                 self.assertNotIn(PRIVATE, json.dumps(value))
 
@@ -663,7 +711,8 @@ class WebControlFlowTests(unittest.TestCase):
             )
         )
         self.modules = {
-            module.__name__: module for module in (contracts, schemas, upstream)
+            module.__name__: module
+            for module in (contracts, schemas, upstream)
         }
         self.token, self.replacement = "a" * 43, "b" * 43
 
@@ -689,7 +738,9 @@ class WebControlFlowTests(unittest.TestCase):
             context_used=self.context,
             cards=[card],
             candidate_count=2,
-            applied_conditions=SimpleNamespace(formats=formats) if formats else None,
+            applied_conditions=SimpleNamespace(formats=formats)
+            if formats
+            else None,
             parsed_conditions=SimpleNamespace(formats=formats),
             timing_ms={},
         )
@@ -716,8 +767,16 @@ class WebControlFlowTests(unittest.TestCase):
             )
         return checks + [
             ("/api/session", 200, {**session, "token": self.token}),
-            ("/api/turn", 200, {"version": 1, "result": {}, "context_used": {}}),
-            ("/api/turn", 200, {"version": 2, "result": {}, "context_used": {}}),
+            (
+                "/api/turn",
+                200,
+                {"version": 1, "result": {}, "context_used": {}},
+            ),
+            (
+                "/api/turn",
+                200,
+                {"version": 2, "result": {}, "context_used": {}},
+            ),
             ("/api/session", 200, {"status": "cleared"}),
             ("/api/turn", 410, {"error": {"code": "session_expired"}}),
             ("/api/session", 200, {**session, "token": self.replacement}),
@@ -726,7 +785,9 @@ class WebControlFlowTests(unittest.TestCase):
         ]
 
     def run_script(self, responses=None):
-        fixture = ScriptFixture(self.responses() if responses is None else responses)
+        fixture = ScriptFixture(
+            self.responses() if responses is None else responses
+        )
         value = execute(probe._WEB_SCRIPT, fixture, modules=self.modules)
         return value, fixture
 
@@ -741,7 +802,10 @@ class WebControlFlowTests(unittest.TestCase):
             )
         )
         self.assertFalse(
-            any(request.url.endswith("8000/") for request, _, _ in fixture.calls)
+            any(
+                request.url.endswith("8000/")
+                for request, _, _ in fixture.calls
+            )
         )
         settings = self.modules["search.web.upstream"].WebSettings
         settings.from_environment = lambda: SimpleNamespace(
@@ -752,7 +816,9 @@ class WebControlFlowTests(unittest.TestCase):
         self.assertEqual(report["code"], "web_probe_failed")
         self.assertEqual(blocked.calls, [])
 
-    def test_two_http_turns_without_legacy_fields_chain_versions_and_reset(self):
+    def test_two_http_turns_without_legacy_fields_chain_versions_and_reset(
+        self,
+    ):
         for result in self.results:
             self.assertTrue(
                 {"answer", "planning_status", "clarification"}.isdisjoint(
@@ -775,12 +841,16 @@ class WebControlFlowTests(unittest.TestCase):
         self.assertEqual(turns[1]["query"], "CSV")
         self.assertEqual(len(fixture.calls), 9)
         for request, timeout, max_bytes in fixture.calls:
-            self.assertEqual(dict(request.headers)["Origin"], "http://127.0.0.1:18083")
+            self.assertEqual(
+                dict(request.headers)["Origin"], "http://127.0.0.1:18083"
+            )
             self.assertNotEqual(request.url, "http://127.0.0.1:8000/")
             self.assertLessEqual(timeout, 130)
             self.assertEqual(max_bytes, 256 * 1024)
 
-    def test_failed_second_turn_cleans_session_and_keeps_partial_evidence(self):
+    def test_failed_second_turn_cleans_session_and_keeps_partial_evidence(
+        self,
+    ):
         responses = self.responses()[:4]
         responses[3] = ("/api/turn", 503, {"error": PRIVATE})
         responses.append(("/api/session", 200, {"status": "cleared"}))
@@ -792,7 +862,9 @@ class WebControlFlowTests(unittest.TestCase):
         self.assertEqual(fixture.calls[-1][0].method, "DELETE")
         probe._web(value, REVISION, BUNDLE, MANIFEST)
 
-    def test_changed_subject_or_missing_csv_filter_cannot_pass_refinement(self):
+    def test_changed_subject_or_missing_csv_filter_cannot_pass_refinement(
+        self,
+    ):
         self.results[1].state.topic = "unrelated topic"
         responses = self.responses()[:4] + [
             ("/api/session", 200, {"status": "cleared"})
@@ -856,7 +928,10 @@ class WebControlFlowTests(unittest.TestCase):
             ("url", "http://data.depositar.io/dataset/public-rainfall"),
             ("url", "https://elsewhere.example.test/dataset/public-rainfall"),
             ("url", "https://data.depositar.io/private/public-rainfall"),
-            ("url", "https://data.depositar.io/dataset/public-rainfall?private=1"),
+            (
+                "url",
+                "https://data.depositar.io/dataset/public-rainfall?private=1",
+            ),
         ):
             with self.subTest(field=field, invalid=invalid):
                 result = self.result([])

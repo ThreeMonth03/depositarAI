@@ -1,4 +1,6 @@
-"""Render the small trusted-principal adapter; OIDC and crypto stay upstream."""
+"""Render the small trusted-principal adapter; OIDC and crypto stay
+upstream.
+"""
 
 import hashlib
 import json
@@ -14,7 +16,9 @@ def render_identity(config, *, redirect=False):
         "access_mode": config.access_mode,
         "issuer": config.oidc_issuer,
         "client_id": config.oidc_client_id,
-        "bucket": hashlib.sha256(config.public_origin.encode("ascii")).hexdigest(),
+        "bucket": hashlib.sha256(
+            config.public_origin.encode("ascii")
+        ).hexdigest(),
         "quota_per_guest": config.quota_per_guest,
         "quota_per_account": config.quota_per_account,
         "quota_guest_pool": config.quota_guest_pool,
@@ -23,7 +27,9 @@ def render_identity(config, *, redirect=False):
         "session_window_seconds": config.session_window_seconds,
         "redirect": redirect,
     }
-    encoded = json.dumps(json.dumps(options, sort_keys=True, separators=(",", ":")))
+    encoded = json.dumps(
+        json.dumps(options, sort_keys=True, separators=(",", ":"))
+    )
     return (
         "return require('depositar_identity').handler("
         "require('cjson.safe').decode(" + encoded + "))"

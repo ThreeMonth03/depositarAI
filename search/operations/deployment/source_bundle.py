@@ -7,7 +7,8 @@ interpret arbitrary Docker syntax. New COPY inputs or build recipes require an
 explicit contract review. Scope/answer/query-embedding registry images and the
 separately verified catalog build are outside this module.
 
-``source_sha256`` is SHA256 of ``private_io.canonical(service_source_map)``. The
+``source_sha256`` is SHA256 of ``private_io.canonical(service_source_map)``.
+The
 map binds every recipe, ignore and COPY input to its Git mode, size and SHA256.
 Image labels/IDs only bind caller-supplied inspection to that planned identity;
 they cannot by themselves establish that Docker built those bytes or used the
@@ -72,7 +73,8 @@ def _paths(prefix, names):
 
 COMMON = _paths(
     "search/",
-    "__init__.py serialization.py secrets.py transport/__init__.py transport/http.py transport/version.py "
+    "__init__.py serialization.py secrets.py transport/__init__.py "
+    "transport/http.py transport/version.py "
     "model_policy.py scope.py",
 )
 HTTP = _paths(
@@ -83,16 +85,23 @@ CATALOG_QUERY = _paths(
     "search/catalog/",
     "__init__.py errors.py policy.py query.py resources.py",
 )
-CATALOG_RETRIEVAL = _paths("search/catalog/", "bundle.py codec.py embedding.py")
+CATALOG_RETRIEVAL = _paths(
+    "search/catalog/", "bundle.py codec.py embedding.py"
+)
 WEB_CONTRACT = (
     _paths("search/", "__init__.py serialization.py secrets.py")
     | _paths("search/transport/", "__init__.py http.py")
     | CATALOG_QUERY
     | _paths("search/api/", "__init__.py")
-    | _paths("search/api/conversation/", "__init__.py calendar.py contract.py time.py")
+    | _paths(
+        "search/api/conversation/",
+        "__init__.py calendar.py contract.py time.py",
+    )
     | _paths("search/api/retrieval/", "__init__.py metadata.py schemas.py")
     | _paths("search/api/shared/", "__init__.py admission.py schemas.py")
-    | _paths("search/planning/", "__init__.py clock.py contract.py predicates.py")
+    | _paths(
+        "search/planning/", "__init__.py clock.py contract.py predicates.py"
+    )
 )
 API = (
     _paths(
@@ -101,34 +110,43 @@ API = (
     )
     | _paths(
         "search/api/conversation/",
-        "__init__.py app.py calendar.py contract.py engine.py time.py worker.py",
+        "__init__.py app.py calendar.py contract.py engine.py time.py "
+        "worker.py",
     )
     | _paths(
         "search/api/retrieval/",
-        "__init__.py engine.py index.py metadata.py pipeline.py query.py results.py schemas.py worker.py",
+        "__init__.py engine.py index.py metadata.py pipeline.py query.py "
+        "results.py schemas.py worker.py",
     )
     | _paths(
         "search/api/shared/",
-        "__init__.py admission.py backend.py config.py middleware.py model_transport.py peers.py readiness.py schemas.py worker_io.py",
+        "__init__.py admission.py backend.py config.py middleware.py "
+        "model_transport.py peers.py readiness.py schemas.py worker_io.py",
     )
 )
 PLANNING = _paths(
     "search/planning/",
     "__init__.py clock.py contract.py index_filters.py model.py predicates.py",
 )
-RERANKER_PY = _paths("search/reranker/", "__init__.py contract.py model.py server.py")
+RERANKER_PY = _paths(
+    "search/reranker/", "__init__.py contract.py model.py server.py"
+)
 RERANKER = RERANKER_PY | {"search/reranker/requirements.lock"}
 WEB = _paths(
     "search/web/",
-    "__init__.py app.py identity.py origin.py sessions.py upstream.py requirements.lock",
+    "__init__.py app.py identity.py origin.py sessions.py upstream.py "
+    "requirements.lock",
 )
 ASSETS = (
     _paths(
-        "web/", "package.json package-lock.json index.html tsconfig.json vite.config.ts"
+        "web/",
+        "package.json package-lock.json index.html tsconfig.json "
+        "vite.config.ts",
     )
     | _paths(
         "web/src/",
-        "api.ts env.d.ts main.tsx search-access.tsx search-progress.tsx search-results.tsx styles.css",
+        "api.ts env.d.ts main.tsx search-access.tsx search-progress.tsx "
+        "search-results.tsx styles.css",
     )
     | _paths("web/src/search/", "session.ts")
     | _paths("web/src/assets/", "search-symbol.svg search-logo.svg")
@@ -149,8 +167,10 @@ API_PATTERNS = (
 RECIPES = {
     "conversation-api": {
         "dockerfile": "deploy/docker/api/Dockerfile",
-        "dockerfile_sha256": "8db3a98b7f5b29b1ba98ee14459b2f6ebfe50ffc870744f6b179fdc09d163d03",
-        "dockerignore_sha256": "ffd1200d640569735ed1997397cd12e7aafb78a5427a2720c50e85797f7e96fb",
+        "dockerfile_sha256": "8db3a98b7f5b29b1ba98ee14459b2f6e"
+        "bfe50ffc870744f6b179fdc09d163d03",
+        "dockerignore_sha256": "ffd1200d640569735ed1997397cd12e7"
+        "aafb78a5427a2720c50e85797f7e96fb",
         "bases": (PYTHON_BASE,),
         "inputs": COMMON
         | HTTP
@@ -169,8 +189,10 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "24a3bc5ab156f4147d3214416d04038bdb0b6362a2a9d6bb787649236688deda",
-        "dockerignore_sha256": "a44d28c6b36440522025533b860615e6c37db79f36c9f9e1fdebd9a297e718da",
+        "dockerfile_sha256": "24a3bc5ab156f4147d3214416d04038b"
+        "db0b6362a2a9d6bb787649236688deda",
+        "dockerignore_sha256": "a44d28c6b36440522025533b860615e6"
+        "c37db79f36c9f9e1fdebd9a297e718da",
         "bases": (PYTHON_BASE,),
         "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
         "patterns": (
@@ -180,8 +202,10 @@ RECIPES = {
     },
     "reranker": {
         "dockerfile": "deploy/docker/reranker/Dockerfile",
-        "dockerfile_sha256": "383799ba2ddfddc59b21df091cb800ce70625bdecb328387e7e351f6315ade7a",
-        "dockerignore_sha256": "e4df1b2f5daa54a9afffe57c615a78704701a3312d6dc4cc3ea3642a9212fda4",
+        "dockerfile_sha256": "383799ba2ddfddc59b21df091cb800ce"
+        "70625bdecb328387e7e351f6315ade7a",
+        "dockerignore_sha256": "e4df1b2f5daa54a9afffe57c615a7870"
+        "4701a3312d6dc4cc3ea3642a9212fda4",
         "bases": (RERANKER_BASE,),
         "inputs": RERANKER
         | {
@@ -195,8 +219,10 @@ RECIPES = {
     },
     "web-nginx": {
         "dockerfile": "deploy/docker/web-nginx/Dockerfile",
-        "dockerfile_sha256": "832598580d7978ac2c2797361d934e346c424b6e31f3b0c1479972da3da5a785",
-        "dockerignore_sha256": "9bae44a1e0822f159c1ba5c0bfe9c4bf7fa5734a6ccd436933c8226bd9137aa1",
+        "dockerfile_sha256": "832598580d7978ac2c2797361d934e34"
+        "6c424b6e31f3b0c1479972da3da5a785",
+        "dockerignore_sha256": "9bae44a1e0822f159c1ba5c0bfe9c4bf"
+        "7fa5734a6ccd436933c8226bd9137aa1",
         "bases": (NODE_BASE, NGINX_BASE),
         "inputs": ASSETS
         | _paths(
@@ -242,7 +268,9 @@ def _path(value):
 def _matches(path, pattern):
     # Docker's reviewed rules here are single-directory globs. fnmatch alone
     # would incorrectly admit descendants because its '*' also matches '/'.
-    return path.count("/") == pattern.count("/") and fnmatch.fnmatchcase(path, pattern)
+    return path.count("/") == pattern.count("/") and fnmatch.fnmatchcase(
+        path, pattern
+    )
 
 
 def _closure(tracked_tree):
@@ -267,14 +295,18 @@ def _closure(tracked_tree):
     selected = set()
     for recipe in RECIPES.values():
         selected.update(recipe["inputs"])
-        selected.update({recipe["dockerfile"], recipe["dockerfile"] + ".dockerignore"})
+        selected.update(
+            {recipe["dockerfile"], recipe["dockerfile"] + ".dockerignore"}
+        )
         for path in tracked_tree:
             if (
                 any(_matches(path, pattern) for pattern in recipe["patterns"])
                 and path not in recipe["inputs"]
             ):
                 raise SourceBundleError("source_bundle_unreviewed_copy_input")
-    if not 1 <= len(selected) <= MAX_SOURCE_FILES or not selected <= set(tracked_tree):
+    if not 1 <= len(selected) <= MAX_SOURCE_FILES or not selected <= set(
+        tracked_tree
+    ):
         raise SourceBundleError("source_bundle_copy_closure_incomplete")
     for path in selected:
         if (
@@ -325,7 +357,8 @@ def _plan(revision, records):
         dockerfile = recipe["dockerfile"]
         dockerignore = dockerfile + ".dockerignore"
         if any(
-            records[path]["sha256"] != recipe[key] or records[path]["mode"] != "100644"
+            records[path]["sha256"] != recipe[key]
+            or records[path]["mode"] != "100644"
             for path, key in (
                 (dockerfile, "dockerfile_sha256"),
                 (dockerignore, "dockerignore_sha256"),
@@ -369,14 +402,19 @@ def plan_source_bundle(revision, tracked_tree, committed_sources):
     """Plan reviewed COPY closures from explicit committed Git blob bytes.
 
     ``tracked_tree`` maps paths to exactly ``mode,type,object`` (Git ls-tree
-    strings). ``committed_sources`` contains *only* the union of selected files,
-    mapping each path to bytes. Blob object IDs are also checked, so caller bytes
-    cannot silently differ from the supplied Git tree. Inputs are not authority;
+    strings). ``committed_sources`` contains *only* the union of selected
+    files,
+    mapping each path to bytes. Blob object IDs are also checked, so caller
+    bytes
+    cannot silently differ from the supplied Git tree. Inputs are not
+    authority;
     the host must authenticate the revision/tree before staging or building.
     """
     _revision(revision)
     selected = _closure(tracked_tree)
-    if type(committed_sources) is not dict or set(committed_sources) != set(selected):
+    if type(committed_sources) is not dict or set(committed_sources) != set(
+        selected
+    ):
         raise SourceBundleError("source_bundle_committed_closure_invalid")
     records, total = {}, 0
     for path in selected:
@@ -446,7 +484,9 @@ def parse_image_environment(entries):
         try:
             size = len(entry.encode("utf-8"))
         except UnicodeError:
-            raise SourceBundleError("source_bundle_image_environment_invalid") from None
+            raise SourceBundleError(
+                "source_bundle_image_environment_invalid"
+            ) from None
         total += size
         if size > MAX_ENVIRONMENT_ENTRY_BYTES or total > MAX_ENVIRONMENT_BYTES:
             raise SourceBundleError("source_bundle_image_environment_limit")
@@ -459,7 +499,8 @@ def parse_image_environment(entries):
 
 def _required_environment(service, revision):
     if service == "web-nginx":
-        # The reviewed nginx Dockerfile uses ARG/LABEL, not ENV SOURCE_REVISION.
+        # The reviewed nginx Dockerfile uses ARG/LABEL, not ENV
+        # SOURCE_REVISION.
         return {}
     expected = {
         "SOURCE_REVISION": revision,
@@ -488,7 +529,8 @@ def validate_built_image(plan, service, image_id, inspection):
     """Check supplied image inspection; perform no Docker or build operation.
 
     The six-field summary includes only a digest of the independently inspected
-    image environment, never its values. The private client lease requires a new
+    image environment, never its values. The private client lease requires a
+    new
     same-immutable-image Env inspection and this digest before exact container
     override matching. A match is not a build attestation: a privileged caller
     can forge labels. The host authenticates its sealed build operation and
@@ -538,7 +580,9 @@ def _validate_built_image(expected, service, revision, image_id, inspection):
             or len(key) + len(value) > 2048
             for key, value in labels.items()
         )
-        or any(labels.get(key) != value for key, value in required_labels.items())
+        or any(
+            labels.get(key) != value for key, value in required_labels.items()
+        )
     ):
         raise SourceBundleError("source_bundle_image_labels_changed")
     environment = parse_image_environment(config.get("Env"))
@@ -546,7 +590,9 @@ def _validate_built_image(expected, service, revision, image_id, inspection):
         environment.get(key) != value
         for key, value in _required_environment(service, revision).items()
     ):
-        raise SourceBundleError("source_bundle_image_environment_flags_changed")
+        raise SourceBundleError(
+            "source_bundle_image_environment_flags_changed"
+        )
     return {
         "schema_version": 1,
         "revision": revision,
@@ -558,7 +604,9 @@ def _validate_built_image(expected, service, revision, image_id, inspection):
 
 
 def _runner(argv, *, timeout):
-    """Bound pipes during capture, not after subprocess.run allocated output."""
+    """Bound pipes during capture, not after subprocess.run allocated
+    output.
+    """
     process = subprocess.Popen(
         argv,
         stdin=subprocess.DEVNULL,
@@ -576,7 +624,9 @@ def _runner(argv, *, timeout):
         timeout=timeout,
         max_bytes=MAX_GIT_OUTPUT_BYTES,
         timeout_error=lambda: SourceBundleError("source_bundle_git_timeout"),
-        output_error=lambda: SourceBundleError("source_bundle_git_output_limit"),
+        output_error=lambda: SourceBundleError(
+            "source_bundle_git_output_limit"
+        ),
     ) as (remaining, stdout, stderr):
         return subprocess.CompletedProcess(
             argv,
@@ -594,7 +644,8 @@ class _Git:
         self.calls = 0
 
     def raw(self, argv, *, max_bytes=MAX_GIT_OUTPUT_BYTES):
-        # refs/replace must not relabel another tree/blob with the selected SHA.
+        # refs/replace must not relabel another tree/blob with the selected
+        # SHA.
         # Normalize here so injected runners and shared clean-source probes use
         # the same literal Git-object semantics as the default runner.
         if type(argv) is not list or not argv or argv[0] != "git":
@@ -605,7 +656,9 @@ class _Git:
         if self.calls > MAX_GIT_COMMANDS or remaining <= 0:
             raise SourceBundleError("source_bundle_git_budget_exceeded")
         try:
-            result = self.runner(argv, timeout=min(COMMAND_TIMEOUT_SECONDS, remaining))
+            result = self.runner(
+                argv, timeout=min(COMMAND_TIMEOUT_SECONDS, remaining)
+            )
             output = result.stdout
             if type(output) is str:
                 output = output.encode("utf-8")
@@ -629,12 +682,16 @@ class _Git:
         try:
             actual = require_clean_revision(self.repo, runner=self.text_runner)
         except ValueError:
-            raise SourceBundleError("source_bundle_clean_revision_required") from None
+            raise SourceBundleError(
+                "source_bundle_clean_revision_required"
+            ) from None
         if actual != revision:
             raise SourceBundleError("source_bundle_revision_changed")
 
     def tree(self, revision):
-        raw = self.raw(["git", "-C", str(self.repo), "ls-tree", "-r", "-z", revision])
+        raw = self.raw(
+            ["git", "-C", str(self.repo), "ls-tree", "-r", "-z", revision]
+        )
         if not raw.endswith(b"\x00"):
             raise SourceBundleError("source_bundle_git_tree_invalid")
         entries = raw[:-1].split(b"\x00")
@@ -647,7 +704,9 @@ class _Git:
                 mode, kind, object_id = metadata.decode("ascii").split(" ")
                 path = path.decode("utf-8")
             except (UnicodeError, ValueError):
-                raise SourceBundleError("source_bundle_git_tree_invalid") from None
+                raise SourceBundleError(
+                    "source_bundle_git_tree_invalid"
+                ) from None
             if path in result:
                 raise SourceBundleError("source_bundle_git_tree_invalid")
             result[path] = {"mode": mode, "type": kind, "object": object_id}
@@ -730,7 +789,9 @@ def _verify_context(descriptor, records, *, prefix=""):
             ):
                 raise SourceBundleError("source_bundle_staged_source_changed")
         else:
-            child = private_io.open_child_directory(descriptor, name, mode=0o755)
+            child = private_io.open_child_directory(
+                descriptor, name, mode=0o755
+            )
             try:
                 _verify_context(child, records, prefix=path + "/")
             finally:
@@ -771,7 +832,8 @@ def _committed_sources(git, revision):
 def committed_source_plan(repo_root, verified_clean_sha, runner=None):
     """Authenticate one clean literal Git revision's reviewed source closure.
 
-    This read-only independent plan can bind a previously staged manifest before
+    This read-only independent plan can bind a previously staged manifest
+    before
     any Docker command. It never reads working-tree bytes or creates artifacts.
     Git replacement refs cannot relabel other tree/blob bytes with this SHA.
     """
@@ -781,18 +843,25 @@ def committed_source_plan(repo_root, verified_clean_sha, runner=None):
     return plan
 
 
-def stage_source_bundle(repo_root, verified_clean_sha, private_root, runner=None):
+def stage_source_bundle(
+    repo_root, verified_clean_sha, private_root, runner=None
+):
     """Stage one fresh private context, with clean-SHA checks before and after.
 
-    The existing parent must be operator-owned 0700. A root/partial root is never
-    reused, overwritten or removed, including on failure; retained artifacts are
+    The existing parent must be operator-owned 0700. A root/partial root is
+    never
+    reused, overwritten or removed, including on failure; retained artifacts
+    are
     evidence, not a resumable successful context. Nested source directories are
-    0755 inside the private 0700 context root; source files retain Git 0644/0755.
-    The manifest is 0600 outside the Docker context. No working-tree source bytes
+    0755 inside the private 0700 context root; source files retain Git
+    0644/0755.
+    The manifest is 0600 outside the Docker context. No working-tree source
+    bytes
     or private configuration are read, and no Docker command is run.
 
     An injected runner(argv, *, timeout) returns CompletedProcess with bytes or
-    text stdout and is trusted to obey its own capture/timeout bounds. The default
+    text stdout and is trusted to obey its own capture/timeout bounds. The
+    default
     runner bounds live capture, process-group cleanup and the whole operation.
     """
     _revision(verified_clean_sha)
@@ -810,7 +879,9 @@ def stage_source_bundle(repo_root, verified_clean_sha, private_root, runner=None
     root = context = None
     directories = {}
     try:
-        root = private_io.open_child_directory(parent, destination.name, create=True)
+        root = private_io.open_child_directory(
+            parent, destination.name, create=True
+        )
         context = private_io.open_child_directory(root, "context", create=True)
         directories[""] = context
         for path, raw in sources.items():
@@ -823,7 +894,9 @@ def stage_source_bundle(repo_root, verified_clean_sha, private_root, runner=None
                         directories[prefix], part
                     )
                 prefix = child_prefix
-            _write_source(directories[prefix], parts[-1], raw, plan["files"][path])
+            _write_source(
+                directories[prefix], parts[-1], raw, plan["files"][path]
+            )
         private_io.verify_directory(parent, destination.parent)
         private_io.verify_directory(root, destination)
         private_io.verify_directory(context, destination / "context")

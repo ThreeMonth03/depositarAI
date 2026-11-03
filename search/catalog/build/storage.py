@@ -61,7 +61,9 @@ def _open_directory_chain(path: str, description: str) -> int:
     try:
         descriptor = os.open(os.path.sep, _directory_flags())
     except OSError as exc:
-        raise policy.BundleError("unable to open filesystem root safely") from exc
+        raise policy.BundleError(
+            "unable to open filesystem root safely"
+        ) from exc
     try:
         for component in Path(path).parts[1:]:
             try:
@@ -83,7 +85,9 @@ def _open_directory_chain(path: str, description: str) -> int:
         raise
 
 
-def _open_child_directory(parent_fd: int, name: str, error_message: str) -> int:
+def _open_child_directory(
+    parent_fd: int, name: str, error_message: str
+) -> int:
     try:
         descriptor = os.open(name, _directory_flags(), dir_fd=parent_fd)
     except OSError as exc:
@@ -135,13 +139,17 @@ def _safe_source_fd(path: str) -> Tuple[int, os.stat_result]:
         if not stat.S_ISREG(opened.st_mode):
             raise policy.BundleError("source must be a regular file")
         if opened.st_uid != os.geteuid():
-            raise policy.BundleError("source must be owned by the effective user")
+            raise policy.BundleError(
+                "source must be owned by the effective user"
+            )
         if opened.st_nlink != 1:
             raise policy.BundleError("source must not be hard-linked")
         if stat.S_IMODE(opened.st_mode) & 0o022:
             raise policy.BundleError("source must not be group/world writable")
         if opened.st_size > policy.MAX_COMPRESSED_BYTES:
-            raise policy.BundleError("source exceeds the compressed-size limit")
+            raise policy.BundleError(
+                "source exceeds the compressed-size limit"
+            )
         return descriptor, opened
     except Exception:
         os.close(descriptor)
@@ -157,9 +165,13 @@ def _open_output_root(path: str) -> int:
         if not stat.S_ISDIR(info.st_mode):
             raise policy.BundleError("output root must be a directory")
         if info.st_uid != os.geteuid():
-            raise policy.BundleError("output root must be owned by the effective user")
+            raise policy.BundleError(
+                "output root must be owned by the effective user"
+            )
         if stat.S_IMODE(info.st_mode) != 0o700:
-            raise policy.BundleError("output root permissions must be exactly 0700")
+            raise policy.BundleError(
+                "output root permissions must be exactly 0700"
+            )
         return descriptor
     except Exception:
         os.close(descriptor)
@@ -176,10 +188,14 @@ def _open_lock(root_fd: int) -> int:
     try:
         descriptor = os.open(policy.LOCK_NAME, flags, 0o600, dir_fd=root_fd)
     except OSError as exc:
-        raise policy.BundleError("unable to create the output lock safely") from exc
+        raise policy.BundleError(
+            "unable to create the output lock safely"
+        ) from exc
     try:
         info = os.fstat(descriptor)
-        by_name = os.stat(policy.LOCK_NAME, dir_fd=root_fd, follow_symlinks=False)
+        by_name = os.stat(
+            policy.LOCK_NAME, dir_fd=root_fd, follow_symlinks=False
+        )
         if _inode_identity(info) != _inode_identity(by_name):
             raise policy.BundleError("output lock changed while it was opened")
         if (
@@ -189,7 +205,9 @@ def _open_lock(root_fd: int) -> int:
         ):
             raise policy.BundleError("output lock is unsafe")
         if stat.S_IMODE(info.st_mode) != 0o600:
-            raise policy.BundleError("output lock permissions must be exactly 0600")
+            raise policy.BundleError(
+                "output lock permissions must be exactly 0600"
+            )
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -209,7 +227,9 @@ def _make_staging_directory(root_fd: int) -> Tuple[str, int]:
             continue
         try:
             descriptor = _open_child_directory(
-                root_fd, name, "new staging directory changed while it was opened"
+                root_fd,
+                name,
+                "new staging directory changed while it was opened",
             )
             metadata = os.fstat(descriptor)
             if (
@@ -249,9 +269,16 @@ def write_gzip_jsonl(
             for row in rows:
                 encoded = codec.canonical_json(row) + b"\n"
                 if len(encoded) > policy.MAX_ARTIFACT_LINE_BYTES:
-                    raise policy.BundleError("artifact record exceeds its byte limit")
-                if expanded_size + len(encoded) > policy.MAX_ARTIFACT_EXPANDED_BYTES:
-                    raise policy.BundleError("artifact exceeds its expanded-size limit")
+                    raise policy.BundleError(
+                        "artifact record exceeds its byte limit"
+                    )
+                if (
+                    expanded_size + len(encoded)
+                    > policy.MAX_ARTIFACT_EXPANDED_BYTES
+                ):
+                    raise policy.BundleError(
+                        "artifact exceeds its expanded-size limit"
+                    )
                 expanded_size += len(encoded)
                 compressed.write(encoded)
         os.fchmod(raw.fileno(), 0o400)
@@ -292,7 +319,9 @@ def _hash_file(
         info = os.fstat(descriptor)
         named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         if _file_identity(info) != _file_identity(named):
-            raise policy.BundleError("bundle artifact changed while it was opened")
+            raise policy.BundleError(
+                "bundle artifact changed while it was opened"
+            )
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.geteuid()
@@ -313,7 +342,9 @@ def _hash_file(
         if _file_identity(info) != _file_identity(after) or _file_identity(
             info
         ) != _file_identity(by_name):
-            raise policy.BundleError("bundle artifact changed while it was read")
+            raise policy.BundleError(
+                "bundle artifact changed while it was read"
+            )
     finally:
         os.close(descriptor)
     return digest.hexdigest(), total
@@ -366,11 +397,15 @@ def _rename_noreplace(root_fd: int, source: str, destination: str) -> None:
     if result != 0:
         error_number = ctypes.get_errno()
         if error_number == errno.EEXIST:
-            raise FileExistsError(error_number, "destination exists", destination)
+            raise FileExistsError(
+                error_number, "destination exists", destination
+            )
         raise OSError(error_number, os.strerror(error_number), destination)
 
 
-def _cleanup_directory_entry(root_fd: int, name: str, directory_fd: int) -> None:
+def _cleanup_directory_entry(
+    root_fd: int, name: str, directory_fd: int
+) -> None:
     """Remove only the known contents of the exact held directory inode."""
 
     for artifact_name in policy.ARTIFACT_NAMES + (policy.MANIFEST_NAME,):
@@ -415,7 +450,8 @@ def _portable_publish_directory(
         destination_fd = _open_child_directory(
             root_fd,
             destination,
-            "portable bundle publication reservation changed while it was opened",
+            "portable bundle publication reservation changed "
+            "while it was opened",
         )
         metadata = os.fstat(destination_fd)
         if (
@@ -445,7 +481,9 @@ def _portable_publish_directory(
                 "portable publication left unexpected staging entries"
             )
         source_named = os.stat(source, dir_fd=root_fd, follow_symlinks=False)
-        if _inode_identity(source_named) != _inode_identity(os.fstat(source_fd)):
+        if _inode_identity(source_named) != _inode_identity(
+            os.fstat(source_fd)
+        ):
             raise policy.BundleError(
                 "staging directory changed during portable publication"
             )
@@ -463,7 +501,8 @@ def _portable_publish_directory(
                 pass
         if isinstance(exc, FileExistsError):
             raise policy.BundleError(
-                "portable publication encountered an unexpected destination entry"
+                "portable publication encountered "
+                "an unexpected destination entry"
             ) from exc
         raise
     finally:
@@ -505,11 +544,15 @@ def _verify_existing(
         )
     expected_names = set(policy.ARTIFACT_NAMES + (policy.MANIFEST_NAME,))
     if set(os.listdir(directory_fd)) != expected_names:
-        raise policy.BundleError("existing bundle has unexpected or missing entries")
-    manifest_digest, manifest_size = _hash_file(directory_fd, policy.MANIFEST_NAME)
-    if manifest_size != len(manifest_bytes) or manifest_digest != codec.sha256_bytes(
+        raise policy.BundleError(
+            "existing bundle has unexpected or missing entries"
+        )
+    manifest_digest, manifest_size = _hash_file(
+        directory_fd, policy.MANIFEST_NAME
+    )
+    if manifest_size != len(
         manifest_bytes
-    ):
+    ) or manifest_digest != codec.sha256_bytes(manifest_bytes):
         raise policy.BundleError(
             "existing bundle manifest does not match the requested build"
         )

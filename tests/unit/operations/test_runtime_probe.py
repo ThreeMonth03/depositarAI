@@ -31,7 +31,9 @@ class ModelHTTP:
         self.role = role
         self.clock = clock
         self.model = SCOPE_MODEL if role == "scope" else PLANNER_MODEL
-        self.digest = SCOPE_MODEL_DIGEST if role == "scope" else PLANNER_MODEL_DIGEST
+        self.digest = (
+            SCOPE_MODEL_DIGEST if role == "scope" else PLANNER_MODEL_DIGEST
+        )
         self.ctx = 4096 if role == "scope" else 16384
         self.requests = []
         self.loaded = False
@@ -51,7 +53,9 @@ class ModelHTTP:
         if path == self.fail_path:
             raise OSError("PRIVATE UPSTREAM ERROR")
         if path == "/api/tags":
-            value = {"models": [{"name": self.model, "digest": self.tags_digest}]}
+            value = {
+                "models": [{"name": self.model, "digest": self.tags_digest}]
+            }
         elif path == "/api/ps":
             value = {"models": []}
             if self.loaded:
@@ -62,11 +66,17 @@ class ModelHTTP:
                     "size_vram": self.vram,
                     "context_length": self.ctx,
                 }
-                value["models"] = [row, row] if self.duplicate_resident else [row]
+                value["models"] = (
+                    [row, row] if self.duplicate_resident else [row]
+                )
         elif path == "/api/chat":
             self.clock.now += self.delay
             self.loaded = True
-            output = {"decision": "search"} if self.role == "scope" else {"ready": True}
+            output = (
+                {"decision": "search"}
+                if self.role == "scope"
+                else {"ready": True}
+            )
             value = {
                 "model": self.model,
                 "done": True,
@@ -102,7 +112,9 @@ class RuntimeProbeTests(unittest.TestCase):
         self.transports = {"scope": self.scope, "planner": self.planner}
 
     def run_probe(self, **kwargs):
-        return probe_models(transports=self.transports, clock=self.clock, **kwargs)
+        return probe_models(
+            transports=self.transports, clock=self.clock, **kwargs
+        )
 
     def test_loads_exact_two_pins_reports_full_gpu_and_no_generated_text(self):
         report = self.run_probe()
@@ -118,7 +130,8 @@ class RuntimeProbeTests(unittest.TestCase):
             self.assertEqual(row["decode_ms"], 411.75)
         self.assertNotIn("PRIVATE", json.dumps(report))
         self.assertEqual(
-            [row["model"] for row in report["models"]], [SCOPE_MODEL, PLANNER_MODEL]
+            [row["model"] for row in report["models"]],
+            [SCOPE_MODEL, PLANNER_MODEL],
         )
 
     def test_warmup_context_and_inference_options_are_server_owned(self):
@@ -141,7 +154,9 @@ class RuntimeProbeTests(unittest.TestCase):
             self.assertFalse(payload["stream"])
             self.assertNotIn("tools", payload)
             self.assertNotIn("tool_choice", payload)
-        self.assertEqual(json.loads(self.planner.requests[2][0].body)["think"], "low")
+        self.assertEqual(
+            json.loads(self.planner.requests[2][0].body)["think"], "low"
+        )
 
     def test_pre_and_post_pin_checks_and_post_residency_are_required(self):
         self.run_probe()
@@ -159,7 +174,10 @@ class RuntimeProbeTests(unittest.TestCase):
         report = self.run_probe()
         self.assertEqual(report["status"], "blocked")
         self.assertFalse(
-            any(request.method == "POST" for request, _, _ in self.scope.requests)
+            any(
+                request.method == "POST"
+                for request, _, _ in self.scope.requests
+            )
         )
         self.assertEqual(report["models"][0]["code"], "warmup_failed")
 
@@ -199,7 +217,9 @@ class RuntimeProbeTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE", json.dumps(report))
             setattr(self.scope, field, previous)
 
-    def test_timeout_exhausts_total_budget_without_retrying_or_probing_next_model(self):
+    def test_timeout_exhausts_budget_without_retry_or_next_model(
+        self,
+    ):
         self.scope.delay = 50
         report = self.run_probe(budget_seconds=20)
         self.assertEqual(report["status"], "blocked")
@@ -232,9 +252,9 @@ class RuntimeProbeTests(unittest.TestCase):
             200, (), b" " * (128 * 1024 + 1), OLLAMA_BASE_URL + "/api/tags"
         )
         self.assertEqual(
-            probe_models(transports={"scope": bad, "planner": bad}, clock=self.clock)[
-                "status"
-            ],
+            probe_models(
+                transports={"scope": bad, "planner": bad}, clock=self.clock
+            )["status"],
             "blocked",
         )
 
@@ -248,9 +268,14 @@ class RuntimeProbeTests(unittest.TestCase):
         self.planner.loaded = True
         result = self.run_probe()
         self.assertEqual(result["status"], "ready")
-        self.assertTrue(all(row["resident_before"] for row in result["models"]))
         self.assertTrue(
-            any(request.method == "POST" for request, _, _ in self.scope.requests)
+            all(row["resident_before"] for row in result["models"])
+        )
+        self.assertTrue(
+            any(
+                request.method == "POST"
+                for request, _, _ in self.scope.requests
+            )
         )
 
     def test_probe_transport_accepts_only_role_dns_not_arbitrary_urls(self):
@@ -272,9 +297,12 @@ class RuntimeProbeTests(unittest.TestCase):
                 transport.send(request, timeout=5, max_bytes=1024)
         transport.transport.send.assert_not_called()
 
-    def test_probe_import_does_not_load_worker_or_application_configuration(self):
+    def test_probe_import_does_not_load_worker_or_application_configuration(
+        self,
+    ):
         root = Path(__file__).resolve().parents[3]
-        script = """
+        script = (
+            """
 import sys
 sys.path.insert(0, sys.argv[1])
 from search.operations.shared import runtime_probe
@@ -282,10 +310,14 @@ from search.api.shared import peers
 assert runtime_probe.service_address is peers.service_address
 for name in (
     "search.api.worker", "search.api.selector", "search.api.shared.config",
-    "search.api.retrieval.fess", "fastapi", "django", "rest_framework", "adrf", "pydantic", "torch", "haystack",
+    "search.api.retrieval.fess", "fastapi", "django", """
+            """"rest_framework", "adrf", "pydantic", "torch", """
+            """"haystack",
 ):
-    assert not any(key == name or key.startswith(name + ".") for key in sys.modules), name
+    assert not any(key == name or key.startswith(name """
+            """+ ".") for key in sys.modules), name
 """
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(root)],
             capture_output=True,

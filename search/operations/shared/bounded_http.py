@@ -13,7 +13,9 @@ import threading
 
 
 class AbortableConnection:
-    """Mix into HTTPConnection and publish each raw/TLS channel after creation."""
+    """Mix into HTTPConnection and publish each raw/TLS channel after
+    creation.
+    """
 
     def _init_abortable(self):
         self._aborted = threading.Event()

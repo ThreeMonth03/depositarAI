@@ -1,4 +1,5 @@
-"""Local status never substitutes retained activation evidence for live health."""
+"""Local status never substitutes retained activation evidence for live
+health."""
 
 from __future__ import annotations
 
@@ -28,7 +29,9 @@ def digest(value):
 
 class LocalStatusTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-local-status-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-local-status-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = replace(product(), state_root=self.root / "product")
@@ -50,7 +53,8 @@ class LocalStatusTests(unittest.TestCase):
                 "operation": name,
                 "source_revision": REVISION,
                 "status": status,
-                "active_changed": name == "activate-gateway" and status == "staged",
+                "active_changed": name == "activate-gateway"
+                and status == "staged",
             }
             if bundle:
                 value.update(bundle_id=BUNDLE, manifest_sha256=MANIFEST)
@@ -79,9 +83,16 @@ class LocalStatusTests(unittest.TestCase):
         }
         prepared = {
             key: identity[key]
-            for key in ("schema_version", "revision", "project", "release_project")
+            for key in (
+                "schema_version",
+                "revision",
+                "project",
+                "release_project",
+            )
         }
-        prepared.update(status="gateway_prepared", source_manifest_sha256="d" * 64)
+        prepared.update(
+            status="gateway_prepared", source_manifest_sha256="d" * 64
+        )
         self.write(gateway / "prepared.json", prepared)
         complete = {
             **identity,
@@ -156,7 +167,8 @@ class LocalStatusTests(unittest.TestCase):
         result = self.status()
         self.assertEqual("recovery_required", result["status"])
         self.assertEqual(
-            ["operation_failed", "operation_incomplete"], result["recovery_reasons"]
+            ["operation_failed", "operation_incomplete"],
+            result["recovery_reasons"],
         )
 
     def test_successful_app_preparation_is_distinct_from_catalog_only(self):
@@ -175,7 +187,7 @@ class LocalStatusTests(unittest.TestCase):
                 self.assertEqual("partially_prepared", result["status"])
                 self.assertIsNone(result["active_release"])
 
-    def test_artifact_without_operation_is_still_partial_and_secret_bytes_are_not_read(
+    def test_artifact_without_operation_is_partial_and_secrets_unread(
         self,
     ):
         self.initialize()
@@ -189,7 +201,11 @@ class LocalStatusTests(unittest.TestCase):
     def test_active_pointer_reports_only_bound_local_identity(self):
         pointer, _ = self.activation()
         before = {
-            path: (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+            path: (
+                path.stat().st_ino,
+                path.stat().st_mtime_ns,
+                path.read_bytes(),
+            )
             for path in self.config.state_root.rglob("*")
             if path.is_file()
         }
@@ -201,13 +217,19 @@ class LocalStatusTests(unittest.TestCase):
         self.assertEqual(
             before,
             {
-                path: (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+                path: (
+                    path.stat().st_ino,
+                    path.stat().st_mtime_ns,
+                    path.read_bytes(),
+                )
                 for path in self.config.state_root.rglob("*")
                 if path.is_file()
             },
         )
 
-    def test_valid_active_record_survives_failed_or_missing_operation_completion(self):
+    def test_active_record_survives_failed_or_missing_completion(
+        self,
+    ):
         pointer, _ = self.activation(receipt_status="failed")
         result = self.status()
         self.assertEqual("recovery_required", result["status"])
@@ -217,7 +239,7 @@ class LocalStatusTests(unittest.TestCase):
             result["recovery_reasons"],
         )
 
-    def test_valid_pointer_with_interrupted_operation_is_locally_visible_but_uncertain(
+    def test_pointer_with_interrupted_operation_is_visible_but_uncertain(
         self,
     ):
         pointer, _ = self.activation(receipt_status="started")
@@ -238,7 +260,9 @@ class LocalStatusTests(unittest.TestCase):
             ["activation_operation_unconfirmed"], result["recovery_reasons"]
         )
 
-    def test_active_identity_is_independent_of_a_newer_metadata_candidate(self):
+    def test_active_identity_is_independent_of_a_newer_metadata_candidate(
+        self,
+    ):
         pointer, _ = self.activation()
         row = {
             "id": "00000000-0000-4000-8000-000000000001",
@@ -277,15 +301,20 @@ class LocalStatusTests(unittest.TestCase):
                 result = self.status()
                 self.assertEqual("recovery_required", result["status"])
                 self.assertEqual(
-                    ["activation_operation_unconfirmed"], result["recovery_reasons"]
+                    ["activation_operation_unconfirmed"],
+                    result["recovery_reasons"],
                 )
                 self.assertIsNotNone(result["active_release"])
 
-    def test_successful_activation_history_without_pointer_requires_recovery(self):
+    def test_successful_activation_history_without_pointer_requires_recovery(
+        self,
+    ):
         self.receipt("activate-gateway", bundle=True)
         result = self.status()
         self.assertEqual("recovery_required", result["status"])
-        self.assertEqual(["activation_pointer_missing"], result["recovery_reasons"])
+        self.assertEqual(
+            ["activation_pointer_missing"], result["recovery_reasons"]
+        )
 
     def test_activation_intent_without_pointer_requires_recovery(self):
         self.initialize()
@@ -294,7 +323,9 @@ class LocalStatusTests(unittest.TestCase):
         (gateway / "activation").mkdir(mode=0o700)
         result = self.status()
         self.assertEqual("recovery_required", result["status"])
-        self.assertEqual(["activation_pointer_missing"], result["recovery_reasons"])
+        self.assertEqual(
+            ["activation_pointer_missing"], result["recovery_reasons"]
+        )
 
     def test_pointer_schema_and_identity_fail_closed(self):
         pointer, _ = self.activation()
@@ -321,7 +352,13 @@ class LocalStatusTests(unittest.TestCase):
     def test_malformed_pointer_types_and_json_fail_closed(self):
         self.initialize()
         path = self.config.state_root / "active.json"
-        for raw in (b"null", b"[]", b"1", b"{broken", b'{"status":1,"status":2}'):
+        for raw in (
+            b"null",
+            b"[]",
+            b"1",
+            b"{broken",
+            b'{"status":1,"status":2}',
+        ):
             with self.subTest(raw=raw):
                 path.write_bytes(raw)
                 path.chmod(0o600)
@@ -331,7 +368,9 @@ class LocalStatusTests(unittest.TestCase):
 
     def test_missing_or_mismatched_complete_never_confirms_pointer(self):
         pointer, complete = self.activation()
-        complete_path = self.config.state_root / "gateway/activation/complete.json"
+        complete_path = (
+            self.config.state_root / "gateway/activation/complete.json"
+        )
         complete_path.unlink()
         self.assertEqual("recovery_required", self.status()["status"])
         self.write(complete_path, {**complete, "manifest_sha256": "9" * 64})
@@ -342,7 +381,9 @@ class LocalStatusTests(unittest.TestCase):
         self.write(self.config.state_root / "active.json", pointer)
         self.assertEqual("recovery_required", self.status()["status"])
 
-    def test_false_or_wrong_type_historical_flags_are_not_accepted_by_hash_alone(self):
+    def test_invalid_historical_flags_are_not_accepted_by_hash_alone(
+        self,
+    ):
         pointer, complete = self.activation()
         for change in (
             {"runtime_verified": False},
@@ -358,21 +399,33 @@ class LocalStatusTests(unittest.TestCase):
                 pointer["activation_complete_sha256"] = digest(altered)
                 self.write(self.config.state_root / "active.json", pointer)
                 self.write(
-                    self.config.state_root / "gateway/activation/complete.json", altered
+                    self.config.state_root
+                    / "gateway/activation/complete.json",
+                    altered,
                 )
                 self.assertIsNone(self.status()["active_release"])
 
     def test_changed_preparation_invalidates_local_activation_binding(self):
         self.activation()
-        self.write(self.config.state_root / "gateway/prepared.json", {"changed": True})
+        self.write(
+            self.config.state_root / "gateway/prepared.json", {"changed": True}
+        )
         self.assertIsNone(self.status()["active_release"])
 
-    def test_pointer_special_files_and_links_are_not_read_or_treated_absent(self):
+    def test_pointer_special_files_and_links_are_not_read_or_treated_absent(
+        self,
+    ):
         self.initialize()
         pointer = self.config.state_root / "active.json"
         target = self.root / "PRIVATE_SENTINEL"
         target.write_text("PRIVATE_SENTINEL")
-        for kind in ("symlink", "broken_symlink", "fifo", "directory", "hardlink"):
+        for kind in (
+            "symlink",
+            "broken_symlink",
+            "fifo",
+            "directory",
+            "hardlink",
+        ):
             with self.subTest(kind=kind):
                 if kind == "symlink":
                     pointer.symlink_to(target)
@@ -398,10 +451,14 @@ class LocalStatusTests(unittest.TestCase):
         self.initialize()
         path = self.config.state_root / "gateway"
         path.symlink_to(self.root / "missing")
-        self.assertEqual(["artifact_invalid"], self.status()["recovery_reasons"])
+        self.assertEqual(
+            ["artifact_invalid"], self.status()["recovery_reasons"]
+        )
         path.unlink()
         path.mkdir(mode=0o755)
-        self.assertEqual(["artifact_invalid"], self.status()["recovery_reasons"])
+        self.assertEqual(
+            ["artifact_invalid"], self.status()["recovery_reasons"]
+        )
 
     def test_activation_evidence_child_symlink_is_rejected(self):
         self.activation()
@@ -413,7 +470,9 @@ class LocalStatusTests(unittest.TestCase):
             ["activation_record_invalid"], self.status()["recovery_reasons"]
         )
 
-    def test_missing_candidate_bundle_is_not_mistaken_for_absent_candidate(self):
+    def test_missing_candidate_bundle_is_not_mistaken_for_absent_candidate(
+        self,
+    ):
         self.initialize()
         with state.locked_state(self.config) as store:
             store.write(
@@ -444,7 +503,9 @@ class LocalStatusTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "busy"):
                 self.status()
         with self.assertRaisesRegex(ValueError, "configuration_mismatch"):
-            lifecycle.status(replace(self.config, api_model_root=self.root / "other"))
+            lifecycle.status(
+                replace(self.config, api_model_root=self.root / "other")
+            )
 
 
 if __name__ == "__main__":

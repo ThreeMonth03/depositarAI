@@ -22,7 +22,12 @@ from search import vector_journal
 from search.operations.catalog import execution, vectors
 from search.operations.catalog.policy import admin_arguments
 from search.operations.shared import private_io
-from search.tests.catalog_fixtures import BuiltBundle, ManualClock, NONCE, PASSWORD
+from search.tests.catalog_fixtures import (
+    BuiltBundle,
+    ManualClock,
+    NONCE,
+    PASSWORD,
+)
 from search.tests.test_vector_pass import PartialTransport
 
 
@@ -61,7 +66,9 @@ def host_context(root, bundle, manifest_sha256, document_count):
 
 class VectorCoordinatorTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-vector-host-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-vector-host-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.context = host_context(
@@ -79,7 +86,11 @@ class VectorCoordinatorTests(unittest.TestCase):
         self.container_id = "a" * 64
         self.runtime = {"container_ids": {"fess-search": "b" * 64}}
         self.calls, self.last_identity, self.remaining = [], None, ""
-        self.result_change, self.rm_failure, self.helper_failure = None, False, False
+        self.result_change, self.rm_failure, self.helper_failure = (
+            None,
+            False,
+            False,
+        )
         self.addCleanup(patch.stopall)
         patch.object(
             execution, "require_runtime", return_value=(self.runtime, {})
@@ -102,7 +113,12 @@ class VectorCoordinatorTests(unittest.TestCase):
             "status": "complete-clean",
             **{
                 key: identity[key]
-                for key in ("run_id", "recipe_sha256", "bundle_id", "manifest_sha256")
+                for key in (
+                    "run_id",
+                    "recipe_sha256",
+                    "bundle_id",
+                    "manifest_sha256",
+                )
             },
             "document_count": 2,
             "before_done_count": 0,
@@ -125,7 +141,9 @@ class VectorCoordinatorTests(unittest.TestCase):
 
     def create(self, context, image, identity, fess, secret, *, journal):
         self.last_identity = identity
-        self.assertEqual(self.history_root / identity["run_id"] / "events", journal)
+        self.assertEqual(
+            self.history_root / identity["run_id"] / "events", journal
+        )
         self.assertTrue((journal.parent / "started.json").is_file())
         return ["docker", "create"]
 
@@ -154,7 +172,9 @@ class VectorCoordinatorTests(unittest.TestCase):
             self.assertEqual(["docker", "rm", self.container_id], argv)
             self.assertFalse(
                 (
-                    self.history_root / self.last_identity["run_id"] / "complete.json"
+                    self.history_root
+                    / self.last_identity["run_id"]
+                    / "complete.json"
                 ).exists()
             )
             if self.rm_failure:
@@ -241,10 +261,14 @@ class VectorCoordinatorTests(unittest.TestCase):
         self.assertNotIn("rm", [argv[1] for argv in self.calls])
         self.assertFalse(self.final_exists())
 
-    def test_checkpoint_mismatch_is_detected_and_expected_digest_is_passed(self):
+    def test_checkpoint_mismatch_is_detected_and_expected_digest_is_passed(
+        self,
+    ):
         with self.assertRaisesRegex(ValueError, "checkpoint_changed"):
             self.run_pass({"after_state_sha256": "4" * 64})
-        self.assertEqual("4" * 64, self.last_identity["expected_before_state_sha256"])
+        self.assertEqual(
+            "4" * 64, self.last_identity["expected_before_state_sha256"]
+        )
         self.assertFalse(self.final_exists())
 
     def test_host_receipt_write_failure_after_removal_is_not_success(self):
@@ -282,7 +306,9 @@ class VectorCoordinatorTests(unittest.TestCase):
                     {"schema_version": schema, "active_changed": changed},
                     replace=True,
                 )
-                with self.assertRaisesRegex(ValueError, "host_receipt_invalid"):
+                with self.assertRaisesRegex(
+                    ValueError, "host_receipt_invalid"
+                ):
                     vectors._host_record(self.root, "typed.json")
 
     def test_recipe_true_is_not_equivalent_to_integer_one(self):
@@ -298,7 +324,9 @@ class VectorCoordinatorTests(unittest.TestCase):
             (16, 1200),
             (16, 36001),
         ):
-            with self.subTest(max_passes=max_passes, wall_seconds=wall_seconds):
+            with self.subTest(
+                max_passes=max_passes, wall_seconds=wall_seconds
+            ):
                 with self.assertRaisesRegex(ValueError, "budget_invalid"):
                     vectors.build(
                         None,
@@ -320,7 +348,9 @@ class VectorCoordinatorTests(unittest.TestCase):
         journal = self.history_root / identity["run_id"] / "events"
         command = admin_arguments(self.context, identity, journal=journal)
         self.assertIn("1200", command)
-        self.assertEqual(["--expected-before-state-sha256", "c" * 64], command[-2:])
+        self.assertEqual(
+            ["--expected-before-state-sha256", "c" * 64], command[-2:]
+        )
         with self.assertRaises(ValueError):
             admin_arguments(self.context, identity, journal=self.root)
         changed = copy.deepcopy(identity)
@@ -333,7 +363,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
     """Real helper/journal/history chain; service and preflight IO are fake."""
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-vector-history-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-vector-history-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.built = BuiltBundle(count=3)
@@ -379,7 +411,11 @@ class DurableVectorHistoryTests(unittest.TestCase):
         state.mkdir(mode=0o700)
         execution.write_record(state, "operations.lock", {})
         for target, name, arguments in (
-            (execution, "require_runtime", {"return_value": (self.runtime, {})}),
+            (
+                execution,
+                "require_runtime",
+                {"return_value": (self.runtime, {})},
+            ),
             (execution, "verify_image", {"return_value": None}),
             (
                 vectors.administration,
@@ -395,7 +431,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.calls.append(argv)
         if argv[1] == "create":
             run_id = argv[argv.index("--run-id") + 1]
-            identity = execution.read_record(self.history_root / run_id, "started.json")
+            identity = execution.read_record(
+                self.history_root / run_id, "started.json"
+            )
             container_id = run_id * 2
             self.helpers[container_id] = {
                 "identity": identity,
@@ -409,7 +447,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             helper = self.helpers[argv[-1]]
             identity, arguments = helper["identity"], helper["arguments"]
             expected_before = (
-                arguments[arguments.index("--expected-before-state-sha256") + 1]
+                arguments[
+                    arguments.index("--expected-before-state-sha256") + 1
+                ]
                 if "--expected-before-state-sha256" in arguments
                 else None
             )
@@ -428,7 +468,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
                         expected_before_state_sha256=expected_before,
                         nonce=NONCE,
                         deadline_seconds=float(
-                            arguments[arguments.index("--deadline-seconds") + 1]
+                            arguments[
+                                arguments.index("--deadline-seconds") + 1
+                            ]
                         ),
                     )
                 value = private_io.canonical(report.as_dict()).decode("utf-8")
@@ -439,7 +481,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             self.assertEqual("exited", helper["status"])
             self.assertFalse(
                 (
-                    self.history_root / helper["identity"]["run_id"] / "complete.json"
+                    self.history_root
+                    / helper["identity"]["run_id"]
+                    / "complete.json"
                 ).exists()
             )
             helper["removed"] = True
@@ -453,12 +497,18 @@ class DurableVectorHistoryTests(unittest.TestCase):
                 )
             else:
                 container_id = argv[-1].removeprefix("id=")
-                value = "" if self.helpers[container_id]["removed"] else container_id
+                value = (
+                    ""
+                    if self.helpers[container_id]["removed"]
+                    else container_id
+                )
         else:
             self.fail("unexpected fake Docker operation")
         return subprocess.CompletedProcess(argv, 0, value, "")
 
-    def inspect(self, _context, _image, identity, container_id, *_args, **_kwargs):
+    def inspect(
+        self, _context, _image, identity, container_id, *_args, **_kwargs
+    ):
         helper = self.helpers[container_id]
         self.assertEqual(
             identity,
@@ -498,12 +548,19 @@ class DurableVectorHistoryTests(unittest.TestCase):
 
         with (
             patch.object(execution, "load_context", return_value=self.context),
-            patch.object(vectors.administration, "_admin_ids", return_value=[]),
+            patch.object(
+                vectors.administration, "_admin_ids", return_value=[]
+            ),
             patch.object(
                 vectors.administration, "_admin_image", return_value=self.image
             ),
-            patch.object(vectors.administration, "_secret", return_value=self.secret),
-            patch("search.operations.doctor._embedding_model", side_effect=preflight),
+            patch.object(
+                vectors.administration, "_secret", return_value=self.secret
+            ),
+            patch(
+                "search.operations.doctor._embedding_model",
+                side_effect=preflight,
+            ),
         ):
             return vectors.build(
                 None,
@@ -536,15 +593,20 @@ class DurableVectorHistoryTests(unittest.TestCase):
         execution.write_record(directory, name, value, replace=True)
 
     def rewrite_events(self, report, mutate):
-        """Model canonical but untrusted evidence, not just broken JSON/hashes."""
+        """Model canonical but untrusted evidence, not just broken
+        JSON/hashes."""
         directory = self.directory(report) / "events"
         records = copy.deepcopy(list(vector_journal.read_events(directory)))
         mutate(records)
         previous = "0" * 64
         for record in records:
             record["previous_sha256"] = previous
-            body = {key: value for key, value in record.items() if key != "sha256"}
-            record["sha256"] = hashlib.sha256(private_io.canonical(body)).hexdigest()
+            body = {
+                key: value for key, value in record.items() if key != "sha256"
+            }
+            record["sha256"] = hashlib.sha256(
+                private_io.canonical(body)
+            ).hexdigest()
             execution.write_record(
                 directory,
                 f"{record['sequence']:04d}-{record['event']}.json",
@@ -566,12 +628,17 @@ class DurableVectorHistoryTests(unittest.TestCase):
             ("complete-clean", 3, 0),
             (second["status"], second["done_count"], second["pending_count"]),
         )
-        self.assertEqual(first["after_state_sha256"], second["before_state_sha256"])
+        self.assertEqual(
+            first["after_state_sha256"], second["before_state_sha256"]
+        )
         self.assertEqual((2, second), self.history()[2:])
         for report in (first, second):
-            records = vector_journal.read_events(self.directory(report) / "events")
+            records = vector_journal.read_events(
+                self.directory(report) / "events"
+            )
             self.assertEqual(
-                vector_journal.NORMAL_EVENTS, tuple(row["event"] for row in records)
+                vector_journal.NORMAL_EVENTS,
+                tuple(row["event"] for row in records),
             )
             self.assertEqual(report, records[-1]["payload"])
             self.assertTrue(self.helpers[report["run_id"] * 2]["removed"])
@@ -583,15 +650,21 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertTrue(noop["no_op"])
         self.assertIsNone(noop["job_id"])
         self.assertEqual(0, noop["progress_count"])
-        self.assertEqual(completed["after_state_sha256"], noop["before_state_sha256"])
-        self.assertEqual(noop["before_state_sha256"], noop["after_state_sha256"])
+        self.assertEqual(
+            completed["after_state_sha256"], noop["before_state_sha256"]
+        )
+        self.assertEqual(
+            noop["before_state_sha256"], noop["after_state_sha256"]
+        )
         self.assertEqual((2, noop), self.history()[2:])
         records = vector_journal.read_events(self.directory(noop) / "events")
         self.assertEqual(
             vector_journal.NOOP_EVENTS, tuple(row["event"] for row in records)
         )
         observed = next(
-            row["payload"] for row in records if row["event"] == "scheduler-verified"
+            row["payload"]
+            for row in records
+            if row["event"] == "scheduler-verified"
         )
         self.assertEqual(
             {
@@ -624,10 +697,14 @@ class DurableVectorHistoryTests(unittest.TestCase):
             first["after_state_sha256"],
             arguments[arguments.index("--expected-before-state-sha256") + 1],
         )
-        self.assertEqual(first["after_state_sha256"], second["before_state_sha256"])
+        self.assertEqual(
+            first["after_state_sha256"], second["before_state_sha256"]
+        )
         self.seed_mock.assert_not_called()
 
-    def test_first_pass_observes_reused_prefix_and_builds_only_the_remainder(self):
+    def test_first_pass_observes_reused_prefix_and_builds_only_the_remainder(
+        self,
+    ):
         def seed(*_args, **_kwargs):
             for row in list(self.transport.documents.values())[:2]:
                 row["content_chunk_status"] = "done"
@@ -662,8 +739,12 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertTrue(final["token_cleanup_verified"])
         self.assert_no_scheduler_mutation_since(0)
 
-    def test_cache_preparation_cannot_consume_the_reserved_helper_wall_budget(self):
-        self.seed_mock.side_effect = lambda *_args, **_kwargs: self.clock.sleep(1201)
+    def test_cache_preparation_cannot_consume_the_reserved_helper_wall_budget(
+        self,
+    ):
+        self.seed_mock.side_effect = (
+            lambda *_args, **_kwargs: self.clock.sleep(1201)
+        )
         with patch.object(
             vectors, "_one_pass", side_effect=AssertionError("over budget")
         ):
@@ -673,11 +754,16 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertEqual(0, result["completed_passes"])
         self.assertEqual({}, self.helpers)
 
-    def test_build_complete_catalog_reverifies_without_a_new_helper_or_http(self):
+    def test_build_complete_catalog_reverifies_without_a_new_helper_or_http(
+        self,
+    ):
         self.readonly_admin_evidence()
         completed = self.run_pass(3)
         before = self.filesystem_snapshot()
-        request_count, command_count = len(self.transport.requests), len(self.calls)
+        request_count, command_count = (
+            len(self.transport.requests),
+            len(self.calls),
+        )
         with patch.object(
             vectors, "_one_pass", side_effect=AssertionError("extra pass")
         ):
@@ -685,22 +771,31 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertEqual("vectors-complete", result["status"])
         self.assertEqual(0, result["passes_this_invocation"])
         self.assertEqual(1, result["completed_passes"])
-        self.assertEqual(completed["after_state_sha256"], result["after_state_sha256"])
+        self.assertEqual(
+            completed["after_state_sha256"], result["after_state_sha256"]
+        )
         self.assertTrue(result["runtime_verified"])
         self.assertTrue(result["host_cleanup_verified"])
         self.assertEqual(before, self.filesystem_snapshot())
         self.assertEqual(request_count, len(self.transport.requests))
         self.assertTrue(
-            all(argv[:2] == ["docker", "ps"] for argv in self.calls[command_count:])
+            all(
+                argv[:2] == ["docker", "ps"]
+                for argv in self.calls[command_count:]
+            )
         )
 
-    def test_cached_complete_catalog_still_rejects_runtime_drift_before_new_work(self):
+    def test_complete_catalog_rejects_runtime_drift_before_new_work(
+        self,
+    ):
         self.readonly_admin_evidence()
         self.run_pass(3)
         before = self.filesystem_snapshot()
         with (
             patch.object(
-                execution, "require_runtime", side_effect=ValueError("runtime changed")
+                execution,
+                "require_runtime",
+                side_effect=ValueError("runtime changed"),
             ),
             patch.object(
                 vectors, "_one_pass", side_effect=AssertionError("extra pass")
@@ -718,26 +813,37 @@ class DurableVectorHistoryTests(unittest.TestCase):
             if row.get("content_chunk_status") is None
         )
         pending["content_chunk_status"] = "done"
-        call_count, request_count = len(self.calls), len(self.transport.requests)
+        call_count, request_count = (
+            len(self.calls),
+            len(self.transport.requests),
+        )
         with self.assertRaisesRegex(VectorBuildError, "resume checkpoint"):
             self.run_pass(1)
         self.assertFalse(self.transport.token_active)
         self.assert_no_scheduler_mutation_since(request_count)
         self.assertNotIn("rm", [argv[1] for argv in self.calls[call_count:]])
         failed_run = self.calls[-1][-1][:32]
-        self.assertTrue((self.history_root / failed_run / "failure.json").is_file())
-        self.assertFalse((self.history_root / failed_run / "complete.json").exists())
+        self.assertTrue(
+            (self.history_root / failed_run / "failure.json").is_file()
+        )
+        self.assertFalse(
+            (self.history_root / failed_run / "complete.json").exists()
+        )
         with self.assertRaisesRegex(ValueError, "explicit_recovery"):
             self.history()
 
-    def test_history_rejects_checkpoint_changed_consistently_in_host_receipts(self):
+    def test_history_rejects_checkpoint_changed_consistently_in_host_receipts(
+        self,
+    ):
         self.run_pass(1)
         second = self.run_pass(1)
         for name in ("started.json", "container.json", "complete.json"):
             self.replace_record(
                 self.directory(second),
                 name,
-                lambda value: value.update(expected_before_state_sha256="0" * 64),
+                lambda value: value.update(
+                    expected_before_state_sha256="0" * 64
+                ),
             )
         with self.assertRaisesRegex(ValueError, "progress_checkpoint_changed"):
             self.history()
@@ -763,7 +869,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
                 elapsed_seconds=value["payload"]["elapsed_seconds"] + 1
             ),
         )
-        with self.assertRaisesRegex(vector_journal.JournalError, "digest_changed"):
+        with self.assertRaisesRegex(
+            vector_journal.JournalError, "digest_changed"
+        ):
             self.history()
 
     def test_history_rejects_removed_helper_proof_revocation(self):
@@ -773,10 +881,14 @@ class DurableVectorHistoryTests(unittest.TestCase):
             "complete.json",
             lambda value: value.update(helper_removed_verified=False),
         )
-        with self.assertRaisesRegex(ValueError, "host_cleanup_receipt_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "host_cleanup_receipt_changed"
+        ):
             self.history()
 
-    def test_history_host_proof_types_do_not_accept_boolean_integer_aliases(self):
+    def test_history_host_proof_types_do_not_accept_boolean_integer_aliases(
+        self,
+    ):
         report = self.run_pass(1)
         directory = self.directory(report)
         for name, field, value in (
@@ -798,7 +910,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
                     ):
                         self.history()
                 finally:
-                    execution.write_record(directory, name, original, replace=True)
+                    execution.write_record(
+                        directory, name, original, replace=True
+                    )
         self.assertEqual((1, report), self.history()[2:])
 
     def test_history_rejects_valid_chain_for_foreign_document_inventory(self):
@@ -809,12 +923,19 @@ class DurableVectorHistoryTests(unittest.TestCase):
             for record in records:
                 if record["event"] in {"before-state", "after-state"}:
                     state = record["payload"]
-                    for row in (*state["done_entries"], *state["pending_entries"]):
+                    for row in (
+                        *state["done_entries"],
+                        *state["pending_entries"],
+                    ):
                         row[2] = "0" * 64
                     states[record["event"]] = state
             records[-1]["payload"].update(
-                before_state_sha256=vector_journal.state_sha256(states["before-state"]),
-                after_state_sha256=vector_journal.state_sha256(states["after-state"]),
+                before_state_sha256=vector_journal.state_sha256(
+                    states["before-state"]
+                ),
+                after_state_sha256=vector_journal.state_sha256(
+                    states["after-state"]
+                ),
             )
 
         records = self.rewrite_events(report, change_inventory)
@@ -846,7 +967,8 @@ class DurableVectorHistoryTests(unittest.TestCase):
         result = self.build(wall_seconds=2400)
         self.assertEqual("checkpoint", result["status"])
         self.assertEqual(
-            (0, 0), (result["passes_this_invocation"], result["completed_passes"])
+            (0, 0),
+            (result["passes_this_invocation"], result["completed_passes"]),
         )
         self.assertIsNone(result["done_count"])
         self.assertIsNone(result["pending_count"])
@@ -854,9 +976,14 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertEqual([], self.calls)
         self.assertEqual([], self.transport.requests)
 
-    def test_zero_pass_preserves_previous_counts_without_reasserting_cleanup(self):
+    def test_zero_pass_preserves_previous_counts_without_reasserting_cleanup(
+        self,
+    ):
         self.run_pass(1)
-        call_count, request_count = len(self.calls), len(self.transport.requests)
+        call_count, request_count = (
+            len(self.calls),
+            len(self.transport.requests),
+        )
         result = self.build(wall_seconds=2400)
         self.assertEqual("checkpoint", result["status"])
         self.assertEqual(
@@ -873,7 +1000,8 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertEqual(request_count, len(self.transport.requests))
 
     def readonly_admin_evidence(self):
-        """Real private receipts, with committed-source/image IO stubbed only."""
+        """Real private receipts, with committed-source/image IO stubbed
+        only."""
         source = b"synthetic committed importer source\n"
         stub = patch.object(execution, "sealed_source", return_value=source)
         stub.start()
@@ -945,7 +1073,8 @@ class DurableVectorHistoryTests(unittest.TestCase):
         return result
 
     def observe_verify(self):
-        """Every success/failure must leave bytes, identities and IO unchanged."""
+        """Every success/failure must leave bytes, identities and IO
+        unchanged."""
         before = self.filesystem_snapshot()
         commands, requests = len(self.calls), len(self.transport.requests)
         original_open = private_io.open_directory
@@ -956,15 +1085,23 @@ class DurableVectorHistoryTests(unittest.TestCase):
 
         try:
             with (
-                patch.object(private_io, "open_directory", side_effect=readonly_open),
                 patch.object(
-                    execution, "write_record", side_effect=AssertionError("write")
+                    private_io, "open_directory", side_effect=readonly_open
                 ),
                 patch.object(
-                    private_io, "write_json", side_effect=AssertionError("publish")
+                    execution,
+                    "write_record",
+                    side_effect=AssertionError("write"),
                 ),
                 patch.object(
-                    execution, "build_image", side_effect=AssertionError("build")
+                    private_io,
+                    "write_json",
+                    side_effect=AssertionError("publish"),
+                ),
+                patch.object(
+                    execution,
+                    "build_image",
+                    side_effect=AssertionError("build"),
                 ),
                 patch.object(
                     vectors.administration,
@@ -976,14 +1113,19 @@ class DurableVectorHistoryTests(unittest.TestCase):
                     "_admin_create",
                     side_effect=AssertionError("helper"),
                 ),
-                patch.object(vectors, "_one_pass", side_effect=AssertionError("pass")),
+                patch.object(
+                    vectors, "_one_pass", side_effect=AssertionError("pass")
+                ),
             ):
                 return vectors.verify_complete(self.context)
         finally:
             self.assertEqual(before, self.filesystem_snapshot())
             self.assertEqual(requests, len(self.transport.requests))
             self.assertTrue(
-                all(argv[:2] == ["docker", "ps"] for argv in self.calls[commands:])
+                all(
+                    argv[:2] == ["docker", "ps"]
+                    for argv in self.calls[commands:]
+                )
             )
 
     def test_readonly_complete_verifies_real_history_without_mutation(self):
@@ -998,10 +1140,18 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertEqual("vectors-complete", proof["status"])
         self.assertEqual(
             (2, 3, 0),
-            (proof["completed_passes"], proof["done_count"], proof["pending_count"]),
+            (
+                proof["completed_passes"],
+                proof["done_count"],
+                proof["pending_count"],
+            ),
         )
-        self.assertEqual(completed["after_state_sha256"], proof["after_state_sha256"])
-        self.assertEqual(execution.digest_record(self.runtime), proof["runtime_sha256"])
+        self.assertEqual(
+            completed["after_state_sha256"], proof["after_state_sha256"]
+        )
+        self.assertEqual(
+            execution.digest_record(self.runtime), proof["runtime_sha256"]
+        )
         self.assertIs(proof["read_only"], True)
         self.assertIs(proof["host_cleanup_verified"], True)
         self.assertIs(proof["active_changed"], False)
@@ -1017,7 +1167,8 @@ class DurableVectorHistoryTests(unittest.TestCase):
         }
         overlay = {
             "services": {
-                role: {"image": item["image_id"]} for role, item in images.items()
+                role: {"image": item["image_id"]}
+                for role, item in images.items()
             }
         }
         self.runtime = {
@@ -1032,7 +1183,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
                 )
             },
             "network_id": "7" * 64,
-            "image_ids": {role: item["image_id"] for role, item in images.items()},
+            "image_ids": {
+                role: item["image_id"] for role, item in images.items()
+            },
             "image_lock_sha256": execution.digest_record(overlay),
             "images_sha256": execution.digest_record(images),
         }
@@ -1047,7 +1200,7 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.addCleanup(stub.stop)
         return images
 
-    def test_read_complete_evidence_validates_real_history_without_baseline_topology(
+    def test_complete_evidence_checks_history_without_baseline_topology(
         self,
     ):
         self.readonly_admin_evidence()
@@ -1058,9 +1211,13 @@ class DurableVectorHistoryTests(unittest.TestCase):
             patch.object(
                 execution,
                 "require_runtime",
-                side_effect=AssertionError("baseline cannot authorize leased peers"),
+                side_effect=AssertionError(
+                    "baseline cannot authorize leased peers"
+                ),
             ),
-            patch.object(private_io, "write_file", side_effect=AssertionError("write")),
+            patch.object(
+                private_io, "write_file", side_effect=AssertionError("write")
+            ),
         ):
             gate, runtime, observed_images = vectors.read_complete_evidence(
                 self.context
@@ -1072,7 +1229,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.assertIs(gate["runtime_verified"], False)
         self.assertIs(gate["host_cleanup_verified"], True)
 
-    def test_read_complete_evidence_rejects_incomplete_journal_and_live_helper(self):
+    def test_read_complete_evidence_rejects_incomplete_journal_and_live_helper(
+        self,
+    ):
         self.readonly_admin_evidence()
         self.run_pass(3)
         self.sealed_runtime_evidence()
@@ -1089,7 +1248,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             ):
                 vectors.read_complete_evidence(self.context)
 
-    def test_read_complete_evidence_rejects_changed_runtime_or_image_lock(self):
+    def test_read_complete_evidence_rejects_changed_runtime_or_image_lock(
+        self,
+    ):
         self.readonly_admin_evidence()
         self.run_pass(3)
         self.sealed_runtime_evidence()
@@ -1103,14 +1264,19 @@ class DurableVectorHistoryTests(unittest.TestCase):
             ("container_ids", {"fess-search": "4" * 64}),
         ):
             execution.write_record(
-                self.root, "runtime.json", {**original, field: value}, replace=True
+                self.root,
+                "runtime.json",
+                {**original, field: value},
+                replace=True,
             )
             with (
                 self.subTest(field=field),
                 self.assertRaisesRegex(ValueError, "runtime_receipt_changed"),
             ):
                 vectors.read_complete_evidence(self.context)
-        execution.write_record(self.root, "runtime.json", original, replace=True)
+        execution.write_record(
+            self.root, "runtime.json", original, replace=True
+        )
         execution.write_record(
             self.root, "image-lock.json", {"services": {}}, replace=True
         )
@@ -1153,7 +1319,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.readonly_admin_evidence()
         self.run_pass(3)
         self.replace_record(
-            self.root, "admin-image.json", lambda value: value.update(sources={})
+            self.root,
+            "admin-image.json",
+            lambda value: value.update(sources={}),
         )
         with self.assertRaisesRegex(ValueError, "image_receipt_changed"):
             self.observe_verify()
@@ -1173,7 +1341,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         self.run_pass(3)
         for path in directory.iterdir():
             path.unlink()
-        with self.assertRaisesRegex(ValueError, "admin_completion_evidence_missing"):
+        with self.assertRaisesRegex(
+            ValueError, "admin_completion_evidence_missing"
+        ):
             self.observe_verify()
 
     def test_readonly_unfinished_import_and_reconcile_are_not_retried(self):
@@ -1206,7 +1376,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             self.replace_record(
                 directory,
                 identity["run_id"] + "-" + suffix + ".json",
-                lambda value: value.update(admin_image_id="sha256:" + "f" * 64),
+                lambda value: value.update(
+                    admin_image_id="sha256:" + "f" * 64
+                ),
             )
         with self.assertRaisesRegex(ValueError, "evidence_image_changed"):
             self.observe_verify()
@@ -1220,7 +1392,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "retagged-image"):
                 self.observe_verify()
 
-    def test_readonly_explicit_reconciliation_can_resolve_a_failed_import(self):
+    def test_readonly_explicit_reconciliation_can_resolve_a_failed_import(
+        self,
+    ):
         directory, identity = self.readonly_admin_evidence()
         self.run_pass(3)
         failed = {**identity, "run_id": "8" * 32}
@@ -1232,7 +1406,11 @@ class DurableVectorHistoryTests(unittest.TestCase):
         execution.write_record(
             directory,
             failed["run_id"] + "-failure.json",
-            {**failed, "status": "quarantined", "error_type": "TimeoutExpired"},
+            {
+                **failed,
+                "status": "quarantined",
+                "error_type": "TimeoutExpired",
+            },
         )
         completed = execution.read_record(
             directory, identity["run_id"] + "-complete.json"
@@ -1272,7 +1450,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         )
         self.assertEqual("vectors-complete", self.observe_verify()["status"])
 
-    def test_readonly_conflicting_admin_completion_and_failure_stays_quarantined(self):
+    def test_readonly_conflicting_completion_and_failure_quarantine(
+        self,
+    ):
         directory, identity = self.readonly_admin_evidence()
         self.run_pass(3)
         execution.write_record(
@@ -1321,7 +1501,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             "complete.json",
             lambda value: value.update(helper_removed_verified=1),
         )
-        with self.assertRaisesRegex(ValueError, "host_cleanup_receipt_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "host_cleanup_receipt_changed"
+        ):
             self.observe_verify()
 
     def test_readonly_vector_counts_require_strict_integers(self):
@@ -1336,7 +1518,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
         ):
             altered = copy.deepcopy(original)
             altered["result"][field] = changed
-            execution.write_record(directory, "complete.json", altered, replace=True)
+            execution.write_record(
+                directory, "complete.json", altered, replace=True
+            )
             try:
                 with (
                     self.subTest(field=field),
@@ -1356,7 +1540,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             "0018-pass-result.json",
             lambda value: value["payload"].update(elapsed_seconds=2.0),
         )
-        with self.assertRaisesRegex(vector_journal.JournalError, "digest_changed"):
+        with self.assertRaisesRegex(
+            vector_journal.JournalError, "digest_changed"
+        ):
             self.observe_verify()
 
     def test_readonly_helper_absence_is_checked_before_and_after_history(self):
@@ -1366,7 +1552,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             with (
                 self.subTest(observations=observations),
                 patch.object(
-                    vectors.administration, "_admin_ids", side_effect=observations
+                    vectors.administration,
+                    "_admin_ids",
+                    side_effect=observations,
                 ),
             ):
                 with self.assertRaisesRegex(
@@ -1377,14 +1565,22 @@ class DurableVectorHistoryTests(unittest.TestCase):
     def test_readonly_runtime_and_images_must_remain_identical(self):
         self.readonly_admin_evidence()
         self.run_pass(3)
-        before = (self.runtime, {"fess-search": {"image_id": "sha256:" + "a" * 64}})
+        before = (
+            self.runtime,
+            {"fess-search": {"image_id": "sha256:" + "a" * 64}},
+        )
         for after in (
             ({"container_ids": {"fess-search": "f" * 64}}, before[1]),
-            (self.runtime, {"fess-search": {"image_id": "sha256:" + "f" * 64}}),
+            (
+                self.runtime,
+                {"fess-search": {"image_id": "sha256:" + "f" * 64}},
+            ),
         ):
             with (
                 self.subTest(after=after),
-                patch.object(execution, "require_runtime", side_effect=(before, after)),
+                patch.object(
+                    execution, "require_runtime", side_effect=(before, after)
+                ),
             ):
                 with self.assertRaisesRegex(ValueError, "runtime_changed"):
                     self.observe_verify()
@@ -1398,11 +1594,13 @@ class DurableVectorHistoryTests(unittest.TestCase):
             self.runtime["container_ids"]["fess-search"] = "f" * 64
             return original(*args, **kwargs)
 
-        with patch.object(vectors, "_history", side_effect=mutate_after_snapshot):
+        with patch.object(
+            vectors, "_history", side_effect=mutate_after_snapshot
+        ):
             with self.assertRaisesRegex(ValueError, "runtime_changed"):
                 self.observe_verify()
 
-    def test_readonly_accepts_full_completed_history_without_granting_write_capacity(
+    def test_readonly_accepts_complete_history_without_write_capacity(
         self,
     ):
         self.readonly_admin_evidence()
@@ -1411,7 +1609,9 @@ class DurableVectorHistoryTests(unittest.TestCase):
             patch.object(vectors, "MAX_HISTORY", 1),
             patch.object(vectors.administration, "MAX_OPERATIONS", 1),
         ):
-            self.assertEqual("vectors-complete", self.observe_verify()["status"])
+            self.assertEqual(
+                "vectors-complete", self.observe_verify()["status"]
+            )
             with self.assertRaisesRegex(ValueError, "history_invalid_or_full"):
                 self.history()
             with self.assertRaisesRegex(ValueError, "retention_limit"):

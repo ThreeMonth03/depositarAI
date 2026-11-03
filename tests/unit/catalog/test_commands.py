@@ -22,15 +22,19 @@ class CatalogCommandTests(unittest.TestCase):
         self.assertEqual(4 * 1024**2, commands.MAX_OUTPUT_BYTES)
         self.assertEqual("BackendError", commands.BackendError.__name__)
         self.assertEqual(
-            "search.operations.catalog.commands", commands.BackendError.__module__
+            "search.operations.catalog.commands",
+            commands.BackendError.__module__,
         )
         self.assertEqual(
             (commands.BackendError,), backend.IncompatibleCatalog.__bases__
         )
         self.assertTrue(issubclass(backend.IncompatibleCatalog, ValueError))
 
-    def test_isolated_import_has_no_orchestration_or_process_side_effects(self):
-        script = """
+    def test_isolated_import_has_no_orchestration_or_process_side_effects(
+        self,
+    ):
+        script = (
+            """
 import subprocess
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -47,13 +51,16 @@ for name in (
     "search.operations.catalog.administration",
     "search.operations.catalog.vectors",
     "search.catalog",
-    "search.api", "torch", "fastapi", "django", "rest_framework", "adrf", "pydantic",
+    "search.api", "torch", "fastapi", "django", """
+            """"rest_framework", "adrf", "pydantic",
 ):
     assert not any(
-        loaded == name or loaded.startswith(name + ".") for loaded in sys.modules
+        loaded == name or loaded.startswith(name + """
+            """".") for loaded in sys.modules
     ), name
 assert commands.MAX_OUTPUT_BYTES == 4 * 1024**2
 """
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(ROOT)],
             capture_output=True,
@@ -63,7 +70,9 @@ assert commands.MAX_OUTPUT_BYTES == 4 * 1024**2
         )
         self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_real_runner_snapshots_filtered_environment_cwd_stdin_and_text(self):
+    def test_real_runner_snapshots_filtered_environment_cwd_stdin_and_text(
+        self,
+    ):
         environment = {
             "SEARCH_CATALOG_TEST": "excluded-search",
             "COMPOSE_CATALOG_TEST": "excluded-compose",
@@ -73,7 +82,8 @@ assert commands.MAX_OUTPUT_BYTES == 4 * 1024**2
             "COMPOSE": "preserved-compose",
             "DEPOSITAR_COMMAND_TEST": "factory-snapshot",
         }
-        script = """
+        script = (
+            """
 import json, os, sys
 keys = json.loads(sys.argv[1])
 record = {
@@ -81,15 +91,26 @@ record = {
     "stdin": sys.stdin.read(),
     "environment": {key: os.environ.get(key) for key in keys},
 }
-sys.stdout.buffer.write(json.dumps(record).encode() + b"\\r\\nsecond\\rthird\\n")
+sys.stdout.buffer.write(json.dumps(record).encode() + """
+            """b"\\r\\nsecond\\rthird\\n")
 sys.stderr.buffer.write(b"private warning\\r\\n")
 """
-        with tempfile.TemporaryDirectory(prefix="catalog-command-") as directory:
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="catalog-command-"
+        ) as directory:
             with patch.dict(os.environ, environment):
                 runner = commands.default_runner(Path(directory))
-                with patch.dict(os.environ, {"DEPOSITAR_COMMAND_TEST": "later"}):
+                with patch.dict(
+                    os.environ, {"DEPOSITAR_COMMAND_TEST": "later"}
+                ):
                     result = runner(
-                        [sys.executable, "-c", script, json.dumps(list(environment))],
+                        [
+                            sys.executable,
+                            "-c",
+                            script,
+                            json.dumps(list(environment)),
+                        ],
                         timeout=10,
                     )
             self.assertEqual(0, result.returncode)
@@ -108,15 +129,22 @@ sys.stderr.buffer.write(b"private warning\\r\\n")
             )
 
     def test_stdout_bound_counts_utf8_bytes_and_does_not_charge_stderr(self):
-        runner = Mock(return_value=subprocess.CompletedProcess([], 0, "éé", "x" * 100))
+        runner = Mock(
+            return_value=subprocess.CompletedProcess([], 0, "éé", "x" * 100)
+        )
         with patch.object(commands, "MAX_OUTPUT_BYTES", 4):
-            self.assertEqual("éé", commands.command_output(runner, ["private"]))
+            self.assertEqual(
+                "éé", commands.command_output(runner, ["private"])
+            )
             for stdout in ("ééa", b"bytes", None):
                 with self.subTest(stdout=stdout):
-                    runner.return_value = subprocess.CompletedProcess([], 0, stdout, "")
+                    runner.return_value = subprocess.CompletedProcess(
+                        [], 0, stdout, ""
+                    )
                     with self.assertRaisesRegex(
                         commands.BackendError,
-                        "^catalog preparation command failed; inspect private evidence$",
+                        "^catalog preparation command failed; "
+                        "inspect private evidence$",
                     ):
                         commands.command_output(runner, ["private"])
 
@@ -125,7 +153,9 @@ sys.stderr.buffer.write(b"private warning\\r\\n")
             "import sys; print('private stdout'); "
             "sys.stderr.write('private stderr'); sys.exit(7)"
         )
-        with tempfile.TemporaryDirectory(prefix="catalog-command-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="catalog-command-"
+        ) as directory:
             runner = commands.default_runner(Path(directory))
             with self.assertRaises(commands.BackendError) as caught:
                 commands.command_output(runner, [sys.executable, "-c", script])
@@ -134,7 +164,9 @@ sys.stderr.buffer.write(b"private warning\\r\\n")
             str(caught.exception),
         )
 
-    def test_runner_failures_propagate_unchanged_with_the_requested_timeout(self):
+    def test_runner_failures_propagate_unchanged_with_the_requested_timeout(
+        self,
+    ):
         argv = ["private-command"]
         for failure in (
             OSError("private launch error"),

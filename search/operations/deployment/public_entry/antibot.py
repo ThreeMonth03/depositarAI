@@ -1,8 +1,8 @@
 """Optional browser challenges before the public gateway; no runtime mutation.
 
 The HTTP entry rejects missing challenges as JSON on expensive APIs. Only GET
-/verify renders HTML; successful verification returns home, never replays a POST.
-OIDC callbacks retain the gateway's own state, nonce and body processing.
+/verify renders HTML; successful verification returns home, never replays a
+POST. OIDC callbacks retain the gateway's own state, nonce and body processing.
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ ANUBIS_IMAGE = (
     "ghcr.io/techarohq/anubis:v1.28.1@sha256:"
     "1744c03a918160a28b0d2e8c1656de6585f4071b30b4c3b0d51d02282c9b7c25"
 )
-ASSET_ROOT = Path(__file__).resolve().parents[4] / "deploy/config/public-entry/antibot"
+ASSET_ROOT = (
+    Path(__file__).resolve().parents[4] / "deploy/config/public-entry/antibot"
+)
 NETWORK = "antibot-gateway"
 
 
@@ -37,8 +39,8 @@ def render_antibot(config, *, uid=None, gid=None):
     """Return assets and additions for a validated PublicEntryConfig.
 
     The caller owns configuration and secret validation. It must apply the
-    returned APISIX overrides, stage state_directories with mode 0700 and retain
-    the complete asset set in its deployment/upgrade integrity receipt.
+    returned APISIX overrides, stage state_directories with mode 0700 and
+    retain the complete asset set in its deployment/upgrade integrity receipt.
     """
     if not getattr(config, "antibot_enabled", False):
         return {
@@ -63,7 +65,8 @@ def render_antibot(config, *, uid=None, gid=None):
         # Never interpolate unparsed configuration into nginx directives.
         ipaddress.ip_network(cidr, strict=True)
     trusted = "\n".join(
-        "    set_real_ip_from " + cidr + ";" for cidr in config.trusted_proxy_cidrs
+        "    set_real_ip_from " + cidr + ";"
+        for cidr in config.trusted_proxy_cidrs
     )
     template = (ASSET_ROOT / "nginx.conf.template").read_text(encoding="utf-8")
     for key, value in {
@@ -107,11 +110,16 @@ def render_antibot(config, *, uid=None, gid=None):
                 "cpus": 0.5,
                 "mem_limit": "64m",
                 "pids_limit": 32,
-                "tmpfs": [f"/tmp:rw,noexec,nosuid,size=16m,uid={uid},gid={gid}"],
+                "tmpfs": [
+                    f"/tmp:rw,noexec,nosuid,size=16m,uid={uid},gid={gid}"
+                ],
                 "volumes": [
-                    _mount(root / "antibot-nginx.conf", "/etc/nginx/nginx.conf"),
                     _mount(
-                        root / "antibot-errors.conf", "/etc/nginx/antibot-errors.conf"
+                        root / "antibot-nginx.conf", "/etc/nginx/nginx.conf"
+                    ),
+                    _mount(
+                        root / "antibot-errors.conf",
+                        "/etc/nginx/antibot-errors.conf",
                     ),
                 ],
                 "ports": [
@@ -127,7 +135,10 @@ def render_antibot(config, *, uid=None, gid=None):
                         "CMD-SHELL",
                         "wget -q -O - --header='Host: "
                         + origin.netloc
-                        + '\' http://127.0.0.1:8080/_edge_healthz | grep -q \'"status":"ok"\'',
+                        + (
+                            "' http://127.0.0.1:8080/_edge_healthz | "
+                            'grep -q \'"status":"ok"\''
+                        ),
                     ],
                     "interval": "5s",
                     "timeout": "3s",
@@ -146,7 +157,9 @@ def render_antibot(config, *, uid=None, gid=None):
                     "TARGET": " ",
                     "PUBLIC_URL": "",
                     "POLICY_FNAME": "/run/antibot/policy.yaml",
-                    "ED25519_PRIVATE_KEY_HEX_FILE": "/run/secrets/antibot-signing-key",
+                    ("ED25519_PRIVATE_KEY_HEX_FILE"): (
+                        "/run/secrets/antibot-signing-key"
+                    ),
                     "COOKIE_EXPIRATION_TIME": "24h",
                     "COOKIE_SECURE": "true",
                     "COOKIE_HTTP_ONLY": "true",
@@ -160,7 +173,10 @@ def render_antibot(config, *, uid=None, gid=None):
                     "GOMAXPROCS": "1",
                 },
                 "volumes": [
-                    _mount(root / "antibot-policy.yaml", "/run/antibot/policy.yaml"),
+                    _mount(
+                        root / "antibot-policy.yaml",
+                        "/run/antibot/policy.yaml",
+                    ),
                     _mount(signing_key, "/run/secrets/antibot-signing-key"),
                     _mount(root / "antibot-data", "/data", read_only=False),
                 ],

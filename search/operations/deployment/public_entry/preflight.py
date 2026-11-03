@@ -40,13 +40,15 @@ NETWORK_FORMAT = (
     '"Labels":{{json .Labels}},"Containers":{{json .Containers}}}'
 )
 CONTAINER_FORMAT = (
-    '{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json .Config.Labels}},'
-    '"State":{"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},'
-    '"Restarting":{{json .State.Restarting}},"Dead":{{json .State.Dead}},'
-    '"Health":{{if .State.Health}}{"Status":{{json .State.Health.Status}}}{{else}}null{{end}}},'
-    '"Mounts":{{json .Mounts}},"Networks":{{json .NetworkSettings.Networks}},'
-    '"Ports":{{json .NetworkSettings.Ports}},'
-    '"PortBindings":{{json .HostConfig.PortBindings}}}'
+    '{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json '
+    '.Config.Labels}},"State":{"Running":{{json .State.Running}},'
+    '"Paused":{{json .State.Paused}},"Restarting":{{json '
+    '.State.Restarting}},"Dead":{{json .State.Dead}},"Health":'
+    '{{if .State.Health}}{"Status":{{json '
+    '.State.Health.Status}}}{{else}}null{{end}}},"Mounts":{{json '
+    '.Mounts}},"Networks":{{json .NetworkSettings.Networks}},'
+    '"Ports":{{json .NetworkSettings.Ports}},"PortBindings":'
+    "{{json .HostConfig.PortBindings}}}"
 )
 
 
@@ -62,8 +64,10 @@ def _require(condition, code):
 def _output(runner, argv):
     try:
         if runner is subprocess.run:
-            # Reuse the existing live pipe cap instead of adding another process
-            # capture implementation. It also terminates timed-out child groups.
+            # Reuse the existing live pipe cap instead of adding another
+            # process
+            # capture implementation. It also terminates timed-out child
+            # groups.
             result = image_build._run(
                 argv, timeout=COMMAND_TIMEOUT, environment=dict(os.environ)
             )
@@ -77,7 +81,10 @@ def _output(runner, argv):
                 check=False,
             )
         stdout, stderr = result.stdout, result.stderr
-        _require(type(stdout) is bytes and type(stderr) is bytes, "inspection_failed")
+        _require(
+            type(stdout) is bytes and type(stderr) is bytes,
+            "inspection_failed",
+        )
         _require(len(stdout) + len(stderr) <= MAX_OUTPUT_BYTES, "output_limit")
         _require(
             type(result.returncode) is int and result.returncode == 0,
@@ -131,7 +138,9 @@ def _plan(profile, release):
         )
         return project, network, image, mounts[0]["source"]
     except (KeyError, TypeError, AttributeError):
-        raise PublicEntryPreflightError("public_entry_backend_plan_invalid") from None
+        raise PublicEntryPreflightError(
+            "public_entry_backend_plan_invalid"
+        ) from None
 
 
 def _verify_private_backend(profile, release, runner):
@@ -139,7 +148,14 @@ def _verify_private_backend(profile, release, runner):
     networks = _objects(
         _output(
             runner,
-            ["docker", "network", "inspect", "--format", NETWORK_FORMAT, network_name],
+            [
+                "docker",
+                "network",
+                "inspect",
+                "--format",
+                NETWORK_FORMAT,
+                network_name,
+            ],
         )
     )
     _require(len(networks) == 1, "network_invalid")
@@ -167,11 +183,18 @@ def _verify_private_backend(profile, release, runner):
     rows = _objects(
         _output(
             runner,
-            ["docker", "inspect", "--format", CONTAINER_FORMAT, *sorted(members)],
+            [
+                "docker",
+                "inspect",
+                "--format",
+                CONTAINER_FORMAT,
+                *sorted(members),
+            ],
         )
     )
     _require(
-        len(rows) == len(members) and {row.get("Id") for row in rows} == set(members),
+        len(rows) == len(members)
+        and {row.get("Id") for row in rows} == set(members),
         "inspection_failed",
     )
     candidates, alias_owners = [], []
@@ -220,7 +243,8 @@ def _verify_private_backend(profile, release, runner):
     key_mounts = [
         mount
         for mount in api.get("Mounts", [])
-        if type(mount) is dict and mount.get("Destination") == "/run/secrets/api_key"
+        if type(mount) is dict
+        and mount.get("Destination") == "/run/secrets/api_key"
     ]
     _require(
         len(key_mounts) == 1
@@ -232,7 +256,9 @@ def _verify_private_backend(profile, release, runner):
 
 
 def verify_private_backend(profile, release, *, runner=subprocess.run):
-    """Reject a missing, ambiguous or incompatible backend before CPU startup."""
+    """Reject a missing, ambiguous or incompatible backend before CPU
+    startup.
+    """
     try:
         return _verify_private_backend(profile, release, runner)
     except PublicEntryPreflightError:
@@ -244,7 +270,9 @@ def verify_private_backend(profile, release, *, runner=subprocess.run):
 
 
 def verify_bound_backend(profile, *, runner=subprocess.run, compose_file=None):
-    """Verify the backend identity sealed in a prepared or versioned profile."""
+    """Verify the backend identity sealed in a prepared or versioned
+    profile.
+    """
     try:
         plan = profile["x-depositar-plan"]["private_backend"]
         if type(plan) is dict and plan.get("kind") == "https":
@@ -256,7 +284,12 @@ def verify_bound_backend(profile, *, runner=subprocess.run, compose_file=None):
         _require(
             type(plan) is dict
             and set(plan)
-            == {"schema_version", "release_project", "network_name", "api_image"}
+            == {
+                "schema_version",
+                "release_project",
+                "network_name",
+                "api_image",
+            }
             and type(plan["schema_version"]) is int
             and plan["schema_version"] == 1,
             "plan_invalid",
@@ -267,5 +300,7 @@ def verify_bound_backend(profile, *, runner=subprocess.run, compose_file=None):
             "services": {"conversation-api": {"image": plan["api_image"]}},
         }
     except (KeyError, TypeError, AttributeError):
-        raise PublicEntryPreflightError("public_entry_backend_plan_invalid") from None
+        raise PublicEntryPreflightError(
+            "public_entry_backend_plan_invalid"
+        ) from None
     return verify_private_backend(profile, release, runner=runner)

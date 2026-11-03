@@ -23,9 +23,13 @@ if __name__ == "__main__":
     description = "Intranet" if args.intranet else "Private"
     try:
         validate(
-            json.load(sys.stdin), intranet=args.intranet, prepare=args.prepare_access
+            json.load(sys.stdin),
+            intranet=args.intranet,
+            prepare=args.prepare_access,
         )
     except (ValueError, KeyError, TypeError, OSError):
-        print(f"{description} website deployment policy failed.", file=sys.stderr)
+        print(
+            f"{description} website deployment policy failed.", file=sys.stderr
+        )
         raise SystemExit(1) from None
     print(f"{description} website deployment policy passed.")

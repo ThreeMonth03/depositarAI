@@ -1,4 +1,5 @@
-"""Abortable channel lifetime does not depend on HTTPConnection.sock retention."""
+"""Abortable channel lifetime does not depend on HTTPConnection.sock
+retention."""
 
 import socket
 import unittest

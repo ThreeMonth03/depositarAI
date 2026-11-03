@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Aggregate private batch captures against one complete quality plan, offline."""
+"""Aggregate private batch captures against one complete quality plan,
+offline.
+"""
 
 import argparse
 import json
@@ -27,7 +29,9 @@ def _read(path, maximum):
     path = Path(path)
     directory = private_io.open_directory(path.parent)
     try:
-        raw = private_io.read_file(directory, path.name, mode=0o600, max_bytes=maximum)
+        raw = private_io.read_file(
+            directory, path.name, mode=0o600, max_bytes=maximum
+        )
         private_io.verify_directory(directory, path.parent)
         return raw
     finally:
@@ -97,7 +101,10 @@ def main(argv=None):
             if total > batches.MAX_TOTAL_BYTES:
                 raise ValueError("input too large")
             records.append(
-                {"plan": strict_json(_read(plan, MAX_PLAN_BYTES)), "files": files}
+                {
+                    "plan": strict_json(_read(plan, MAX_PLAN_BYTES)),
+                    "files": files,
+                }
             )
         report = batches.aggregate(full_plan, records, baseline=baseline)
         _write(args.output, report)
@@ -118,7 +125,10 @@ def main(argv=None):
         RecursionError,
     ):
         summary, code = (
-            {"status": "invalid_input", "error": "quality_batches_input_invalid"},
+            {
+                "status": "invalid_input",
+                "error": "quality_batches_input_invalid",
+            },
             2,
         )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))

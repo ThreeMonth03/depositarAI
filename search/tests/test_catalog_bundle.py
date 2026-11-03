@@ -84,7 +84,11 @@ def _dataset(identifier=UUID_1, slug="dataset-one"):
         "type": "dataset",
         "author": "Researcher",
         "maintainer": "Curator",
-        "organization": {"id": "org-1", "name": "lab", "title": "Research Lab"},
+        "organization": {
+            "id": "org-1",
+            "name": "lab",
+            "title": "Research Lab",
+        },
         "tags": [{"name": "climate"}],
         "groups": [{"display_name": "Earth Science"}],
         "keywords": ["rainfall", "temperature"],
@@ -121,7 +125,9 @@ def _dataset(identifier=UUID_1, slug="dataset-one"):
 def _resource_enrichment(
     *, kind="CSV", columns=None, text="", resource_id=RESOURCE_UUID
 ):
-    columns = ["observation_time", "rainfall_mm"] if columns is None else columns
+    columns = (
+        ["observation_time", "rainfall_mm"] if columns is None else columns
+    )
     index_text = " ".join(columns) if kind == "CSV" else text
     return {
         "context": {
@@ -147,7 +153,9 @@ def _resource_enrichment(
 def _make_writable(path):
     if not os.path.lexists(path):
         return
-    for root, directories, files in os.walk(path, topdown=True, followlinks=False):
+    for root, directories, files in os.walk(
+        path, topdown=True, followlinks=False
+    ):
         try:
             os.chmod(root, 0o700)
         except OSError:
@@ -196,11 +204,15 @@ class CatalogBundleTests(unittest.TestCase):
 
     @staticmethod
     def read_jsonl(path):
-        with gzip.open(path, "rt", encoding="utf-8", errors="strict") as stream:
+        with gzip.open(
+            path, "rt", encoding="utf-8", errors="strict"
+        ) as stream:
             return [json.loads(line) for line in stream]
 
     def test_metadata_only_bundle_has_canonical_empty_resource_context(self):
-        result = builder.build_bundle(self.write_jsonl([_dataset()]), self.output)
+        result = builder.build_bundle(
+            self.write_jsonl([_dataset()]), self.output
+        )
         path = Path(result["bundle_path"])
         self.assertEqual(
             "depositar-public-metadata-v3", result["manifest"]["bundle_format"]
@@ -214,7 +226,9 @@ class CatalogBundleTests(unittest.TestCase):
         )
         self.assertEqual((), bundle.documents[0]["resource_context"])
 
-    def test_csv_columns_enter_search_content_without_changing_condition_metadata(self):
+    def test_csv_columns_preserve_condition_metadata(
+        self,
+    ):
         dataset = _dataset()
         dataset["resources"][0]["id"] = RESOURCE_UUID
         dataset["notes"] = "Long metadata " * 3000
@@ -226,17 +240,23 @@ class CatalogBundleTests(unittest.TestCase):
             columns=["unique_station_measurement", "rainfall_mm"]
         )
         result = builder.build_bundle(
-            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+            self.write_jsonl([dataset]),
+            self.output,
+            resource_context={UUID_1: [entry]},
         )
         path = Path(result["bundle_path"])
         document = self.read_jsonl(path / "fess-documents.jsonl.gz")[0]
         corpus = self.read_jsonl(path / "corpus.v2.jsonl.gz")[0]
         self.assertIn(entry["index_text"], document["content"])
-        self.assertLess(document["content"].index("unique_station_measurement"), 100)
+        self.assertLess(
+            document["content"].index("unique_station_measurement"), 100
+        )
         self.assertEqual([entry["context"]], document["resource_context"])
         self.assertEqual(
             [entry],
-            self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0]["resources"],
+            self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0][
+                "resources"
+            ],
         )
         self.assertEqual(["CSV"], corpus["resource_formats"])
         self.assertEqual("2020-01-01", corpus["temporal"]["start"])
@@ -254,31 +274,38 @@ class CatalogBundleTests(unittest.TestCase):
         dataset["resources"][0].update(id=RESOURCE_UUID, format="PDF")
         entry = _resource_enrichment(
             kind="PDF",
-            text="<p>沿海沉積研究 owner@example.org</p><script>hidden</script>\u202e "
-            + "研究內容 " * 200,
+            text="<p>沿海沉積研究 owner@example.org</p><script>hidden</script>"
+            "\u202e " + "研究內容 " * 200,
         )
         result = builder.build_bundle(
-            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+            self.write_jsonl([dataset]),
+            self.output,
+            resource_context={UUID_1: [entry]},
         )
         path = Path(result["bundle_path"])
         document = self.read_jsonl(path / "fess-documents.jsonl.gz")[0]
-        saved = self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0]["resources"][
-            0
-        ]
+        saved = self.read_jsonl(path / "resource-context.v1.jsonl.gz")[0][
+            "resources"
+        ][0]
         self.assertNotIn("@", json.dumps(document, ensure_ascii=False))
         self.assertNotIn("hidden", saved["index_text"])
         self.assertNotIn("\u202e", saved["index_text"])
         self.assertIn("[email removed]", saved["index_text"])
         self.assertEqual(
-            saved["index_text"][:320], document["resource_context"][0]["excerpt"]
+            saved["index_text"][:320],
+            document["resource_context"][0]["excerpt"],
         )
         self.assertIn(saved["index_text"], document["content"])
         self.assertEqual(entry["profile_sha256"], saved["profile_sha256"])
         self.assertEqual(entry["content_sha256"], saved["content_sha256"])
         self.assertIn("@", entry["index_text"])
-        CatalogBundle.load(path, expected_manifest_sha256=result["manifest_sha256"])
+        CatalogBundle.load(
+            path, expected_manifest_sha256=result["manifest_sha256"]
+        )
 
-    def test_resource_selection_rejects_unknown_dataset_resource_or_format(self):
+    def test_resource_selection_rejects_unknown_dataset_resource_or_format(
+        self,
+    ):
         dataset = _dataset()
         dataset["resources"][0]["id"] = RESOURCE_UUID
         source = self.write_jsonl([dataset])
@@ -299,12 +326,17 @@ class CatalogBundleTests(unittest.TestCase):
         dataset["resources"][0]["id"] = RESOURCE_UUID
         dataset["resources"].append({**dataset["resources"][0], "id": UUID_2})
         source = self.write_jsonl([dataset])
-        entries = [_resource_enrichment(), _resource_enrichment(resource_id=UUID_2)]
+        entries = [
+            _resource_enrichment(),
+            _resource_enrichment(resource_id=UUID_2),
+        ]
         first = builder.build_bundle(
             source, self.output, resource_context={UUID_1: entries}
         )
         second = builder.build_bundle(
-            source, self.output, resource_context={UUID_1: list(reversed(entries))}
+            source,
+            self.output,
+            resource_context={UUID_1: list(reversed(entries))},
         )
         self.assertEqual(first["bundle_id"], second["bundle_id"])
         self.assertFalse(second["created"])
@@ -313,7 +345,10 @@ class CatalogBundleTests(unittest.TestCase):
         )
         self.assertEqual(
             [UUID_2, RESOURCE_UUID],
-            [entry["context"]["resource_id"] for entry in rows[0]["resources"]],
+            [
+                entry["context"]["resource_id"]
+                for entry in rows[0]["resources"]
+            ],
         )
 
     def test_profile_text_and_column_budgets_are_explicitly_recorded(self):
@@ -323,14 +358,18 @@ class CatalogBundleTests(unittest.TestCase):
             columns=["column%02d" % number + "x" * 120 for number in range(32)]
         )
         result = builder.build_bundle(
-            self.write_jsonl([dataset]), self.output, resource_context={UUID_1: [entry]}
+            self.write_jsonl([dataset]),
+            self.output,
+            resource_context={UUID_1: [entry]},
         )
         row = self.read_jsonl(
             Path(result["bundle_path"]) / "resource-context.v1.jsonl.gz"
         )[0]["resources"][0]
         self.assertLessEqual(sum(map(len, row["context"]["columns"])), 2048)
         self.assertTrue(row["truncated"])
-        self.assertEqual(" ".join(row["context"]["columns"]), row["index_text"])
+        self.assertEqual(
+            " ".join(row["context"]["columns"]), row["index_text"]
+        )
 
     def test_builds_rich_corpus_and_allowlisted_fess_document(self):
         package = _dataset(slug="Ｄata set/測試")
@@ -338,8 +377,12 @@ class CatalogBundleTests(unittest.TestCase):
         package["notes"] = (
             "<p>Contact\nowner@example.org</p><script>do not index</script>"
         )
-        package["resources"][0]["description"] = "Ask helper@example.net for details"
-        source = self.write_jsonl([package], name="datasets.jsonl.gz", compressed=True)
+        package["resources"][0]["description"] = (
+            "Ask helper@example.net for details"
+        )
+        source = self.write_jsonl(
+            [package], name="datasets.jsonl.gz", compressed=True
+        )
 
         result = builder.build_bundle(source, self.output)
 
@@ -363,7 +406,9 @@ class CatalogBundleTests(unittest.TestCase):
         self.assertEqual(corpus["keywords"], ["rainfall", "temperature"])
         self.assertEqual(corpus["language"], ["en", "zh_TW"])
         self.assertEqual(corpus["data_type"], ["CSV"])
-        self.assertEqual(corpus["license_title"], "Creative Commons Attribution")
+        self.assertEqual(
+            corpus["license_title"], "Creative Commons Attribution"
+        )
         self.assertEqual(raw["spatial"], package["spatial"])
 
         self.assertEqual(set(fess), EXPECTED_FESS_FIELDS)
@@ -389,10 +434,15 @@ class CatalogBundleTests(unittest.TestCase):
         self.assertNotIn("do not index", serialized_fess)
         self.assertNotIn("spatial", serialized_fess)
         self.assertGreater(
-            result["manifest"]["normalization_counters"]["bidi_characters_removed"], 0
+            result["manifest"]["normalization_counters"][
+                "bidi_characters_removed"
+            ],
+            0,
         )
 
-    def test_suppressed_html_cannot_be_reopened_by_a_mismatched_close_tag(self):
+    def test_suppressed_html_cannot_be_reopened_by_a_mismatched_close_tag(
+        self,
+    ):
         package = _dataset()
         package["notes"] = (
             "visible <noscript></style>HIDDEN-ONE</noscript> tail "
@@ -400,14 +450,18 @@ class CatalogBundleTests(unittest.TestCase):
         )
         source = self.write_jsonl([package])
         result = builder.build_bundle(source, self.output)
-        corpus = self.read_jsonl(Path(result["bundle_path"]) / "corpus.v2.jsonl.gz")[0]
+        corpus = self.read_jsonl(
+            Path(result["bundle_path"]) / "corpus.v2.jsonl.gz"
+        )[0]
         self.assertIn("visible", corpus["notes"])
         self.assertIn("tail", corpus["notes"])
         self.assertNotIn("HIDDEN-ONE", corpus["notes"])
         self.assertNotIn("HIDDEN-TWO", corpus["notes"])
         self.assertNotIn("end", corpus["notes"])
 
-    def test_condition_metadata_is_manifest_bound_immutable_and_not_update_time(self):
+    def test_condition_metadata_is_immutable_manifest_coverage(
+        self,
+    ):
         package = _dataset()
         source = self.write_jsonl([package])
         built = builder.build_bundle(source, self.output)
@@ -429,11 +483,14 @@ class CatalogBundleTests(unittest.TestCase):
     def test_nested_script_close_cannot_reopen_outer_noscript(self):
         package = _dataset()
         package["notes"] = (
-            "before <noscript><script></noscript></script>HIDDEN</noscript> VISIBLE"
+            "before <noscript><script></noscript></script>HIDDEN</no"
+            "script> VISIBLE"
         )
         source = self.write_jsonl([package])
         result = builder.build_bundle(source, self.output)
-        corpus = self.read_jsonl(Path(result["bundle_path"]) / "corpus.v2.jsonl.gz")[0]
+        corpus = self.read_jsonl(
+            Path(result["bundle_path"]) / "corpus.v2.jsonl.gz"
+        )[0]
         self.assertIn("before", corpus["notes"])
         self.assertIn("VISIBLE", corpus["notes"])
         self.assertNotIn("HIDDEN", corpus["notes"])
@@ -445,12 +502,16 @@ class CatalogBundleTests(unittest.TestCase):
         )
         source = self.write_jsonl([package])
         result = builder.build_bundle(source, self.output)
-        corpus = self.read_jsonl(Path(result["bundle_path"]) / "corpus.v2.jsonl.gz")[0]
+        corpus = self.read_jsonl(
+            Path(result["bundle_path"]) / "corpus.v2.jsonl.gz"
+        )[0]
         self.assertIn("before", corpus["notes"])
         self.assertIn("VISIBLE", corpus["notes"])
         self.assertNotIn("HIDDEN", corpus["notes"])
 
-    def test_fess_email_scrub_is_conservative_bounded_and_loader_compatible(self):
+    def test_fess_email_scrub_is_conservative_bounded_and_loader_compatible(
+        self,
+    ):
         package = _dataset()
         package["title"] = "owner@example.org聯絡"
         package["notes"] = " ".join(
@@ -505,7 +566,9 @@ class CatalogBundleTests(unittest.TestCase):
                     builder.build_bundle(source, self.output)
 
     def test_manifest_binds_the_exact_shared_artifact_contract(self):
-        source = self.write_jsonl([_dataset()], "source.jsonl.gz", compressed=True)
+        source = self.write_jsonl(
+            [_dataset()], "source.jsonl.gz", compressed=True
+        )
         result = builder.build_bundle(source, self.output)
         bundle = Path(result["bundle_path"])
         manifest_raw = (bundle / policy.MANIFEST_NAME).read_bytes()
@@ -533,7 +596,9 @@ class CatalogBundleTests(unittest.TestCase):
                 "normalization_counters",
             },
         )
-        self.assertEqual(set(manifest["artifacts"]), set(policy.ARTIFACT_NAMES))
+        self.assertEqual(
+            set(manifest["artifacts"]), set(policy.ARTIFACT_NAMES)
+        )
         for name, descriptor in manifest["artifacts"].items():
             artifact_raw = (bundle / name).read_bytes()
             with gzip.open(bundle / name, "rb") as stream:
@@ -557,7 +622,9 @@ class CatalogBundleTests(unittest.TestCase):
             self.assertEqual(expanded.count(b"\n"), descriptor["records"])
             self.assertEqual(artifact_raw[:2], b"\x1f\x8b")
             self.assertEqual(artifact_raw[4:8], b"\x00\x00\x00\x00")
-            self.assertEqual(stat.S_IMODE((bundle / name).stat().st_mode), 0o400)
+            self.assertEqual(
+                stat.S_IMODE((bundle / name).stat().st_mode), 0o400
+            )
         self.assertEqual(
             stat.S_IMODE((bundle / policy.MANIFEST_NAME).stat().st_mode), 0o400
         )
@@ -567,7 +634,8 @@ class CatalogBundleTests(unittest.TestCase):
         )
         expected_ids = (UUID_1 + "\n").encode("ascii")
         self.assertEqual(
-            manifest["dataset_ids_sha256"], hashlib.sha256(expected_ids).hexdigest()
+            manifest["dataset_ids_sha256"],
+            hashlib.sha256(expected_ids).hexdigest(),
         )
 
     def test_build_cli_prints_only_a_bounded_summary(self):
@@ -579,7 +647,13 @@ class CatalogBundleTests(unittest.TestCase):
             contextlib.redirect_stderr(standard_error),
         ):
             status_code = cli.main(
-                ["build", "--input", str(source), "--output-root", str(self.output)]
+                [
+                    "build",
+                    "--input",
+                    str(source),
+                    "--output-root",
+                    str(self.output),
+                ]
             )
         summary = json.loads(standard_output.getvalue())
         self.assertEqual(status_code, 0)
@@ -664,7 +738,9 @@ class CatalogBundleTests(unittest.TestCase):
                 finally:
                     unknown.unlink()
 
-    def test_builder_import_closure_is_exactly_the_sealed_standard_library_recipe(self):
+    def test_builder_imports_match_sealed_stdlib_recipe(
+        self,
+    ):
         root = Path(__file__).resolve().parents[2]
         sources = {}
         packages = set()
@@ -678,7 +754,9 @@ class CatalogBundleTests(unittest.TestCase):
         graph = {}
         for module, path in sources.items():
             dependencies = set()
-            package = module if module in packages else module.rpartition(".")[0]
+            package = (
+                module if module in packages else module.rpartition(".")[0]
+            )
             tree = ast.parse((root / path).read_bytes())
             dynamic_imports = {
                 alias.asname or alias.name
@@ -711,7 +789,9 @@ class CatalogBundleTests(unittest.TestCase):
                         )
                     imports = [name]
                     if name in packages:
-                        imports.extend(name + "." + alias.name for alias in node.names)
+                        imports.extend(
+                            name + "." + alias.name for alias in node.names
+                        )
                 else:
                     continue
                 for name in imports:
@@ -729,9 +809,12 @@ class CatalogBundleTests(unittest.TestCase):
                         if spec.origin in ("built-in", "frozen"):
                             continue
                         origin = Path(spec.origin).resolve()
-                        self.assertIn(standard_library, origin.parents, (module, name))
+                        self.assertIn(
+                            standard_library, origin.parents, (module, name)
+                        )
                         self.assertFalse(
-                            {"site-packages", "dist-packages"} & set(origin.parts),
+                            {"site-packages", "dist-packages"}
+                            & set(origin.parts),
                             (module, name),
                         )
             graph[module] = dependencies
@@ -750,7 +833,9 @@ class CatalogBundleTests(unittest.TestCase):
         first = _dataset(UUID_1, "one")
         second = _dataset(UUID_2, "two")
         source_a = self.write_jsonl([second, first], "a.jsonl")
-        source_b = self.write_jsonl([first, second], "b.jsonl.gz", compressed=True)
+        source_b = self.write_jsonl(
+            [first, second], "b.jsonl.gz", compressed=True
+        )
 
         result_a = builder.build_bundle(source_a, self.output)
         bytes_before = {
@@ -785,7 +870,9 @@ class CatalogBundleTests(unittest.TestCase):
             {path.name for path in destination.iterdir()},
         )
 
-    def test_artifact_mutation_after_manifest_hash_is_caught_before_publish(self):
+    def test_artifact_mutation_after_manifest_hash_is_caught_before_publish(
+        self,
+    ):
         source = self.write_jsonl([_dataset()], "mutation.jsonl")
         original = storage._artifact_description
         calls = 0
@@ -815,10 +902,15 @@ class CatalogBundleTests(unittest.TestCase):
             "_artifact_description",
             side_effect=mutate_after_hash,
         ):
-            with self.assertRaisesRegex(policy.BundleError, "artifact does not match"):
+            with self.assertRaisesRegex(
+                policy.BundleError, "artifact does not match"
+            ):
                 builder.build_bundle(source, self.output)
         self.assertFalse(
-            any(path.name.startswith("sha256-") for path in self.output.iterdir())
+            any(
+                path.name.startswith("sha256-")
+                for path in self.output.iterdir()
+            )
         )
 
     def test_missing_renameat2_and_enosys_use_portable_publication(self):
@@ -842,24 +934,34 @@ class CatalogBundleTests(unittest.TestCase):
                     result = builder.build_bundle(source, output)
                 self.assertTrue(result["created"])
                 self.assertEqual(
-                    0o500, stat.S_IMODE(Path(result["bundle_path"]).stat().st_mode)
+                    0o500,
+                    stat.S_IMODE(Path(result["bundle_path"]).stat().st_mode),
                 )
 
     def test_rejects_non_public_inactive_and_non_dataset_records(self):
-        changes = (("private", True), ("state", "deleted"), ("type", "showcase"))
+        changes = (
+            ("private", True),
+            ("state", "deleted"),
+            ("type", "showcase"),
+        )
         for index, (key, value) in enumerate(changes):
             with self.subTest(key=key):
                 package = _dataset()
                 package[key] = value
-                source = self.write_jsonl([package], "selection-%d.jsonl" % index)
+                source = self.write_jsonl(
+                    [package], "selection-%d.jsonl" % index
+                )
                 with self.assertRaises(policy.BundleError):
                     builder.build_bundle(source, self.output)
 
     def test_rejects_duplicate_uuid_and_duplicate_normalized_url(self):
         source = self.write_jsonl(
-            [_dataset(UUID_1, "one"), _dataset(UUID_1, "two")], "duplicate-id.jsonl"
+            [_dataset(UUID_1, "one"), _dataset(UUID_1, "two")],
+            "duplicate-id.jsonl",
         )
-        with self.assertRaisesRegex(policy.BundleError, "duplicate dataset UUID"):
+        with self.assertRaisesRegex(
+            policy.BundleError, "duplicate dataset UUID"
+        ):
             builder.build_bundle(source, self.output)
 
         source = self.write_jsonl(
@@ -907,7 +1009,9 @@ class CatalogBundleTests(unittest.TestCase):
                 builder.build_bundle(source, self.output)
 
     def test_rejects_row_and_array_caps_and_oversized_slug(self):
-        source = self.write_jsonl([_dataset(UUID_1), _dataset(UUID_2)], "rows.jsonl")
+        source = self.write_jsonl(
+            [_dataset(UUID_1), _dataset(UUID_2)], "rows.jsonl"
+        )
         with mock.patch.object(policy, "MAX_ROWS", 1):
             with self.assertRaisesRegex(policy.BundleError, "row limit"):
                 builder.build_bundle(source, self.output)
@@ -945,7 +1049,9 @@ class CatalogBundleTests(unittest.TestCase):
             ('{"id":"%s","id":"%s"}\n' % (UUID_1, UUID_2)).encode("ascii")
         )
         os.chmod(duplicate, 0o600)
-        with self.assertRaisesRegex(policy.BundleError, "duplicate JSON object key"):
+        with self.assertRaisesRegex(
+            policy.BundleError, "duplicate JSON object key"
+        ):
             builder.build_bundle(duplicate, self.output)
 
     def test_rejects_surrogates_and_nonfinite_numeric_results(self):
@@ -954,13 +1060,17 @@ class CatalogBundleTests(unittest.TestCase):
             '"state":"active","type":"dataset","resources":[],"ignored":%s}\n'
         )
         surrogate = self.base / "surrogate.jsonl"
-        surrogate.write_bytes((template % (UUID_1, '"\\ud800"', "0")).encode("ascii"))
+        surrogate.write_bytes(
+            (template % (UUID_1, '"\\ud800"', "0")).encode("ascii")
+        )
         os.chmod(surrogate, 0o600)
         with self.assertRaisesRegex(policy.BundleError, "Unicode scalar"):
             builder.build_bundle(surrogate, self.output)
 
         overflow = self.base / "overflow.jsonl"
-        overflow.write_bytes((template % (UUID_1, '"safe"', "1e9999")).encode("ascii"))
+        overflow.write_bytes(
+            (template % (UUID_1, '"safe"', "1e9999")).encode("ascii")
+        )
         os.chmod(overflow, 0o600)
         with self.assertRaisesRegex(policy.BundleError, "non-finite JSON"):
             builder.build_bundle(overflow, self.output)
@@ -989,7 +1099,9 @@ class CatalogBundleTests(unittest.TestCase):
         hardlink.unlink()
 
         os.chmod(source, 0o666)
-        with self.assertRaisesRegex(policy.BundleError, "group/world writable"):
+        with self.assertRaisesRegex(
+            policy.BundleError, "group/world writable"
+        ):
             builder.build_bundle(source, self.output)
 
     def test_rejects_unsafe_output_root_and_redirected_bundle(self):
@@ -1008,7 +1120,9 @@ class CatalogBundleTests(unittest.TestCase):
         nested_source = self.output / "nested-source.jsonl"
         nested_source.write_bytes(source.read_bytes())
         os.chmod(nested_source, 0o600)
-        with self.assertRaisesRegex(policy.BundleError, "inside the output root"):
+        with self.assertRaisesRegex(
+            policy.BundleError, "inside the output root"
+        ):
             builder.build_bundle(nested_source, self.output)
         nested_source.unlink()
 
@@ -1025,9 +1139,9 @@ class CatalogBundleTests(unittest.TestCase):
         source_parent.mkdir(mode=0o700)
         source = source_parent / "snapshot.jsonl"
         source.write_bytes(
-            json.dumps(_dataset(slug="pinned-source"), separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(
+                _dataset(slug="pinned-source"), separators=(",", ":")
+            ).encode("utf-8")
             + b"\n"
         )
         os.chmod(source, 0o600)
@@ -1052,7 +1166,9 @@ class CatalogBundleTests(unittest.TestCase):
             descriptor = original(path, description)
             if path == str(source_parent) and not swapped:
                 source_parent.rename(pinned_parent)
-                source_parent.symlink_to(redirected_parent, target_is_directory=True)
+                source_parent.symlink_to(
+                    redirected_parent, target_is_directory=True
+                )
                 swapped = True
             return descriptor
 
@@ -1069,11 +1185,15 @@ class CatalogBundleTests(unittest.TestCase):
             if pinned_parent.exists():
                 pinned_parent.rename(source_parent)
 
-        corpus = self.read_jsonl(Path(result["bundle_path"]) / "corpus.v2.jsonl.gz")[0]
+        corpus = self.read_jsonl(
+            Path(result["bundle_path"]) / "corpus.v2.jsonl.gz"
+        )[0]
         self.assertEqual("pinned-source", corpus["name"])
 
     def test_output_writes_stay_on_pinned_root_after_ancestor_swap(self):
-        source = self.write_jsonl([_dataset(slug="fd-target")], "fd-target.jsonl")
+        source = self.write_jsonl(
+            [_dataset(slug="fd-target")], "fd-target.jsonl"
+        )
         managed_parent = self.base / "managed-parent"
         managed_parent.mkdir(mode=0o700)
         output = managed_parent / "bundles"
@@ -1089,7 +1209,9 @@ class CatalogBundleTests(unittest.TestCase):
         def swap_after_root_open(path):
             descriptor = original(path)
             managed_parent.rename(pinned_parent)
-            managed_parent.symlink_to(redirected_parent, target_is_directory=True)
+            managed_parent.symlink_to(
+                redirected_parent, target_is_directory=True
+            )
             return descriptor
 
         try:
@@ -1131,7 +1253,9 @@ class CatalogBundleTests(unittest.TestCase):
         os.chmod(artifact, 0o400)
         os.chmod(bundle, 0o500)
 
-        with self.assertRaisesRegex(policy.BundleError, "artifact does not match"):
+        with self.assertRaisesRegex(
+            policy.BundleError, "artifact does not match"
+        ):
             builder.build_bundle(source, self.output)
 
 

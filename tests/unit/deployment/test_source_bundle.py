@@ -1,4 +1,6 @@
-"""Reviewed source closure and real-Git private staging; never operate Docker."""
+"""Reviewed source closure and real-Git private staging; never operate
+Docker.
+"""
 
 from __future__ import annotations
 
@@ -40,21 +42,29 @@ class SourceBundlePlanTests(unittest.TestCase):
     def test_four_reviewed_services_have_exact_canonical_source_maps(self):
         plan = self.plan()
         self.assertEqual(
-            {"conversation-api", "web", "reranker", "web-nginx"}, set(plan["services"])
+            {"conversation-api", "web", "reranker", "web-nginx"},
+            set(plan["services"]),
         )
         self.assertFalse(plan["images_built"])
         self.assertFalse(plan["runtime_verified"])
         self.assertEqual("source_plan_only", plan["status"])
-        self.assertEqual(sum(map(len, self.sources.values())), plan["total_bytes"])
+        self.assertEqual(
+            sum(map(len, self.sources.values())), plan["total_bytes"]
+        )
         for name, service in plan["services"].items():
             self.assertEqual(
-                hashlib.sha256(private_io.canonical(service["source_map"])).hexdigest(),
+                hashlib.sha256(
+                    private_io.canonical(service["source_map"])
+                ).hexdigest(),
                 service["source_sha256"],
             )
             self.assertEqual(
-                name, service["required_labels"][bundle.LABEL_PREFIX + "service"]
+                name,
+                service["required_labels"][bundle.LABEL_PREFIX + "service"],
             )
-            self.assertTrue(all("@sha256:" in base for base in service["base_images"]))
+            self.assertTrue(
+                all("@sha256:" in base for base in service["base_images"])
+            )
             self.assertNotIn("project", service)
 
     def test_reranker_has_no_api_operator_or_browser_source_dependency(self):
@@ -105,9 +115,13 @@ class SourceBundlePlanTests(unittest.TestCase):
                     "-S",
                     "-B",
                     "-c",
-                    "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "
-                    "import search.transport.http as transport; "
-                    "assert pathlib.Path(transport.__file__).is_relative_to(sys.argv[1])",
+                    (
+                        "import pathlib, sys; sys.path.insert(0, "
+                        "sys.argv[1]); import search.transport.http as "
+                        "transport; assert "
+                        "pathlib.Path(transport.__file__).is_relative_to("
+                        "sys.argv[1])"
+                    ),
                     str(staged),
                 ],
                 cwd=staged,
@@ -120,7 +134,9 @@ class SourceBundlePlanTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr.decode())
             self.assertEqual(b"", result.stdout)
 
-    def test_reviewed_real_source_is_complete_without_working_tree_extras(self):
+    def test_reviewed_real_source_is_complete_without_working_tree_extras(
+        self,
+    ):
         sources = {path: (ROOT / path).read_bytes() for path in self.sources}
         tree = fixture_tree(sources)
         for path in (
@@ -134,7 +150,8 @@ class SourceBundlePlanTests(unittest.TestCase):
         self.assertIn("search/api/shared/readiness.py", plan["files"])
         self.assertNotIn(".env.private", plan["files"])
         self.assertNotIn(
-            "search/reranker/requirements.lock", plan["services"]["web"]["source_map"]
+            "search/reranker/requirements.lock",
+            plan["services"]["web"]["source_map"],
         )
         self.assertEqual(
             [bundle.PYTHON_BASE],
@@ -163,7 +180,10 @@ class SourceBundlePlanTests(unittest.TestCase):
                     stages.add(words[3])
             self.assertEqual(actual_bases, service["base_images"])
             self.assertEqual(
-                "**", sources[service["dockerignore"]].decode("utf-8").splitlines()[0]
+                "**",
+                sources[service["dockerignore"]]
+                .decode("utf-8")
+                .splitlines()[0],
             )
 
     def test_input_order_does_not_change_identity_or_mutate_inputs(self):
@@ -181,13 +201,19 @@ class SourceBundlePlanTests(unittest.TestCase):
         before = self.plan()
         self.tree["search/catalog/query.py"]["mode"] = "100755"
         after = self.plan()
-        self.assertEqual("100755", after["files"]["search/catalog/query.py"]["mode"])
-        self.assertNotEqual(before["source_map_sha256"], after["source_map_sha256"])
+        self.assertEqual(
+            "100755", after["files"]["search/catalog/query.py"]["mode"]
+        )
+        self.assertNotEqual(
+            before["source_map_sha256"], after["source_map_sha256"]
+        )
         self.assertNotEqual(
             before["services"]["web"]["source_sha256"],
             after["services"]["web"]["source_sha256"],
         )
-        self.assertEqual(before["services"]["reranker"], after["services"]["reranker"])
+        self.assertEqual(
+            before["services"]["reranker"], after["services"]["reranker"]
+        )
 
     def test_changed_content_changes_only_dependent_services(self):
         before = self.plan()
@@ -206,7 +232,9 @@ class SourceBundlePlanTests(unittest.TestCase):
             after["services"]["conversation-api"],
         )
 
-    def test_recipe_and_ignore_mutations_require_review_even_with_valid_git_blobs(self):
+    def test_recipe_and_ignore_mutations_require_review(
+        self,
+    ):
         for path in (
             "deploy/docker/web/Dockerfile",
             "deploy/docker/web/Dockerfile.dockerignore",
@@ -236,7 +264,11 @@ class SourceBundlePlanTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 tree = copy.deepcopy(self.tree)
-                tree[path] = {"mode": "100644", "type": "blob", "object": "c" * 40}
+                tree[path] = {
+                    "mode": "100644",
+                    "type": "blob",
+                    "object": "c" * 40,
+                }
                 with self.assertRaisesRegex(
                     bundle.SourceBundleError, "unreviewed_copy_input"
                 ):
@@ -272,27 +304,37 @@ class SourceBundlePlanTests(unittest.TestCase):
         for mode, kind in (("120000", "blob"), ("160000", "commit")):
             tree = copy.deepcopy(self.tree)
             tree["search/catalog/query.py"].update(mode=mode, type=kind)
-            with self.assertRaisesRegex(bundle.SourceBundleError, "copy_mode_invalid"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "copy_mode_invalid"
+            ):
                 bundle.plan_source_bundle(REVISION, tree, self.sources)
 
     def test_git_blob_bytes_are_checked_not_only_caller_sha256(self):
         self.sources["search/catalog/query.py"] += b"different bytes\n"
-        with self.assertRaisesRegex(bundle.SourceBundleError, "git_blob_changed"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "git_blob_changed"
+        ):
             self.plan()
 
     def test_file_total_tree_limits_and_exact_types(self):
         for raw in (b"", "not bytes", b"x" * (bundle.MAX_FILE_BYTES + 1)):
             with self.subTest(kind=type(raw)):
-                sources = dict(self.sources, **{"search/catalog/query.py": raw})
+                sources = dict(
+                    self.sources, **{"search/catalog/query.py": raw}
+                )
                 with self.assertRaisesRegex(
                     bundle.SourceBundleError, "file_byte_limit"
                 ):
                     bundle.plan_source_bundle(REVISION, self.tree, sources)
         with mock.patch.object(bundle, "MAX_TOTAL_BYTES", 10):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "total_byte_limit"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "total_byte_limit"
+            ):
                 self.plan()
         with mock.patch.object(bundle, "MAX_TRACKED_FILES", 2):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "tree_limit"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "tree_limit"
+            ):
                 self.plan()
         with mock.patch.object(bundle, "MAX_SOURCE_FILES", 2):
             with self.assertRaisesRegex(
@@ -302,7 +344,9 @@ class SourceBundlePlanTests(unittest.TestCase):
 
     def test_invalid_revision_path_tree_shapes_fail_with_fixed_codes(self):
         for revision in (True, "main", "a" * 39, "A" * 40, "a" * 40 + "\n"):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "revision_invalid"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "revision_invalid"
+            ):
                 bundle.plan_source_bundle(revision, self.tree, self.sources)
         for path in (
             ".",
@@ -314,7 +358,9 @@ class SourceBundlePlanTests(unittest.TestCase):
         ):
             tree = copy.deepcopy(self.tree)
             tree[path] = {"mode": "100644", "type": "blob", "object": "c" * 40}
-            with self.assertRaisesRegex(bundle.SourceBundleError, "path_invalid"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "path_invalid"
+            ):
                 bundle.plan_source_bundle(REVISION, tree, self.sources)
         for field, value in (
             ("mode", []),
@@ -324,10 +370,14 @@ class SourceBundlePlanTests(unittest.TestCase):
         ):
             tree = copy.deepcopy(self.tree)
             tree["search/catalog/query.py"][field] = value
-            with self.assertRaisesRegex(bundle.SourceBundleError, "tree_invalid"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "tree_invalid"
+            ):
                 bundle.plan_source_bundle(REVISION, tree, self.sources)
 
-    def test_image_summary_matches_client_lease_without_release_project_identity(self):
+    def test_image_summary_matches_client_lease_without_release_project(
+        self,
+    ):
         plan = self.plan()
         labels = dict(plan["services"]["conversation-api"]["required_labels"])
         labels["org.opencontainers.image.title"] = "public base label"
@@ -365,14 +415,18 @@ class SourceBundlePlanTests(unittest.TestCase):
         )
         self.assertEqual(
             hashlib.sha256(
-                private_io.canonical(bundle.parse_image_environment(environment))
+                private_io.canonical(
+                    bundle.parse_image_environment(environment)
+                )
             ).hexdigest(),
             summary["image_environment_sha256"],
         )
         self.assertNotIn("UNEXPECTED_PRIVATE_TOKEN", str(summary))
         self.assertNotIn("do-not-return-this-fixture-sentinel", str(summary))
 
-    def test_recipe_environment_flags_are_required_and_nginx_has_no_revision_env(self):
+    def test_recipe_flags_are_required_without_nginx_revision_env(
+        self,
+    ):
         plan = self.plan()
         for name in plan["services"]:
             environment = bundle._required_environment(name, REVISION)
@@ -384,7 +438,9 @@ class SourceBundlePlanTests(unittest.TestCase):
                     "Env": entries,
                 },
             }
-            summary = bundle.validate_built_image(plan, name, IMAGE, inspection)
+            summary = bundle.validate_built_image(
+                plan, name, IMAGE, inspection
+            )
             self.assertEqual(name, summary["service"])
             if name != "web-nginx":
                 inspection["Config"]["Env"] = [
@@ -396,11 +452,15 @@ class SourceBundlePlanTests(unittest.TestCase):
                     bundle.SourceBundleError, "environment_flags_changed"
                 ):
                     bundle.validate_built_image(plan, name, IMAGE, inspection)
-        self.assertEqual({}, bundle._required_environment("web-nginx", REVISION))
+        self.assertEqual(
+            {}, bundle._required_environment("web-nginx", REVISION)
+        )
         inspection = {
             "Id": IMAGE,
             "Config": {
-                "Labels": plan["services"]["conversation-api"]["required_labels"],
+                "Labels": plan["services"]["conversation-api"][
+                    "required_labels"
+                ],
                 "Env": [
                     "SOURCE_REVISION=" + REVISION,
                     "PYTHONDONTWRITEBYTECODE=1",
@@ -413,7 +473,9 @@ class SourceBundlePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(
             bundle.SourceBundleError, "environment_flags_changed"
         ):
-            bundle.validate_built_image(plan, "conversation-api", IMAGE, inspection)
+            bundle.validate_built_image(
+                plan, "conversation-api", IMAGE, inspection
+            )
 
     def test_image_label_and_immutable_identity_mismatches_rejected(self):
         plan = self.plan()
@@ -431,13 +493,21 @@ class SourceBundlePlanTests(unittest.TestCase):
                     {"Id": IMAGE, "Config": {"Labels": actual}},
                 )
         for reference in ("image:latest", "sha256:" + "B" * 64, True):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "image_id_invalid"):
-                bundle.validate_built_image(plan, "conversation-api", reference, {})
-        with self.assertRaisesRegex(bundle.SourceBundleError, "image_identity_changed"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "image_id_invalid"
+            ):
+                bundle.validate_built_image(
+                    plan, "conversation-api", reference, {}
+                )
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "image_identity_changed"
+        ):
             bundle.validate_built_image(
                 plan, "conversation-api", IMAGE, {"Id": "sha256:" + "c" * 64}
             )
-        with self.assertRaisesRegex(bundle.SourceBundleError, "service_invalid"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "service_invalid"
+        ):
             bundle.validate_built_image(plan, "scope-model", IMAGE, {})
 
     def test_tampered_plan_digests_flags_pins_and_numeric_types_rejected(self):
@@ -446,7 +516,9 @@ class SourceBundlePlanTests(unittest.TestCase):
             lambda p: p.update(schema_version=True),
             lambda p: p.update(images_built=True),
             lambda p: p.update(images_built=float("nan")),
-            lambda p: p["services"]["web"].update(base_images=["python:latest"]),
+            lambda p: p["services"]["web"].update(
+                base_images=["python:latest"]
+            ),
             lambda p: p["services"]["web"].update(source_sha256="c" * 64),
             lambda p: p["files"]["search/catalog/query.py"].update(size=True),
             lambda p: p["files"]["search/catalog/query.py"].update(mode=[]),
@@ -459,7 +531,9 @@ class SourceBundlePlanTests(unittest.TestCase):
 
 
 class ImageEnvironmentParserTests(unittest.TestCase):
-    def test_environment_values_stay_in_memory_and_digest_is_order_independent(self):
+    def test_environment_values_stay_in_memory_and_digest_is_order_independent(
+        self,
+    ):
         entries = [
             "PATH=/usr/bin",
             "SOURCE_REVISION=" + REVISION,
@@ -471,10 +545,14 @@ class ImageEnvironmentParserTests(unittest.TestCase):
         self.assertEqual(forward, reverse)
         self.assertEqual("", forward["EMPTY"])
         self.assertEqual("a=b", forward["VALUE_WITH_EQUAL"])
-        self.assertEqual(private_io.canonical(forward), private_io.canonical(reverse))
+        self.assertEqual(
+            private_io.canonical(forward), private_io.canonical(reverse)
+        )
         self.assertEqual({}, bundle.parse_image_environment([]))
 
-    def test_environment_types_keys_duplicates_and_control_values_rejected(self):
+    def test_environment_types_keys_duplicates_and_control_values_rejected(
+        self,
+    ):
         for entries in (
             None,
             {},
@@ -499,23 +577,33 @@ class ImageEnvironmentParserTests(unittest.TestCase):
                 self.assertNotIn("private", str(caught.exception))
 
     def test_environment_count_per_entry_bytes_and_total_limits(self):
-        with self.assertRaisesRegex(bundle.SourceBundleError, "environment_invalid"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "environment_invalid"
+        ):
             bundle.parse_image_environment(
                 ["K" + str(index) + "=x" for index in range(129)]
             )
-        with self.assertRaisesRegex(bundle.SourceBundleError, "environment_invalid"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "environment_invalid"
+        ):
             bundle.parse_image_environment(["KEY=" + "x" * 4096])
         with mock.patch.object(bundle, "MAX_ENVIRONMENT_ENTRY_BYTES", 10):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "environment_limit"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "environment_limit"
+            ):
                 bundle.parse_image_environment(["KEY=中文中文"])
         with mock.patch.object(bundle, "MAX_ENVIRONMENT_BYTES", 10):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "environment_limit"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "environment_limit"
+            ):
                 bundle.parse_image_environment(["FIRST=1", "SECOND=2"])
 
 
 class SourceBundleStageTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-source-context-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-source-context-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.repo = self.root / "checkout"
@@ -560,17 +648,25 @@ class SourceBundleStageTests(unittest.TestCase):
             self.repo, self.revision, self.destination, runner=runner
         )
 
-    def test_independent_committed_plan_is_read_only_and_matches_staged_manifest(self):
+    def test_committed_plan_is_readonly_and_matches_staged_manifest(
+        self,
+    ):
         planned = bundle.committed_source_plan(self.repo, self.revision)
         self.assertFalse(self.destination.exists())
         self.assertEqual(planned, self.stage())
         again = bundle.committed_source_plan(self.repo, self.revision)
         self.assertEqual(planned, again)
 
-    def test_committed_plan_rejects_dirty_or_different_revision_without_artifacts(self):
-        with self.assertRaisesRegex(bundle.SourceBundleError, "revision_changed"):
+    def test_committed_plan_rejects_dirty_or_different_revision(
+        self,
+    ):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "revision_changed"
+        ):
             bundle.committed_source_plan(self.repo, "b" * 40)
-        (self.repo / "search/api/conversation/app.py").write_text("dirty source\n")
+        (self.repo / "search/api/conversation/app.py").write_text(
+            "dirty source\n"
+        )
         with self.assertRaisesRegex(
             bundle.SourceBundleError, "clean_revision_required"
         ):
@@ -578,7 +674,9 @@ class SourceBundleStageTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_real_git_context_manifest_modes_and_exact_closure(self):
-        (self.repo / ".env.private").write_text("must not enter build context\n")
+        (self.repo / ".env.private").write_text(
+            "must not enter build context\n"
+        )
         commands = []
 
         def runner(argv, *, timeout):
@@ -596,12 +694,16 @@ class SourceBundleStageTests(unittest.TestCase):
         self.assertEqual(
             0o600, (self.destination / "manifest.json").stat().st_mode & 0o777
         )
-        self.assertEqual(0o755, (context / "search/api").stat().st_mode & 0o777)
+        self.assertEqual(
+            0o755, (context / "search/api").stat().st_mode & 0o777
+        )
         self.assertEqual(
             0o755, (context / "search/catalog/query.py").stat().st_mode & 0o777
         )
         self.assertEqual(
-            0o644, (context / "search/api/conversation/app.py").stat().st_mode & 0o777
+            0o644,
+            (context / "search/api/conversation/app.py").stat().st_mode
+            & 0o777,
         )
         self.assertEqual(
             set(self.sources),
@@ -620,13 +722,17 @@ class SourceBundleStageTests(unittest.TestCase):
         self.assertTrue(
             all(command[1] == "--no-replace-objects" for command in commands)
         )
-        self.assertEqual(4, sum("rev-parse" in command for command in commands))
+        self.assertEqual(
+            4, sum("rev-parse" in command for command in commands)
+        )
 
     def test_existing_or_partial_roots_never_overwritten_or_removed(self):
         self.destination.mkdir(mode=0o700)
         marker = self.destination / "evidence"
         marker.write_bytes(b"preserve\n")
-        with self.assertRaisesRegex(bundle.SourceBundleError, "staging_failed"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "staging_failed"
+        ):
             self.stage()
         self.assertEqual(b"preserve\n", marker.read_bytes())
         self.assertEqual(
@@ -641,9 +747,13 @@ class SourceBundleStageTests(unittest.TestCase):
             os.umask(previous)
         context = self.destination / "context"
         self.assertEqual(0o700, context.stat().st_mode & 0o777)
-        self.assertEqual(0o755, (context / "search/api").stat().st_mode & 0o777)
         self.assertEqual(
-            0o644, (context / "search/api/conversation/app.py").stat().st_mode & 0o777
+            0o755, (context / "search/api").stat().st_mode & 0o777
+        )
+        self.assertEqual(
+            0o644,
+            (context / "search/api/conversation/app.py").stat().st_mode
+            & 0o777,
         )
         self.assertEqual(
             0o755, (context / "search/catalog/query.py").stat().st_mode & 0o777
@@ -657,14 +767,18 @@ class SourceBundleStageTests(unittest.TestCase):
         finally:
             self.root.chmod(0o700)
         self.destination.symlink_to(self.repo, target_is_directory=True)
-        with self.assertRaisesRegex(bundle.SourceBundleError, "host_path_invalid"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "host_path_invalid"
+        ):
             self.stage()
         self.assertTrue(self.destination.is_symlink())
 
-    def test_dirty_source_untracked_production_and_wrong_sha_are_rejected_before_staging(
+    def test_dirty_untracked_or_wrong_revision_source_blocks_staging(
         self,
     ):
-        (self.repo / "search/api/conversation/app.py").write_text("dirty source\n")
+        (self.repo / "search/api/conversation/app.py").write_text(
+            "dirty source\n"
+        )
         with self.assertRaisesRegex(
             bundle.SourceBundleError, "clean_revision_required"
         ):
@@ -673,21 +787,30 @@ class SourceBundleStageTests(unittest.TestCase):
         (self.repo / "search/api/conversation/app.py").write_bytes(
             self.sources["search/api/conversation/app.py"]
         )
-        (self.repo / "search/new-untracked.py").write_text("source not committed\n")
+        (self.repo / "search/new-untracked.py").write_text(
+            "source not committed\n"
+        )
         with self.assertRaisesRegex(
             bundle.SourceBundleError, "clean_revision_required"
         ):
             self.stage()
         (self.repo / "search/new-untracked.py").unlink()
-        with self.assertRaisesRegex(bundle.SourceBundleError, "revision_changed"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "revision_changed"
+        ):
             bundle.stage_source_bundle(self.repo, REVISION, self.destination)
 
-    def test_replace_refs_cannot_seal_a_different_tree_under_the_same_revision(self):
-        # Normal Git presents replacement B as commit A, and core.filemode=false
+    def test_replace_refs_cannot_seal_a_different_tree_under_the_same_revision(
+        self,
+    ):
+        # Normal Git presents replacement B as commit A, and
+        # core.filemode=false
         # makes the original working-file mode irrelevant. Every source read,
         # including the shared clean guard, must bypass refs/replace.
         self.git("config", "core.filemode", "false")
-        self.git("update-index", "--chmod=+x", "search/api/conversation/app.py")
+        self.git(
+            "update-index", "--chmod=+x", "search/api/conversation/app.py"
+        )
         self.commit()
         replacement = self.git("rev-parse", "HEAD").strip()
         self.git("replace", self.revision, replacement)
@@ -707,11 +830,13 @@ class SourceBundleStageTests(unittest.TestCase):
         )
         self.assertEqual(
             0o644,
-            (self.destination / "context/search/api/conversation/app.py").stat().st_mode
+            (self.destination / "context/search/api/conversation/app.py")
+            .stat()
+            .st_mode
             & 0o777,
         )
 
-    def test_source_change_after_staging_retains_partial_evidence_without_manifest(
+    def test_staged_source_change_retains_partial_evidence_only(
         self,
     ):
         real_write = bundle._write_source
@@ -726,7 +851,9 @@ class SourceBundleStageTests(unittest.TestCase):
                     "changed during stage\n"
                 )
 
-        with mock.patch.object(bundle, "_write_source", side_effect=change_after_write):
+        with mock.patch.object(
+            bundle, "_write_source", side_effect=change_after_write
+        ):
             with self.assertRaisesRegex(
                 bundle.SourceBundleError, "clean_revision_required"
             ):
@@ -754,10 +881,14 @@ class SourceBundleStageTests(unittest.TestCase):
                 bundle.SourceBundleError, "staged_closure_changed"
             ):
                 self.stage()
-        self.assertTrue((self.destination / "context/extra-private.txt").exists())
+        self.assertTrue(
+            (self.destination / "context/extra-private.txt").exists()
+        )
         self.assertFalse((self.destination / "manifest.json").exists())
 
-    def test_stage_verification_detects_source_bytes_mode_and_link_replacement(self):
+    def test_stage_verification_detects_source_bytes_mode_and_link_replacement(
+        self,
+    ):
         real_verify = bundle._verify_context
         target = self.destination / "context/search/api/conversation/app.py"
 
@@ -780,9 +911,9 @@ class SourceBundleStageTests(unittest.TestCase):
         try:
             tree = fixture_tree(self.sources)
             tree["search/catalog/query.py"]["mode"] = "100755"
-            records = bundle.plan_source_bundle(self.revision, tree, self.sources)[
-                "files"
-            ]
+            records = bundle.plan_source_bundle(
+                self.revision, tree, self.sources
+            )["files"]
             target.write_bytes(self.sources["search/api/conversation/app.py"])
             target.chmod(0o600)
             with self.assertRaisesRegex(ValueError, "file_unsafe"):
@@ -796,7 +927,9 @@ class SourceBundleStageTests(unittest.TestCase):
         finally:
             os.close(descriptor)
 
-    def test_git_runner_errors_and_output_limits_do_not_leak_private_stderr(self):
+    def test_git_runner_errors_and_output_limits_do_not_leak_private_stderr(
+        self,
+    ):
         def failed(argv, *, timeout):
             return subprocess.CompletedProcess(
                 argv, 1, b"", b"private credentials must never appear"
@@ -810,14 +943,20 @@ class SourceBundleStageTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
         git = bundle._Git(
             self.repo,
-            lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, b"x" * 11, b""),
+            lambda argv, **kwargs: subprocess.CompletedProcess(
+                argv, 0, b"x" * 11, b""
+            ),
         )
-        with self.assertRaisesRegex(bundle.SourceBundleError, "git_output_limit"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "git_output_limit"
+        ):
             git.raw(["git"], max_bytes=10)
 
 
 class BoundedSourceGitRunnerTests(unittest.TestCase):
-    def test_binary_output_and_nonzero_exit_keep_completed_process_contract(self):
+    def test_binary_output_and_nonzero_exit_keep_completed_process_contract(
+        self,
+    ):
         argv = [
             sys.executable,
             "-c",
@@ -848,7 +987,9 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
         ):
             bundle._runner(argv, timeout=2)
 
-    def test_eof_before_leader_exit_keeps_direct_and_git_wait_error_policy(self):
+    def test_eof_before_leader_exit_keeps_direct_and_git_wait_error_policy(
+        self,
+    ):
         original_popen = subprocess.Popen
         argv = [
             sys.executable,
@@ -866,12 +1007,16 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
 
             with (
                 self.subTest(through_git=through_git),
-                mock.patch.object(bundle.subprocess, "Popen", side_effect=spawn),
+                mock.patch.object(
+                    bundle.subprocess, "Popen", side_effect=spawn
+                ),
             ):
                 if through_git:
                     git = bundle._Git(
                         Path("/fixture"),
-                        lambda _argv, **_kwargs: bundle._runner(argv, timeout=1),
+                        lambda _argv, **_kwargs: bundle._runner(
+                            argv, timeout=1
+                        ),
                     )
                     with self.assertRaisesRegex(
                         bundle.SourceBundleError, "^source_bundle_git_failed$"
@@ -882,8 +1027,10 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
                         bundle._runner(argv, timeout=1)
                 self.assertEqual(1, len(created))
                 process = created[0]
-                # Prove EOF reached the final wait, rather than timing out while
-                # reading pipes and observing only the five-second cleanup wait.
+                # Prove EOF reached the final wait, rather than timing out
+                # while
+                # reading pipes and observing only the five-second cleanup
+                # wait.
                 self.assertLessEqual(
                     process.wait.call_args_list[0].kwargs["timeout"], 1
                 )
@@ -891,29 +1038,42 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
                 self.assertTrue(process.stdout.closed)
                 self.assertTrue(process.stderr.closed)
 
-    def test_call_budget_includes_maximum_closure_and_all_staging_clean_checks(self):
+    def test_call_budget_includes_maximum_closure_and_all_staging_clean_checks(
+        self,
+    ):
         git = bundle._Git(
             Path("/fixture"),
-            lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, b"ok", b""),
+            lambda argv, **kwargs: subprocess.CompletedProcess(
+                argv, 0, b"ok", b""
+            ),
         )
         for _ in range(bundle.MAX_SOURCE_FILES + 9):
             self.assertEqual(b"ok", git.raw(["git"]))
         self.assertEqual(b"ok", git.raw(["git"]))
-        with self.assertRaisesRegex(bundle.SourceBundleError, "budget_exceeded"):
+        with self.assertRaisesRegex(
+            bundle.SourceBundleError, "budget_exceeded"
+        ):
             git.raw(["git"])
 
     def test_live_output_capture_stops_at_bound(self):
         with mock.patch.object(bundle, "MAX_GIT_OUTPUT_BYTES", 4096):
-            with self.assertRaisesRegex(bundle.SourceBundleError, "git_output_limit"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "git_output_limit"
+            ):
                 bundle._runner(
-                    [sys.executable, "-c", "import os; os.write(1, b'x' * 65536)"],
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os; os.write(1, b'x' * 65536)",
+                    ],
                     timeout=2,
                 )
 
     def test_live_timeout_stops_process_group(self):
         with self.assertRaisesRegex(bundle.SourceBundleError, "git_timeout"):
             bundle._runner(
-                [sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.1
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=0.1,
             )
 
     def test_exited_leader_does_not_leave_child_holding_capture_pipe(self):
@@ -922,7 +1082,9 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
             "time.sleep(10) if child == 0 else os._exit(0)"
         )
         with mock.patch.object(bundle.os, "killpg", wraps=os.killpg) as kill:
-            with self.assertRaisesRegex(bundle.SourceBundleError, "git_timeout"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "git_timeout"
+            ):
                 bundle._runner([sys.executable, "-c", program], timeout=0.1)
         self.assertEqual(1, kill.call_count)
 
@@ -931,9 +1093,13 @@ class BoundedSourceGitRunnerTests(unittest.TestCase):
         for raw in (row + row, row[:-1]):
             git = bundle._Git(
                 Path("/fixture"),
-                lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, raw, b""),
+                lambda argv, **kwargs: subprocess.CompletedProcess(
+                    argv, 0, raw, b""
+                ),
             )
-            with self.assertRaisesRegex(bundle.SourceBundleError, "git_tree_invalid"):
+            with self.assertRaisesRegex(
+                bundle.SourceBundleError, "git_tree_invalid"
+            ):
                 git.tree(REVISION)
 
 

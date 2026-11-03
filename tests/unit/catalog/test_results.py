@@ -1,4 +1,5 @@
-"""Current catalog-admin reports are bounded, strict and tied to import authority."""
+"""Current catalog-admin reports are bounded, strict and tied to import
+authority."""
 
 import json
 import unittest
@@ -28,9 +29,11 @@ class CatalogResultTests(unittest.TestCase):
         report = valid_import_report()
         raw = json.dumps(report).encode("utf-8") + b"\n"
         self.assertEqual(report, results.parse_record(raw))
-        results.validate_import(report, BUNDLE_ID, MANIFEST_SHA256, operation="import")
+        results.validate_import(
+            report, BUNDLE_ID, MANIFEST_SHA256, operation="import"
+        )
 
-    def test_writing_idempotent_and_reconciled_reports_match_the_requested_operation(
+    def test_write_idempotent_and_reconciled_reports_match_operation(
         self,
     ):
         for operation, status, batches in (
@@ -45,10 +48,17 @@ class CatalogResultTests(unittest.TestCase):
                 results.validate_import(
                     report, BUNDLE_ID, MANIFEST_SHA256, operation=operation
                 )
-                other_operation = "import" if operation == "reconcile" else "reconcile"
-                with self.assertRaisesRegex(results.ResultError, "requested operation"):
+                other_operation = (
+                    "import" if operation == "reconcile" else "reconcile"
+                )
+                with self.assertRaisesRegex(
+                    results.ResultError, "requested operation"
+                ):
                     results.validate_import(
-                        report, BUNDLE_ID, MANIFEST_SHA256, operation=other_operation
+                        report,
+                        BUNDLE_ID,
+                        MANIFEST_SHA256,
+                        operation=other_operation,
                     )
 
     def test_schema_identity_inventory_and_numeric_values_fail_closed(self):
@@ -75,21 +85,32 @@ class CatalogResultTests(unittest.TestCase):
             ):
                 results.validate_import(report, BUNDLE_ID, MANIFEST_SHA256)
 
-    def test_nonwriting_reports_cannot_claim_batches_or_unknown_operations(self):
+    def test_nonwriting_reports_cannot_claim_batches_or_unknown_operations(
+        self,
+    ):
         for status in ("already-active-no-op", "reconciled-active"):
             report = valid_import_report()
             report.update(status=status, batch_count=1)
             with (
                 self.subTest(status=status),
-                self.assertRaisesRegex(results.ResultError, "cannot contain batches"),
+                self.assertRaisesRegex(
+                    results.ResultError, "cannot contain batches"
+                ),
             ):
                 results.validate_import(report, BUNDLE_ID, MANIFEST_SHA256)
-        with self.assertRaisesRegex(results.ResultError, "operation is invalid"):
+        with self.assertRaisesRegex(
+            results.ResultError, "operation is invalid"
+        ):
             results.validate_import(
-                valid_import_report(), BUNDLE_ID, MANIFEST_SHA256, operation="unknown"
+                valid_import_report(),
+                BUNDLE_ID,
+                MANIFEST_SHA256,
+                operation="unknown",
             )
 
-    def test_parser_rejects_unbounded_duplicate_nonfinite_or_multiple_records(self):
+    def test_parser_rejects_unbounded_duplicate_nonfinite_or_multiple_records(
+        self,
+    ):
         for raw in (
             b"{}",
             b"{}\n{}\n",

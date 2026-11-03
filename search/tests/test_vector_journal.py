@@ -1,4 +1,6 @@
-"""Strict vector evidence, private publication and isolated admin package imports."""
+"""Strict vector evidence, private publication and isolated admin
+package imports.
+"""
 
 from __future__ import annotations
 
@@ -48,7 +50,11 @@ def clean_payloads(*, no_op=False):
     report = {
         "schema_version": 2,
         "status": "complete-clean" if no_op else "partial-clean",
-        **{key: value for key, value in IDENTITY.items() if key != "schema_version"},
+        **{
+            key: value
+            for key, value in IDENTITY.items()
+            if key != "schema_version"
+        },
         "document_count": 2,
         "before_done_count": 2 if no_op else 0,
         "done_count": 2 if no_op else 1,
@@ -74,7 +80,11 @@ def clean_payloads(*, no_op=False):
         "pass-started": {"deadline_seconds": 1200.0, "poll_seconds": 1.0},
         "token-create-intent": token,
         "token-created": {**token, "token_id": "token-id"},
-        "scheduler-verified": {**scheduler, "available": "false", "running": False},
+        "scheduler-verified": {
+            **scheduler,
+            "available": "false",
+            "running": False,
+        },
         "before-state": before,
         "scheduler-enable-intent": scheduler,
         "scheduler-enabled": scheduler,
@@ -126,7 +136,9 @@ class VectorJournalValidationTests(unittest.TestCase):
     def test_prefixes_are_diagnostic_only_and_cannot_grant_completion(self):
         value = records()
         for prefix in ([], value[:1], value[:-1]):
-            self.assertEqual(tuple(prefix), journal.validate_all(prefix, IDENTITY))
+            self.assertEqual(
+                tuple(prefix), journal.validate_all(prefix, IDENTITY)
+            )
             with self.assertRaisesRegex(journal.JournalError, "incomplete"):
                 journal.validate_all(prefix, IDENTITY, require_result=True)
 
@@ -161,7 +173,10 @@ class VectorJournalValidationTests(unittest.TestCase):
         ):
             payloads = clean_payloads()
             payloads[event][key] = value
-            with self.subTest(event=event), self.assertRaises(journal.JournalError):
+            with (
+                self.subTest(event=event),
+                self.assertRaises(journal.JournalError),
+            ):
                 journal.validate_all(records(payloads), require_result=True)
 
     def test_same_counts_cannot_hide_replacement_or_regression(self):
@@ -189,14 +204,20 @@ class VectorJournalValidationTests(unittest.TestCase):
     def test_noop_cannot_omit_scheduler_proof_or_claim_other_scheduler(self):
         value = records(no_op=True)
         names = tuple(
-            event for event in journal.NOOP_EVENTS if event != "scheduler-verified"
+            event
+            for event in journal.NOOP_EVENTS
+            if event != "scheduler-verified"
         )
         with self.assertRaisesRegex(journal.JournalError, "clean_sequence"):
-            journal.validate_all(records(no_op=True, names=names), require_result=True)
+            journal.validate_all(
+                records(no_op=True, names=names), require_result=True
+            )
         payloads = clean_payloads(no_op=True)
         payloads["pass-result"]["scheduler_id"] = "other"
         with self.assertRaisesRegex(journal.JournalError, "resource_identity"):
-            journal.validate_all(records(payloads, no_op=True), require_result=True)
+            journal.validate_all(
+                records(payloads, no_op=True), require_result=True
+            )
         self.assertEqual(len(value), len(journal.NOOP_EVENTS))
 
     def test_state_partition_is_sorted_unique_exhaustive_and_bounded(self):
@@ -206,7 +227,11 @@ class VectorJournalValidationTests(unittest.TestCase):
                 "done_entries": ENTRIES,
                 "pending_entries": [ENTRIES[0]],
             },
-            {"document_count": True, "done_entries": [], "pending_entries": ENTRIES},
+            {
+                "document_count": True,
+                "done_entries": [],
+                "pending_entries": ENTRIES,
+            },
             {
                 "document_count": 2,
                 "done_entries": [],
@@ -217,12 +242,21 @@ class VectorJournalValidationTests(unittest.TestCase):
                 "done_entries": [],
                 "pending_entries": [ENTRIES[0], ENTRIES[0]],
             },
-            {"document_count": 2, "done_entries": [], "pending_entries": [ENTRIES[0]]},
+            {
+                "document_count": 2,
+                "done_entries": [],
+                "pending_entries": [ENTRIES[0]],
+            },
         ):
-            with self.subTest(state=state), self.assertRaises(journal.JournalError):
+            with (
+                self.subTest(state=state),
+                self.assertRaises(journal.JournalError),
+            ):
                 journal.validate_state(state)
 
-    def test_unknown_events_extra_secret_fields_and_false_boolean_proofs_fail(self):
+    def test_unknown_events_extra_secret_fields_and_false_boolean_proofs_fail(
+        self,
+    ):
         for event, key, value in (
             ("pass-started", "token", "secret-not-allowed"),
             ("pass-started", "deadline_seconds", float("nan")),
@@ -261,7 +295,9 @@ class VectorJournalValidationTests(unittest.TestCase):
 
 class VectorJournalFileTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-journal-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-journal-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
@@ -288,7 +324,9 @@ class VectorJournalFileTests(unittest.TestCase):
             for path in self.root.iterdir():
                 self.assertEqual(0o600, path.stat().st_mode & 0o777)
                 self.assertEqual(1, path.stat().st_nlink)
-            with self.assertRaisesRegex(journal.JournalError, "writer_identity"):
+            with self.assertRaisesRegex(
+                journal.JournalError, "writer_identity"
+            ):
                 writer.append("logout-intent", {})
         with self.assertRaisesRegex(journal.JournalError, "closed"):
             writer.append("logout-intent", {})
@@ -315,7 +353,9 @@ class VectorJournalFileTests(unittest.TestCase):
         with self.assertRaisesRegex(journal.JournalError, "file_identity"):
             journal.read_events(self.root)
 
-    def test_noncanonical_duplicate_key_wrong_filename_and_record_change_rejected(self):
+    def test_reject_noncanonical_duplicate_misnamed_or_changed_record(
+        self,
+    ):
         self.save_records(records()[:1])
         path = next(self.root.iterdir())
         raw = path.read_bytes()
@@ -323,7 +363,9 @@ class VectorJournalFileTests(unittest.TestCase):
         with self.assertRaisesRegex(journal.JournalError, "noncanonical"):
             journal.read_events(self.root)
         path.write_bytes(
-            raw.replace(b'{"bundle_id"', b'{"sequence":1,"sequence":2,"bundle_id"', 1)
+            raw.replace(
+                b'{"bundle_id"', b'{"sequence":1,"sequence":2,"bundle_id"', 1
+            )
         )
         with self.assertRaisesRegex(journal.JournalError, "duplicate_key"):
             journal.read_events(self.root)
@@ -339,23 +381,31 @@ class VectorJournalFileTests(unittest.TestCase):
         with self.assertRaisesRegex(journal.JournalError, "digest_changed"):
             journal.read_events(self.root)
 
-    def test_directory_replacement_blocks_publication_through_retained_fd(self):
+    def test_directory_replacement_blocks_publication_through_retained_fd(
+        self,
+    ):
         with journal.DurableVectorJournal(self.root, IDENTITY) as writer:
             moved = self.root.with_name(self.root.name + "-moved")
             self.root.rename(moved)
             self.root.mkdir(mode=0o700)
             try:
                 with self.assertRaises(ValueError):
-                    writer.append("pass-started", clean_payloads()["pass-started"])
+                    writer.append(
+                        "pass-started", clean_payloads()["pass-started"]
+                    )
                 self.assertEqual([], list(moved.iterdir()))
             finally:
                 self.root.rmdir()
                 moved.rename(self.root)
 
-    def test_other_writer_or_tampering_cannot_be_accepted_as_our_own_records(self):
+    def test_other_writer_or_tampering_cannot_be_accepted_as_our_own_records(
+        self,
+    ):
         with journal.DurableVectorJournal(self.root, IDENTITY) as writer:
             self.save_records(records()[:1])
-            with self.assertRaisesRegex(journal.JournalError, "writer_identity"):
+            with self.assertRaisesRegex(
+                journal.JournalError, "writer_identity"
+            ):
                 writer.append("logout-intent", {})
 
     def test_unsafe_directory_mode_alias_and_wrong_owner_are_rejected(self):
@@ -363,7 +413,9 @@ class VectorJournalFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             journal.DurableVectorJournal(self.root, IDENTITY)
         self.root.chmod(0o700)
-        with patch.object(private_io.os, "geteuid", return_value=os.geteuid() + 1):
+        with patch.object(
+            private_io.os, "geteuid", return_value=os.geteuid() + 1
+        ):
             with self.assertRaises(ValueError):
                 journal.DurableVectorJournal(self.root, IDENTITY)
         alias = self.root / "alias"
@@ -371,7 +423,7 @@ class VectorJournalFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             journal.read_events(alias)
 
-    def test_admin_package_closure_supports_durable_journals_without_app_dependencies(
+    def test_admin_journals_import_without_app_dependencies(
         self,
     ):
         from search.operations.catalog.administration import ADMIN_FILES
@@ -384,39 +436,51 @@ class VectorJournalFileTests(unittest.TestCase):
                 target = staging / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((repository / name).read_bytes())
-        script = """
-import json
-from pathlib import Path
-import sys
-
-source = Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(source))
-from search import catalog_admin, vector_journal
-from search.catalog.journal import _vector_event
-
-assert catalog_admin.VectorBuilder.__module__ == "search.catalog.vectors"
-identity = dict(schema_version=1, run_id='1'*32, bundle_id='a'*64,
-                manifest_sha256='b'*64, recipe_sha256='c'*64)
-vector_journal.validate_identity(identity)
-directory = source.parent / "isolated-journal"
-directory.mkdir(mode=0o700)
-with vector_journal.DurableVectorJournal(directory, identity) as writer:
-    _vector_event(writer, "pass-started",
-                  {"deadline_seconds": 1200.0, "poll_seconds": 1.0})
-rows = vector_journal.read_events(directory, identity)
-assert len(rows) == 1 and rows[0]["event"] == "pass-started"
-vector_journal.validate_all(rows, identity)
-
-reviewed = set(json.loads(sys.argv[2]))
-for name, module in tuple(sys.modules.items()):
-    if name == "search" or name.startswith("search."):
-        relative = Path(module.__file__).resolve().relative_to(source).as_posix()
-        assert relative in reviewed, (name, relative)
-for forbidden in ("torch", "fastapi", "django", "rest_framework", "adrf", "pydantic", "search.api", "search.web",
-                  "search.planning", "search.operations.config"):
-    assert not any(name == forbidden or name.startswith(forbidden + ".")
-                   for name in sys.modules), forbidden
-"""
+        script = (
+            "\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            "import sys\n"
+            "\n"
+            "source = Path(sys.argv[1]).resolve()\n"
+            "sys.path.insert(0, str(source))\n"
+            "from search import catalog_admin, vector_journal\n"
+            "from search.catalog.journal import _vector_event\n"
+            "\n"
+            'assert catalog_admin.VectorBuilder.__module__ == "search.'
+            'catalog.vectors"\n'
+            "identity = dict(schema_version=1, run_id='1'*32, "
+            "bundle_id='a'*64,\n"
+            "                manifest_sha256='b'*64, "
+            "recipe_sha256='c'*64)\n"
+            "vector_journal.validate_identity(identity)\n"
+            'directory = source.parent / "isolated-journal"\n'
+            "directory.mkdir(mode=0o700)\n"
+            "with vector_journal.DurableVectorJournal(directory, "
+            "identity) as writer:\n"
+            '    _vector_event(writer, "pass-started",\n'
+            '                  {"deadline_seconds": 1200.0, '
+            '"poll_seconds": 1.0})\n'
+            "rows = vector_journal.read_events(directory, identity)\n"
+            'assert len(rows) == 1 and rows[0]["event"] == '
+            '"pass-started"\n'
+            "vector_journal.validate_all(rows, identity)\n"
+            "\n"
+            "reviewed = set(json.loads(sys.argv[2]))\n"
+            "for name, module in tuple(sys.modules.items()):\n"
+            '    if name == "search" or name.startswith("search."):\n'
+            "        relative = Path(module.__file__).resolve()."
+            "relative_to(source).as_posix()\n"
+            "        assert relative in reviewed, (name, relative)\n"
+            'for forbidden in ("torch", "fastapi", "django", '
+            '"rest_framework", "adrf", "pydantic", "search.api", '
+            '"search.web",\n'
+            '                  "search.planning", "search.operations.'
+            'config"):\n'
+            "    assert not any(name == forbidden or name."
+            'startswith(forbidden + ".")\n'
+            "                   for name in sys.modules), forbidden\n"
+        )
         outcome = subprocess.run(
             [
                 sys.executable,

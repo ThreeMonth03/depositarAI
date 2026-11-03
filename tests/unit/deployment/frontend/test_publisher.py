@@ -1,4 +1,6 @@
-"""The release producer must preserve tested images and never overwrite a release."""
+"""The release producer must preserve tested images and never overwrite a
+release.
+"""
 
 import hashlib
 from contextlib import ExitStack
@@ -61,7 +63,9 @@ class PublisherTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(mock.patch.dict(os.environ, self.environment))
-        stack.enter_context(mock.patch.object(publisher, "_command", self.command))
+        stack.enter_context(
+            mock.patch.object(publisher, "_command", self.command)
+        )
         shared = SimpleNamespace(
             describe_archive=self.describe,
             validate_manifest=lambda value, **_: value,
@@ -105,8 +109,13 @@ class PublisherTests(unittest.TestCase):
                         "Architecture": "amd64",
                         "Descriptor": {
                             "digest": self.current[role],
-                            "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                            "platform": {"architecture": "amd64", "os": "linux"},
+                            "mediaType": (
+                                "application/vnd.oci.image.manifest.v1+json"
+                            ),
+                            "platform": {
+                                "architecture": "amd64",
+                                "os": "linux",
+                            },
                         },
                         "Config": {
                             "Labels": {
@@ -141,7 +150,9 @@ class PublisherTests(unittest.TestCase):
                 )
             if route.startswith("git/ref/tags/"):
                 return (
-                    self.response(args, {"object": {"type": "commit", "sha": REVISION}})
+                    self.response(
+                        args, {"object": {"type": "commit", "sha": REVISION}}
+                    )
                     if self.tag_created
                     else self.response(args, {"status": 404}, 1)
                 )
@@ -183,19 +194,27 @@ class PublisherTests(unittest.TestCase):
         publisher.capture(self.tested)
         publisher.export(self.tested, self.output)
         if signed:
-            (self.output / publisher.BUNDLE).write_text('{"mediaType":"test bundle"}')
+            (self.output / publisher.BUNDLE).write_text(
+                '{"mediaType":"test bundle"}'
+            )
 
-    def test_export_preserves_tested_manifests_and_distinguishes_config_digests(self):
+    def test_export_keeps_tested_manifests_and_distinct_config_digests(
+        self,
+    ):
         self.prepare()
         manifest = json.loads((self.output / publisher.MANIFEST).read_text())
         for role in publisher.ROLES:
             self.assertEqual(
                 manifest["images"][role]["platform_manifest"], MANIFESTS[role]
             )
-            self.assertEqual(manifest["images"][role]["image_config"], CONFIGS[role])
+            self.assertEqual(
+                manifest["images"][role]["image_config"], CONFIGS[role]
+            )
         saves = [x for x in self.calls if x[:3] == ["docker", "image", "save"]]
         self.assertEqual(len(saves), 2)
-        self.assertTrue(all(x[3:5] == ["--platform", "linux/amd64"] for x in saves))
+        self.assertTrue(
+            all(x[3:5] == ["--platform", "linux/amd64"] for x in saves)
+        )
         self.assertEqual(
             {x[-1] for x in saves},
             {f"depositar-search-{r}:{REVISION}" for r in publisher.ROLES},
@@ -206,7 +225,9 @@ class PublisherTests(unittest.TestCase):
         publisher.verify(self.output)
         self.assertEqual(len(self.validated_archives), 2)
 
-    def test_fork_branch_other_events_and_dirty_source_fail_before_docker(self):
+    def test_fork_branch_other_events_and_dirty_source_fail_before_docker(
+        self,
+    ):
         for key, value in [
             ("GITHUB_REPOSITORY", "attacker/fork"),
             ("GITHUB_REF", "refs/heads/feature"),
@@ -221,7 +242,10 @@ class PublisherTests(unittest.TestCase):
                 "ThreeMonth03/depositarAI/.github/workflows/other.yml@refs/heads/main",
             ),
         ]:
-            with self.subTest(key=key), mock.patch.dict(os.environ, {key: value}):
+            with (
+                self.subTest(key=key),
+                mock.patch.dict(os.environ, {key: value}),
+            ):
                 with self.assertRaises(ValueError):
                     publisher.capture(self.tested)
         self.dirty = True
@@ -244,7 +268,9 @@ class PublisherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             publisher.export(self.tested, self.output)
         self.assertFalse(self.output.exists())
-        self.assertFalse(any(x[:3] == ["docker", "image", "tag"] for x in self.calls))
+        self.assertFalse(
+            any(x[:3] == ["docker", "image", "tag"] for x in self.calls)
+        )
 
     def test_tag_drift_during_save_never_produces_a_manifest(self):
         publisher.capture(self.tested)
@@ -266,7 +292,8 @@ class PublisherTests(unittest.TestCase):
         mutations = [
             x
             for x in self.calls
-            if x[0] == "gh" and ("--method" in x or x[1:3] == ["release", "upload"])
+            if x[0] == "gh"
+            and ("--method" in x or x[1:3] == ["release", "upload"])
         ]
         self.assertIn("git/refs", mutations[0][2])
         self.assertTrue(mutations[1][2].endswith("/releases"))
@@ -285,10 +312,14 @@ class PublisherTests(unittest.TestCase):
                 before = len(self.calls)
                 with self.assertRaises(ValueError):
                     publisher.publish(self.output)
-                self.assertFalse(any("--method" in x for x in self.calls[before:]))
+                self.assertFalse(
+                    any("--method" in x for x in self.calls[before:])
+                )
                 setattr(self, attribute, False)
 
-    def test_incomplete_or_changed_remote_assets_leave_release_unpublished(self):
+    def test_incomplete_or_changed_remote_assets_leave_release_unpublished(
+        self,
+    ):
         self.prepare(signed=True)
         for attribute in ["incomplete_assets", "bad_remote_digest"]:
             with self.subTest(attribute=attribute):
@@ -302,15 +333,22 @@ class PublisherTests(unittest.TestCase):
 
 class PublisherWorkflowTests(unittest.TestCase):
     def setUp(self):
-        self.source = (ROOT / ".github/workflows/frontend-release.yml").read_text()
+        self.source = (
+            ROOT / ".github/workflows/frontend-release.yml"
+        ).read_text()
         self.build, self.publish = self.source.split("\n  publish:\n", 1)
 
     def test_only_dispatched_original_main_can_reach_hosted_publisher(self):
         self.assertIn("on:\n  workflow_dispatch:\n", self.source)
         self.assertEqual(
-            self.source.count("github.repository == 'ThreeMonth03/depositarAI'"), 2
+            self.source.count(
+                "github.repository == 'ThreeMonth03/depositarAI'"
+            ),
+            2,
         )
-        self.assertEqual(self.source.count("github.ref == 'refs/heads/main'"), 2)
+        self.assertEqual(
+            self.source.count("github.ref == 'refs/heads/main'"), 2
+        )
         self.assertIn("needs: [build-test]", self.publish)
         self.assertNotIn("always()", self.publish)
         for forbidden in [
@@ -326,7 +364,11 @@ class PublisherWorkflowTests(unittest.TestCase):
 
     def test_test_job_cannot_sign_publish_or_rebuild_after_tests(self):
         self.assertIn("permissions:\n  contents: read", self.build)
-        for permission in ["contents: write", "id-token: write", "attestations: write"]:
+        for permission in [
+            "contents: write",
+            "id-token: write",
+            "attestations: write",
+        ]:
             self.assertNotIn(permission, self.build)
             self.assertIn(permission, self.publish)
         ordered = [

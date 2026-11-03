@@ -1,4 +1,5 @@
-"""Read sealed credentials and bind one catalog client to verified Docker peers."""
+"""Read sealed credentials and bind one catalog client to verified Docker
+peers."""
 
 from __future__ import annotations
 
@@ -27,7 +28,9 @@ def materials(context):
     try:
         ca_fd = private_io.open_directory(ca_root)
         admin = _secret(secret_fd, "opensearch_admin_password")
-        ca = private_io.read_file(ca_fd, "root-ca.pem", mode=0o400, max_bytes=64 * 1024)
+        ca = private_io.read_file(
+            ca_fd, "root-ca.pem", mode=0o400, max_bytes=64 * 1024
+        )
         private_io.verify_directory(secret_fd, secret_root)
         private_io.verify_directory(ca_fd, ca_root)
         return admin, ca
@@ -46,7 +49,7 @@ def peers(context, runtime, images):
 
 
 def snapshot_peers(context, runtime, snapshot):
-    """Select pinned addresses only from the host's verified Docker snapshot."""
+    """Select pinned addresses from the host's verified Docker snapshot."""
     if type(snapshot) is not tuple or len(snapshot) != 3:
         raise RuntimeError("catalog_query_runtime_snapshot_invalid")
     proof, containers, network = snapshot
@@ -60,7 +63,9 @@ def snapshot_peers(context, runtime, snapshot):
     for role in ("fess-search", "opensearch-search"):
         container_id = proof["container_ids"][role]
         try:
-            attachment = by_id[container_id]["NetworkSettings"]["Networks"][name]
+            attachment = by_id[container_id]["NetworkSettings"]["Networks"][
+                name
+            ]
             literal = attachment["IPAddress"]
             interface = ipaddress.IPv4Interface(
                 network["Containers"][container_id]["IPv4Address"]
@@ -73,7 +78,11 @@ def snapshot_peers(context, runtime, snapshot):
                 and attachment["NetworkID"] == proof["network_id"]
                 and any(
                     address in ipaddress.IPv4Network(cidr)
-                    for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+                    for cidr in (
+                        "10.0.0.0/8",
+                        "172.16.0.0/12",
+                        "192.168.0.0/16",
+                    )
                 )
             )
         except (KeyError, TypeError, ValueError):

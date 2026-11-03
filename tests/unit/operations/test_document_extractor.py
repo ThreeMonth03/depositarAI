@@ -1,4 +1,5 @@
-"""Protect bounded extraction, source identity and per-resource output semantics."""
+"""Protect bounded extraction, source identity and per-resource output
+semantics."""
 
 import copy
 import hashlib
@@ -54,7 +55,9 @@ class FakeDocker:
         arguments = argv[5:]
         if arguments[:2] == ["image", "inspect"]:
             if not self.exists:
-                return subprocess.CompletedProcess(argv, 1, b"", b"No such image")
+                return subprocess.CompletedProcess(
+                    argv, 1, b"", b"No such image"
+                )
             metadata = {
                 "Id": self.image["image_id"],
                 "Config": {
@@ -62,7 +65,9 @@ class FakeDocker:
                         "org.depositarai.extractor.source-sha256": self.image[
                             "source_sha256"
                         ],
-                        "org.depositarai.extractor.base": self.image["base_image"],
+                        "org.depositarai.extractor.base": self.image[
+                            "base_image"
+                        ],
                     }
                 },
             }
@@ -95,7 +100,11 @@ class FakeDocker:
             self.snapshot_stat = snapshot.stat()
             if self.on_run:
                 self.on_run()
-            value = report(self.snapshot_bytes) if self.output is None else self.output
+            value = (
+                report(self.snapshot_bytes)
+                if self.output is None
+                else self.output
+            )
             encoded = (
                 json.dumps(value).encode()
                 if self.raw_output is None
@@ -114,7 +123,9 @@ class FakeDocker:
             "unix:///var/run/docker.sock",
             "--config",
         ]
-        assert json.loads((Path(argv[4]) / "config.json").read_text()) == {"auths": {}}
+        assert json.loads((Path(argv[4]) / "config.json").read_text()) == {
+            "auths": {}
+        }
         assert set(environment) == {"PATH", "LANG", "LC_ALL"}
 
 
@@ -189,7 +200,9 @@ class ReportContractTests(unittest.TestCase):
         with self.assertRaises(extractor.ExtractorError):
             extractor.validate_report(value)
         value = report()
-        value.update(status="parse_error", text="", columns=[], rows_observed=None)
+        value.update(
+            status="parse_error", text="", columns=[], rows_observed=None
+        )
         self.assertEqual(value, extractor.validate_report(value))
         value["text"] = "untrusted diagnostic"
         with self.assertRaises(extractor.ExtractorError):
@@ -204,7 +217,9 @@ class ReportContractTests(unittest.TestCase):
             columns=[],
             rows_observed=None,
         )
-        self.assertEqual(value, extractor.validate_report(value, expected_format="CSV"))
+        self.assertEqual(
+            value, extractor.validate_report(value, expected_format="CSV")
+        )
         value["detected_mime"] += "; version=4"
         with self.assertRaises(extractor.ExtractorError):
             extractor.validate_report(value, expected_format="CSV")
@@ -212,13 +227,23 @@ class ReportContractTests(unittest.TestCase):
 
 class OperatorIdentityTests(unittest.TestCase):
     def test_each_root_identity_is_rejected(self):
-        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        identities = {
+            "getuid": 1001,
+            "getgid": 1002,
+            "geteuid": 1003,
+            "getegid": 1004,
+        }
         for zero in (*identities, "all"):
             values = {
-                name: (lambda value=0 if zero in (name, "all") else value: value)
+                name: (
+                    lambda value=0 if zero in (name, "all") else value: value
+                )
                 for name, value in identities.items()
             }
-            with self.subTest(zero=zero), patch.multiple(extractor.os, **values):
+            with (
+                self.subTest(zero=zero),
+                patch.multiple(extractor.os, **values),
+            ):
                 with self.assertRaisesRegex(
                     extractor.ExtractorError,
                     "^document_extractor_operator_must_be_nonroot$",
@@ -234,8 +259,12 @@ class OperatorIdentityTests(unittest.TestCase):
                 self.subTest(real=real, effective=effective),
                 patch.object(extractor.os, "getuid", return_value=real[0]),
                 patch.object(extractor.os, "getgid", return_value=real[1]),
-                patch.object(extractor.os, "geteuid", return_value=effective[0]),
-                patch.object(extractor.os, "getegid", return_value=effective[1]),
+                patch.object(
+                    extractor.os, "geteuid", return_value=effective[0]
+                ),
+                patch.object(
+                    extractor.os, "getegid", return_value=effective[1]
+                ),
             ):
                 self.assertEqual(effective, extractor.operator_ids())
 
@@ -251,9 +280,15 @@ class RuntimeTests(unittest.TestCase):
 
     def test_snapshot_run_is_cpu_only_and_container_is_removed(self):
         docker = FakeDocker()
-        docker.on_run = lambda: self.path.write_bytes(b"changed after snapshot")
-        result = extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
-        self.assertEqual(hashlib.sha256(self.raw).hexdigest(), result["input_sha256"])
+        docker.on_run = lambda: self.path.write_bytes(
+            b"changed after snapshot"
+        )
+        result = extractor.extract(
+            self.path, "CSV", image=IMAGE, runner=docker
+        )
+        self.assertEqual(
+            hashlib.sha256(self.raw).hexdigest(), result["input_sha256"]
+        )
         self.assertEqual(self.raw, docker.snapshot_bytes)
         commands = [call[0][5:] for call in docker.calls]
         run = next(command for command in commands if command[0] == "run")
@@ -277,14 +312,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(
             ["CSV", "/input/resource.csv", "utf-8", "first_record"], run[-4:]
         )
-        self.assertEqual(["rm", "--force", run[run.index("--name") + 1]], commands[-1])
+        self.assertEqual(
+            ["rm", "--force", run[run.index("--name") + 1]], commands[-1]
+        )
 
     def test_root_is_rejected_before_input_or_client_access(self):
-        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        identities = {
+            "getuid": 1001,
+            "getgid": 1002,
+            "geteuid": 1003,
+            "getegid": 1004,
+        }
         for zero in (*identities, "all"):
             docker = FakeDocker()
             values = {
-                name: (lambda value=0 if zero in (name, "all") else value: value)
+                name: (
+                    lambda value=0 if zero in (name, "all") else value: value
+                )
                 for name, value in identities.items()
             }
             with (
@@ -310,17 +354,27 @@ class RuntimeTests(unittest.TestCase):
             patch.object(
                 extractor, "operator_ids", wraps=extractor.operator_ids
             ) as identity,
-            patch.object(extractor.os, "getuid", return_value=effective[0] + 1),
-            patch.object(extractor.os, "getgid", return_value=effective[1] + 1),
+            patch.object(
+                extractor.os, "getuid", return_value=effective[0] + 1
+            ),
+            patch.object(
+                extractor.os, "getgid", return_value=effective[1] + 1
+            ),
         ):
-            result = extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
+            result = extractor.extract(
+                self.path, "CSV", image=IMAGE, runner=docker
+            )
         identity.assert_called_once_with()
         run = next(call[0] for call in docker.calls if call[0][5] == "run")
-        self.assertEqual(f"{effective[0]}:{effective[1]}", run[run.index("--user") + 1])
+        self.assertEqual(
+            f"{effective[0]}:{effective[1]}", run[run.index("--user") + 1]
+        )
         self.assertEqual(self.raw, docker.snapshot_bytes)
         self.assertEqual(0o600, docker.snapshot_stat.st_mode & 0o777)
         self.assertEqual(effective[0], docker.snapshot_stat.st_uid)
-        self.assertEqual(hashlib.sha256(self.raw).hexdigest(), result["input_sha256"])
+        self.assertEqual(
+            hashlib.sha256(self.raw).hexdigest(), result["input_sha256"]
+        )
 
     def test_attempt_name_is_used_for_run_and_exact_cleanup(self):
         docker = FakeDocker()
@@ -332,13 +386,23 @@ class RuntimeTests(unittest.TestCase):
         run = next(command for command in commands if command[0] == "run")
         self.assertEqual(run[run.index("--name") + 1], name)
         self.assertEqual(commands[-1], ["rm", "--force", name])
-        for invalid in ("", "foreign-service", "depositarai-extract-" + "D" * 32):
+        for invalid in (
+            "",
+            "foreign-service",
+            "depositarai-extract-" + "D" * 32,
+        ):
             with (
                 self.subTest(name=invalid),
-                self.assertRaisesRegex(extractor.ExtractorError, "settings_invalid"),
+                self.assertRaisesRegex(
+                    extractor.ExtractorError, "settings_invalid"
+                ),
             ):
                 extractor.extract(
-                    self.path, "CSV", image=IMAGE, container_name=invalid, runner=docker
+                    self.path,
+                    "CSV",
+                    image=IMAGE,
+                    container_name=invalid,
+                    runner=docker,
                 )
 
     def test_resume_inspects_only_exact_recorded_helper_and_fails_closed(self):
@@ -365,7 +429,8 @@ class RuntimeTests(unittest.TestCase):
 
             if expected is None:
                 with self.assertRaisesRegex(
-                    extractor.ExtractorError, "^document_extractor_inspect_failed$"
+                    extractor.ExtractorError,
+                    "^document_extractor_inspect_failed$",
                 ):
                     extractor.helper_exists(name, runner=failed)
             else:
@@ -386,7 +451,9 @@ class RuntimeTests(unittest.TestCase):
         for docker in cases:
             with self.subTest(output=docker.output):
                 with self.assertRaises(extractor.ExtractorError):
-                    extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
+                    extractor.extract(
+                        self.path, "CSV", image=IMAGE, runner=docker
+                    )
                 self.assertEqual("rm", docker.calls[-1][0][5])
 
     def test_timeout_cleans_container_and_hides_raw_process_diagnostics(self):
@@ -404,20 +471,30 @@ class RuntimeTests(unittest.TestCase):
             extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
         self.assertEqual("rm", docker.calls[-1][0][5])
 
-    def test_input_links_permissions_and_wrong_image_are_rejected_before_run(self):
+    def test_input_links_permissions_and_wrong_image_are_rejected_before_run(
+        self,
+    ):
         alias = self.path.with_name("alias.csv")
         alias.symlink_to(self.path)
         for path in (alias,):
-            with self.assertRaisesRegex(extractor.ExtractorError, "input_invalid"):
-                extractor.extract(path, "CSV", image=IMAGE, runner=FakeDocker())
+            with self.assertRaisesRegex(
+                extractor.ExtractorError, "input_invalid"
+            ):
+                extractor.extract(
+                    path, "CSV", image=IMAGE, runner=FakeDocker()
+                )
         hardlink = self.path.with_name("hardlink.csv")
         os.link(self.path, hardlink)
         with self.assertRaisesRegex(extractor.ExtractorError, "input_invalid"):
-            extractor.extract(self.path, "CSV", image=IMAGE, runner=FakeDocker())
+            extractor.extract(
+                self.path, "CSV", image=IMAGE, runner=FakeDocker()
+            )
         hardlink.unlink()
         self.path.chmod(0o644)
         with self.assertRaisesRegex(extractor.ExtractorError, "input_invalid"):
-            extractor.extract(self.path, "CSV", image=IMAGE, runner=FakeDocker())
+            extractor.extract(
+                self.path, "CSV", image=IMAGE, runner=FakeDocker()
+            )
         self.path.chmod(0o600)
         changed = dict(IMAGE, source_sha256="c" * 64)
         docker = FakeDocker(image=changed)
@@ -443,7 +520,9 @@ class BuildIdentityTests(unittest.TestCase):
             path.write_text(filename)
             path.chmod(0o644)
 
-    def test_build_uses_only_snapshotted_recipe_and_reuses_matching_image(self):
+    def test_build_uses_only_snapshotted_recipe_and_reuses_matching_image(
+        self,
+    ):
         docker = FakeDocker()
         docker.exists = False
         first = extractor.build_image(self.root, runner=docker)
@@ -451,7 +530,9 @@ class BuildIdentityTests(unittest.TestCase):
         second = extractor.build_image(self.root, runner=docker)
         self.assertEqual(first, second)
         self.assertEqual(1, builds)
-        self.assertEqual(builds, sum(call[0][5] == "build" for call in docker.calls))
+        self.assertEqual(
+            builds, sum(call[0][5] == "build" for call in docker.calls)
+        )
         self.assertEqual(
             {
                 "deploy/docker/extractor/" + name

@@ -1,4 +1,6 @@
-"""Namespace probes execute against fake HTTP only; no Docker, models or GPU."""
+"""Namespace probes execute against fake HTTP only; no Docker, models or
+GPU.
+"""
 
 import copy
 from http import client as http_client
@@ -53,7 +55,9 @@ class FakeDocker:
         if isinstance(self.value, Exception):
             raise self.value
         return (
-            self.value if type(self.value) is bytes else json.dumps(self.value).encode()
+            self.value
+            if type(self.value) is bytes
+            else json.dumps(self.value).encode()
         )
 
 
@@ -76,7 +80,9 @@ class FakeHTTP:
                 fixture.sockets.append(self.sock)
 
             def request(self, method, path, body=None, headers=None):
-                fixture.calls.append((host, port, timeout, method, path, body, headers))
+                fixture.calls.append(
+                    (host, port, timeout, method, path, body, headers)
+                )
 
             def getresponse(self):
                 value = fixture.responses.pop(0)
@@ -84,7 +90,9 @@ class FakeHTTP:
                     raise value
                 status, payload = value
                 raw = (
-                    payload if type(payload) is bytes else json.dumps(payload).encode()
+                    payload
+                    if type(payload) is bytes
+                    else json.dumps(payload).encode()
                 )
                 if fixture.detach_socket:
                     self.sock = None
@@ -117,7 +125,9 @@ def run_script(script, payload, http, *, timers=None):
         return Mock()
 
     with (
-        patch.object(http_client, "HTTPConnection", side_effect=http.connection),
+        patch.object(
+            http_client, "HTTPConnection", side_effect=http.connection
+        ),
         patch("threading.Timer", side_effect=timer),
         patch.object(sys, "argv", ["namespace-probe"]),
         patch("sys.stdin", input_stream),
@@ -161,11 +171,16 @@ class ResidencyScriptTests(unittest.TestCase):
 
     def test_fixed_gets_prove_full_gpu_context_without_loading_models(self):
         result, _output, http = self.run_probe(
-            [{"models": [resident("scope")]}, {"models": [resident("planner")]}]
+            [
+                {"models": [resident("scope")]},
+                {"models": [resident("planner")]},
+            ]
         )
         self.assertEqual(result["status"], "resident")
         self.assertIs(result["full_gpu_residency_verified"], True)
-        self.assertEqual([row["num_ctx"] for row in result["models"]], [4096, 16384])
+        self.assertEqual(
+            [row["num_ctx"] for row in result["models"]], [4096, 16384]
+        )
         self.assertEqual(
             [(row[0], row[1], row[3], row[4]) for row in http.calls],
             [
@@ -176,11 +191,21 @@ class ResidencyScriptTests(unittest.TestCase):
         self.assertTrue(all(row[5] is None for row in http.calls))
         self.assertEqual(http.closed, 2)
         self.assertEqual(
-            probe.verify_residency(FakeDocker(result), CONTAINER, POLICY), result
+            probe.verify_residency(FakeDocker(result), CONTAINER, POLICY),
+            result,
         )
 
-    def test_missing_partial_cpu_and_changed_residency_fail_without_post_or_retry(self):
-        for mutation in ("missing", "digest", "context", "cpu", "extra", "bool"):
+    def test_partial_cpu_or_residency_drift_fails_without_post_or_retry(
+        self,
+    ):
+        for mutation in (
+            "missing",
+            "digest",
+            "context",
+            "cpu",
+            "extra",
+            "bool",
+        ):
             with self.subTest(mutation=mutation):
                 row = resident("scope")
                 rows = [row]
@@ -199,7 +224,10 @@ class ResidencyScriptTests(unittest.TestCase):
                 result, output, http = self.run_probe([{"models": rows}])
                 self.assertIn(
                     result["error"],
-                    {"shared_backend_not_resident", "shared_backend_residency_changed"},
+                    {
+                        "shared_backend_not_resident",
+                        "shared_backend_residency_changed",
+                    },
                 )
                 self.assertEqual(len(http.calls), 1)
                 self.assertNotIn("PRIVATE_SENTINEL", output)
@@ -215,7 +243,9 @@ class ResidencyScriptTests(unittest.TestCase):
                 result, output = run_script(
                     probe._RESIDENCY_SCRIPT, probe._expected(POLICY), http
                 )
-                self.assertEqual(result, {"error": "shared_backend_residency_failed"})
+                self.assertEqual(
+                    result, {"error": "shared_backend_residency_failed"}
+                )
                 self.assertNotIn("PRIVATE_SENTINEL", output)
 
 
@@ -223,7 +253,9 @@ class QueryScriptTests(unittest.TestCase):
     def run_query(self, responses):
         http = FakeHTTP(responses)
         result, output = run_script(
-            probe._QUERY_SCRIPT, {"revision": REVISION, "query": "找 CSV 資料"}, http
+            probe._QUERY_SCRIPT,
+            {"revision": REVISION, "query": "找 CSV 資料"},
+            http,
         )
         return result, output, http
 
@@ -242,15 +274,22 @@ class QueryScriptTests(unittest.TestCase):
             with self.subTest(size=len(raw)):
                 http = FakeHTTP([])
                 result, output = run_script(probe._QUERY_SCRIPT, raw, http)
-                self.assertEqual(result, {"error": "shared_backend_query_failed"})
+                self.assertEqual(
+                    result, {"error": "shared_backend_query_failed"}
+                )
                 self.assertEqual(http.calls, [])
                 self.assertNotIn("PRIVATE_SENTINEL", output)
 
-    def test_one_turn_identity_check_and_final_reset_keep_token_in_namespace(self):
+    def test_one_turn_identity_check_and_final_reset_keep_token_in_namespace(
+        self,
+    ):
         result, output, http = self.run_query(
             [
                 (200, session()),
-                (200, {"version": 1, "result": RESULT, "context_used": CONTEXT}),
+                (
+                    200,
+                    {"version": 1, "result": RESULT, "context_used": CONTEXT},
+                ),
                 (200, {"status": "cleared"}),
             ]
         )
@@ -264,7 +303,9 @@ class QueryScriptTests(unittest.TestCase):
                 ("DELETE", "/api/session"),
             ],
         )
-        self.assertTrue(all(row[:2] == ("127.0.0.1", 8000) for row in http.calls))
+        self.assertTrue(
+            all(row[:2] == ("127.0.0.1", 8000) for row in http.calls)
+        )
         for row in http.calls:
             self.assertEqual(row[6]["Host"], "127.0.0.1:18083")
             self.assertEqual(row[6]["Origin"], "http://127.0.0.1:18083")
@@ -284,14 +325,19 @@ class QueryScriptTests(unittest.TestCase):
         result, output, http = self.run_query(
             [(200, session("f" * 40)), (200, {"status": "cleared"})]
         )
-        self.assertEqual(result, {"error": "shared_backend_query_identity_changed"})
+        self.assertEqual(
+            result, {"error": "shared_backend_query_identity_changed"}
+        )
         self.assertNotIn(TOKEN, output)
         self.assertEqual([row[3] for row in http.calls], ["POST", "DELETE"])
 
     def test_busy_timeout_and_bad_turn_reset_without_retry_or_error_body(self):
         for response, expected in (
             ((429, b"PRIVATE_SENTINEL"), "shared_backend_query_busy"),
-            (socket.timeout("PRIVATE_SENTINEL"), "shared_backend_query_timeout"),
+            (
+                socket.timeout("PRIVATE_SENTINEL"),
+                "shared_backend_query_timeout",
+            ),
             ((503, b"PRIVATE_SENTINEL"), "shared_backend_query_failed"),
             ((200, b"PRIVATE_SENTINEL"), "shared_backend_query_failed"),
             ((200, b"x" * (1024 * 1024 + 1)), "shared_backend_query_failed"),
@@ -310,12 +356,21 @@ class QueryScriptTests(unittest.TestCase):
     def test_result_or_search_revision_drift_fails_and_resets(self):
         for target in ("result", "search"):
             value = copy.deepcopy(RESULT)
-            (value if target == "result" else value["search"])["revision"] = "f" * 40
+            (value if target == "result" else value["search"])["revision"] = (
+                "f" * 40
+            )
             with self.subTest(target=target):
                 result, _output, http = self.run_query(
                     [
                         (200, session()),
-                        (200, {"version": 1, "result": value, "context_used": CONTEXT}),
+                        (
+                            200,
+                            {
+                                "version": 1,
+                                "result": value,
+                                "context_used": CONTEXT,
+                            },
+                        ),
                         (200, {"status": "cleared"}),
                     ]
                 )
@@ -328,15 +383,22 @@ class QueryScriptTests(unittest.TestCase):
         result, output, _http = self.run_query(
             [
                 (200, session()),
-                (200, {"version": 1, "result": RESULT, "context_used": CONTEXT}),
+                (
+                    200,
+                    {"version": 1, "result": RESULT, "context_used": CONTEXT},
+                ),
                 (503, b"PRIVATE_SENTINEL"),
             ]
         )
-        self.assertEqual(result, {"error": "shared_backend_query_reset_failed"})
+        self.assertEqual(
+            result, {"error": "shared_backend_query_reset_failed"}
+        )
         self.assertNotIn("Public dataset", output)
         self.assertNotIn(TOKEN, output)
 
-    def test_deadline_interrupts_detached_response_socket_then_resets_session(self):
+    def test_deadline_interrupts_detached_response_socket_then_resets_session(
+        self,
+    ):
         timers = []
 
         def read_hook():
@@ -348,7 +410,10 @@ class QueryScriptTests(unittest.TestCase):
         http = FakeHTTP(
             [
                 (200, session()),
-                (200, {"version": 1, "result": RESULT, "context_used": CONTEXT}),
+                (
+                    200,
+                    {"version": 1, "result": RESULT, "context_used": CONTEXT},
+                ),
                 (200, {"status": "cleared"}),
             ],
             read_hook=read_hook,
@@ -369,7 +434,9 @@ class QueryScriptTests(unittest.TestCase):
 
 
 class HostWrapperTests(unittest.TestCase):
-    def test_real_runtime_wrapper_preserves_query_timeout_from_fake_runners(self):
+    def test_real_runtime_wrapper_preserves_query_timeout_from_fake_runners(
+        self,
+    ):
         for error in (
             subprocess.TimeoutExpired("PRIVATE_SENTINEL", 130),
             image_build.ImageBuildError("image_build_command_timeout"),
@@ -378,13 +445,16 @@ class HostWrapperTests(unittest.TestCase):
                 runner = Mock(side_effect=error)
                 docker = runtime_docker.Docker("/private-client", runner)
                 with self.assertRaisesRegex(
-                    probe.SharedBackendProbeError, "^shared_backend_query_timeout$"
+                    probe.SharedBackendProbeError,
+                    "^shared_backend_query_timeout$",
                 ) as caught:
                     probe.query(docker, CONTAINER, "找資料", REVISION)
                 self.assertEqual(runner.call_count, 1)
                 self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
 
-    def test_query_uses_verified_namespace_and_returns_only_interactive_result(self):
+    def test_query_uses_verified_namespace_and_returns_only_interactive_result(
+        self,
+    ):
         docker = FakeDocker({"result": RESULT, "context_used": CONTEXT})
         result = probe.query(docker, CONTAINER, "  找 CSV 資料  ", REVISION)
         self.assertEqual(set(result), {"result", "context_used"})
@@ -425,7 +495,9 @@ class HostWrapperTests(unittest.TestCase):
             probe.verify_residency(docker, CONTAINER, {})
         self.assertEqual(docker.calls, [])
 
-    def test_subprocess_and_untrusted_stdout_errors_are_closed_and_not_retried(self):
+    def test_subprocess_and_untrusted_stdout_errors_are_closed_and_not_retried(
+        self,
+    ):
         for value in (
             ValueError("PRIVATE_SENTINEL"),
             subprocess.TimeoutExpired("PRIVATE_SENTINEL", 130),
@@ -435,14 +507,20 @@ class HostWrapperTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 docker = FakeDocker(value)
-                with self.assertRaises(probe.SharedBackendProbeError) as caught:
+                with self.assertRaises(
+                    probe.SharedBackendProbeError
+                ) as caught:
                     probe.query(docker, CONTAINER, "找資料", REVISION)
-                self.assertRegex(str(caught.exception), r"^shared_backend_[a-z_]+$")
+                self.assertRegex(
+                    str(caught.exception), r"^shared_backend_[a-z_]+$"
+                )
                 self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
                 self.assertNotIn(TOKEN, str(caught.exception))
                 self.assertEqual(len(docker.calls), 1)
 
-    def test_residency_summary_identity_and_full_gpu_metrics_are_rechecked(self):
+    def test_residency_summary_identity_and_full_gpu_metrics_are_rechecked(
+        self,
+    ):
         models = [
             {**item, "size_bytes": 12, "vram_bytes": 12}
             for item in probe._expected(POLICY)

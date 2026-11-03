@@ -93,7 +93,9 @@ class UrllibTransport:
                 fp = getattr(read_response, "fp", None)
                 raw = getattr(fp, "raw", None)
                 socket = getattr(raw, "_sock", None)
-                if socket is None or not callable(getattr(socket, "settimeout", None)):
+                if socket is None or not callable(
+                    getattr(socket, "settimeout", None)
+                ):
                     raise OSError("cannot enforce Ollama transport deadline")
                 socket.settimeout(max(0.001, remaining))
                 read1 = getattr(read_response, "read1", None)
@@ -110,7 +112,8 @@ class UrllibTransport:
             return HTTPResponse(
                 status=int(response.code),
                 headers=tuple(
-                    (str(name), str(value)) for name, value in response.headers.items()
+                    (str(name), str(value))
+                    for name, value in response.headers.items()
                 ),
                 body=body,
                 url=str(response.geturl()),

@@ -1,4 +1,5 @@
-"""Explicit volume-profile configuration and bootstrap path policy, no daemon."""
+"""Explicit volume-profile configuration and bootstrap path policy, no
+daemon."""
 
 from __future__ import annotations
 
@@ -25,7 +26,9 @@ PROJECT = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
 
 class VolumeConfigTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-volume-config-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-volume-config-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.repo = self.root / "repo"
@@ -33,7 +36,11 @@ class VolumeConfigTests(unittest.TestCase):
         self.home = self.root / "home"
         self.home.mkdir(mode=0o700)
         roots = {}
-        for name in ("api_model_root", "embedding_model_root", "reranker_model_root"):
+        for name in (
+            "api_model_root",
+            "embedding_model_root",
+            "reranker_model_root",
+        ):
             path = self.root / name
             path.mkdir(mode=0o700)
             roots[name] = str(path)
@@ -90,7 +97,9 @@ class VolumeConfigTests(unittest.TestCase):
 
     def test_schema_one_is_rejected_without_upgrade_or_rewrite(self):
         value = {
-            key: item for key, item in self.value.items() if key != "catalog_storage"
+            key: item
+            for key, item in self.value.items()
+            if key != "catalog_storage"
         }
         value["schema_version"] = 1
         path = self.root / "config.json"
@@ -104,7 +113,11 @@ class VolumeConfigTests(unittest.TestCase):
 
     def test_schema_storage_mismatches_missing_and_unknown_values_fail(self):
         cases = [
-            {key: item for key, item in self.value.items() if key != "catalog_storage"},
+            {
+                key: item
+                for key, item in self.value.items()
+                if key != "catalog_storage"
+            },
             {**self.value, "schema_version": 1},
             {**self.value, "schema_version": True},
             {**self.value, "schema_version": 2.0},
@@ -144,7 +157,9 @@ class VolumeConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "config_schema"):
             replace(config, schema_version=1, catalog_storage="bind").to_dict()
 
-    def test_volume_profile_retains_home_root_repo_overlap_and_private_guards(self):
+    def test_volume_profile_retains_home_root_repo_overlap_and_private_guards(
+        self,
+    ):
         for value in (
             {**self.value, "state_root": str(self.home)},
             {**self.value, "state_root": str(self.repo / "runtime")},
@@ -163,10 +178,13 @@ class VolumeConfigTests(unittest.TestCase):
 
 
 class VolumeBootstrapPolicyTests(unittest.TestCase):
-    """Run actual bootstrap preflight bytes; no service or model phase exists."""
+    """Run actual bootstrap preflight bytes; no service or model phase
+    exists."""
 
     def run_policy(self, *, isolated=True, root_case="child"):
-        with tempfile.TemporaryDirectory(prefix="depositar-volume-bootstrap-") as raw:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-volume-bootstrap-"
+        ) as raw:
             directory = Path(raw)
             project = directory / "project"
             scripts = project / "scripts"
@@ -196,7 +214,10 @@ class VolumeBootstrapPolicyTests(unittest.TestCase):
             for name in ("search-lib.sh", "read_env.py"):
                 shutil.copy2(ROOT / "scripts" / name, scripts / name)
             # The prefix only verifies these helpers exist; neither is invoked.
-            for name in ("search_dictionary_permissions.py", "search_model_source.py"):
+            for name in (
+                "search_dictionary_permissions.py",
+                "search_model_source.py",
+            ):
                 (scripts / name).write_text("# fixture\n")
             text = (
                 f"COMPOSE_PROJECT_NAME={PROJECT}\n"
@@ -214,7 +235,8 @@ class VolumeBootstrapPolicyTests(unittest.TestCase):
             # its canonical result, allowing path-policy tests off real NFS.
             realpath = fake_bin / "realpath"
             realpath.write_text(
-                '#!/bin/bash\nif [[ "$*" == "-m -- $FIXTURE_REAL_HOME" ]]; then\n'
+                "#!/bin/bash\n"
+                'if [[ "$*" == "-m -- $FIXTURE_REAL_HOME" ]]; then\n'
                 '  printf "%s\\n" "$FIXTURE_HOME"\n'
                 'else exec /usr/bin/realpath "$@"; fi\n'
             )

@@ -100,7 +100,8 @@ def oci_archive(path, role="web", *, mutate=None, architecture="amd64"):
         ],
     }
     blobs = {
-        "blobs/sha256/" + digest(value)[7:]: value for value in (image, config, layer)
+        "blobs/sha256/" + digest(value)[7:]: value
+        for value in (image, config, layer)
     }
     members = {
         "oci-layout": encoded({"imageLayoutVersion": "1.0.0"}),
@@ -197,13 +198,19 @@ class ArchiveTests(unittest.TestCase):
             "wrong-platform": lambda m: update_json(
                 m,
                 "index.json",
-                lambda v: v["manifests"][0]["platform"].update(architecture="arm64"),
+                lambda v: v["manifests"][0]["platform"].update(
+                    architecture="arm64"
+                ),
             ),
             "wrong-tag": lambda m: update_json(
-                m, "manifest.json", lambda v: v[0].update(RepoTags=["unapproved:tag"])
+                m,
+                "manifest.json",
+                lambda v: v[0].update(RepoTags=["unapproved:tag"]),
             ),
             "extra-image-tag": lambda m: update_json(
-                m, "manifest.json", lambda v: v[0]["RepoTags"].append("unapproved:tag")
+                m,
+                "manifest.json",
+                lambda v: v[0]["RepoTags"].append("unapproved:tag"),
             ),
             "config-hash": bad_config_digest,
             "layer-hash": bad_layer_hash,
@@ -214,7 +221,9 @@ class ArchiveTests(unittest.TestCase):
                     if name.startswith("blobs/") and len(value) == 10240
                 )
             ),
-            "extra-blob": lambda m: m.update({"blobs/sha256/" + "f" * 64: b"extra"}),
+            "extra-blob": lambda m: m.update(
+                {"blobs/sha256/" + "f" * 64: b"extra"}
+            ),
             "missing-index": lambda m: m.pop("index.json"),
         }
         for name, mutate in mutations.items():
@@ -234,12 +243,15 @@ class ArchiveTests(unittest.TestCase):
             with self.subTest(field=field):
                 changed = {
                     **expected,
-                    field: ("" if field == "archive_sha256" else "sha256:") + "f" * 64,
+                    field: ("" if field == "archive_sha256" else "sha256:")
+                    + "f" * 64,
                 }
                 with self.assertRaisesRegex(
                     artifact.FrontendArtifactError, "archive_identity_changed"
                 ):
-                    artifact.validate_archive(self.path, changed, REVISION, "web")
+                    artifact.validate_archive(
+                        self.path, changed, REVISION, "web"
+                    )
 
     def test_non_tar_and_symlink_inputs_are_rejected(self):
         self.path.write_bytes(b"not an archive")
@@ -275,18 +287,23 @@ class ArchiveTests(unittest.TestCase):
                 if name.startswith("st_")
             }
             values.update(
-                st_atime=len(observations) + 1, st_atime_ns=len(observations) + 1
+                st_atime=len(observations) + 1,
+                st_atime_ns=len(observations) + 1,
             )
             observations.append(values["st_atime_ns"])
             return SimpleNamespace(**values)
 
-        with mock.patch.object(artifact.os, "fstat", side_effect=changed_atime):
+        with mock.patch.object(
+            artifact.os, "fstat", side_effect=changed_atime
+        ):
             self.assertEqual(
                 artifact.describe_archive(self.path, REVISION, "web"), expected
             )
         self.assertGreater(len(set(observations)), 1)
 
-    def test_named_path_replacement_is_rejected_even_when_open_bytes_stay_valid(self):
+    def test_path_replacement_rejects_even_when_open_bytes_remain_valid(
+        self,
+    ):
         oci_archive(self.path)
         real_hash, changed = artifact._hash, []
 
@@ -308,7 +325,9 @@ class ArchiveTests(unittest.TestCase):
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="frontend-release-fetch-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="frontend-release-fetch-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.destination = self.root / "destination"
@@ -384,7 +403,9 @@ class ReleaseTests(unittest.TestCase):
         )
 
     def fetch(self):
-        with mock.patch.object(artifact, "_download", side_effect=self.download):
+        with mock.patch.object(
+            artifact, "_download", side_effect=self.download
+        ):
             return artifact.fetch_release(
                 REVISION,
                 REPOSITORY,
@@ -394,7 +415,9 @@ class ReleaseTests(unittest.TestCase):
                 runner=self.verify,
             )
 
-    def test_verification_precedes_archives_and_does_not_inherit_credentials(self):
+    def test_verification_precedes_archives_and_does_not_inherit_credentials(
+        self,
+    ):
         with mock.patch.dict(
             os.environ, {"GH_TOKEN": PRIVATE, "GITHUB_TOKEN": PRIVATE}
         ):
@@ -411,7 +434,9 @@ class ReleaseTests(unittest.TestCase):
             ],
         )
         arguments, timeout, environment = self.verify_calls[0]
-        self.assertEqual(arguments[:3], [str(self.binary), "attestation", "verify"])
+        self.assertEqual(
+            arguments[:3], [str(self.binary), "attestation", "verify"]
+        )
         for flag, value in {
             "--repo": REPOSITORY,
             "--source-ref": "refs/heads/main",
@@ -428,7 +453,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("GITHUB_TOKEN", environment)
         self.assertNotIn(PRIVATE, json.dumps(environment))
 
-    def test_failed_source_or_signature_verification_never_fetches_archives(self):
+    def test_failed_source_or_signature_verification_never_fetches_archives(
+        self,
+    ):
         self.verifier_status = 1
         with self.assertRaises(artifact.FrontendArtifactError) as raised:
             self.fetch()
@@ -436,10 +463,16 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.events[-1], "verify")
         self.assertFalse(list(self.destination.glob("*.tar")))
 
-    def test_repository_id_must_come_from_verified_certificate_as_a_string(self):
-        for index, identifier in enumerate(("1425391258", REPOSITORY_ID, None)):
+    def test_repository_id_must_come_from_verified_certificate_as_a_string(
+        self,
+    ):
+        for index, identifier in enumerate(
+            ("1425391258", REPOSITORY_ID, None)
+        ):
             with self.subTest(identifier=identifier):
-                self.destination = self.root / ("repository-case-" + str(index))
+                self.destination = self.root / (
+                    "repository-case-" + str(index)
+                )
                 self.destination.mkdir(mode=0o700)
                 self.verify_calls.clear()
                 certificate = (
@@ -453,7 +486,9 @@ class ReleaseTests(unittest.TestCase):
                             "signature": {"certificate": certificate},
                             "statement": {
                                 "predicate": {
-                                    "sourceRepositoryIdentifier": str(REPOSITORY_ID)
+                                    "sourceRepositoryIdentifier": str(
+                                        REPOSITORY_ID
+                                    )
                                 }
                             },
                         }
@@ -504,7 +539,9 @@ class VerifierTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.binary = self.root / "verifier"
         certificate = {"sourceRepositoryIdentifier": str(REPOSITORY_ID)}
-        verified = [{"verificationResult": {"signature": {"certificate": certificate}}}]
+        verified = [
+            {"verificationResult": {"signature": {"certificate": certificate}}}
+        ]
         self.binary.write_text(
             f"#!{Path(sys.executable).resolve()}\nimport sys\n"
             f"sys.stdout.buffer.write({encoded(verified)!r})\n"
@@ -544,7 +581,9 @@ class VerifierTests(unittest.TestCase):
             os.fstat(self.opened[0])
             return result
 
-        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+        with mock.patch.object(
+            artifact.os, "open", side_effect=self.tracked_open
+        ):
             self.verify(run)
         self.assert_closed()
 
@@ -553,7 +592,9 @@ class VerifierTests(unittest.TestCase):
         with artifact.checked_verifier(native) as checked:
             self.assertEqual(checked, native)
             result = artifact.image_build._run(
-                [str(checked)], timeout=5, environment={"PATH": "/usr/bin:/bin"}
+                [str(checked)],
+                timeout=5,
+                environment={"PATH": "/usr/bin:/bin"},
             )
         self.assertEqual(result.returncode, 0)
 
@@ -590,7 +631,9 @@ class VerifierTests(unittest.TestCase):
         target = self.binary.rename(self.root / "original")
         self.binary.symlink_to(target)
         runner = mock.Mock()
-        with self.assertRaisesRegex(artifact.FrontendArtifactError, "verifier_invalid"):
+        with self.assertRaisesRegex(
+            artifact.FrontendArtifactError, "verifier_invalid"
+        ):
             self.verify(runner)
         runner.assert_not_called()
 
@@ -600,7 +643,9 @@ class VerifierTests(unittest.TestCase):
         replacement.chmod(0o700)
         self.after_open = lambda: replacement.replace(self.binary)
         runner = mock.Mock()
-        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+        with mock.patch.object(
+            artifact.os, "open", side_effect=self.tracked_open
+        ):
             with self.assertRaisesRegex(
                 artifact.FrontendArtifactError, "verifier_changed"
             ):
@@ -621,7 +666,9 @@ class VerifierTests(unittest.TestCase):
                         replacement.replace(self.binary)
                     else:
                         with self.binary.open("a") as stream:
-                            stream.write("\n# synthetic completed-tool change\n")
+                            stream.write(
+                                "\n# synthetic completed-tool change\n"
+                            )
                     return result
 
                 runner = mock.Mock(side_effect=run)
@@ -634,21 +681,27 @@ class VerifierTests(unittest.TestCase):
     def test_failed_real_tool_closes_the_descriptor(self):
         with self.binary.open("a") as stream:
             stream.write("\nraise SystemExit(1)\n")
-        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+        with mock.patch.object(
+            artifact.os, "open", side_effect=self.tracked_open
+        ):
             with self.assertRaisesRegex(
                 artifact.FrontendArtifactError, "provenance_invalid"
             ):
                 self.verify()
         self.assert_closed()
 
-    def test_runner_exception_survives_a_changed_tool_and_closes_descriptor(self):
+    def test_runner_exception_survives_a_changed_tool_and_closes_descriptor(
+        self,
+    ):
         error = RuntimeError("synthetic runner failure")
 
         def fail(*_args, **_kwargs):
             self.binary.chmod(0o600)
             raise error
 
-        with mock.patch.object(artifact.os, "open", side_effect=self.tracked_open):
+        with mock.patch.object(
+            artifact.os, "open", side_effect=self.tracked_open
+        ):
             with self.assertRaises(RuntimeError) as caught:
                 self.verify(fail)
         self.assertIs(caught.exception, error)
@@ -681,7 +734,9 @@ class DownloadTests(unittest.TestCase):
                 "https://untrusted.example/file",
             )
 
-    def test_global_watchdog_interrupts_a_slow_drip_and_closes_retained_channel(self):
+    def test_global_watchdog_interrupts_slow_drip_and_closes_channel(
+        self,
+    ):
         channel = SimpleNamespace(stopped=threading.Event(), closed=False)
 
         def shutdown(_how):
@@ -722,7 +777,9 @@ class DownloadTests(unittest.TestCase):
 
         def opener(*handlers):
             owner = next(
-                h for h in handlers if isinstance(h, artifact._DownloadConnections)
+                h
+                for h in handlers
+                if isinstance(h, artifact._DownloadConnections)
             )
             owner.connections.append(Connection())
             return SimpleNamespace(open=lambda *_args, **_kwargs: response)

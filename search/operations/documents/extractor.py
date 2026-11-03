@@ -32,7 +32,12 @@ FESS_IMAGE = (
 )
 SUPPORTED_ENCODINGS = frozenset({"utf-8", "utf-8-sig", "utf-16", "cp950"})
 HEADER_POLICIES = frozenset({"first_record", "absent"})
-_SOURCE_FILES = ("Dockerfile", "Dockerfile.dockerignore", "Main.java", "log4j2.xml")
+_SOURCE_FILES = (
+    "Dockerfile",
+    "Dockerfile.dockerignore",
+    "Main.java",
+    "log4j2.xml",
+)
 _SOURCE_DIRECTORY = Path("deploy/docker/extractor")
 _SOURCE_LABEL = "org.depositarai.extractor.source-sha256"
 _BASE_LABEL = "org.depositarai.extractor.base"
@@ -77,14 +82,22 @@ def _string(value, maximum):
 
 
 def validate_report(value, *, expected_format=None, header_policy=None):
-    """Validate the closed output contract, including empty-content semantics."""
+    """Validate the closed output contract, including empty-content
+    semantics.
+    """
     error = "document_extractor_report_invalid"
     if (
         expected_format is not None
-        and (type(expected_format) is not str or expected_format not in {"CSV", "PDF"})
+        and (
+            type(expected_format) is not str
+            or expected_format not in {"CSV", "PDF"}
+        )
     ) or (
         header_policy is not None
-        and (type(header_policy) is not str or header_policy not in HEADER_POLICIES)
+        and (
+            type(header_policy) is not str
+            or header_policy not in HEADER_POLICIES
+        )
     ):
         raise ExtractorError(error)
     if type(value) is not dict or set(value) != _REPORT_KEYS:
@@ -175,13 +188,17 @@ def _run(argv, *, timeout, max_bytes, environment):
         process,
         timeout=timeout,
         max_bytes=max_bytes,
-        timeout_error=lambda: ExtractorError("document_extractor_command_timeout"),
+        timeout_error=lambda: ExtractorError(
+            "document_extractor_command_timeout"
+        ),
         output_error=lambda: ExtractorError("document_extractor_output_limit"),
     ) as (remaining, stdout, stderr):
         try:
             status = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            raise ExtractorError("document_extractor_command_timeout") from None
+            raise ExtractorError(
+                "document_extractor_command_timeout"
+            ) from None
         return subprocess.CompletedProcess(
             argv, status, b"".join(stdout), b"".join(stderr)
         )
@@ -195,7 +212,12 @@ def _call(argv, *, timeout, runner, max_bytes=MAX_REPORT_BYTES):
     }
     try:
         result = (
-            _run(argv, timeout=timeout, max_bytes=max_bytes, environment=environment)
+            _run(
+                argv,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                environment=environment,
+            )
             if runner is None
             else runner(argv, timeout=timeout, environment=environment)
         )
@@ -218,10 +240,18 @@ def _call(argv, *, timeout, runner, max_bytes=MAX_REPORT_BYTES):
 
 @contextmanager
 def _client():
-    with tempfile.TemporaryDirectory(prefix="depositarai-extractor-client-") as name:
+    with tempfile.TemporaryDirectory(
+        prefix="depositarai-extractor-client-"
+    ) as name:
         config = Path(name)
         (config / "config.json").write_text('{"auths":{}}\n')
-        yield ["docker", "--host", "unix:///var/run/docker.sock", "--config", name]
+        yield [
+            "docker",
+            "--host",
+            "unix:///var/run/docker.sock",
+            "--config",
+            name,
+        ]
 
 
 def _inspect(prefix, reference, runner):
@@ -267,7 +297,9 @@ def _source_files(source_root):
         raise ExtractorError("document_extractor_source_invalid")
     descriptor = None
     try:
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(
+            directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
         return {
             name: private_io.read_file(
                 descriptor, name, mode=0o644, max_bytes=128 * 1024
@@ -282,20 +314,27 @@ def _source_files(source_root):
 
 
 def source_identity(source_root):
-    """Hash the same bounded recipe bytes used to build the extraction helper."""
+    """Hash the same bounded recipe bytes used to build the extraction
+    helper.
+    """
     return _source_identity(_source_files(source_root))
 
 
 def _source_identity(files):
     return hashlib.sha256(
         private_io.canonical(
-            {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
+            {
+                name: hashlib.sha256(raw).hexdigest()
+                for name, raw in files.items()
+            }
         )
     ).hexdigest()
 
 
 def build_image(source_root, *, runner=None):
-    """Build or reuse the immutable helper identified by its exact source bytes."""
+    """Build or reuse the immutable helper identified by its exact source
+    bytes.
+    """
     files = _source_files(source_root)
     source_sha256 = _source_identity(files)
     tag = "depositarai-resource-extractor:" + source_sha256
@@ -303,7 +342,9 @@ def build_image(source_root, *, runner=None):
         existing = _inspect(prefix, tag, runner)
         if existing is not None:
             return _image_identity(existing, source_sha256)
-        with tempfile.TemporaryDirectory(prefix="depositarai-extractor-build-") as name:
+        with tempfile.TemporaryDirectory(
+            prefix="depositarai-extractor-build-"
+        ) as name:
             context = Path(name)
             directory = context / _SOURCE_DIRECTORY
             directory.mkdir(parents=True)
@@ -345,7 +386,9 @@ def _input_bytes(path):
         mode = stat.S_IMODE(path.lstat().st_mode)
         if mode not in {0o400, 0o600}:
             raise ExtractorError("document_extractor_input_invalid")
-        descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(
+            path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
         return private_io.read_file(
             descriptor, path.name, mode=mode, max_bytes=MAX_INPUT_BYTES
         )
@@ -359,13 +402,16 @@ def _input_bytes(path):
 def _cleanup(prefix, name, runner):
     result = _call(prefix + ["rm", "--force", name], timeout=10, runner=runner)
     if result.returncode and not any(
-        marker in result.stderr for marker in (b"No such container", b"No such object")
+        marker in result.stderr
+        for marker in (b"No such container", b"No such object")
     ):
         raise ExtractorError("document_extractor_cleanup_failed")
 
 
 def helper_exists(name, *, runner=None):
-    """Inspect only the exact durable attempt name; never remove a stale helper."""
+    """Inspect only the exact durable attempt name; never remove a stale
+    helper.
+    """
     _helper_name(name)
     with _client() as prefix:
         result = _call(
@@ -375,7 +421,10 @@ def helper_exists(name, *, runner=None):
             max_bytes=4096,
         )
     if result.returncode:
-        if b"No such container" in result.stderr or b"No such object" in result.stderr:
+        if (
+            b"No such container" in result.stderr
+            or b"No such object" in result.stderr
+        ):
             return False
         raise ExtractorError("document_extractor_inspect_failed")
     if result.stdout.strip() != ("/" + name).encode():
@@ -401,7 +450,9 @@ def extract(
     container_name=None,
     runner=None,
 ):
-    """Snapshot one private file, extract it offline, and verify its bound output."""
+    """Snapshot one private file, extract it offline, and verify its bound
+    output.
+    """
     uid, gid = operator_ids()
     if (
         type(expected_format) is not str
@@ -434,7 +485,9 @@ def extract(
         )
         if identity != image:
             raise ExtractorError("document_extractor_image_invalid")
-        with tempfile.TemporaryDirectory(prefix="depositarai-extractor-input-") as name:
+        with tempfile.TemporaryDirectory(
+            prefix="depositarai-extractor-input-"
+        ) as name:
             snapshot = Path(name) / ("resource." + expected_format.lower())
             snapshot.write_bytes(raw)
             snapshot.chmod(0o600)
@@ -491,7 +544,9 @@ def extract(
                         header_policy=header_policy,
                     )
                 except (ValueError, TypeError, UnicodeError, RecursionError):
-                    raise ExtractorError("document_extractor_report_invalid") from None
+                    raise ExtractorError(
+                        "document_extractor_report_invalid"
+                    ) from None
                 if report["input_sha256"] != digest:
                     raise ExtractorError("document_extractor_input_changed")
                 return report

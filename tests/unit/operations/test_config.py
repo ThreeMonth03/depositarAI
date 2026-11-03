@@ -17,7 +17,9 @@ from search.operations.config import (
 )
 
 
-UUIDS = tuple(f"GPU-00000000-0000-0000-0000-{index:012x}" for index in range(1, 5))
+UUIDS = tuple(
+    f"GPU-00000000-0000-0000-0000-{index:012x}" for index in range(1, 5)
+)
 
 
 class ProductConfigTests(unittest.TestCase):
@@ -125,7 +127,10 @@ class ProductConfigTests(unittest.TestCase):
             ("cache_ttl_seconds", "0"),
         ):
             value = {**self.value, key: invalid}
-            with self.subTest(key=key, value=invalid), self.assertRaises(ValueError):
+            with (
+                self.subTest(key=key, value=invalid),
+                self.assertRaises(ValueError),
+            ):
                 self.validate(value)
         self.validate({**self.value, "cache_ttl_seconds": 3600})
 
@@ -158,13 +163,18 @@ class ProductConfigTests(unittest.TestCase):
             ):
                 self.validate(value)
         with self.assertRaisesRegex(ValueError, "roots_overlap"):
-            self.validate({**self.value, "state_root": str(self.models[0] / "state")})
+            self.validate(
+                {**self.value, "state_root": str(self.models[0] / "state")}
+            )
 
     def test_symlink_roots_and_ancestors_fail(self):
         link = self.root / "linked"
         link.symlink_to(self.models[0], target_is_directory=True)
         for path in (link, link / "nested"):
-            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "symlink"):
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(ValueError, "symlink"),
+            ):
                 self.validate({**self.value, "api_model_root": str(path)})
 
     def test_configuration_file_modes_owner_and_size_fail(self):
@@ -216,7 +226,9 @@ class ProductConfigTests(unittest.TestCase):
             self.path.write_bytes(raw + b" ")
             return raw
 
-        with mock.patch("search.operations.config.os.read", side_effect=changed):
+        with mock.patch(
+            "search.operations.config.os.read", side_effect=changed
+        ):
             with self.assertRaisesRegex(ValueError, "config_changed"):
                 self.load()
 
@@ -257,7 +269,8 @@ class ProductConfigTests(unittest.TestCase):
         value["gpus"]["reranker"] = UUIDS[3]
         value["gpus"]["scope"] = value["gpus"]["scope"].upper()
         self.assertEqual(
-            self.validate(value).gpus.scope, "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            self.validate(value).gpus.scope,
+            "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         )
 
     def test_gpu_inventory_presence_duplicates_and_malformed_records(self):
@@ -274,7 +287,10 @@ class ProductConfigTests(unittest.TestCase):
             inventory.replace(",3", ",oops"),
             inventory + ",extra",
         ):
-            with self.subTest(inventory=invalid), self.assertRaises(ValueError):
+            with (
+                self.subTest(inventory=invalid),
+                self.assertRaises(ValueError),
+            ):
                 validate_gpu_inventory(config, invalid)
 
 

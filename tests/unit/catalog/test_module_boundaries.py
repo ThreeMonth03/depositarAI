@@ -24,7 +24,11 @@ def source_tree(name):
 
 def imported_module(node):
     module = node.module or ""
-    return resolve_name("." * node.level + module, PACKAGE) if node.level else module
+    return (
+        resolve_name("." * node.level + module, PACKAGE)
+        if node.level
+        else module
+    )
 
 
 def dependencies(name):
@@ -37,14 +41,18 @@ def dependencies(name):
             found.update(alias.name for alias in node.names)
             for alias in node.names:
                 bindings[alias.asname or alias.name.partition(".")[0]] = (
-                    alias.name if alias.asname else alias.name.partition(".")[0]
+                    alias.name
+                    if alias.asname
+                    else alias.name.partition(".")[0]
                 )
         elif isinstance(node, ast.ImportFrom):
             module = imported_module(node)
             found.add(module)
             found.update(module + "." + alias.name for alias in node.names)
             for alias in node.names:
-                bindings[alias.asname or alias.name] = module + "." + alias.name
+                bindings[alias.asname or alias.name] = (
+                    module + "." + alias.name
+                )
 
     def qualified(node):
         if isinstance(node, ast.Name):
@@ -64,7 +72,9 @@ def dependencies(name):
 
 
 def imports_namespace(found, namespace):
-    return any(name == namespace or name.startswith(namespace + ".") for name in found)
+    return any(
+        name == namespace or name.startswith(namespace + ".") for name in found
+    )
 
 
 class CatalogModuleBoundaryTests(unittest.TestCase):
@@ -83,7 +93,9 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
                 with self.subTest(consumer=consumer, forbidden=namespace):
                     self.assertFalse(imports_namespace(found, namespace))
 
-    def test_import_parser_keeps_absolute_relative_and_aliased_boundaries(self):
+    def test_import_parser_keeps_absolute_relative_and_aliased_boundaries(
+        self,
+    ):
         for source, expected in (
             ("from . import runtime", PACKAGE + ".runtime"),
             ("from .runtime import start", PACKAGE + ".runtime"),
@@ -95,16 +107,24 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(source=source),
-                patch(__name__ + ".source_tree", return_value=ast.parse(source)),
+                patch(
+                    __name__ + ".source_tree", return_value=ast.parse(source)
+                ),
             ):
-                self.assertTrue(imports_namespace(dependencies("ignored"), expected))
+                self.assertTrue(
+                    imports_namespace(dependencies("ignored"), expected)
+                )
 
     def test_namespace_matching_does_not_confuse_similarly_named_modules(self):
         self.assertFalse(
-            imports_namespace({PACKAGE + ".runtime_utils"}, PACKAGE + ".runtime")
+            imports_namespace(
+                {PACKAGE + ".runtime_utils"}, PACKAGE + ".runtime"
+            )
         )
         self.assertTrue(
-            imports_namespace({PACKAGE + ".runtime.nested"}, PACKAGE + ".runtime")
+            imports_namespace(
+                {PACKAGE + ".runtime.nested"}, PACKAGE + ".runtime"
+            )
         )
 
     def test_command_parser_resolves_legacy_and_canonical_aliases(self):
@@ -118,7 +138,8 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
                 PACKAGE + ".backend._runner",
             ),
             (
-                "def later():\n    import search.operations.catalog.backend as old\n"
+                "def later():\n"
+                "    import search.operations.catalog.backend as old\n"
                 "    return old._command",
                 PACKAGE + ".backend._command",
             ),
@@ -130,7 +151,9 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(source=source),
-                patch(__name__ + ".source_tree", return_value=ast.parse(source)),
+                patch(
+                    __name__ + ".source_tree", return_value=ast.parse(source)
+                ),
             ):
                 self.assertIn(expected, dependencies("ignored"))
 
@@ -220,7 +243,10 @@ class CatalogModuleBoundaryTests(unittest.TestCase):
             with self.subTest(module=name):
                 found = dependencies(name)
                 self.assertFalse(
-                    any(imports_namespace(found, namespace) for namespace in forbidden)
+                    any(
+                        imports_namespace(found, namespace)
+                        for namespace in forbidden
+                    )
                 )
 
 

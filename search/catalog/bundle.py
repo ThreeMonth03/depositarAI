@@ -102,7 +102,14 @@ _MANIFEST_KEYS = frozenset(
 
 
 _ARTIFACT_KEYS = frozenset(
-    ("sha256", "bytes", "expanded_bytes", "records", "schema_version", "media_type")
+    (
+        "sha256",
+        "bytes",
+        "expanded_bytes",
+        "records",
+        "schema_version",
+        "media_type",
+    )
 )
 
 
@@ -222,11 +229,15 @@ CATALOG_MANIFEST_POLICY = {
         "resources_per_dataset_max": resource_contract.MAX_RESOURCES,
         "columns_per_resource_max": resource_contract.MAX_COLUMNS,
         "column_characters_max": resource_contract.MAX_COLUMN_CHARS,
-        "column_total_characters_max": resource_contract.MAX_COLUMN_TOTAL_CHARS,
+        "column_total_characters_max": (
+            resource_contract.MAX_COLUMN_TOTAL_CHARS
+        ),
         "excerpt_characters_max": resource_contract.MAX_EXCERPT_CHARS,
         "index_text_characters_max": resource_contract.MAX_INDEX_TEXT_CHARS,
     },
-    "dataset_id_digest_encoding": "lowercase UUIDs sorted, one UTF-8 ID plus LF per record",
+    "dataset_id_digest_encoding": (
+        "lowercase UUIDs sorted, one UTF-8 ID plus LF per record"
+    ),
 }
 
 
@@ -338,15 +349,17 @@ def _open_sealed(
         raise
 
 
-def _assert_unchanged(path: Path, descriptor: int, initial: os.stat_result) -> None:
+def _assert_unchanged(
+    path: Path, descriptor: int, initial: os.stat_result
+) -> None:
     try:
         by_descriptor = os.fstat(descriptor)
         by_name = path.lstat()
     except OSError:
         raise BundleError("sealed bundle file changed while reading") from None
-    if _stat_identity(initial) != _stat_identity(by_descriptor) or _stat_identity(
-        initial
-    ) != _stat_identity(by_name):
+    if _stat_identity(initial) != _stat_identity(
+        by_descriptor
+    ) or _stat_identity(initial) != _stat_identity(by_name):
         raise BundleError("sealed bundle file changed while reading")
 
 
@@ -358,7 +371,9 @@ def _secure_read(path: Path, *, expected_uid: int, max_bytes: int) -> bytes:
         chunks: List[bytes] = []
         total = 0
         while True:
-            chunk = os.read(descriptor, min(1024 * 1024, max_bytes + 1 - total))
+            chunk = os.read(
+                descriptor, min(1024 * 1024, max_bytes + 1 - total)
+            )
             if not chunk:
                 break
             chunks.append(chunk)
@@ -380,7 +395,9 @@ def _manifest_line(raw: bytes) -> bytes:
         or b"\r" in raw
         or len(raw) - 1 > MAX_MANIFEST_LINE_BYTES
     ):
-        raise BundleError("sealed manifest must be one newline-terminated JSON record")
+        raise BundleError(
+            "sealed manifest must be one newline-terminated JSON record"
+        )
     return raw[:-1]
 
 
@@ -411,8 +428,13 @@ def _secure_gzip_lines(
                 break
             digest.update(chunk)
             total_compressed += len(chunk)
-        if total_compressed != expected_bytes or digest.hexdigest() != expected_sha256:
-            raise BundleError("sealed artifact digest differs from its manifest")
+        if (
+            total_compressed != expected_bytes
+            or digest.hexdigest() != expected_sha256
+        ):
+            raise BundleError(
+                "sealed artifact digest differs from its manifest"
+            )
         os.lseek(descriptor, 0, os.SEEK_SET)
         duplicate = os.dup(descriptor)
         lines: List[bytes] = []
@@ -450,7 +472,8 @@ def _secure_gzip_lines(
                 os.close(duplicate)
         if expanded != expected_expanded_bytes or records != expected_records:
             raise BundleError(
-                "sealed artifact expanded size or record count differs from its manifest"
+                "sealed artifact expanded size or record count "
+                "differs from its manifest"
             )
         _assert_unchanged(path, descriptor, metadata)
         return lines
@@ -483,7 +506,8 @@ def _validate_dataset_url(value: Any, slug: Any) -> str:
         or value != "https://data.depositar.io" + canonical_path
     ):
         raise BundleError(
-            "catalog document URL is outside the canonical Depositar dataset origin"
+            "catalog document URL is outside "
+            "the canonical Depositar dataset origin"
         )
     return value
 
@@ -495,7 +519,9 @@ def _safe_text(value: Any, field: str, maximum: int) -> str:
         raise BundleError("catalog document text is not NFKC-normalized")
     if any(character in _BIDI_CONTROLS for character in value):
         raise BundleError("catalog document contains a bidi control")
-    if any(unicodedata.category(character) in ("Cc", "Cf") for character in value):
+    if any(
+        unicodedata.category(character) in ("Cc", "Cf") for character in value
+    ):
         raise BundleError("catalog document contains a control character")
     return value
 
@@ -511,9 +537,14 @@ def _safe_string_list(value: Any, *, maximum_items: int = 256) -> List[str]:
 
 def _validated_document(value: Any) -> Dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != _DOCUMENT_FIELDS:
-        raise BundleError("catalog document does not match its exact field allowlist")
+        raise BundleError(
+            "catalog document does not match its exact field allowlist"
+        )
     dataset_id = value.get("dataset_id")
-    if not isinstance(dataset_id, str) or DATASET_ID_RE.fullmatch(dataset_id) is None:
+    if (
+        not isinstance(dataset_id, str)
+        or DATASET_ID_RE.fullmatch(dataset_id) is None
+    ):
         raise BundleError("catalog dataset identifier is malformed")
     result = dict(value)
     result["name"] = _safe_text(result["name"], "name", 256)
@@ -539,15 +570,21 @@ def _validated_document(value: Any) -> Dict[str, Any]:
         ("groups", 64),
         ("resource_formats", 256),
     ):
-        result[field] = _safe_string_list(result[field], maximum_items=maximum_items)
+        result[field] = _safe_string_list(
+            result[field], maximum_items=maximum_items
+        )
     if not _exact_int(result.get("resource_count"), maximum=100_000):
         raise BundleError("catalog resource count is invalid")
     try:
-        result["resource_context"] = resource_contract.validate_resource_context(
-            result["resource_context"]
+        result["resource_context"] = (
+            resource_contract.validate_resource_context(
+                result["resource_context"]
+            )
         )
     except ValueError as exc:
-        raise BundleError("catalog resource context is invalid: %s" % exc) from exc
+        raise BundleError(
+            "catalog resource context is invalid: %s" % exc
+        ) from exc
     if (
         result.get("label") != [CATALOG_LABEL]
         or result.get("lang") != ["auto"]
@@ -602,7 +639,9 @@ class CatalogBundle:
             root = directory.lstat()
             names = set(os.listdir(str(directory)))
         except OSError:
-            raise BundleError("cannot inspect the catalog bundle directory") from None
+            raise BundleError(
+                "cannot inspect the catalog bundle directory"
+            ) from None
         if (
             not stat.S_ISDIR(root.st_mode)
             or stat.S_ISLNK(root.st_mode)
@@ -616,13 +655,21 @@ class CatalogBundle:
             expected_uid=uid,
             max_bytes=MAX_MANIFEST_BYTES,
         )
-        if hashlib.sha256(manifest_raw).hexdigest() != expected_manifest_sha256:
+        if (
+            hashlib.sha256(manifest_raw).hexdigest()
+            != expected_manifest_sha256
+        ):
             raise BundleError("catalog bundle manifest digest mismatch")
         try:
             manifest = _strict_json(_manifest_line(manifest_raw))
         except ProtocolError:
-            raise BundleError("catalog bundle manifest JSON is malformed") from None
-        if not isinstance(manifest, Mapping) or set(manifest) != _MANIFEST_KEYS:
+            raise BundleError(
+                "catalog bundle manifest JSON is malformed"
+            ) from None
+        if (
+            not isinstance(manifest, Mapping)
+            or set(manifest) != _MANIFEST_KEYS
+        ):
             raise BundleError("catalog bundle manifest shape is invalid")
         bundle_id = manifest.get("bundle_id")
         artifacts = manifest.get("artifacts")
@@ -630,7 +677,9 @@ class CatalogBundle:
         policy = manifest.get("policy")
         counters = manifest.get("normalization_counters")
         if (
-            not _exact_int(manifest.get("schema_version"), minimum=1, maximum=1)
+            not _exact_int(
+                manifest.get("schema_version"), minimum=1, maximum=1
+            )
             or manifest.get("bundle_format") != "depositar-public-metadata-v3"
             or not isinstance(bundle_id, str)
             or SHA256_RE.fullmatch(bundle_id) is None
@@ -673,9 +722,13 @@ class CatalogBundle:
         core = dict(manifest)
         del core["bundle_id"]
         try:
-            calculated_bundle_id = hashlib.sha256(_canonical_json(core)).hexdigest()
+            calculated_bundle_id = hashlib.sha256(
+                _canonical_json(core)
+            ).hexdigest()
         except ProtocolError:
-            raise BundleError("catalog bundle identity cannot be reproduced") from None
+            raise BundleError(
+                "catalog bundle identity cannot be reproduced"
+            ) from None
         if calculated_bundle_id != bundle_id:
             raise BundleError("catalog bundle content identity is invalid")
 
@@ -688,13 +741,20 @@ class CatalogBundle:
         }
         for name in ARTIFACT_NAMES:
             descriptor = artifacts.get(name)
-            if not isinstance(descriptor, Mapping) or set(descriptor) != _ARTIFACT_KEYS:
-                raise BundleError("catalog artifact descriptor shape is invalid")
+            if (
+                not isinstance(descriptor, Mapping)
+                or set(descriptor) != _ARTIFACT_KEYS
+            ):
+                raise BundleError(
+                    "catalog artifact descriptor shape is invalid"
+                )
             if (
                 not isinstance(descriptor.get("sha256"), str)
                 or SHA256_RE.fullmatch(descriptor["sha256"]) is None
                 or not _exact_int(
-                    descriptor.get("bytes"), minimum=1, maximum=MAX_ARTIFACT_FILE_BYTES
+                    descriptor.get("bytes"),
+                    minimum=1,
+                    maximum=MAX_ARTIFACT_FILE_BYTES,
                 )
                 or not _exact_int(
                     descriptor.get("expanded_bytes"),
@@ -716,7 +776,9 @@ class CatalogBundle:
                 )
                 or descriptor.get("media_type") != "application/x-ndjson+gzip"
             ):
-                raise BundleError("catalog artifact descriptor values are invalid")
+                raise BundleError(
+                    "catalog artifact descriptor values are invalid"
+                )
             lines = _secure_gzip_lines(
                 directory / name,
                 expected_uid=uid,
@@ -751,8 +813,12 @@ class CatalogBundle:
                 document = _validated_document(_strict_json(document_line))
                 context_row = _strict_json(context_line)
             except ProtocolError:
-                raise BundleError("catalog artifact JSON is malformed") from None
-            source_id = source.get("id") if isinstance(source, Mapping) else None
+                raise BundleError(
+                    "catalog artifact JSON is malformed"
+                ) from None
+            source_id = (
+                source.get("id") if isinstance(source, Mapping) else None
+            )
             if (
                 not isinstance(source, Mapping)
                 or not isinstance(source_id, str)
@@ -762,7 +828,9 @@ class CatalogBundle:
                 or source.get("type") != "dataset"
                 or not isinstance(corpus, Mapping)
                 or set(corpus) != _CORPUS_KEYS
-                or not _exact_int(corpus.get("schema_version"), minimum=2, maximum=2)
+                or not _exact_int(
+                    corpus.get("schema_version"), minimum=2, maximum=2
+                )
                 or corpus.get("visibility") != "public"
                 or corpus.get("state") != "active"
                 or corpus.get("dataset_type") != "dataset"
@@ -771,7 +839,9 @@ class CatalogBundle:
                 or not _exact_int(corpus.get("resource_count"), maximum=256)
                 or corpus["resource_count"] != len(corpus["resources"])
             ):
-                raise BundleError("catalog source or corpus semantics are invalid")
+                raise BundleError(
+                    "catalog source or corpus semantics are invalid"
+                )
             source_resources = source.get("resources")
             if source_resources is None:
                 source_resources = []
@@ -779,11 +849,14 @@ class CatalogBundle:
                 not isinstance(source_resources, list)
                 or len(source_resources) > 256
                 or not all(
-                    isinstance(resource, Mapping) for resource in source_resources
+                    isinstance(resource, Mapping)
+                    for resource in source_resources
                 )
                 or len(source_resources) != corpus["resource_count"]
             ):
-                raise BundleError("catalog source and corpus resource counts disagree")
+                raise BundleError(
+                    "catalog source and corpus resource counts disagree"
+                )
             url = document["url"]
             dataset_id = document["dataset_id"]
             if (
@@ -793,10 +866,13 @@ class CatalogBundle:
                 or corpus.get("url") != url
                 or corpus.get("resource_count") != document["resource_count"]
             ):
-                raise BundleError("catalog artifacts disagree on dataset identity")
+                raise BundleError(
+                    "catalog artifacts disagree on dataset identity"
+                )
             if (
                 not isinstance(context_row, Mapping)
-                or set(context_row) != {"schema_version", "dataset_id", "resources"}
+                or set(context_row)
+                != {"schema_version", "dataset_id", "resources"}
                 or not _exact_int(
                     context_row.get("schema_version"), minimum=1, maximum=1
                 )
@@ -813,11 +889,14 @@ class CatalogBundle:
                 ) from exc
             contexts = [entry["context"] for entry in enrichment]
             if not _exact_json_equal(contexts, document["resource_context"]):
-                raise BundleError("catalog document and resource context disagree")
+                raise BundleError(
+                    "catalog document and resource context disagree"
+                )
             resources_by_id = {
                 resource.get("id"): resource
                 for resource in corpus["resources"]
-                if isinstance(resource, Mapping) and isinstance(resource.get("id"), str)
+                if isinstance(resource, Mapping)
+                and isinstance(resource.get("id"), str)
             }
             source_resource_ids = {
                 resource["id"]
@@ -832,23 +911,33 @@ class CatalogBundle:
                     or not isinstance(resource.get("format"), str)
                     or resource["format"].upper() != context["format"]
                     or context["url"]
-                    != resource_contract.resource_url(url, context["resource_id"])
+                    != resource_contract.resource_url(
+                        url, context["resource_id"]
+                    )
                 ):
                     raise BundleError(
-                        "catalog enrichment does not match its dataset resource"
+                        "catalog enrichment does not match "
+                        "its dataset resource"
                     )
             if any(
-                entry["index_text"] not in document["content"] for entry in enrichment
+                entry["index_text"] not in document["content"]
+                for entry in enrichment
             ):
-                raise BundleError("catalog indexed content omits resource enrichment")
+                raise BundleError(
+                    "catalog indexed content omits resource enrichment"
+                )
             if url in by_url or dataset_id in dataset_ids:
                 raise BundleError("catalog bundle contains duplicate datasets")
-            document_sha256 = hashlib.sha256(_canonical_json(document)).hexdigest()
+            document_sha256 = hashlib.sha256(
+                _canonical_json(document)
+            ).hexdigest()
             outbound = dict(document)
             outbound["depositar_bundle_id"] = bundle_id
             outbound["depositar_document_sha256"] = document_sha256
             outbound["resource_context"] = tuple(
-                MappingProxyType({**context, "columns": tuple(context["columns"])})
+                MappingProxyType(
+                    {**context, "columns": tuple(context["columns"])}
+                )
                 for context in contexts
             )
             frozen = MappingProxyType(
@@ -876,7 +965,9 @@ class CatalogBundle:
         if dataset_id_digest.hexdigest() != manifest["dataset_ids_sha256"]:
             raise BundleError("catalog dataset identity digest is invalid")
         if summed_resource_count != manifest["resource_count"]:
-            raise BundleError("catalog resource count differs from its manifest")
+            raise BundleError(
+                "catalog resource count differs from its manifest"
+            )
         return cls(
             bundle_id=bundle_id,
             manifest_sha256=expected_manifest_sha256,

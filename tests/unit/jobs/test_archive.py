@@ -23,7 +23,9 @@ from search.operations.shared import private_io
 
 @contextmanager
 def proof_locked(root, name):
-    """Supply the agreed FD-proof lock API without changing another owner's file."""
+    """Supply the agreed FD-proof lock API without changing another
+    owner's file.
+    """
     fd = os.open(root / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:
@@ -109,7 +111,14 @@ class ArchiveTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(
-            ["git", "-c", "core.hooksPath=/dev/null", "-c", "init.templateDir=", *args],
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "init.templateDir=",
+                *args,
+            ],
             cwd=self.repo,
             check=True,
             capture_output=True,
@@ -127,7 +136,8 @@ class ArchiveTests(unittest.TestCase):
 
     def verified(self, registry, identifier):
         # The typed owner supplies this API. Resource outer validation remains
-        # real here; native parsing is exercised on the coordinator's merged head.
+        # real here; native parsing is exercised on the coordinator's merged
+        # head.
         queue.result(registry, identifier)
         return deepcopy(self.evidence[identifier])
 
@@ -213,7 +223,9 @@ class ArchiveTests(unittest.TestCase):
             )
             self.transport.tasks[str(task_id)] = {
                 "label": "depositarai-" + identifier,
-                "command": shlex.join(queue.launcher(self.registry, identifier)),
+                "command": shlex.join(
+                    queue.launcher(self.registry, identifier)
+                ),
                 "path": str(self.root),
                 "group": "heavy",
                 "envs": dict(ENVIRONMENT),
@@ -228,12 +240,13 @@ class ArchiveTests(unittest.TestCase):
         self.evidence[identifier] = archive._inventory(root, source=True)
         return identifier, root
 
-    def test_terminal_archive_preserves_original_bytes_and_source_and_is_repeatable(
+    def test_terminal_archive_preserves_bytes_and_source_repeatably(
         self,
     ):
         identifier, original = self.job()
         before = {
-            name: (original / name).read_bytes() for name in self.evidence[identifier]
+            name: (original / name).read_bytes()
+            for name in self.evidence[identifier]
         }
         source_before = (self.repo / "fixture.py").read_bytes()
         self.assertEqual(
@@ -245,21 +258,29 @@ class ArchiveTests(unittest.TestCase):
         self.assertFalse((self.root / "archive-intent.json").exists())
         for name, raw in before.items():
             self.assertEqual(raw, (archived / name).read_bytes())
-        self.assertEqual(source_before, (self.repo / "fixture.py").read_bytes())
-        self.assertEqual(queue.result(self.registry, identifier)["status"], "completed")
+        self.assertEqual(
+            source_before, (self.repo / "fixture.py").read_bytes()
+        )
+        self.assertEqual(
+            queue.result(self.registry, identifier)["status"], "completed"
+        )
         self.assertEqual(
             archive.archive(self.registry, identifier)["status"], "archived"
         )
         self.assertEqual(self.transport.calls, [("remove", "1")])
 
-    def test_cancelled_missing_entry_requires_exact_no_execution_evidence(self):
+    def test_cancelled_missing_entry_requires_exact_no_execution_evidence(
+        self,
+    ):
         identifier, _ = self.job(cancelled=True)
         self.assertEqual(
             archive.archive(self.registry, identifier)["status"], "archived"
         )
         self.assertEqual(self.transport.calls, [])
 
-    def test_native_sidecars_are_preserved_by_the_verified_inventory_contract(self):
+    def test_native_sidecars_are_preserved_by_the_verified_inventory_contract(
+        self,
+    ):
         identifier, root = self.job()
         queue.write(root / "native-config.json", {"fixture": "private"})
         queue.write(root / "quality-cases.json", {"fixture": "cases"})
@@ -271,13 +292,17 @@ class ArchiveTests(unittest.TestCase):
         target = self.root / "archive" / identifier
         self.assertEqual(
             self.evidence[identifier],
-            archive.verify_archived(self.registry, identifier, target)["files"],
+            archive.verify_archived(self.registry, identifier, target)[
+                "files"
+            ],
         )
         (target / "capture/capture.json").write_bytes(b"changed")
         with self.assertRaises(JobError):
             archive.verify_archived(self.registry, identifier, target)
 
-    def test_queued_running_unknown_and_unverified_peers_prevent_any_cleanup(self):
+    def test_queued_running_unknown_and_unverified_peers_prevent_any_cleanup(
+        self,
+    ):
         target, root = self.job()
         peer, _ = self.job()
         row = self.transport.tasks["2"]
@@ -296,7 +321,9 @@ class ArchiveTests(unittest.TestCase):
             self.assertFalse((self.root / "archive-intent.json").exists())
             self.assertEqual(self.transport.calls, [])
 
-    def test_unexpected_files_artifacts_and_private_permissions_are_refused(self):
+    def test_unexpected_files_artifacts_and_private_permissions_are_refused(
+        self,
+    ):
         for mutation in ("unknown", "raw", "mode", "link", "ignored"):
             with self.subTest(mutation=mutation):
                 identifier, root = self.job()
@@ -307,9 +334,13 @@ class ArchiveTests(unittest.TestCase):
                 elif mutation == "mode":
                     (root / "request.json").chmod(0o644)
                 elif mutation == "link":
-                    (root / "unknown-link").symlink_to(self.repo / "fixture.py")
+                    (root / "unknown-link").symlink_to(
+                        self.repo / "fixture.py"
+                    )
                 else:
-                    (root / "source/ignored.tmp").write_text("private ignored input")
+                    (root / "source/ignored.tmp").write_text(
+                        "private ignored input"
+                    )
                 with self.assertRaises(JobError):
                     archive.archive(self.registry, identifier)
                 self.assertTrue((root / "source").exists())
@@ -323,7 +354,13 @@ class ArchiveTests(unittest.TestCase):
         self.git("worktree", "unlock", str(root / "source"))
         for reason in (None, "some other owner"):
             if reason:
-                self.git("worktree", "lock", "--reason", reason, str(root / "source"))
+                self.git(
+                    "worktree",
+                    "lock",
+                    "--reason",
+                    reason,
+                    str(root / "source"),
+                )
             with self.assertRaises(JobError):
                 archive.archive(self.registry, identifier)
             self.assertFalse((self.root / "archive-intent.json").exists())
@@ -348,7 +385,9 @@ class ArchiveTests(unittest.TestCase):
                     archive.archive(self.registry, identifier)
             self.assertTrue((root / "source").exists())
 
-    def test_known_interruption_after_task_removal_can_resume_without_rewriting(self):
+    def test_known_task_removal_interruption_resumes_without_rewrite(
+        self,
+    ):
         identifier, root = self.job()
         original = (root / "result.json").read_bytes()
         self.transport.after_remove = True
@@ -359,13 +398,18 @@ class ArchiveTests(unittest.TestCase):
         self.transport.after_remove = False
         archive.archive(self.registry, identifier)
         self.assertEqual(
-            original, (self.root / "archive" / identifier / "result.json").read_bytes()
+            original,
+            (self.root / "archive" / identifier / "result.json").read_bytes(),
         )
 
-    def test_prepared_intent_does_not_authorize_an_unrecorded_task_disappearance(self):
+    def test_prepared_intent_rejects_unrecorded_task_disappearance(
+        self,
+    ):
         identifier, root = self.job()
         with patch.object(
-            sources, "preserve_bundle", side_effect=OSError("fixture before bundle")
+            sources,
+            "preserve_bundle",
+            side_effect=OSError("fixture before bundle"),
         ):
             with self.assertRaisesRegex(JobError, "archive_recovery_required"):
                 archive.archive(self.registry, identifier)
@@ -378,7 +422,9 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue((root / "source").exists())
         self.assertEqual(self.transport.calls, [])
 
-    def test_missing_source_with_remaining_registration_requires_reconciliation(self):
+    def test_registered_missing_source_requires_reconciliation(
+        self,
+    ):
         identifier, root = self.job()
         real_git = archive._git
         calls = []
@@ -397,9 +443,11 @@ class ArchiveTests(unittest.TestCase):
             archive.archive(self.registry, identifier)
         self.assertTrue((self.root / "archive-intent.json").exists())
         self.assertFalse((self.root / "archive" / identifier).exists())
-        self.assertFalse(any("--force" in args or "prune" in args for args in calls))
+        self.assertFalse(
+            any("--force" in args or "prune" in args for args in calls)
+        )
 
-    def test_new_busy_peer_during_bundle_verification_prevents_task_and_source_removal(
+    def test_busy_peer_during_bundle_check_prevents_cleanup(
         self,
     ):
         identifier, root = self.job()
@@ -418,7 +466,9 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue((root / "source").exists())
         self.assertTrue((self.root / "archive-intent.json").exists())
 
-    def test_task_disappearance_during_bundle_save_remains_unknown_recovery(self):
+    def test_task_disappearance_during_bundle_save_remains_unknown_recovery(
+        self,
+    ):
         identifier, root = self.job()
         preserve = sources.preserve_bundle
 
@@ -466,12 +516,16 @@ class ArchiveTests(unittest.TestCase):
                 if name == "execution.lock":
                     lock = directory / "submissions.lock"
                     lock.unlink()
-                    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    fd = os.open(
+                        lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
                     os.close(fd)
                 yield proof
 
         with patch.object(queue, "locked", side_effect=changed):
-            with self.assertRaisesRegex(JobError, "^job_archive_lock_changed$"):
+            with self.assertRaisesRegex(
+                JobError, "^job_archive_lock_changed$"
+            ):
                 archive.archive(self.registry, identifier)
         self.assertTrue((root / "source").exists())
         self.assertFalse((self.root / "archive-intent.json").exists())
@@ -496,7 +550,8 @@ class ArchiveTests(unittest.TestCase):
         content_before = (root / "source/fixture.py").read_bytes()
         tasks_before = self.transport.state()
         files_before = {
-            name: (root / name).read_bytes() for name in self.evidence[identifier]
+            name: (root / name).read_bytes()
+            for name in self.evidence[identifier]
         }
         self.assertFalse((self.root / "archive-intent.json").exists())
         with self.assertRaisesRegex(JobError, "^job_artifact_changed$"):
@@ -504,16 +559,23 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(
             source_before, self.git("worktree", "list", "--porcelain", "-z")
         )
-        self.assertEqual(content_before, (root / "source/fixture.py").read_bytes())
+        self.assertEqual(
+            content_before, (root / "source/fixture.py").read_bytes()
+        )
         self.assertEqual(tasks_before, self.transport.state())
         self.assertEqual(self.transport.calls, [])
         self.assertEqual(
             files_before,
-            {name: (root / name).read_bytes() for name in self.evidence[identifier]},
+            {
+                name: (root / name).read_bytes()
+                for name in self.evidence[identifier]
+            },
         )
         self.assertFalse((self.root / "archive-intent.json").exists())
 
-    def test_source_removal_and_rename_interruptions_resume_only_known_steps(self):
+    def test_source_removal_and_rename_interruptions_resume_only_known_steps(
+        self,
+    ):
         for stage in ("unlock", "source", "rename-before", "rename-after"):
             with self.subTest(stage=stage):
                 identifier, root = self.job()
@@ -538,7 +600,9 @@ class ArchiveTests(unittest.TestCase):
                     if stage in {"source", "unlock"}
                     else patch.object(archive.os, "rename", side_effect=rename)
                 ):
-                    with self.assertRaisesRegex(JobError, "archive_recovery_required"):
+                    with self.assertRaisesRegex(
+                        JobError, "archive_recovery_required"
+                    ):
                         archive.archive(self.registry, identifier)
                 self.assertTrue((self.root / "archive-intent.json").exists())
                 archive.archive(self.registry, identifier)
@@ -562,7 +626,9 @@ class ArchiveTests(unittest.TestCase):
             archive.archive(self.registry, identifier)
         self.assertTrue((root / "source").exists())
 
-    def test_more_than_128_cumulative_archives_keep_active_capacity_bounded(self):
+    def test_more_than_128_cumulative_archives_keep_active_capacity_bounded(
+        self,
+    ):
         artifact = {
             "revision": self.revision,
             "bundle_name": "source.bundle",
@@ -572,7 +638,9 @@ class ArchiveTests(unittest.TestCase):
         proof = {
             "revision": self.revision,
             "inode": [1, 2],
-            "repository_sha256": queue.digest(str(queue.common_directory(self.repo))),
+            "repository_sha256": queue.digest(
+                str(queue.common_directory(self.repo))
+            ),
         }
 
         def git(registry, *args):
@@ -603,7 +671,9 @@ class ArchiveCLITests(unittest.TestCase):
         for error in (None, JobError("job_archive_recovery_required")):
             output = io.StringIO()
             with (
-                patch.object(queue, "load_registry", return_value={"fixture": True}),
+                patch.object(
+                    queue, "load_registry", return_value={"fixture": True}
+                ),
                 patch.object(
                     archive,
                     "archive",

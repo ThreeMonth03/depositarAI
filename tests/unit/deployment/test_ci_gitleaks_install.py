@@ -14,7 +14,9 @@ SHA256 = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 class GitleaksInstallerTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="gitleaks-installer-test-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="gitleaks-installer-test-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.bin = self.root / "bin"
@@ -24,17 +26,21 @@ class GitleaksInstallerTests(unittest.TestCase):
         self.calls = self.root / "calls"
         self.payload = self.root / "payload"
         self.payload.write_text(
-            "#!/bin/bash\nset -euo pipefail\n"
-            'if [[ "$1" == version ]]; then\n'
-            '  printf "version\\n" >> "$CALLS"\n'
-            '  echo "${REPORTED_VERSION:-8.30.1}"; exit 0\n'
-            "fi\n"
-            'printf "scan\\n" >> "$CALLS"\n'
-            '[[ "$*" == *"--redact=100"* && "$*" == *"--ignore-gitleaks-allow"* ]] || exit 9\n'
-            'if [[ "${@: -1}" == */positive.txt ]]; then\n'
-            '  exit "${POSITIVE_STATUS:-1}"\n'
-            "fi\n"
-            'exit "${NEGATIVE_STATUS:-0}"\n'
+            (
+                "#!/bin/bash\n"
+                "set -euo pipefail\n"
+                'if [[ "$1" == version ]]; then\n'
+                '  printf "version\\n" >> "$CALLS"\n'
+                '  echo "${REPORTED_VERSION:-8.30.1}"; exit 0\n'
+                "fi\n"
+                'printf "scan\\n" >> "$CALLS"\n'
+                '[[ "$*" == *"--redact=100"* && "$*" == '
+                '*"--ignore-gitleaks-allow"* ]] || exit 9\n'
+                'if [[ "${@: -1}" == */positive.txt ]]; then\n'
+                '  exit "${POSITIVE_STATUS:-1}"\n'
+                "fi\n"
+                'exit "${NEGATIVE_STATUS:-0}"\n'
+            )
         )
         self.environment = {
             **os.environ,
@@ -48,16 +54,22 @@ class GitleaksInstallerTests(unittest.TestCase):
         }
         self.stub(
             "uname",
-            'if [[ "$1" == -s ]]; then echo Linux; else echo "${TEST_ARCH:-x86_64}"; fi',
+            (
+                'if [[ "$1" == -s ]]; then echo Linux; else echo '
+                '"${TEST_ARCH:-x86_64}"; fi'
+            ),
         )
         self.stub(
             "curl",
-            'printf "download\\n" >> "$CALLS"\n'
-            'if [[ "${DOWNLOAD_FAIL:-0}" == 1 ]]; then exit 22; fi\n'
-            "while (($#)); do\n"
-            '  if [[ "$1" == --output ]]; then output="$2"; shift 2; else shift; fi\n'
-            "done\n"
-            'cp "$PAYLOAD" "$output"',
+            (
+                'printf "download\\n" >> "$CALLS"\n'
+                'if [[ "${DOWNLOAD_FAIL:-0}" == 1 ]]; then exit 22; fi\n'
+                "while (($#)); do\n"
+                '  if [[ "$1" == --output ]]; then output="$2"; shift 2; '
+                "else shift; fi\n"
+                "done\n"
+                'cp "$PAYLOAD" "$output"'
+            ),
         )
         self.stub(
             "sha256sum",
@@ -68,11 +80,14 @@ class GitleaksInstallerTests(unittest.TestCase):
         )
         self.stub(
             "tar",
-            'printf "extracted\\n" >> "$CALLS"\n'
-            "while (($#)); do\n"
-            '  if [[ "$1" == --directory ]]; then destination="$2"; shift 2; else shift; fi\n'
-            "done\n"
-            'cp "$PAYLOAD" "$destination/gitleaks"',
+            (
+                'printf "extracted\\n" >> "$CALLS"\n'
+                "while (($#)); do\n"
+                '  if [[ "$1" == --directory ]]; then destination="$2"; '
+                "shift 2; else shift; fi\n"
+                "done\n"
+                'cp "$PAYLOAD" "$destination/gitleaks"'
+            ),
         )
 
     def stub(self, name, body):
@@ -102,13 +117,17 @@ class GitleaksInstallerTests(unittest.TestCase):
         binary = Path(line.split("=", 1)[1])
         self.assertEqual(binary.parent.parent, self.root)
         self.assertEqual(0o700, binary.stat().st_mode & 0o777)
-        self.assertIn("synthetic positive and negative controls passed", result.stdout)
+        self.assertIn(
+            "synthetic positive and negative controls passed", result.stdout
+        )
 
     def test_checksum_failure_cannot_extract_or_execute_download(self):
         result = self.run_installer(BAD_HASH="1")
         self.assertNotEqual(0, result.returncode)
         self.assertIn("SHA256", result.stderr)
-        self.assertEqual(["download", "verified"], self.calls.read_text().splitlines())
+        self.assertEqual(
+            ["download", "verified"], self.calls.read_text().splitlines()
+        )
         self.assertEqual("", self.env_file.read_text())
 
     def test_network_failure_never_exports_binary(self):
@@ -141,7 +160,10 @@ class GitleaksInstallerTests(unittest.TestCase):
         self.assertEqual("", self.env_file.read_text())
 
     def test_non_actions_and_other_architectures_fail_before_download(self):
-        for environment in ({"GITHUB_ACTIONS": "false"}, {"TEST_ARCH": "aarch64"}):
+        for environment in (
+            {"GITHUB_ACTIONS": "false"},
+            {"TEST_ARCH": "aarch64"},
+        ):
             with self.subTest(environment=environment):
                 result = self.run_installer(**environment)
                 self.assertNotEqual(0, result.returncode)

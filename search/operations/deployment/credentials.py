@@ -1,7 +1,8 @@
 """Prepare one product-owned API key, without starting or exposing services.
 
 The caller retains the product lock and its operation receipt. A key survives
-source upgrades, but not changes to the product configuration identity. Existing
+source upgrades, but not changes to the product configuration identity.
+Existing
 keys are never rotated or adopted from an incomplete/unknown receipt. Key bytes
 and their private verification digest are not included in the returned report.
 """
@@ -30,7 +31,9 @@ REVISION = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class CredentialError(ValueError):
-    """Fixed operator errors, without key bytes, digests or environment values."""
+    """Fixed operator errors, without key bytes, digests or environment
+    values.
+    """
 
 
 def _digest(value):
@@ -38,7 +41,9 @@ def _digest(value):
 
 
 def _record(descriptor, name):
-    raw = private_io.read_file(descriptor, name, mode=0o600, max_bytes=MAX_RECORD_BYTES)
+    raw = private_io.read_file(
+        descriptor, name, mode=0o600, max_bytes=MAX_RECORD_BYTES
+    )
     bounded_json.predecode(raw)
     return strict_json(raw)
 
@@ -100,7 +105,9 @@ def read_api_key_authority(config, store):
         if set(os.listdir(descriptor)) != FILES:
             raise CredentialError("product_credentials_recovery_required")
         _same(
-            _record(descriptor, STARTED), started, "product_credentials_receipt_changed"
+            _record(descriptor, STARTED),
+            started,
+            "product_credentials_receipt_changed",
         )
         completed = {
             "schema_version": 1,
@@ -116,7 +123,9 @@ def read_api_key_authority(config, store):
         # Re-read both receipts and bytes before returning authority, including
         # the retained directory's binding to its configured pathname.
         _same(
-            _record(descriptor, STARTED), started, "product_credentials_receipt_changed"
+            _record(descriptor, STARTED),
+            started,
+            "product_credentials_receipt_changed",
         )
         if _key_digest(descriptor) != completed["key_sha256"]:
             raise CredentialError("product_credentials_receipt_changed")
@@ -129,7 +138,9 @@ def read_api_key_authority(config, store):
             raise CredentialError("product_credentials_inventory_changed")
         private_io.verify_directory(descriptor, root)
         store._check_directory()
-        _same(store.read(ANCHOR), started, "product_credentials_receipt_changed")
+        _same(
+            store.read(ANCHOR), started, "product_credentials_receipt_changed"
+        )
         _same(
             store.read("product.json"),
             marker,
@@ -139,18 +150,31 @@ def read_api_key_authority(config, store):
     except CredentialError:
         raise
     except FileNotFoundError:
-        raise CredentialError("product_credentials_complete_evidence_missing") from None
-    except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
-        raise CredentialError("product_credentials_verification_failed") from None
+        raise CredentialError(
+            "product_credentials_complete_evidence_missing"
+        ) from None
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        RecursionError,
+        OverflowError,
+    ):
+        raise CredentialError(
+            "product_credentials_verification_failed"
+        ) from None
     finally:
         if descriptor is not None:
             os.close(descriptor)
 
 
 def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
-    """Create once or reverify the private key under an already-held product lock.
+    """Create once or reverify the private key under an already-held product
+    lock.
 
-    This does not provision Fess/OpenSearch identities, emit the API key, modify
+    This does not provision Fess/OpenSearch identities, emit the API key,
+    modify
     existing keys or bind any port. Fresh state may contain no secret files;
     existing state must have the exact complete inventory and matching digests.
     A crash between durable intent and completion requires explicit recovery.
@@ -187,9 +211,13 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
             # Check an existing directory before writing intent; never adopt
             # orphan material. Keep its FD retained through any later writes.
             if "secrets" in os.listdir(store.fd):
-                descriptor = private_io.open_child_directory(store.fd, "secrets")
+                descriptor = private_io.open_child_directory(
+                    store.fd, "secrets"
+                )
                 if os.listdir(descriptor):
-                    raise CredentialError("product_credentials_recovery_required")
+                    raise CredentialError(
+                        "product_credentials_recovery_required"
+                    )
             started = {
                 "schema_version": 1,
                 "kind": "product-api-key",
@@ -197,7 +225,8 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
                 "creation_revision": source_revision,
             }
             # This product-root anchor survives loss of the entire key folder.
-            # Never mistake a missing/empty prior folder for first installation.
+            # Never mistake a missing/empty prior folder for first
+            # installation.
             store.write(ANCHOR, started)
         else:
             reused = True
@@ -221,7 +250,9 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
                 raise CredentialError("product_credentials_recovery_required")
         if descriptor is None:
             descriptor = private_io.open_child_directory(
-                store.fd, "secrets", create="secrets" not in os.listdir(store.fd)
+                store.fd,
+                "secrets",
+                create="secrets" not in os.listdir(store.fd),
             )
         root = config.state_root / "secrets"
         names = set(os.listdir(descriptor))
@@ -241,7 +272,10 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
                 descriptor, STARTED, started, max_bytes=MAX_RECORD_BYTES
             )
             key = secrets.token_hex(32)
-            if type(key) is not str or re.fullmatch(r"[0-9a-f]{64}", key) is None:
+            if (
+                type(key) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", key) is None
+            ):
                 raise CredentialError("product_api_key_generation_invalid")
             private_io.verify_directory(descriptor, root)
             private_io.write_file(
@@ -264,7 +298,8 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
             private_io.write_json(
                 descriptor, COMPLETED, completed, max_bytes=MAX_RECORD_BYTES
             )
-        # Re-read the authority and material, not just the in-memory write result.
+        # Re-read the authority and material, not just the in-memory write
+        # result.
         _same(
             _record(descriptor, STARTED),
             started,
@@ -281,7 +316,9 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
             raise CredentialError("product_credentials_inventory_changed")
         private_io.verify_directory(descriptor, root)
         store._check_directory()
-        _same(store.read(ANCHOR), started, "product_credentials_receipt_changed")
+        _same(
+            store.read(ANCHOR), started, "product_credentials_receipt_changed"
+        )
         _same(
             store.read("product.json"),
             _marker(config),
@@ -300,8 +337,17 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
         }
     except CredentialError:
         raise
-    except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
-        raise CredentialError("product_credentials_verification_failed") from None
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        RecursionError,
+        OverflowError,
+    ):
+        raise CredentialError(
+            "product_credentials_verification_failed"
+        ) from None
     finally:
         if descriptor is not None:
             os.close(descriptor)

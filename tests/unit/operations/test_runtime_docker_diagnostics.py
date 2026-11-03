@@ -1,4 +1,5 @@
-"""Closed Docker diagnostics cross the real CLI/receipt boundary without Docker."""
+"""Closed Docker diagnostics cross the real CLI/receipt boundary without
+Docker."""
 
 from __future__ import annotations
 
@@ -49,7 +50,9 @@ CODES = {
 
 class RuntimeDockerDiagnosticTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-docker-diagnostic-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-docker-diagnostic-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.case_number = 0
@@ -65,7 +68,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
         self.assertNotIn("Traceback", errors.getvalue())
         return json.loads(errors.getvalue())
 
-    def assert_failure(self, report, *, error_type="InferenceError", code=None):
+    def assert_failure(
+        self, report, *, error_type="InferenceError", code=None
+    ):
         expected = {
             "schema_version": 1,
             "status": "failed",
@@ -79,7 +84,8 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
         self.assertIs(report["active_changed"], False)
 
     def lifecycle_failure(self, action, expected):
-        """Keep CLI dispatch, private state, locking and failed receipts real."""
+        """Keep CLI dispatch, private state, locking and failed receipts
+        real."""
         self.case_number += 1
         config = ProductConfig(
             2,
@@ -96,7 +102,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
             self.assertIs(value, config)
             self.assertEqual(revision, REVISION)
             self.assertEqual(options["repo_root"], cli.ROOT)
-            with self.assertRaisesRegex(ValueError, "^product_operation_busy$"):
+            with self.assertRaisesRegex(
+                ValueError, "^product_operation_busy$"
+            ):
                 with locked_state(config):
                     self.fail("native owner ran without its operation lock")
             action()
@@ -109,11 +117,17 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                 inference, "start_private_inference", side_effect=fail
             ) as owner,
             patch.object(
-                subprocess, "Popen", side_effect=AssertionError("process started")
+                subprocess,
+                "Popen",
+                side_effect=AssertionError("process started"),
             ),
         ):
             report = self.invoke(
-                ["--config", str(self.root / "private.json"), "start-inference"]
+                [
+                    "--config",
+                    str(self.root / "private.json"),
+                    "start-inference",
+                ]
             )
         owner.assert_called_once()
         self.assert_failure(report, code=expected)
@@ -131,7 +145,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
         if outputs is None:
             outputs = [subprocess.CompletedProcess([], 0, b"", b"")]
         runner = Mock(side_effect=outputs)
-        return runtime_docker.Docker(self.root / PRIVATE, runner, **options), runner
+        return runtime_docker.Docker(
+            self.root / PRIVATE, runner, **options
+        ), runner
 
     def test_invalid_client_configuration_is_a_fixed_diagnostic(self):
         for options, expected in (
@@ -140,7 +156,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
             ({"verify_client": PRIVATE}, "inference_client_guard_invalid"),
         ):
             with self.subTest(options=options):
-                runner = Mock(side_effect=AssertionError("runner must not execute"))
+                runner = Mock(
+                    side_effect=AssertionError("runner must not execute")
+                )
                 self.lifecycle_failure(
                     lambda: runtime_docker.Docker(
                         self.root / PRIVATE, runner, **options
@@ -169,7 +187,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
 
     def test_command_finishing_after_deadline_has_a_fixed_timeout(self):
         client, runner = self.client(deadline=100)
-        with patch.object(runtime_docker.time, "monotonic", side_effect=[0, 101]):
+        with patch.object(
+            runtime_docker.time, "monotonic", side_effect=[0, 101]
+        ):
             self.lifecycle_failure(
                 lambda: client.call(["info"]), "inference_command_timeout"
             )
@@ -178,14 +198,18 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
     def test_raw_output_and_cumulative_output_limits_do_not_print_bytes(self):
         for cumulative in (False, True):
             with self.subTest(cumulative=cumulative):
-                outputs = [subprocess.CompletedProcess([], 0, PRIVATE.encode(), b"")]
+                outputs = [
+                    subprocess.CompletedProcess([], 0, PRIVATE.encode(), b"")
+                ]
                 if cumulative:
                     outputs *= 2
                 client, runner = self.client(outputs=outputs)
 
                 def overflow():
                     if cumulative:
-                        self.assertEqual(client.call(["info"]), PRIVATE.encode())
+                        self.assertEqual(
+                            client.call(["info"]), PRIVATE.encode()
+                        )
                     client.call(["info"])
 
                 with (
@@ -194,7 +218,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                         "MAX_OUTPUT_BYTES",
                         len(PRIVATE) if cumulative else len(PRIVATE) - 1,
                     ),
-                    patch.object(image_build, "MAX_TOTAL_OUTPUT_BYTES", len(PRIVATE)),
+                    patch.object(
+                        image_build, "MAX_TOTAL_OUTPUT_BYTES", len(PRIVATE)
+                    ),
                 ):
                     self.lifecycle_failure(overflow, "inference_output_limit")
                 self.assertEqual(runner.call_count, 2 if cumulative else 1)
@@ -216,7 +242,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
         for result in (
             subprocess.CompletedProcess([], 1, PRIVATE, PRIVATE),
             OSError(PRIVATE),
-            subprocess.TimeoutExpired(PRIVATE, 30, output=PRIVATE, stderr=PRIVATE),
+            subprocess.TimeoutExpired(
+                PRIVATE, 30, output=PRIVATE, stderr=PRIVATE
+            ),
         ):
             with self.subTest(result_type=type(result).__name__):
                 client, runner = self.client(outputs=[result])
@@ -233,7 +261,8 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
             outputs=[subprocess.CompletedProcess([], 0, b"[]", PRIVATE)]
         )
         self.lifecycle_failure(
-            lambda: client.inspect(PRIVATE), "inference_image_inspection_invalid"
+            lambda: client.inspect(PRIVATE),
+            "inference_image_inspection_invalid",
         )
         self.assertEqual(runner.call_count, 1)
 
@@ -274,7 +303,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                         )
                     self.assert_failure(report, code=code)
 
-    def test_other_runtime_commands_cannot_gain_private_runtime_diagnostics(self):
+    def test_other_runtime_commands_cannot_gain_private_runtime_diagnostics(
+        self,
+    ):
         for command in (
             "doctor",
             "status",
@@ -293,7 +324,12 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 options = (
-                    ["--destination", "/unused/package", "--scanner", "/unused/scanner"]
+                    [
+                        "--destination",
+                        "/unused/package",
+                        "--scanner",
+                        "/unused/scanner",
+                    ]
                     if command == "package-product"
                     else []
                 )
@@ -309,8 +345,12 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                     )
                 self.assert_failure(report)
 
-    def test_public_and_source_commands_do_not_gain_private_runtime_diagnostics(self):
-        from search.operations.deployment.payload import restore as product_restore
+    def test_public_and_source_commands_have_no_runtime_diagnostics(
+        self,
+    ):
+        from search.operations.deployment.payload import (
+            restore as product_restore,
+        )
         from search.operations.deployment.public_entry import host, updates
 
         for command, owner, action, options in (
@@ -430,7 +470,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
             runtime_docker.InferenceError(PRIVATE),
             runtime_docker.InferenceError("inference_command_failed", PRIVATE),
             runtime_docker.InferenceError(),
-            runtime_docker.InferenceError(PrivateString("inference_command_failed")),
+            runtime_docker.InferenceError(
+                PrivateString("inference_command_failed")
+            ),
             runtime_docker.InferenceError(PrivateValue()),
         )
         for error in errors:
@@ -442,7 +484,9 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                 self.assert_failure(report, error_type=type(error).__name__)
         self.assertEqual(reads, [])
 
-    def test_wrapped_errors_do_not_recover_a_diagnostic_from_private_context(self):
+    def test_wrapped_errors_do_not_recover_a_diagnostic_from_private_context(
+        self,
+    ):
         for attribute in ("__cause__", "__context__"):
             with self.subTest(attribute=attribute):
                 error = ValueError(PRIVATE)
@@ -457,7 +501,7 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                     )
                 self.assert_failure(report, error_type="ValueError")
 
-    def test_activation_recovery_preserves_true_or_unknown_outcome_with_runtime_cause(
+    def test_activation_recovery_keeps_outcome_with_runtime_cause(
         self,
     ):
         for changed in (True, None):
@@ -467,23 +511,31 @@ class RuntimeDockerDiagnosticTests(unittest.TestCase):
                     error.__cause__ = runtime_docker.InferenceError(
                         "inference_command_failed"
                     )
-                    with patch.object(cli, "_runtime_report", side_effect=error):
+                    with patch.object(
+                        cli, "_runtime_report", side_effect=error
+                    ):
                         report = self.invoke(
                             ["--config", "/unused/product.json", command]
                         )
                     self.assertEqual(report["schema_version"], 1)
                     self.assertEqual(report["status"], "recovery_required")
-                    self.assertEqual(report["code"], "product_operation_failed")
                     self.assertEqual(
-                        report["error_code"], "product_activation_outcome_unconfirmed"
+                        report["code"], "product_operation_failed"
+                    )
+                    self.assertEqual(
+                        report["error_code"],
+                        "product_activation_outcome_unconfirmed",
                     )
                     self.assertIs(report["active_changed"], changed)
                     self.assertIs(report["activation_performed"], changed)
                     self.assertIs(report["runtime_verified"], False)
                     self.assertIs(report["confers_runtime_authority"], False)
 
-    def test_cli_failure_does_not_import_runtime_controllers_or_frameworks(self):
-        program = """
+    def test_cli_failure_does_not_import_runtime_controllers_or_frameworks(
+        self,
+    ):
+        program = (
+            """
 import contextlib
 import importlib.abc
 import io
@@ -500,7 +552,8 @@ blocked = (
 )
 class BlockImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if any(fullname == name or fullname.startswith(name + '.') for name in blocked):
+        if any(fullname == name or """
+            """fullname.startswith(name + '.') for name in blocked):
             raise AssertionError('unnecessary runtime dependency')
 sys.meta_path.insert(0, BlockImports())
 from search.operations import cli
@@ -509,7 +562,9 @@ def forbidden_process(*args, **kwargs):
     raise AssertionError('CLI diagnostic started a process')
 output, errors = io.StringIO(), io.StringIO()
 with patch('subprocess.Popen', forbidden_process), patch.object(
-    cli, '_runtime_report', side_effect=runtime_docker.InferenceError('inference_command_timeout')
+    cli, '_runtime_report', """
+            """side_effect=runtime_docker.InferenceError('inference_"""
+            """command_timeout')
 ), contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
     code = cli.main(['--config', '/unused/product.json', 'start-inference'])
 assert code == 1 and not output.getvalue()
@@ -518,6 +573,7 @@ assert report['error_code'] == 'inference_command_timeout'
 assert not any(name in sys.modules for name in blocked)
 print(json.dumps(report))
 """
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", program, str(ROOT)],
             capture_output=True,
@@ -527,4 +583,6 @@ print(json.dumps(report))
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
-        self.assert_failure(json.loads(result.stdout), code="inference_command_timeout")
+        self.assert_failure(
+            json.loads(result.stdout), code="inference_command_timeout"
+        )

@@ -32,7 +32,9 @@ class SearchImageHardeningTests(unittest.TestCase):
                 / "site-packages"
             )
             user_site.mkdir(parents=True)
-            (user_site / "usercustomize.py").write_text("raise SystemExit(92)\n")
+            (user_site / "usercustomize.py").write_text(
+                "raise SystemExit(92)\n"
+            )
             environment = {
                 **os.environ,
                 "HOME": str(poison),
@@ -138,10 +140,13 @@ class SearchImageHardeningTests(unittest.TestCase):
         )
         self.assertIn("chmod 0755 /usr/share/opensearch ", dockerfile)
         self.assertIn(
-            "chmod 0755 /usr/share/opensearch/plugins/opensearch-security/tools/hash.sh",
+            "chmod 0755 /usr/share/opensearch/plugins/opensearch-sec"
+            "urity/tools/hash.sh",
             dockerfile,
         )
-        self.assertNotIn("chmod -R a+rX /usr/share/opensearch/plugins", dockerfile)
+        self.assertNotIn(
+            "chmod -R a+rX /usr/share/opensearch/plugins", dockerfile
+        )
         self.assertNotIn("chmod 0777", dockerfile)
         self.assertTrue(dockerfile.rstrip().endswith("USER 1000:1000"))
 
@@ -149,9 +154,9 @@ class SearchImageHardeningTests(unittest.TestCase):
         dockerfile = (ROOT / "deploy/docker/fess/Dockerfile").read_text(
             encoding="utf-8"
         )
-        healthcheck = (ROOT / "deploy/docker/fess/fess_healthcheck.sh").read_text(
-            encoding="utf-8"
-        )
+        healthcheck = (
+            ROOT / "deploy/docker/fess/fess_healthcheck.sh"
+        ).read_text(encoding="utf-8")
         self.assertIn(
             "fess_healthcheck.sh /usr/local/bin/depositar-fess-healthcheck",
             dockerfile,

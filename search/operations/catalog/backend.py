@@ -1,8 +1,10 @@
 """Prepare an isolated CPU catalog slot; never start or switch a live service.
 
-Bootstrap material and the Compose policy are sealed from an exact Git revision.
+Bootstrap material and the Compose policy are sealed from an exact Git
+revision.
 No research recovery file or host-specific image ID is accepted. Bootstrap may
-use an isolated password-hash helper, but the retrieval services are not started.
+use an isolated password-hash helper, but the retrieval services are not
+started.
 """
 
 from __future__ import annotations
@@ -155,7 +157,9 @@ def validate_compatibility(plan, *, repo_root, revision, runner=None):
         or type(revision) is not str
         or REVISION.fullmatch(revision) is None
     ):
-        raise commands.BackendError("catalog compatibility revision is invalid")
+        raise commands.BackendError(
+            "catalog compatibility revision is invalid"
+        )
     if origin == revision:
         return
     runner = commands.default_runner(repo_root) if runner is None else runner
@@ -164,31 +168,55 @@ def validate_compatibility(plan, *, repo_root, revision, runner=None):
     original_paths = set(
         commands.command_output(
             runner,
-            ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "--name-only", origin],
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "ls-tree",
+                "-r",
+                "-z",
+                "--name-only",
+                origin,
+            ],
         ).split("\0")
     )
     for relative in (*STAGED_FILES, *BUILD_FILES, *DATA_FILES):
         current = _source_bytes(Path(repo_root) / relative)
         committed = commands.command_output(
-            runner, ["git", "-C", str(repo_root), "show", revision + ":" + relative]
+            runner,
+            ["git", "-C", str(repo_root), "show", revision + ":" + relative],
         ).encode("utf-8")
         if current != committed:
             raise commands.BackendError(
                 "commit catalog compatibility source changes first"
             )
         if relative not in original_paths:
-            raise IncompatibleCatalog("catalog data recipe changed; rebuild required")
+            raise IncompatibleCatalog(
+                "catalog data recipe changed; rebuild required"
+            )
         original = commands.command_output(
-            runner, ["git", "-C", str(repo_root), "show", origin + ":" + relative]
+            runner,
+            ["git", "-C", str(repo_root), "show", origin + ":" + relative],
         ).encode("utf-8")
-        if _recipe_source(relative, original) != _recipe_source(relative, committed):
-            raise IncompatibleCatalog("catalog data recipe changed; rebuild required")
+        if _recipe_source(relative, original) != _recipe_source(
+            relative, committed
+        ):
+            raise IncompatibleCatalog(
+                "catalog data recipe changed; rebuild required"
+            )
 
 
 def _compatible_slot(
-    catalogs_fd, catalog, bundle_path, manifest_sha256, *, repo_root, revision, runner
+    catalogs_fd,
+    catalog,
+    bundle_path,
+    manifest_sha256,
+    *,
+    repo_root,
+    revision,
+    runner,
 ):
-    """Find retained data without rewriting its provenance or probing Docker."""
+    """Find retained data without changing provenance or probing Docker."""
     names = os.listdir(catalogs_fd)
     if len(names) > MAX_SLOTS:
         raise commands.BackendError("catalog slot limit exceeded")
@@ -204,15 +232,18 @@ def _compatible_slot(
             if "failure.json" in entries or "plan.json" not in entries:
                 continue
             plan = storage.read_record(descriptor, "plan.json")
-            # A prefix match is only a lookup hint; the full bundle/manifest and
-            # every sealed path are authenticated by _prepare_or_load below.
+            # A prefix match is only a lookup hint; the full bundle/manifest
+            # and every sealed path are authenticated by _prepare_or_load
+            # below.
             if (
                 type(plan) is not dict
                 or type(plan.get("revision")) is not str
                 or REVISION.fullmatch(plan["revision"]) is None
                 or name != bundle_id[:12] + "-" + plan["revision"][:12]
             ):
-                raise commands.BackendError("existing catalog plan identity mismatch")
+                raise commands.BackendError(
+                    "existing catalog plan identity mismatch"
+                )
             if (
                 plan.get("bundle_path") != str(bundle_path)
                 or plan.get("manifest_sha256") != manifest_sha256
@@ -234,7 +265,7 @@ def _compatible_slot(
 
 
 def _completed_slot_hint(work_fd, count):
-    """Only select complete histories; the vector gate later proves every byte."""
+    """Select complete histories; the vector gate later proves every byte."""
     try:
         vectors = storage.private_directory(work_fd, "vector-operations")
     except FileNotFoundError:
@@ -282,7 +313,8 @@ def _sealed_sources(repo_root, revision, runner):
         path = storage.real_path(repo_root / relative)
         current = _source_bytes(path)
         committed = commands.command_output(
-            runner, ["git", "-C", str(repo_root), "show", revision + ":" + relative]
+            runner,
+            ["git", "-C", str(repo_root), "show", revision + ":" + relative],
         ).encode("utf-8")
         if current != committed:
             raise commands.BackendError(
@@ -293,7 +325,7 @@ def _sealed_sources(repo_root, revision, runner):
 
 
 def _source_bytes(path):
-    """Repository files may be root-owned; pin the leaf before inspecting it."""
+    """Pin repository files before inspection; root-owned files are valid."""
     parent_fd = build_storage._open_directory_chain(
         str(path.parent), "repository source"
     )
@@ -315,13 +347,17 @@ def _source_bytes(path):
             raise commands.BackendError("unsafe repository source file")
         chunks, size = [], 0
         while True:
-            chunk = os.read(fd, min(65536, commands.MAX_OUTPUT_BYTES + 1 - size))
+            chunk = os.read(
+                fd, min(65536, commands.MAX_OUTPUT_BYTES + 1 - size)
+            )
             if not chunk:
                 break
             chunks.append(chunk)
             size += len(chunk)
             if size > commands.MAX_OUTPUT_BYTES:
-                raise commands.BackendError("repository source exceeds its byte limit")
+                raise commands.BackendError(
+                    "repository source exceeds its byte limit"
+                )
         after = os.fstat(fd)
         current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
         if (
@@ -329,7 +365,9 @@ def _source_bytes(path):
             or not storage.same_file(before, after)
             or not storage.same_file(after, current)
         ):
-            raise commands.BackendError("repository source changed while being read")
+            raise commands.BackendError(
+                "repository source changed while being read"
+            )
         return b"".join(chunks)
     finally:
         if fd is not None:
@@ -352,7 +390,9 @@ def validate_compose(
     if PROJECT.fullmatch(project) is None or config.get("name") != project:
         raise commands.BackendError("catalog slot project identity mismatch")
     networks = config.get("networks")
-    network = networks.get("search_backend") if type(networks) is dict else None
+    network = (
+        networks.get("search_backend") if type(networks) is dict else None
+    )
     if (
         type(networks) is not dict
         or set(networks) != {"search_backend"}
@@ -408,9 +448,9 @@ def validate_compose(
                 raise commands.BackendError(
                     "catalog slot mount escapes its isolated data root"
                 )
-    if str(module.derive_catalog_root(config["services"]["opensearch-search"])) != str(
-        data_root
-    ):
+    if str(
+        module.derive_catalog_root(config["services"]["opensearch-search"])
+    ) != str(data_root):
         raise commands.BackendError("catalog slot data root changed")
     for secret in config.get("secrets", {}).values():
         if data_root not in Path(secret["file"]).parents:
@@ -428,7 +468,9 @@ def _write_file(path, content):
     parent_fd = private_io.open_directory(parent)
     try:
         for name in reversed(missing):
-            child = private_io.open_child_directory(parent_fd, name, create=True)
+            child = private_io.open_child_directory(
+                parent_fd, name, create=True
+            )
             os.close(parent_fd)
             parent_fd = child
         fd = os.open(
@@ -468,7 +510,7 @@ def _verify_staged_sources(tooling, sources):
 
 
 def _build_hash_image(tooling, sources, revision, runner):
-    """Build only the reviewed, sealed OpenSearch context; never use host IDs."""
+    """Build the reviewed sealed OpenSearch context, never from host IDs."""
     _verify_staged_sources(tooling, sources)
     image = HASH_IMAGE_PREFIX + revision
     context = tooling / "deploy/docker/opensearch"
@@ -536,14 +578,22 @@ def _environment(template, *, data_root, config, uid, gid, project):
         key = line.split("=", 1)[0]
         if key in replacements:
             if key in found:
-                raise commands.BackendError("duplicate generated bootstrap setting")
+                raise commands.BackendError(
+                    "duplicate generated bootstrap setting"
+                )
             found.add(key)
             line = key + "=" + replacements[key]
         lines.append(line)
     if found != set(replacements):
-        raise commands.BackendError("bootstrap template is missing a required setting")
-    if any(re.search(r"[\s$`,'\"\\]", value) for value in replacements.values()):
-        raise commands.BackendError("bootstrap paths contain unsupported characters")
+        raise commands.BackendError(
+            "bootstrap template is missing a required setting"
+        )
+    if any(
+        re.search(r"[\s$`,'\"\\]", value) for value in replacements.values()
+    ):
+        raise commands.BackendError(
+            "bootstrap paths contain unsupported characters"
+        )
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -567,12 +617,21 @@ def security_material_digest(data_root):
         if set(os.listdir(secret_fd)) != set(SECRET_NAMES) or set(
             os.listdir(config_fd)
         ) != {*SECURITY_FILES, "security-material.sha256"}:
-            raise commands.BackendError("catalog security material inventory changed")
+            raise commands.BackendError(
+                "catalog security material inventory changed"
+            )
         entries = [
-            (secret_fd, "secrets/" + name, name, 0o600, 65) for name in SECRET_NAMES
+            (secret_fd, "secrets/" + name, name, 0o600, 65)
+            for name in SECRET_NAMES
         ]
         entries.extend(
-            (config_fd, "opensearch/config/" + name, name, 0o400, MAX_SECURITY_BYTES)
+            (
+                config_fd,
+                "opensearch/config/" + name,
+                name,
+                0o400,
+                MAX_SECURITY_BYTES,
+            )
             for name in SECURITY_FILES
         )
         entries.append(
@@ -627,7 +686,9 @@ def _prepare_or_load(
         or not isinstance(revision, str)
         or REVISION.fullmatch(revision) is None
     ):
-        raise commands.BackendError("invalid product configuration or source revision")
+        raise commands.BackendError(
+            "invalid product configuration or source revision"
+        )
     repo_root = storage.real_path(repo_root)
     config = validate_config(config.to_dict(), repo_root=repo_root)
     if os.geteuid() == 0 or os.getegid() == 0:
@@ -635,7 +696,9 @@ def _prepare_or_load(
             "catalog preparation requires the non-root product operator"
         )
     bundle_path = storage.real_path(bundle_path)
-    catalog = CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
+    catalog = CatalogBundle.load(
+        bundle_path, expected_manifest_sha256=manifest_sha256
+    )
     runner = commands.default_runner(repo_root) if runner is None else runner
     sources = _sealed_sources(repo_root, revision, runner)
     if catalog_revision is not None:
@@ -687,7 +750,8 @@ def _prepare_or_load(
         "document_count": len(catalog.documents),
         "status": "prepared",
         "source_sha256": {
-            name: hashlib.sha256(raw).hexdigest() for name, raw in sources.items()
+            name: hashlib.sha256(raw).hexdigest()
+            for name, raw in sources.items()
         },
     }
     state_fd = private_io.open_directory(config.state_root)
@@ -701,7 +765,9 @@ def _prepare_or_load(
                 raise commands.BackendError(
                     "catalog must be prepared before it can be loaded"
                 ) from None
-            catalogs_fd = storage.private_directory(state_fd, "catalogs", create=True)
+            catalogs_fd = storage.private_directory(
+                state_fd, "catalogs", create=True
+            )
         if work_name in os.listdir(catalogs_fd):
             work_fd = storage.private_directory(catalogs_fd, work_name)
             if "failure.json" in os.listdir(work_fd):
@@ -715,14 +781,18 @@ def _prepare_or_load(
                 != {*identity, "compose_sha256", "security_material_sha256"}
                 or type(plan.get("schema_version")) is not int
                 or type(plan.get("document_count")) is not int
-                or any(plan.get(key) != value for key, value in identity.items())
+                or any(
+                    plan.get(key) != value for key, value in identity.items()
+                )
             ):
-                raise commands.BackendError("existing catalog plan identity mismatch")
+                raise commands.BackendError(
+                    "existing catalog plan identity mismatch"
+                )
             data_fd = private_io.open_directory(data_root)
             os.close(data_fd)
-            if plan.get("security_material_sha256") != security_material_digest(
-                data_root
-            ):
+            if plan.get(
+                "security_material_sha256"
+            ) != security_material_digest(data_root):
                 raise commands.BackendError(
                     "sealed catalog security material digest mismatch"
                 )
@@ -730,7 +800,9 @@ def _prepare_or_load(
             if hashlib.sha256(
                 metadata_source.canonical(compose) + b"\n"
             ).hexdigest() != plan.get("compose_sha256"):
-                raise commands.BackendError("sealed catalog Compose digest mismatch")
+                raise commands.BackendError(
+                    "sealed catalog Compose digest mismatch"
+                )
             validate_compose(
                 compose,
                 repo_root=repo_root,
@@ -754,9 +826,13 @@ def _prepare_or_load(
                 project=project,
             )
             if _staged_bytes(tooling, ".env.catalog") != env:
-                raise commands.BackendError("sealed bootstrap environment changed")
+                raise commands.BackendError(
+                    "sealed bootstrap environment changed"
+                )
             private_io.verify_directory(state_fd, config.state_root)
-            private_io.verify_directory(catalogs_fd, config.state_root / "catalogs")
+            private_io.verify_directory(
+                catalogs_fd, config.state_root / "catalogs"
+            )
             private_io.verify_directory(work_fd, work_root)
             return plan
         if not allow_create:
@@ -767,11 +843,15 @@ def _prepare_or_load(
             raise commands.BackendError(
                 "catalog slot limit reached; archive retained slots first"
             )
-        work_fd = storage.private_directory(catalogs_fd, work_name, create=True)
+        work_fd = storage.private_directory(
+            catalogs_fd, work_name, create=True
+        )
         storage.write_record(work_fd, "started.json", identity)
         phase = "stage_sources"
         try:
-            tooling_fd = storage.private_directory(work_fd, "tooling", create=True)
+            tooling_fd = storage.private_directory(
+                work_fd, "tooling", create=True
+            )
             os.close(tooling_fd)
             for name in (*STAGED_FILES, *BUILD_FILES):
                 _write_file(tooling / name, sources[name])
@@ -855,12 +935,16 @@ def _prepare_or_load(
                 policy_source=sources["scripts/validate_catalog_compose.py"],
             )
             private_io.verify_directory(state_fd, config.state_root)
-            private_io.verify_directory(catalogs_fd, config.state_root / "catalogs")
+            private_io.verify_directory(
+                catalogs_fd, config.state_root / "catalogs"
+            )
             private_io.verify_directory(work_fd, work_root)
             storage.write_record(work_fd, "compose.json", compose)
             plan = {
                 **identity,
-                "security_material_sha256": security_material_digest(data_root),
+                "security_material_sha256": security_material_digest(
+                    data_root
+                ),
                 "compose_sha256": hashlib.sha256(
                     metadata_source.canonical(compose) + b"\n"
                 ).hexdigest(),
@@ -921,7 +1005,7 @@ def load_prepared(
     runner=None,
     catalog_revision=None,
 ):
-    """Reverify an existing plan without bootstrap, render, writes or creation."""
+    """Reverify plans without bootstrap, rendering, writes or creation."""
     return _prepare_or_load(
         config,
         repo_root=repo_root,

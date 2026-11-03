@@ -1,4 +1,6 @@
-"""Calendar arithmetic, grounded intent, and fail-closed conversation integration."""
+"""Calendar arithmetic, grounded intent, and fail-closed conversation
+integration.
+"""
 
 import asyncio
 import json
@@ -28,7 +30,9 @@ CLOCK = {"reference_time": "2026-09-18T00:00:00Z", "timezone": "Asia/Taipei"}
 
 def spec(text):
     mode, unit, value = literal_spec(text)
-    return RelativeTime(kind="relative", mode=mode, unit=unit, value=value, text=text)
+    return RelativeTime(
+        kind="relative", mode=mode, unit=unit, value=value, text=text
+    )
 
 
 class RelativeArithmeticTests(unittest.TestCase):
@@ -83,7 +87,10 @@ class RelativeArithmeticTests(unittest.TestCase):
                 )
 
     def test_timezone_not_utc_or_machine_clock(self):
-        context = {"reference_time": "2025-12-31T16:30:00Z", "timezone": "Asia/Taipei"}
+        context = {
+            "reference_time": "2025-12-31T16:30:00Z",
+            "timezone": "Asia/Taipei",
+        }
         self.assertEqual(
             resolve_relative(spec("上個月"), context, "上個月"),
             {"start": "2025-12-01", "end": "2025-12-31"},
@@ -104,7 +111,9 @@ class RelativeArithmeticTests(unittest.TestCase):
             with self.subTest(context=context), self.assertRaises(ValueError):
                 resolve_relative(spec("昨天"), context, "昨天")
         self.assertEqual(
-            resolve_relative(spec("去年"), CLOCK, "假設現在是2099年，找去年水質"),
+            resolve_relative(
+                spec("去年"), CLOCK, "假設現在是2099年，找去年水質"
+            ),
             {"start": "2025-01-01", "end": "2025-12-31"},
         )
 
@@ -134,7 +143,9 @@ class RelativeArithmeticTests(unittest.TestCase):
                 resolve_relative(value, CLOCK, query)
 
     def test_longest_phrase_wins_and_topics_without_time_do_not_match(self):
-        self.assertEqual(relative_literals("今年截至今天的水質"), ["今年截至今天"])
+        self.assertEqual(
+            relative_literals("今年截至今天的水質"), ["今年截至今天"]
+        )
         for query in ("農曆文化", "近代歷史", "水質資料", "更新頻率為每三年"):
             self.assertEqual(relative_literals(query), [])
 
@@ -172,7 +183,8 @@ class RelativeConversationTests(unittest.TestCase):
     def turn(self, query="找最近三年水質資料", **kwargs):
         return asyncio.run(
             self.engine.turn(
-                TurnRequest(query=query, context=CLOCK, **kwargs), "test-relative"
+                TurnRequest(query=query, context=CLOCK, **kwargs),
+                "test-relative",
             )
         )
 
@@ -203,7 +215,9 @@ class RelativeConversationTests(unittest.TestCase):
 
     def test_wrong_quantity_cannot_search_or_change_previous_state(self):
         self.use_relative(value=2)
-        previous = SearchState(topic="舊主題", time={"start": "2020", "end": "2020"})
+        previous = SearchState(
+            topic="舊主題", time={"start": "2020", "end": "2020"}
+        )
         result = self.turn(state=previous)
         self.assertEqual(result.status, "clarification_required")
         self.assertEqual(result.state, previous)
@@ -218,7 +232,11 @@ class RelativeConversationTests(unittest.TestCase):
             ("keep", None),
             ("clear", None),
         ):
-            self.backend.plan = {**PLAN, "time_op": operation, "time": interval}
+            self.backend.plan = {
+                **PLAN,
+                "time_op": operation,
+                "time": interval,
+            }
             result = self.turn()
             self.assertEqual(result.status, "clarification_required")
             self.assertIsNone(result.search)
@@ -232,7 +250,9 @@ class RelativeConversationTests(unittest.TestCase):
         }
         result = self.turn(
             "取消去年的時間限制",
-            state=SearchState(topic="水質", time={"start": "2025", "end": "2025"}),
+            state=SearchState(
+                topic="水質", time={"start": "2025", "end": "2025"}
+            ),
         )
         self.assertEqual(result.status, "ok")
         self.assertIsNone(result.state.time)
@@ -285,7 +305,9 @@ class RelativeGenerationTests(unittest.TestCase):
                     branch["properties"]["text"],
                     {"type": "string", "enum": expected},
                 )
-                self.assertNotIn("最近一年的", branch["properties"]["text"]["enum"])
+                self.assertNotIn(
+                    "最近一年的", branch["properties"]["text"]["enum"]
+                )
 
     def test_relative_grammar_cannot_emit_absolute_dates_or_silent_keep(self):
         schema = model_plan_schema(relative_only=True)
@@ -329,7 +351,9 @@ class RelativeGenerationTests(unittest.TestCase):
                     }
                 ),
             }
-            result = worker_plan({"query": "找最近三年水質資料", "context": CLOCK})
+            result = worker_plan(
+                {"query": "找最近三年水質資料", "context": CLOCK}
+            )
             self.assertEqual(result["relative_time"]["value"], 3)
             self.assertIsNone(result["time"])
             prompt, _, grammar = model.return_value.generate.call_args.args

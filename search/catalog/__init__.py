@@ -1,1 +1,1 @@
-"""Sealed catalog data, bounded Fess search and operator-only administration."""
+"""Sealed catalog data, bounded Fess search and operator-only admin."""

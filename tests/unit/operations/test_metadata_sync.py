@@ -1,4 +1,5 @@
-"""Production metadata cache tests: real bundles, fake transport, no services."""
+"""Production metadata cache tests: real bundles, fake transport, no
+services."""
 
 from __future__ import annotations
 
@@ -34,7 +35,9 @@ def dataset(number=1, **changes):
 
 class CatalogSyncTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-sync-test-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-sync-test-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.cache = self.root / "cache"
@@ -44,7 +47,10 @@ class CatalogSyncTests(unittest.TestCase):
 
     def fetch(self, start, rows, deadline):
         self.calls.append((start, rows, deadline))
-        return {"count": len(self.rows), "results": self.rows[start : start + rows]}
+        return {
+            "count": len(self.rows),
+            "results": self.rows[start : start + rows],
+        }
 
     def sync(self, **options):
         return syncer.sync(self.cache, fetch=self.fetch, **options)
@@ -55,7 +61,9 @@ class CatalogSyncTests(unittest.TestCase):
     def baseline(self, report):
         return Path(report["bundle_path"]), report["manifest_sha256"]
 
-    def test_first_sync_has_two_scans_and_a_sealed_cache_without_baseline(self):
+    def test_first_sync_has_two_scans_and_a_sealed_cache_without_baseline(
+        self,
+    ):
         report = self.sync()
         self.assertEqual(2, len(self.calls))
         self.assertEqual(
@@ -76,7 +84,8 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertEqual(0o400, snapshot.stat().st_mode & 0o777)
         self.assertEqual(1, snapshot.stat().st_nlink)
         self.assertEqual(
-            report["snapshot_sha256"], hashlib.sha256(snapshot.read_bytes()).hexdigest()
+            report["snapshot_sha256"],
+            hashlib.sha256(snapshot.read_bytes()).hexdigest(),
         )
         manifest = json.loads(
             (Path(report["bundle_path"]) / "bundle-manifest.json").read_text()
@@ -85,7 +94,9 @@ class CatalogSyncTests(unittest.TestCase):
             report["snapshot_sha256"],
             manifest["artifacts"]["source.jsonl.gz"]["sha256"],
         )
-        self.assertEqual(report, json.loads(Path(report["receipt_path"]).read_text()))
+        self.assertEqual(
+            report, json.loads(Path(report["receipt_path"]).read_text())
+        )
         self.assertEqual(0o600, self.pointer().stat().st_mode & 0o777)
 
     def test_default_always_fetches_and_deduplicates_immutable_objects(self):
@@ -111,7 +122,9 @@ class CatalogSyncTests(unittest.TestCase):
 
     def test_explicit_ttl_revalidates_snapshot_and_bundle(self):
         first = self.sync()
-        with patch.object(CatalogBundle, "load", wraps=CatalogBundle.load) as loader:
+        with patch.object(
+            CatalogBundle, "load", wraps=CatalogBundle.load
+        ) as loader:
             second = self.sync(ttl_seconds=3600)
         self.assertTrue(second["cache_hit"])
         self.assertEqual(2, len(self.calls))
@@ -123,22 +136,30 @@ class CatalogSyncTests(unittest.TestCase):
         first = self.sync()
         self.sync(ttl_seconds=3600, force=True)
         self.assertEqual(4, len(self.calls))
-        with patch.object(syncer.time, "time", return_value=first["fetched_at"] + 7200):
+        with patch.object(
+            syncer.time, "time", return_value=first["fetched_at"] + 7200
+        ):
             self.assertFalse(self.sync(ttl_seconds=3600)["cache_hit"])
         self.assertEqual(6, len(self.calls))
 
     def test_offline_jsonl_is_validated_without_network_or_ttl(self):
         snapshot = self.root / "snapshot.jsonl"
         snapshot.write_bytes(
-            b"".join(source.canonical(row) + b"\n" for row in reversed(self.rows))
+            b"".join(
+                source.canonical(row) + b"\n" for row in reversed(self.rows)
+            )
         )
         with patch.object(source, "fetch_page", side_effect=AssertionError):
-            report = syncer.sync(self.cache, snapshot=snapshot, ttl_seconds=3600)
+            report = syncer.sync(
+                self.cache, snapshot=snapshot, ttl_seconds=3600
+            )
         self.assertEqual("offline_not_checked", report["source_consistency"])
         self.assertFalse(report["cache_hit"])
         self.assertEqual(2, report["document_count"])
 
-    def test_failed_download_preserves_previous_pointer_and_safe_failure_record(self):
+    def test_failed_download_keeps_previous_pointer_and_failure_record(
+        self,
+    ):
         self.sync()
         previous = self.pointer().read_bytes()
         with self.assertRaises(OSError):
@@ -151,7 +172,9 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertEqual(previous, self.pointer().read_bytes())
         failure = next((self.cache / "runs").glob("*/failure.json"))
         self.assertNotIn("remote-sensitive-text", failure.read_text())
-        self.assertEqual("quarantined", json.loads(failure.read_text())["status"])
+        self.assertEqual(
+            "quarantined", json.loads(failure.read_text())["status"]
+        )
 
     def test_unstable_download_never_changes_latest(self):
         self.sync()
@@ -222,7 +245,9 @@ class CatalogSyncTests(unittest.TestCase):
             return loaded
 
         previous = self.pointer().read_bytes()
-        with patch.object(CatalogBundle, "load", side_effect=change_after_load):
+        with patch.object(
+            CatalogBundle, "load", side_effect=change_after_load
+        ):
             with self.assertRaisesRegex(storage.SyncError, "manifest changed"):
                 self.sync(ttl_seconds=3600)
         self.assertEqual(2, len(self.calls))
@@ -258,7 +283,10 @@ class CatalogSyncTests(unittest.TestCase):
         for name in ("snapshots", "bundles", "runs"):
             folder = self.cache / name
             folder.chmod(0o755)
-            with self.subTest(folder=name), self.assertRaises(storage.SyncError):
+            with (
+                self.subTest(folder=name),
+                self.assertRaises(storage.SyncError),
+            ):
                 self.sync()
             folder.chmod(0o700)
             saved = self.cache / (name + "-saved")
@@ -270,13 +298,18 @@ class CatalogSyncTests(unittest.TestCase):
             saved.rename(folder)
         self.assertEqual(2, len(self.calls))
 
-    def test_cache_lock_and_retention_refuse_overlap_without_deleting_evidence(self):
+    def test_cache_lock_and_retention_refuse_overlap_without_deleting_evidence(
+        self,
+    ):
         self.sync()
         with (self.cache / ".sync.lock").open("r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaises(storage.SyncError):
                 self.sync()
-        with patch.object(syncer, "MAX_RUNS", 1), self.assertRaises(storage.SyncError):
+        with (
+            patch.object(syncer, "MAX_RUNS", 1),
+            self.assertRaises(storage.SyncError),
+        ):
             self.sync()
         self.assertEqual(1, len(list((self.cache / "runs").iterdir())))
         self.assertEqual(2, len(self.calls))
@@ -299,7 +332,9 @@ class CatalogSyncTests(unittest.TestCase):
 
     def test_future_clock_and_wrong_snapshot_bundle_pairing_fail_closed(self):
         report = self.sync()
-        with patch.object(syncer.time, "time", return_value=report["fetched_at"] - 60):
+        with patch.object(
+            syncer.time, "time", return_value=report["fetched_at"] - 60
+        ):
             with self.assertRaises(storage.SyncError):
                 self.sync(ttl_seconds=3600)
         pointer = json.loads(self.pointer().read_text())
@@ -310,7 +345,9 @@ class CatalogSyncTests(unittest.TestCase):
             self.sync(ttl_seconds=3600)
         self.assertEqual(2, len(self.calls))
 
-    def test_atomic_records_flush_parent_directory_and_never_overwrite_receipts(self):
+    def test_atomic_records_flush_parent_and_never_overwrite_receipts(
+        self,
+    ):
         report = self.sync()
         folder = self.cache / "runs" / report["run_id"]
         parent_fd = os.open(str(folder.parent), os.O_RDONLY)
@@ -338,7 +375,10 @@ class CatalogSyncTests(unittest.TestCase):
             {"ttl_seconds": 10**10},
             {"force": "yes"},
         ):
-            with self.subTest(options=options), self.assertRaises(storage.SyncError):
+            with (
+                self.subTest(options=options),
+                self.assertRaises(storage.SyncError),
+            ):
                 self.sync(**options)
         snapshot = self.root / "private.jsonl"
         snapshot.write_bytes(source.canonical(dataset(private=True)) + b"\n")

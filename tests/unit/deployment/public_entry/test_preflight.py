@@ -104,11 +104,15 @@ class MetadataRunner:
         if argv[:3] == ["docker", "network", "inspect"]:
             raw = json.dumps(self.network).encode() + b"\n"
         elif argv[:2] == ["docker", "inspect"]:
-            raw = b"\n".join(json.dumps(row).encode() for row in self.containers)
+            raw = b"\n".join(
+                json.dumps(row).encode() for row in self.containers
+            )
         else:
             raise AssertionError("preflight must only inspect Docker metadata")
         return SimpleNamespace(
-            returncode=0, stdout=self.raw if self.raw is not None else raw, stderr=b""
+            returncode=0,
+            stdout=self.raw if self.raw is not None else raw,
+            stderr=b"",
         )
 
 
@@ -124,7 +128,8 @@ class PrivateBackendPreflightTests(unittest.TestCase):
 
     def rejected(self, code):
         return self.assertRaisesRegex(
-            preflight.PublicEntryPreflightError, "^public_entry_backend_" + code + "$"
+            preflight.PublicEntryPreflightError,
+            "^public_entry_backend_" + code + "$",
         )
 
     def test_healthy_backend_uses_only_two_bounded_readonly_inspections(self):
@@ -170,7 +175,10 @@ class PrivateBackendPreflightTests(unittest.TestCase):
         ):
             self.network.clear()
             self.network.update(copy.deepcopy(original), **changed)
-            with self.subTest(changed=changed), self.rejected("network_invalid"):
+            with (
+                self.subTest(changed=changed),
+                self.rejected("network_invalid"),
+            ):
                 self.verify()
 
     def test_missing_network_and_daemon_errors_never_disclose_output(self):
@@ -236,8 +244,13 @@ class PrivateBackendPreflightTests(unittest.TestCase):
             if version is None:
                 self.api["Labels"].pop("io.depositar.ai.conversation.version")
             else:
-                self.api["Labels"]["io.depositar.ai.conversation.version"] = version
-            with self.subTest(version=version), self.rejected("contract_changed"):
+                self.api["Labels"]["io.depositar.ai.conversation.version"] = (
+                    version
+                )
+            with (
+                self.subTest(version=version),
+                self.rejected("contract_changed"),
+            ):
                 self.verify_bound()
         self.assertTrue(
             all(
@@ -282,7 +295,12 @@ class PrivateBackendPreflightTests(unittest.TestCase):
             self.verify()
 
     def test_malformed_duplicate_or_nonfinite_json_is_closed(self):
-        for raw in (b"not-json", b'{"Id":"a","Id":"b"}', b'{"value":NaN}', b"\xff"):
+        for raw in (
+            b"not-json",
+            b'{"Id":"a","Id":"b"}',
+            b'{"value":NaN}',
+            b"\xff",
+        ):
             self.runner.raw = raw
             with self.subTest(raw=raw), self.rejected("inspection_failed"):
                 self.verify()
@@ -308,7 +326,7 @@ class PrivateBackendPreflightTests(unittest.TestCase):
     def verify_bound(self):
         return preflight.verify_bound_backend(self.profile, runner=self.runner)
 
-    def test_sealed_backend_plan_uses_existing_readonly_verifier_without_release_file(
+    def test_sealed_plan_uses_readonly_verifier_without_release_file(
         self,
     ):
         self.release.clear()
@@ -328,9 +346,17 @@ class PrivateBackendPreflightTests(unittest.TestCase):
                 preflight.verify_bound_backend(profile, runner=self.runner)
         self.assertEqual(self.runner.calls, [])
 
-    def test_sealed_plan_requires_exact_fields_and_integer_supported_version(self):
+    def test_sealed_plan_requires_exact_fields_and_integer_supported_version(
+        self,
+    ):
         original = self.profile["x-depositar-plan"]["private_backend"]
-        invalid = [None, [], "invalid", {}, {**original, "unexpected": "ignored"}]
+        invalid = [
+            None,
+            [],
+            "invalid",
+            {},
+            {**original, "unexpected": "ignored"},
+        ]
         invalid.extend(
             {key: value for key, value in original.items() if key != missing}
             for missing in original
@@ -363,7 +389,9 @@ class PrivateBackendPreflightTests(unittest.TestCase):
                 self.verify_bound()
         self.assertEqual(self.runner.calls, [])
 
-    def test_wrong_live_image_is_rejected_instead_of_adopted_into_sealed_plan(self):
+    def test_wrong_live_image_is_rejected_instead_of_adopted_into_sealed_plan(
+        self,
+    ):
         original = copy.deepcopy(self.profile)
         self.api["Image"] = "sha256:" + "f" * 64
         with self.rejected("image_changed"):
@@ -383,7 +411,9 @@ class PrivateBackendPreflightTests(unittest.TestCase):
     def test_native_runner_reuses_existing_live_output_and_timeout_guard(self):
         responses = [
             SimpleNamespace(
-                returncode=0, stdout=json.dumps(self.network).encode(), stderr=b""
+                returncode=0,
+                stdout=json.dumps(self.network).encode(),
+                stderr=b"",
             ),
             SimpleNamespace(
                 returncode=0, stdout=json.dumps(self.api).encode(), stderr=b""

@@ -1,4 +1,6 @@
-"""Frontend host transactions with fake Docker/downloads and the real checker."""
+"""Frontend host transactions with fake Docker/downloads and the real
+checker.
+"""
 
 import copy
 import fcntl
@@ -41,7 +43,9 @@ class HostRunner(Runner):
             old = WEB_IMAGE if role == "web" else NGINX_IMAGE
             image = copy.deepcopy(self.images[old])
             image["Id"] = image["Descriptor"]["digest"] = manifest
-            image["Config"]["Labels"]["org.opencontainers.image.revision"] = NEXT
+            image["Config"]["Labels"]["org.opencontainers.image.revision"] = (
+                NEXT
+            )
             image["Config"]["Env"] = [
                 x.replace(FRONT, NEXT) for x in image["Config"]["Env"]
             ]
@@ -56,20 +60,33 @@ class HostRunner(Runner):
 
     def __call__(self, argv, *, environment, timeout):
         args = argv[5:]
-        if args[0] == "compose" and args[-3:] == ["config", "--format", "json"]:
+        if args[0] == "compose" and args[-3:] == [
+            "config",
+            "--format",
+            "json",
+        ]:
             self.config = copy.deepcopy(self.original)
             for role, service in self.config["services"].items():
                 service["image"] = delivery._locator(
                     environment["SOURCE_REVISION"], role
                 )
-            return super().__call__(argv, environment=environment, timeout=timeout)
-        if args[0] == "exec" and args[2:] == ["cat", "/etc/nginx/intranet-allow.conf"]:
+            return super().__call__(
+                argv, environment=environment, timeout=timeout
+            )
+        if args[0] == "exec" and args[2:] == [
+            "cat",
+            "/etc/nginx/intranet-allow.conf",
+        ]:
             self.calls.append(list(argv))
             assert (
-                self.rows[args[1]]["Config"]["Labels"]["com.docker.compose.service"]
+                self.rows[args[1]]["Config"]["Labels"][
+                    "com.docker.compose.service"
+                ]
                 == "web-nginx"
             )
-            return SimpleNamespace(returncode=0, stdout=self.mounted_acl, stderr=b"")
+            return SimpleNamespace(
+                returncode=0, stdout=self.mounted_acl, stderr=b""
+            )
         if args[:2] == ["image", "inspect"]:
             reference = args[-1]
             assert reference in self.locators, (
@@ -101,7 +118,9 @@ class HostRunner(Runner):
                     ):
                         row["State"]["Running"] = False
             elif args[0] == "compose" and "up" in args:
-                composition = json.loads(Path(args[args.index("-f") + 1]).read_text())
+                composition = json.loads(
+                    Path(args[args.index("-f") + 1]).read_text()
+                )
                 self.generation += 1
                 self.rows = {}
                 for role in delivery.ROLES:
@@ -112,7 +131,9 @@ class HostRunner(Runner):
                         f"{role}-{self.generation}".encode()
                     ).hexdigest()
                     row["Id"], row["Image"] = identifier, image["Id"]
-                    row["ImageManifestDescriptor"] = copy.deepcopy(image["Descriptor"])
+                    row["ImageManifestDescriptor"] = copy.deepcopy(
+                        image["Descriptor"]
+                    )
                     row["Config"] = copy.deepcopy(image["Config"])
                     row["Config"]["Env"] += [
                         k + "=" + v for k, v in service["environment"].items()
@@ -129,15 +150,17 @@ class HostRunner(Runner):
                 self.refresh_networks()
                 if self.fail_health:
                     self.fail_health = False
-                    next(iter(self.rows.values()))["State"]["Health"]["Status"] = (
-                        "unhealthy"
-                    )
+                    next(iter(self.rows.values()))["State"]["Health"][
+                        "Status"
+                    ] = "unhealthy"
                     if self.foreign_after_failure:
                         next(iter(self.rows.values()))["Config"]["Labels"][
                             delivery.TRANSACTION_LABEL
                         ] = "f" * 32
                     return SimpleNamespace(
-                        returncode=23, stdout=b"", stderr=b"private health diagnostic"
+                        returncode=23,
+                        stdout=b"",
+                        stderr=b"private health diagnostic",
                     )
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         return super().__call__(argv, environment=environment, timeout=timeout)
@@ -161,7 +184,9 @@ class HostRunner(Runner):
 
 class FrontendDeliveryTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="frontend-delivery-unit-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="frontend-delivery-unit-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.state = self.root / "delivery"
@@ -215,7 +240,9 @@ class FrontendDeliveryTests(unittest.TestCase):
                     "archive": role + ".oci.tar",
                     "platform_manifest": manifest,
                     "image_config": "sha256:" + "d" * 64,
-                    "archive_sha256": hashlib.sha256(role.encode()).hexdigest(),
+                    "archive_sha256": hashlib.sha256(
+                        role.encode()
+                    ).hexdigest(),
                     "archive_bytes": len(role),
                 }
                 for role, manifest in NEXT_IMAGES.items()
@@ -251,7 +278,9 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.assertEqual(revision, NEXT)
 
     def run_delivery(self, operation="deploy", revision=NEXT):
-        return delivery.operate(self.config, operation, revision, runner=self.runner)
+        return delivery.operate(
+            self.config, operation, revision, runner=self.runner
+        )
 
     def test_failed_attestation_never_calls_docker_or_changes_canonical(self):
         self.fetch.side_effect = ValueError("secret remote diagnostic")
@@ -263,10 +292,17 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
         self.assertFalse((self.state / "intent.json").exists())
 
-    def test_success_and_repeat_deploy_preserve_single_previous_without_restart(self):
+    def test_repeat_deploy_keeps_single_previous_without_restart(
+        self,
+    ):
         result = self.run_delivery()
         self.assertEqual(
-            result, {"status": "deployed", "revision": NEXT, "previous_revision": FRONT}
+            result,
+            {
+                "status": "deployed",
+                "revision": NEXT,
+                "previous_revision": FRONT,
+            },
         )
         mutations = self.runner.mutations()
         self.assertEqual(sum("up" in c for c in mutations), 1)
@@ -291,7 +327,7 @@ class FrontendDeliveryTests(unittest.TestCase):
             any(p.name.startswith(".download-") for p in self.state.iterdir())
         )
 
-    def test_failed_health_restores_exact_previous_profile_and_records_new_runtime(
+    def test_health_failure_restores_previous_and_records_new_runtime(
         self,
     ):
         self.runner.fail_health = True
@@ -329,7 +365,10 @@ class FrontendDeliveryTests(unittest.TestCase):
         ):
             self.run_delivery()
         self.assertFalse(
-            any("up" in call or "stop" in call for call in self.runner.mutations())
+            any(
+                "up" in call or "stop" in call
+                for call in self.runner.mutations()
+            )
         )
         self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
         self.assertTrue((self.state / "intent.json").exists())
@@ -371,23 +410,33 @@ class FrontendDeliveryTests(unittest.TestCase):
             json.loads(self.canonical.read_text())["frontend_revision"], NEXT
         )
 
-    def test_api_contract_mismatch_refuses_before_any_cutover_or_image_import(self):
+    def test_api_contract_mismatch_refuses_before_any_cutover_or_image_import(
+        self,
+    ):
         self.runner.proof = {"error": "upstream contract mismatch"}
         with self.assertRaises(check.FrontendCheckError):
             self.run_delivery()
         self.assertEqual(self.runner.mutations(), [])
         self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
 
-    def test_explicit_rollback_switches_only_frontend_and_keeps_one_previous(self):
+    def test_explicit_rollback_switches_only_frontend_and_keeps_one_previous(
+        self,
+    ):
         self.run_delivery()
         result = self.run_delivery("rollback", None)
         self.assertEqual(
             result,
-            {"status": "rolled_back", "revision": FRONT, "previous_revision": NEXT},
+            {
+                "status": "rolled_back",
+                "revision": FRONT,
+                "previous_revision": NEXT,
+            },
         )
         self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
         saved = json.loads((self.state / "state.json").read_text())
-        self.assertEqual(saved["previous"]["profile"]["frontend_revision"], NEXT)
+        self.assertEqual(
+            saved["previous"]["profile"]["frontend_revision"], NEXT
+        )
         self.assertTrue(
             all(
                 "depositar-search-intranet" in c
@@ -396,7 +445,9 @@ class FrontendDeliveryTests(unittest.TestCase):
             )
         )
 
-    def test_foreign_container_prevents_blind_rollback_and_intent_can_recover(self):
+    def test_foreign_container_prevents_blind_rollback_and_intent_can_recover(
+        self,
+    ):
         self.runner.fail_health = True
         self.runner.foreign_after_failure = True
         with self.assertRaisesRegex(
@@ -408,11 +459,13 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.assertEqual(
             self.run_delivery("status", None)["status"], "recovery_required"
         )
-        # Simulate the operator removing the unrelated replacement, not the tool.
+        # Simulate the operator removing the unrelated replacement, not the
+        # tool.
         self.runner.rows = {
             k: r
             for k, r in self.runner.rows.items()
-            if r["Config"]["Labels"].get(delivery.TRANSACTION_LABEL) != "f" * 32
+            if r["Config"]["Labels"].get(delivery.TRANSACTION_LABEL)
+            != "f" * 32
         }
         self.runner.refresh_networks()
         result = self.run_delivery("rollback", None)
@@ -420,7 +473,9 @@ class FrontendDeliveryTests(unittest.TestCase):
         self.assertEqual(result["revision"], FRONT)
         self.assertFalse((self.state / "intent.json").exists())
 
-    def test_status_is_read_only_and_initial_adoption_requires_checker_success(self):
+    def test_status_is_read_only_and_initial_adoption_requires_checker_success(
+        self,
+    ):
         self.assertEqual(self.run_delivery("status", None)["revision"], FRONT)
         self.assertEqual(self.runner.mutations(), [])
         self.assertFalse((self.state / "state.json").exists())
@@ -429,7 +484,9 @@ class FrontendDeliveryTests(unittest.TestCase):
             self.run_delivery(revision=FRONT)
         self.assertFalse((self.state / "state.json").exists())
 
-    def test_wrong_repository_identity_or_unsafe_config_does_not_start_fetch(self):
+    def test_wrong_repository_identity_or_unsafe_config_does_not_start_fetch(
+        self,
+    ):
         for key, value in (
             ("repository_id", True),
             ("repository", "other/repo"),
@@ -455,7 +512,9 @@ class FrontendDeliveryTests(unittest.TestCase):
         fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with self.assertRaisesRegex(delivery.FrontendDeliveryError, "busy$"):
+            with self.assertRaisesRegex(
+                delivery.FrontendDeliveryError, "busy$"
+            ):
                 self.run_delivery()
             self.assertEqual(
                 scratch.read_bytes(), b"private profile under active check"
@@ -473,7 +532,9 @@ class FrontendDeliveryTests(unittest.TestCase):
         original = Path(self.settings["gh_binary"]).read_bytes()
         for higher in (False, True):
             with self.subTest(higher=higher):
-                tools = self.root / ("higher-tools" if higher else "direct-tools")
+                tools = self.root / (
+                    "higher-tools" if higher else "direct-tools"
+                )
                 tools.mkdir(mode=0o700)
                 parent = tools / "private" if higher else tools
                 if higher:
@@ -500,7 +561,8 @@ class FrontendDeliveryTests(unittest.TestCase):
         binary.unlink()
         binary.symlink_to(binary.name)
         with self.assertRaisesRegex(
-            delivery.FrontendDeliveryError, "^frontend_delivery_config_invalid$"
+            delivery.FrontendDeliveryError,
+            "^frontend_delivery_config_invalid$",
         ):
             self.run_delivery()
         self.assertEqual(self.fetches, 0)
@@ -519,7 +581,9 @@ class FrontendDeliveryTests(unittest.TestCase):
 
         with (
             patch.object(check, "load_config", side_effect=changed),
-            self.assertRaisesRegex(delivery.FrontendDeliveryError, "gh_binary_unsafe$"),
+            self.assertRaisesRegex(
+                delivery.FrontendDeliveryError, "gh_binary_unsafe$"
+            ),
         ):
             self.run_delivery()
         self.assertEqual(self.fetches, 0)
@@ -533,9 +597,12 @@ class FrontendDeliveryTests(unittest.TestCase):
             ),
             patch("sys.stdout", output),
         ):
-            self.assertEqual(delivery.main(["--config", str(self.config), "status"]), 1)
+            self.assertEqual(
+                delivery.main(["--config", str(self.config), "status"]), 1
+            )
         self.assertEqual(
-            json.loads(output.getvalue()), {"error": "frontend_delivery_failed"}
+            json.loads(output.getvalue()),
+            {"error": "frontend_delivery_failed"},
         )
 
     def test_cli_reports_fixed_recovery_action_without_child_output(self):

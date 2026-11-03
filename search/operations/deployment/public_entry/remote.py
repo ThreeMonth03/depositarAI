@@ -54,12 +54,19 @@ COMMAND_TIMEOUT = 15
 MAX_OUTPUT_BYTES = 16 * 1024
 ERROR_CODES = frozenset(
     "public_entry_remote_" + code
-    for code in ("config_invalid", "plan_invalid", "probe_failed", "output_limit")
+    for code in (
+        "config_invalid",
+        "plan_invalid",
+        "probe_failed",
+        "output_limit",
+    )
 )
 
 
 class PublicEntryRemoteError(ValueError):
-    """Closed diagnostics without paths, credentials or remote response bytes."""
+    """Closed diagnostics without paths, credentials or remote response
+    bytes.
+    """
 
 
 def _require(condition, code):
@@ -100,25 +107,36 @@ class RemoteBackend:
 
 def load_remote_backend(path, *, repo_root=None):
     """Read a private explicit backend configuration without network access."""
-    repo_root = public_entry.ROOT if repo_root is None else Path(repo_root).resolve()
+    repo_root = (
+        public_entry.ROOT if repo_root is None else Path(repo_root).resolve()
+    )
     uid = os.geteuid()
     try:
         path = public_entry._path(str(path), repo_root)
-        value = strict_json(public_entry._read_private(path, uid=uid, maximum=16384))
-        _require(type(value) is dict and set(value) == CONFIG_FIELDS, "config_invalid")
+        value = strict_json(
+            public_entry._read_private(path, uid=uid, maximum=16384)
+        )
         _require(
-            type(value["schema_version"]) is int and value["schema_version"] == 1,
+            type(value) is dict and set(value) == CONFIG_FIELDS,
+            "config_invalid",
+        )
+        _require(
+            type(value["schema_version"]) is int
+            and value["schema_version"] == 1,
             "config_invalid",
         )
         _identity(
-            value["origin"], value["api_revision"], value["catalog_manifest_sha256"]
+            value["origin"],
+            value["api_revision"],
+            value["catalog_manifest_sha256"],
         )
         key = public_entry._path(value["api_key_file"], repo_root)
         ca = public_entry._path(value["ca_file"], repo_root)
         _require(len({path, key, ca}) == 3, "config_invalid")
         raw_key = public_entry._read_private(key, uid=uid, maximum=65)
         _require(
-            re.fullmatch(rb"[0-9a-f]{64}\n?", raw_key) is not None, "config_invalid"
+            re.fullmatch(rb"[0-9a-f]{64}\n?", raw_key) is not None,
+            "config_invalid",
         )
         raw_ca = public_entry._read_private(ca, uid=uid, maximum=256 * 1024)
         _require(b"-----BEGIN CERTIFICATE-----" in raw_ca, "config_invalid")
@@ -132,23 +150,39 @@ def load_remote_backend(path, *, repo_root=None):
             key,
             ca,
         )
-    except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
-        raise PublicEntryRemoteError("public_entry_remote_config_invalid") from None
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        UnicodeError,
+        RecursionError,
+    ):
+        raise PublicEntryRemoteError(
+            "public_entry_remote_config_invalid"
+        ) from None
 
 
 def _binding(profile):
     try:
         plan = profile["x-depositar-plan"]["private_backend"]
-        _require(type(plan) is dict and set(plan) == PLAN_FIELDS, "plan_invalid")
+        _require(
+            type(plan) is dict and set(plan) == PLAN_FIELDS, "plan_invalid"
+        )
         _require(
             type(plan["schema_version"]) is int
             and plan["schema_version"] == 2
             and plan["kind"] == "https"
             and type(plan["conversation_contract_version"]) is int
-            and plan["conversation_contract_version"] == CONVERSATION_CONTRACT_VERSION,
+            and plan["conversation_contract_version"]
+            == CONVERSATION_CONTRACT_VERSION,
             "plan_invalid",
         )
-        _identity(plan["origin"], plan["api_revision"], plan["catalog_manifest_sha256"])
+        _identity(
+            plan["origin"],
+            plan["api_revision"],
+            plan["catalog_manifest_sha256"],
+        )
         web = profile["services"]["public-web"]
         environment = web["environment"]
         _require(
@@ -159,7 +193,9 @@ def _binding(profile):
             and web.get("runtime") == "runc"
             and not web.get("ports")
             and not web.get("devices")
-            and not web.get("deploy", {}).get("resources", {}).get("reservations"),
+            and not web.get("deploy", {})
+            .get("resources", {})
+            .get("reservations"),
             "plan_invalid",
         )
         networks = profile["networks"]
@@ -179,18 +215,25 @@ def _binding(profile):
                 and mounts[0].get("read_only") is True,
                 "plan_invalid",
             )
-            paths[target] = public_entry._path(mounts[0]["source"], public_entry.ROOT)
+            paths[target] = public_entry._path(
+                mounts[0]["source"], public_entry.ROOT
+            )
         _require(paths[API_KEY_TARGET] != paths[CA_TARGET], "plan_invalid")
         return plan, paths
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        raise PublicEntryRemoteError("public_entry_remote_plan_invalid") from None
+        raise PublicEntryRemoteError(
+            "public_entry_remote_plan_invalid"
+        ) from None
 
 
-def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
+def verify_remote_backend(
+    profile, *, runner=subprocess.run, compose_file=None
+):
     """Check authenticated TLS identity from the host or the deployed CPU BFF.
 
-    Container checks use the mounted key/CA inside that container. Both variants
-    execute the existing bounded version-only probe; neither submits a turn.
+    Container checks use the mounted key/CA inside that container. Both
+    variants execute the existing bounded version-only probe; neither submits a
+    turn.
     """
     plan, paths = _binding(profile)
     environment = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -206,13 +249,18 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
         )
         argv = [sys.executable, "-E", "-s", "-B", "-c", source]
         environment.update(
-            WEB_UPSTREAM=plan["origin"], WEB_UPSTREAM_CA_FILE=str(paths[CA_TARGET])
+            WEB_UPSTREAM=plan["origin"],
+            WEB_UPSTREAM_CA_FILE=str(paths[CA_TARGET]),
         )
     else:
         try:
-            compose_file = public_entry._path(str(compose_file), public_entry.ROOT)
+            compose_file = public_entry._path(
+                str(compose_file), public_entry.ROOT
+            )
         except (OSError, ValueError, TypeError):
-            raise PublicEntryRemoteError("public_entry_remote_plan_invalid") from None
+            raise PublicEntryRemoteError(
+                "public_entry_remote_plan_invalid"
+            ) from None
         argv = [
             "docker",
             "compose",
@@ -226,7 +274,9 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
             "-s",
             "-B",
             "-c",
-            check._probe_source(contract_version=CONVERSATION_CONTRACT_VERSION),
+            check._probe_source(
+                contract_version=CONVERSATION_CONTRACT_VERSION
+            ),
         ]
         # Use the same operator-selected daemon/context as the surrounding
         # lifecycle commands, including rootless Docker. Never change daemons
@@ -258,10 +308,13 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
                 check=False,
             )
         stdout, stderr = result.stdout, result.stderr
-        _require(type(stdout) is bytes and type(stderr) is bytes, "probe_failed")
+        _require(
+            type(stdout) is bytes and type(stderr) is bytes, "probe_failed"
+        )
         _require(len(stdout) + len(stderr) <= MAX_OUTPUT_BYTES, "output_limit")
         _require(
-            type(result.returncode) is int and result.returncode == 0, "probe_failed"
+            type(result.returncode) is int and result.returncode == 0,
+            "probe_failed",
         )
         proof = strict_json(stdout)
         _require(
@@ -285,4 +338,6 @@ def verify_remote_backend(profile, *, runner=subprocess.run, compose_file=None):
         RecursionError,
         subprocess.SubprocessError,
     ):
-        raise PublicEntryRemoteError("public_entry_remote_probe_failed") from None
+        raise PublicEntryRemoteError(
+            "public_entry_remote_probe_failed"
+        ) from None

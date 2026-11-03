@@ -1,4 +1,4 @@
-"""Bounded catalog-admin output parsing and import/reconcile report validation."""
+"""Parse bounded admin output and validate import/reconcile reports."""
 
 from __future__ import annotations
 
@@ -15,12 +15,16 @@ class ResultError(ValueError):
     pass
 
 
-def _exact_keys(value: Mapping[str, Any], expected: set[str], where: str) -> None:
+def _exact_keys(
+    value: Mapping[str, Any], expected: set[str], where: str
+) -> None:
     if set(value) != expected:
         raise ResultError(f"{where} fields differ from the approved schema")
 
 
-def _integer(value: Any, minimum: int = 0, maximum: int = 1_000_000_000) -> bool:
+def _integer(
+    value: Any, minimum: int = 0, maximum: int = 1_000_000_000
+) -> bool:
     return type(value) is int and minimum <= value <= maximum
 
 
@@ -37,8 +41,14 @@ def _finite(value: Any, minimum: float = 0.0) -> bool:
 def parse_record(raw: bytes) -> dict[str, Any]:
     if type(raw) is not bytes:
         raise ResultError("catalog-admin output must be bytes")
-    if len(raw) > MAX_BYTES or not raw.endswith(b"\n") or raw.count(b"\n") != 1:
-        raise ResultError("catalog-admin output is not one bounded JSON record")
+    if (
+        len(raw) > MAX_BYTES
+        or not raw.endswith(b"\n")
+        or raw.count(b"\n") != 1
+    ):
+        raise ResultError(
+            "catalog-admin output is not one bounded JSON record"
+        )
     try:
         value = strict_json(raw)
     except (UnicodeError, ValueError, RecursionError):
@@ -89,7 +99,9 @@ def validate_import(
         value["status"] in {"already-active-no-op", "reconciled-active"}
         and value["batch_count"] != 0
     ):
-        raise ResultError("a non-writing catalog report cannot contain batches")
+        raise ResultError(
+            "a non-writing catalog report cannot contain batches"
+        )
     if operation == "import" and value["status"] not in {
         "imported",
         "already-active-no-op",

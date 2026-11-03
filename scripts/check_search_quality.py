@@ -45,13 +45,24 @@ def main(argv=None):
                 "status": "plan_valid",
                 "plan_sha256": contract.plan_digest(plan),
                 "case_count": len(plan["cases"]),
-                "turn_count": sum(len(case["turns"]) for case in plan["cases"]),
+                "turn_count": sum(
+                    len(case["turns"]) for case in plan["cases"]
+                ),
             }
         else:
             report = evaluator.evaluate(read_input(args.input), plan)
-    except (OSError, UnicodeError, ValueError, TypeError, KeyError, RecursionError):
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        RecursionError,
+    ):
         print(
-            json.dumps({"status": "invalid_input", "error": "quality_capture_invalid"})
+            json.dumps(
+                {"status": "invalid_input", "error": "quality_capture_invalid"}
+            )
         )
         return 2
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))

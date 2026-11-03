@@ -1,4 +1,5 @@
-"""FIFO rejection must happen without blocking before regular-file validation."""
+"""FIFO rejection must happen without blocking before regular-file
+validation."""
 
 from __future__ import annotations
 
@@ -14,12 +15,17 @@ from unittest.mock import patch
 
 from search.catalog.build import policy, storage
 
-from search.operations.metadata import storage as metadata_storage, sync as catalog_sync
+from search.operations.metadata import (
+    storage as metadata_storage,
+    sync as catalog_sync,
+)
 
 
 class CatalogSafeInputTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-safe-input-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-safe-input-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.fifo = self.root / "input.jsonl"
@@ -31,7 +37,9 @@ class CatalogSafeInputTests(unittest.TestCase):
     def guarded_open(self, path, flags, *args, **kwargs):
         # Fail before the real syscall if a regression would block the test.
         if Path(path).name == self.fifo.name:
-            self.assertTrue(flags & os.O_NONBLOCK, "FIFO leaf must be nonblocking")
+            self.assertTrue(
+                flags & os.O_NONBLOCK, "FIFO leaf must be nonblocking"
+            )
         return self.real_open(path, flags, *args, **kwargs)
 
     def test_source_reader_refuses_fifo_without_waiting_for_a_writer(self):
@@ -54,7 +62,9 @@ class CatalogSafeInputTests(unittest.TestCase):
     def test_sealed_catalog_loader_refuses_fifo_before_blocking(self):
         with patch.object(os, "open", side_effect=self.guarded_open):
             with self.assertRaisesRegex(BundleError, "unsafe"):
-                _open_sealed(self.fifo, expected_uid=os.geteuid(), max_bytes=4096)
+                _open_sealed(
+                    self.fifo, expected_uid=os.geteuid(), max_bytes=4096
+                )
 
     def test_offline_sync_refuses_fifo_and_does_not_publish_latest(self):
         cache = self.root / "cache"

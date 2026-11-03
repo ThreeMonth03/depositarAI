@@ -21,7 +21,9 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
-def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def _reject_duplicate_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
     value: dict[str, object] = {}
     for key, item in pairs:
         if key in value:
@@ -39,7 +41,9 @@ def main() -> int:
             headers={"Accept": "application/json"},
         )
         context = ssl.create_default_context(cafile=str(CA_PATH))
-        with urllib.request.urlopen(request, context=context, timeout=3) as response:
+        with urllib.request.urlopen(
+            request, context=context, timeout=3
+        ) as response:
             if response.status != 200 or response.geturl() != HEALTH_URL:
                 return 1
             raw = response.read(MAX_RESPONSE_BYTES + 1)

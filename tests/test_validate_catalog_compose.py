@@ -36,7 +36,9 @@ CATALOG_PROJECT = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
 CATALOG_VOLUME_NAME = CATALOG_PROJECT + "-index"
 
 
-def bind_mount(relative: str, target: str, *, read_only: bool) -> dict[str, Any]:
+def bind_mount(
+    relative: str, target: str, *, read_only: bool
+) -> dict[str, Any]:
     value = {
         "type": "bind",
         "source": f"{CATALOG_ROOT}/{relative}",
@@ -95,7 +97,9 @@ def valid_config() -> dict[str, Any]:
                 "NVIDIA_VISIBLE_DEVICES": "void",
                 "SEARCH_ENGINE_HTTP_URL": "https://opensearch-search:9200",
                 "SEARCH_ENGINE_TYPE": "opensearch",
-                "FESS_DICTIONARY_PATH": ("/usr/share/opensearch/config/dictionary/"),
+                "FESS_DICTIONARY_PATH": (
+                    "/usr/share/opensearch/config/dictionary/"
+                ),
                 "FESS_HEAP_SIZE": "2g",
                 "FESS_CRAWLER_ENABLED": "false",
                 "FESS_SCHEDULER_ENABLED": "false",
@@ -111,18 +115,25 @@ def valid_config() -> dict[str, Any]:
                     "http://127.0.0.1:11434 "
                     "-Dfess.system.content_chunker.embedding.ollama.model="
                     "granite-embedding:278m "
-                    "-Dfess.system.content_chunker.embedding.ollama.document.prefix= "
-                    "-Dfess.system.content_chunker.embedding.ollama.query.prefix= "
+                    "-Dfess.system.content_chunker.embedding.ollama."
+                    "document.prefix= "
+                    "-Dfess.system.content_chunker.embedding.ollama."
+                    "query.prefix= "
                     "-Dfess.system.content_chunker.chunker.name=length "
                     "-Dfess.system.content_chunker.length.chunk_size=800 "
                     "-Dfess.system.content_chunker.length.overlap=0 "
-                    "-Dfess.system.content_chunker.length.boundary.enabled=true "
-                    "-Dfess.system.content_chunker.length.boundary.lookback_percent=20 "
-                    "-Dfess.system.content_chunker.length.boundary.lookahead_percent=5 "
-                    "-Dfess.system.content_chunker.max_chunks_per_document=1000 "
+                    "-Dfess.system.content_chunker.length.boundary."
+                    "enabled=true "
+                    "-Dfess.system.content_chunker.length.boundary."
+                    "lookback_percent=20 "
+                    "-Dfess.system.content_chunker.length.boundary."
+                    "lookahead_percent=5 "
+                    "-Dfess.system.content_chunker."
+                    "max_chunks_per_document=1000 "
                     "-Dfess.system.content_chunker.job.concurrency=2 "
                     "-Dfess.system.content_chunker.job.bulk_size=100 "
-                    "-Dfess.system.content_chunker.job.max_documents_per_run=256 "
+                    "-Dfess.system.content_chunker.job."
+                    "max_documents_per_run=256 "
                     "-Dfess.system.content_chunker.search.enabled=true "
                     "-Dfess.system.login.required=true "
                     "-Duser.timezone=UTC "
@@ -181,7 +192,9 @@ def valid_config() -> dict[str, Any]:
     opensearch.update(
         {
             "build": {
-                "context": str(PROJECT_DIR / "deploy" / "docker" / "opensearch"),
+                "context": str(
+                    PROJECT_DIR / "deploy" / "docker" / "opensearch"
+                ),
                 "dockerfile": "Dockerfile",
                 "args": {
                     "OPENSEARCH_BASE_IMAGE": OPENSEARCH_BASE_IMAGE,
@@ -290,7 +303,9 @@ def valid_config() -> dict[str, Any]:
                     "restart": False,
                 }
             },
-            "volumes": [bind_mount("ollama/models", "/models", read_only=True)],
+            "volumes": [
+                bind_mount("ollama/models", "/models", read_only=True)
+            ],
             "tmpfs": [
                 f"/tmp:rw,noexec,nosuid,nodev,size=1g,uid={RUNTIME_UID},gid={RUNTIME_GID},mode=0700"
             ],
@@ -300,7 +315,9 @@ def valid_config() -> dict[str, Any]:
 
     return {
         "name": CATALOG_PROJECT,
-        "volumes": {"catalog-index": {"name": CATALOG_VOLUME_NAME, "external": True}},
+        "volumes": {
+            "catalog-index": {"name": CATALOG_VOLUME_NAME, "external": True}
+        },
         "networks": {"search_backend": {"internal": True}},
         "secrets": {
             name: {
@@ -343,7 +360,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
         self.assertEqual(original, config)
         self.assertEqual(
             Path(CATALOG_ROOT),
-            compose_policy.derive_catalog_root(config["services"]["opensearch-search"]),
+            compose_policy.derive_catalog_root(
+                config["services"]["opensearch-search"]
+            ),
         )
         config.pop("volumes")
         config["services"]["opensearch-search"]["volumes"][0] = bind_mount(
@@ -352,7 +371,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate(config)
 
-    def test_volume_name_cannot_select_another_project_or_arbitrary_storage(self):
+    def test_volume_name_cannot_select_another_project_or_arbitrary_storage(
+        self,
+    ):
         for name in (
             "",
             True,
@@ -400,7 +421,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
 
     def test_named_data_mount_is_exact_writable_and_nocopy(self):
         config = valid_config()
-        config["services"]["opensearch-search"]["volumes"][0]["read_only"] = False
+        config["services"]["opensearch-search"]["volumes"][0]["read_only"] = (
+            False
+        )
         validate(config)
         for changes in (
             {"type": "bind"},
@@ -420,25 +443,33 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 config = valid_config()
-                config["services"]["opensearch-search"]["volumes"][0].update(changes)
+                config["services"]["opensearch-search"]["volumes"][0].update(
+                    changes
+                )
                 validate(config)
         self.assert_mutations_fail(
             (
                 (
                     "missing data volume",
-                    lambda c: c["services"]["opensearch-search"]["volumes"].pop(0),
+                    lambda c: c["services"]["opensearch-search"][
+                        "volumes"
+                    ].pop(0),
                 ),
                 (
                     "duplicate data volume",
-                    lambda c: c["services"]["opensearch-search"]["volumes"].append(
-                        copy.deepcopy(c["services"]["opensearch-search"]["volumes"][0])
+                    lambda c: c["services"]["opensearch-search"][
+                        "volumes"
+                    ].append(
+                        copy.deepcopy(
+                            c["services"]["opensearch-search"]["volumes"][0]
+                        )
                     ),
                 ),
                 (
                     "missing volume options",
-                    lambda c: c["services"]["opensearch-search"]["volumes"][0].pop(
-                        "volume"
-                    ),
+                    lambda c: c["services"]["opensearch-search"]["volumes"][
+                        0
+                    ].pop("volume"),
                 ),
             )
         )
@@ -455,7 +486,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
         ):
             with self.subTest(source=source), self.assertRaises(ValueError):
                 config = valid_config()
-                config["services"]["opensearch-search"]["volumes"][1]["source"] = source
+                config["services"]["opensearch-search"]["volumes"][1][
+                    "source"
+                ] = source
                 validate(config)
         config = valid_config()
         for role, service in config["services"].items():
@@ -477,7 +510,9 @@ class CatalogVolumeComposePolicyTests(unittest.TestCase):
 
 
 class SearchComposePolicyTests(unittest.TestCase):
-    def test_native_chunk_profile_cannot_drift_from_nonoverlapping_length_chunks(self):
+    def test_native_chunks_preserve_nonoverlapping_lengths(
+        self,
+    ):
         options = (
             ("chunker.name=length", "chunker.name=other"),
             ("length.chunk_size=800", "length.chunk_size=801"),
@@ -500,7 +535,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     config = valid_config()
                     env = config["services"]["fess-search"]["environment"]
                     if mutation == "remove":
-                        env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(token, "")
+                        env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(
+                            token, ""
+                        )
                     elif mutation == "change":
                         env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(
                             token, "-Dfess.system.content_chunker." + changed
@@ -517,7 +554,8 @@ class SearchComposePolicyTests(unittest.TestCase):
                 config = valid_config()
                 env = config["services"]["fess-search"]["environment"]
                 env["FESS_JAVA_OPTS"] = env["FESS_JAVA_OPTS"].replace(
-                    "max_documents_per_run=256", f"max_documents_per_run={invalid}"
+                    "max_documents_per_run=256",
+                    f"max_documents_per_run={invalid}",
                 )
                 validate(config)
 
@@ -533,9 +571,15 @@ class SearchComposePolicyTests(unittest.TestCase):
         fess_options = config["services"]["fess-search"]["environment"][
             "FESS_JAVA_OPTS"
         ]
-        ollama_environment = config["services"]["ollama-embedding"]["environment"]
-        self.assertIn("-Dfess.system.content_chunker.job.concurrency=2", fess_options)
-        self.assertIn("-Dfess.system.content_chunker.job.bulk_size=100", fess_options)
+        ollama_environment = config["services"]["ollama-embedding"][
+            "environment"
+        ]
+        self.assertIn(
+            "-Dfess.system.content_chunker.job.concurrency=2", fess_options
+        )
+        self.assertIn(
+            "-Dfess.system.content_chunker.job.bulk_size=100", fess_options
+        )
         self.assertEqual("1", ollama_environment["OLLAMA_NUM_PARALLEL"])
         self.assertEqual("1", ollama_environment["OLLAMA_MAX_QUEUE"])
         self.assertEqual("1", ollama_environment["OLLAMA_MAX_LOADED_MODELS"])
@@ -569,7 +613,9 @@ class SearchComposePolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate(config)
 
-    def test_runtime_devices_and_accelerator_requests_are_forbidden(self) -> None:
+    def test_runtime_devices_and_accelerator_requests_are_forbidden(
+        self,
+    ) -> None:
         for name in ("fess-search", "opensearch-search", "ollama-embedding"):
             for host_config in ({}, {"Devices": [], "DeviceRequests": None}):
                 with self.subTest(service=name, host_config=host_config):
@@ -613,11 +659,15 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "backend not internal",
-                    lambda c: c["networks"]["search_backend"].update(internal=False),
+                    lambda c: c["networks"]["search_backend"].update(
+                        internal=False
+                    ),
                 ),
                 (
                     "external backend",
-                    lambda c: c["networks"]["search_backend"].update(external=True),
+                    lambda c: c["networks"]["search_backend"].update(
+                        external=True
+                    ),
                 ),
                 (
                     "extra network",
@@ -631,9 +681,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "opensearch extra network",
-                    lambda c: c["services"]["opensearch-search"]["networks"].update(
-                        public=None
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "networks"
+                    ].update(public=None),
                 ),
             )
         )
@@ -641,7 +691,9 @@ class SearchComposePolicyTests(unittest.TestCase):
     def test_published_ports_and_host_escape_paths_are_rejected(self) -> None:
         def reserve_device(config: dict[str, Any]) -> None:
             config["services"]["fess-search"]["deploy"] = {
-                "resources": {"reservations": {"devices": [{"capabilities": ["gpu"]}]}}
+                "resources": {
+                    "reservations": {"devices": [{"capabilities": ["gpu"]}]}
+                }
             }
 
         self.assert_mutations_fail(
@@ -654,12 +706,18 @@ class SearchComposePolicyTests(unittest.TestCase):
                         ),
                     )
                     for name in sorted(
-                        {"fess-search", "opensearch-search", "ollama-embedding"}
+                        {
+                            "fess-search",
+                            "opensearch-search",
+                            "ollama-embedding",
+                        }
                     )
                 ),
                 (
                     "privileged",
-                    lambda c: c["services"]["fess-search"].update(privileged=True),
+                    lambda c: c["services"]["fess-search"].update(
+                        privileged=True
+                    ),
                 ),
                 (
                     "host network",
@@ -699,7 +757,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "nvidia runtime",
-                    lambda c: c["services"]["fess-search"].update(runtime="nvidia"),
+                    lambda c: c["services"]["fess-search"].update(
+                        runtime="nvidia"
+                    ),
                 ),
                 ("device reservation", reserve_device),
                 (
@@ -719,27 +779,37 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "nnp removed",
-                    lambda c: c["services"]["fess-search"].update(security_opt=[]),
+                    lambda c: c["services"]["fess-search"].update(
+                        security_opt=[]
+                    ),
                 ),
             )
         )
 
-    def test_service_field_allowlists_and_runtime_overrides_fail_closed(self) -> None:
+    def test_service_field_allowlists_and_runtime_overrides_fail_closed(
+        self,
+    ) -> None:
         mutations: list[Mutation] = []
         for name in ("fess-search", "opensearch-search", "ollama-embedding"):
             mutations.extend(
                 (
                     (
                         f"{name} empty command override",
-                        lambda c, name=name: c["services"][name].update(command=[]),
+                        lambda c, name=name: c["services"][name].update(
+                            command=[]
+                        ),
                     ),
                     (
                         f"{name} empty entrypoint override",
-                        lambda c, name=name: c["services"][name].update(entrypoint=""),
+                        lambda c, name=name: c["services"][name].update(
+                            entrypoint=""
+                        ),
                     ),
                     (
                         f"{name} omitted normalized command",
-                        lambda c, name=name: c["services"][name].pop("command"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "command"
+                        ),
                     ),
                     (
                         f"{name} seccomp escape",
@@ -795,7 +865,9 @@ class SearchComposePolicyTests(unittest.TestCase):
 
         self.assert_mutations_fail(tuple(mutations))
 
-    def test_environment_keys_and_values_are_exact_for_every_service(self) -> None:
+    def test_environment_keys_and_values_are_exact_for_every_service(
+        self,
+    ) -> None:
         mutations: list[Mutation] = []
         baseline = valid_config()
         for name in ("fess-search", "opensearch-search", "ollama-embedding"):
@@ -815,7 +887,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                                 "environment"
                             ].update(
                                 {
-                                    key: c["services"][name]["environment"][key]
+                                    key: c["services"][name]["environment"][
+                                        key
+                                    ]
                                     + "-mutated"
                                 }
                             ),
@@ -827,27 +901,29 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "Fess JAVA_TOOL_OPTIONS injection",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/tmp/evil"
                     ),
                 ),
                 (
                     "OpenSearch _JAVA_OPTIONS injection",
-                    lambda c: c["services"]["opensearch-search"]["environment"].update(
-                        _JAVA_OPTIONS="-Dplugins.security.disabled=true"
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "environment"
+                    ].update(_JAVA_OPTIONS="-Dplugins.security.disabled=true"),
                 ),
                 (
                     "Ollama origins expansion",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_ORIGINS="*"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_ORIGINS="*"),
                 ),
                 (
                     "proxy environment injection",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        HTTP_PROXY="http://127.0.0.1:3128"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(HTTP_PROXY="http://127.0.0.1:3128"),
                 ),
             )
         )
@@ -867,7 +943,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "symbolic user",
-                    lambda c: c["services"]["fess-search"].update(user="fess:fess"),
+                    lambda c: c["services"]["fess-search"].update(
+                        user="fess:fess"
+                    ),
                 ),
                 (
                     "different UID",
@@ -878,22 +956,30 @@ class SearchComposePolicyTests(unittest.TestCase):
             )
         )
 
-    def test_every_service_requires_resource_log_and_health_bounds(self) -> None:
+    def test_every_service_requires_resource_log_and_health_bounds(
+        self,
+    ) -> None:
         mutations: list[Mutation] = []
         for name in ("fess-search", "opensearch-search", "ollama-embedding"):
             mutations.extend(
                 (
                     (
                         f"{name} CPU",
-                        lambda c, name=name: c["services"][name].update(cpus=0),
+                        lambda c, name=name: c["services"][name].update(
+                            cpus=0
+                        ),
                     ),
                     (
                         f"{name} CPU below reviewed range",
-                        lambda c, name=name: c["services"][name].update(cpus=0.5),
+                        lambda c, name=name: c["services"][name].update(
+                            cpus=0.5
+                        ),
                     ),
                     (
                         f"{name} CPU above reviewed range",
-                        lambda c, name=name: c["services"][name].update(cpus=99),
+                        lambda c, name=name: c["services"][name].update(
+                            cpus=99
+                        ),
                     ),
                     (
                         f"{name} non-finite CPU",
@@ -903,7 +989,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} memory",
-                        lambda c, name=name: c["services"][name].pop("mem_limit"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "mem_limit"
+                        ),
                     ),
                     (
                         f"{name} memory below reviewed range",
@@ -914,12 +1002,15 @@ class SearchComposePolicyTests(unittest.TestCase):
                     (
                         f"{name} memory above reviewed range",
                         lambda c, name=name: c["services"][name].update(
-                            mem_limit=128 * 1024**3, memswap_limit=128 * 1024**3
+                            mem_limit=128 * 1024**3,
+                            memswap_limit=128 * 1024**3,
                         ),
                     ),
                     (
                         f"{name} swap missing",
-                        lambda c, name=name: c["services"][name].pop("memswap_limit"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "memswap_limit"
+                        ),
                     ),
                     (
                         f"{name} swap can grow",
@@ -929,7 +1020,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} PIDs",
-                        lambda c, name=name: c["services"][name].update(pids_limit=0),
+                        lambda c, name=name: c["services"][name].update(
+                            pids_limit=0
+                        ),
                     ),
                     (
                         f"{name} PIDs above reviewed range",
@@ -939,7 +1032,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} boolean resource",
-                        lambda c, name=name: c["services"][name].update(cpus=True),
+                        lambda c, name=name: c["services"][name].update(
+                            cpus=True
+                        ),
                     ),
                     (
                         f"{name} restart policy",
@@ -949,11 +1044,15 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} init disabled",
-                        lambda c, name=name: c["services"][name].update(init=False),
+                        lambda c, name=name: c["services"][name].update(
+                            init=False
+                        ),
                     ),
                     (
                         f"{name} logging",
-                        lambda c, name=name: c["services"][name].pop("logging"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "logging"
+                        ),
                     ),
                     (
                         f"{name} log bytes",
@@ -969,13 +1068,15 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} health",
-                        lambda c, name=name: c["services"][name].pop("healthcheck"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "healthcheck"
+                        ),
                     ),
                     (
                         f"{name} health disabled",
-                        lambda c, name=name: c["services"][name]["healthcheck"].update(
-                            disable=True
-                        ),
+                        lambda c, name=name: c["services"][name][
+                            "healthcheck"
+                        ].update(disable=True),
                     ),
                 )
             )
@@ -994,7 +1095,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     ),
                     (
                         f"{name} implicit writable root",
-                        lambda c, name=name: c["services"][name].pop("read_only"),
+                        lambda c, name=name: c["services"][name].pop(
+                            "read_only"
+                        ),
                     ),
                 )
             )
@@ -1015,17 +1118,25 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     (
                         f"{name} missing allowed mount",
-                        lambda c, name=name: c["services"][name]["volumes"].pop(),
+                        lambda c, name=name: c["services"][name][
+                            "volumes"
+                        ].pop(),
                     ),
                     (
                         f"{name} extra bind mount",
-                        lambda c, name=name: c["services"][name]["volumes"].append(
-                            bind_mount("unexpected", "/unexpected", read_only=True)
+                        lambda c, name=name: c["services"][name][
+                            "volumes"
+                        ].append(
+                            bind_mount(
+                                "unexpected", "/unexpected", read_only=True
+                            )
                         ),
                     ),
                     (
                         f"{name} Compose config key",
-                        lambda c, name=name: c["services"][name].update(configs=[]),
+                        lambda c, name=name: c["services"][name].update(
+                            configs=[]
+                        ),
                     ),
                     (
                         f"{name} volumes_from key",
@@ -1039,53 +1150,55 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "changed mount source",
-                    lambda c: c["services"]["fess-search"]["volumes"][0].update(
+                    lambda c: c["services"]["fess-search"]["volumes"][
+                        0
+                    ].update(
                         source=f"{CATALOG_ROOT}/opensearch/config/other-ca.pem"
                     ),
                 ),
                 (
                     "changed mount target",
-                    lambda c: c["services"]["fess-search"]["volumes"][0].update(
-                        target="/tmp/root-ca.pem"
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][
+                        0
+                    ].update(target="/tmp/root-ca.pem"),
                 ),
                 (
                     "named volume type",
-                    lambda c: c["services"]["fess-search"]["volumes"][0].update(
-                        type="volume"
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][
+                        0
+                    ].update(type="volume"),
                 ),
                 ("removed read-only flag", remove_read_only),
                 (
                     "writable config mount",
-                    lambda c: c["services"]["fess-search"]["volumes"][0].update(
-                        read_only=False
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][
+                        0
+                    ].update(read_only=False),
                 ),
                 (
                     "nonboolean read-only field on writable data",
-                    lambda c: c["services"]["opensearch-search"]["volumes"][0].update(
-                        read_only=0
-                    ),
+                    lambda c: c["services"]["opensearch-search"]["volumes"][
+                        0
+                    ].update(read_only=0),
                 ),
                 ("missing create_host_path", remove_create_host_path),
                 (
                     "auto-created host path",
-                    lambda c: c["services"]["fess-search"]["volumes"][0]["bind"].update(
-                        create_host_path=True
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][0][
+                        "bind"
+                    ].update(create_host_path=True),
                 ),
                 (
                     "extra bind option",
-                    lambda c: c["services"]["fess-search"]["volumes"][0]["bind"].update(
-                        propagation="rshared"
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][0][
+                        "bind"
+                    ].update(propagation="rshared"),
                 ),
                 (
                     "extra mount field",
-                    lambda c: c["services"]["fess-search"]["volumes"][0].update(
-                        consistency="cached"
-                    ),
+                    lambda c: c["services"]["fess-search"]["volumes"][
+                        0
+                    ].update(consistency="cached"),
                 ),
                 (
                     "top-level named volume key",
@@ -1106,11 +1219,15 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     (
                         f"{name} missing tmpfs",
-                        lambda c, name=name: c["services"][name]["tmpfs"].pop(),
+                        lambda c, name=name: c["services"][name][
+                            "tmpfs"
+                        ].pop(),
                     ),
                     (
                         f"{name} extra tmpfs",
-                        lambda c, name=name: c["services"][name]["tmpfs"].append(
+                        lambda c, name=name: c["services"][name][
+                            "tmpfs"
+                        ].append(
                             "/run/extra:rw,noexec,nosuid,nodev,size=1m,mode=0700"
                         ),
                     ),
@@ -1120,7 +1237,9 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "general OpenSearch tmp is executable",
-                    lambda c: c["services"]["opensearch-search"]["tmpfs"].__setitem__(
+                    lambda c: c["services"]["opensearch-search"][
+                        "tmpfs"
+                    ].__setitem__(
                         0,
                         c["services"]["opensearch-search"]["tmpfs"][0].replace(
                             "noexec", "exec"
@@ -1129,7 +1248,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "native OpenSearch tmp is noexec",
-                    lambda c: c["services"]["opensearch-search"]["tmpfs"].__setitem__(
+                    lambda c: c["services"]["opensearch-search"][
+                        "tmpfs"
+                    ].__setitem__(
                         1,
                         c["services"]["opensearch-search"]["tmpfs"][1].replace(
                             ":rw,exec,", ":rw,noexec,"
@@ -1138,7 +1259,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "native OpenSearch tmp is too large",
-                    lambda c: c["services"]["opensearch-search"]["tmpfs"].__setitem__(
+                    lambda c: c["services"]["opensearch-search"][
+                        "tmpfs"
+                    ].__setitem__(
                         1,
                         c["services"]["opensearch-search"]["tmpfs"][1].replace(
                             "size=64m", "size=1g"
@@ -1147,7 +1270,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "tmpfs runtime owner changed",
-                    lambda c: c["services"]["ollama-embedding"]["tmpfs"].__setitem__(
+                    lambda c: c["services"]["ollama-embedding"][
+                        "tmpfs"
+                    ].__setitem__(
                         0,
                         c["services"]["ollama-embedding"]["tmpfs"][0].replace(
                             f"uid={RUNTIME_UID}", f"uid={int(RUNTIME_UID) + 1}"
@@ -1158,18 +1283,22 @@ class SearchComposePolicyTests(unittest.TestCase):
         )
         self.assert_mutations_fail(tuple(mutations))
 
-    def test_images_build_inputs_and_runtime_entrypoints_are_exact(self) -> None:
+    def test_images_build_inputs_and_runtime_entrypoints_are_exact(
+        self,
+    ) -> None:
         self.assert_mutations_fail(
             (
                 (
                     "unpinned fess base",
-                    lambda c: c["services"]["fess-search"]["build"]["args"].update(
-                        FESS_BASE_IMAGE="ghcr.io/codelibs/fess:latest"
-                    ),
+                    lambda c: c["services"]["fess-search"]["build"][
+                        "args"
+                    ].update(FESS_BASE_IMAGE="ghcr.io/codelibs/fess:latest"),
                 ),
                 (
                     "different digest-pinned fess base",
-                    lambda c: c["services"]["fess-search"]["build"]["args"].update(
+                    lambda c: c["services"]["fess-search"]["build"][
+                        "args"
+                    ].update(
                         FESS_BASE_IMAGE="evil.invalid/fess@sha256:" + DIGEST_A
                     ),
                 ),
@@ -1204,21 +1333,23 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "plugin checksum",
-                    lambda c: c["services"]["fess-search"]["build"]["args"].update(
-                        FESS_OLLAMA_PLUGIN_SHA256=DIGEST_B
-                    ),
+                    lambda c: c["services"]["fess-search"]["build"][
+                        "args"
+                    ].update(FESS_OLLAMA_PLUGIN_SHA256=DIGEST_B),
                 ),
                 (
                     "plugin URL",
-                    lambda c: c["services"]["fess-search"]["build"]["args"].update(
+                    lambda c: c["services"]["fess-search"]["build"][
+                        "args"
+                    ].update(
                         FESS_OLLAMA_PLUGIN_URL="https://evil.invalid/plugin.jar"
                     ),
                 ),
                 (
                     "secret build arg",
-                    lambda c: c["services"]["fess-search"]["build"]["args"].update(
-                        ADMIN_PASSWORD="plaintext"
-                    ),
+                    lambda c: c["services"]["fess-search"]["build"][
+                        "args"
+                    ].update(ADMIN_PASSWORD="plaintext"),
                 ),
                 (
                     "fess build context",
@@ -1228,9 +1359,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "opensearch Dockerfile",
-                    lambda c: c["services"]["opensearch-search"]["build"].update(
-                        dockerfile="Dockerfile.evil"
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "build"
+                    ].update(dockerfile="Dockerfile.evil"),
                 ),
                 (
                     "fess output image",
@@ -1269,30 +1400,36 @@ class SearchComposePolicyTests(unittest.TestCase):
             )
         )
 
-    def test_plaintext_credentials_are_rejected_in_all_compose_channels(self) -> None:
+    def test_plaintext_credentials_are_rejected_in_all_compose_channels(
+        self,
+    ) -> None:
         self.assert_mutations_fail(
             (
                 (
                     "password environment",
-                    lambda c: c["services"]["opensearch-search"]["environment"].update(
-                        OPENSEARCH_INITIAL_ADMIN_PASSWORD="plaintext"
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "environment"
+                    ].update(OPENSEARCH_INITIAL_ADMIN_PASSWORD="plaintext"),
                 ),
                 (
                     "token environment",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_ADMIN_TOKEN="plaintext"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_ADMIN_TOKEN="plaintext"),
                 ),
                 (
                     "URL userinfo",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         SEARCH_ENGINE_HTTP_URL="https://admin:plaintext@opensearch-search:9200"
                     ),
                 ),
                 (
                     "password hidden in generic options",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         FESS_JAVA_OPTS="-Dsearch_engine.password=plaintext"
                     ),
                 ),
@@ -1333,32 +1470,34 @@ class SearchComposePolicyTests(unittest.TestCase):
                 (
                     "duplicate Fess service secret",
                     lambda c: c["services"]["fess-search"]["secrets"].append(
-                        copy.deepcopy(c["services"]["fess-search"]["secrets"][0])
+                        copy.deepcopy(
+                            c["services"]["fess-search"]["secrets"][0]
+                        )
                     ),
                 ),
                 (
                     "unexpected Fess service secret",
-                    lambda c: c["services"]["fess-search"]["secrets"][0].update(
-                        source="undefined"
-                    ),
+                    lambda c: c["services"]["fess-search"]["secrets"][
+                        0
+                    ].update(source="undefined"),
                 ),
                 (
                     "changed secret target",
-                    lambda c: c["services"]["fess-search"]["secrets"][0].update(
-                        target="renamed-secret"
-                    ),
+                    lambda c: c["services"]["fess-search"]["secrets"][
+                        0
+                    ].update(target="renamed-secret"),
                 ),
                 (
                     "unsupported file-secret target mode",
-                    lambda c: c["services"]["fess-search"]["secrets"][0].update(
-                        mode="0440"
-                    ),
+                    lambda c: c["services"]["fess-search"]["secrets"][
+                        0
+                    ].update(mode="0440"),
                 ),
                 (
                     "extra secret mount field",
-                    lambda c: c["services"]["fess-search"]["secrets"][0].update(
-                        uid="21599"
-                    ),
+                    lambda c: c["services"]["fess-search"]["secrets"][
+                        0
+                    ].update(uid="21599"),
                 ),
                 (
                     "missing top-level secret",
@@ -1378,13 +1517,17 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "external top-level secret",
-                    lambda c: c["secrets"]["fess_app_cipher_key"].update(external=True),
+                    lambda c: c["secrets"]["fess_app_cipher_key"].update(
+                        external=True
+                    ),
                 ),
                 (
                     "OpenSearch receives a Fess secret",
                     lambda c: c["services"]["opensearch-search"].update(
                         secrets=[
-                            copy.deepcopy(c["services"]["fess-search"]["secrets"][0])
+                            copy.deepcopy(
+                                c["services"]["fess-search"]["secrets"][0]
+                            )
                         ]
                     ),
                 ),
@@ -1392,7 +1535,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                     "Ollama receives a Fess secret",
                     lambda c: c["services"]["ollama-embedding"].update(
                         secrets=[
-                            copy.deepcopy(c["services"]["fess-search"]["secrets"][0])
+                            copy.deepcopy(
+                                c["services"]["fess-search"]["secrets"][0]
+                            )
                         ]
                     ),
                 ),
@@ -1407,8 +1552,12 @@ class SearchComposePolicyTests(unittest.TestCase):
             validate(config)
 
     def test_opensearch_tls_and_security_cannot_be_disabled(self) -> None:
-        def mutate_os_java_options(config: dict[str, Any], old: str, new: str) -> None:
-            environment = config["services"]["opensearch-search"]["environment"]
+        def mutate_os_java_options(
+            config: dict[str, Any], old: str, new: str
+        ) -> None:
+            environment = config["services"]["opensearch-search"][
+                "environment"
+            ]
             environment["OPENSEARCH_JAVA_OPTS"] = environment[
                 "OPENSEARCH_JAVA_OPTS"
             ].replace(old, new)
@@ -1417,27 +1566,32 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "Fess plaintext backend",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         SEARCH_ENGINE_HTTP_URL="http://opensearch-search:9200"
                     ),
                 ),
                 (
                     "disabled plugin env",
-                    lambda c: c["services"]["opensearch-search"]["environment"].update(
-                        DISABLE_SECURITY_PLUGIN="true"
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "environment"
+                    ].update(DISABLE_SECURITY_PLUGIN="true"),
                 ),
                 (
                     "disabled plugin option",
                     lambda c: c["services"]["opensearch-search"].update(
-                        command=["opensearch", "-Eplugins.security.disabled=true"]
+                        command=[
+                            "opensearch",
+                            "-Eplugins.security.disabled=true",
+                        ]
                     ),
                 ),
                 (
                     "HTTP healthcheck",
-                    lambda c: c["services"]["opensearch-search"]["healthcheck"].update(
-                        test=["CMD", "curl", "http://127.0.0.1:9200"]
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "healthcheck"
+                    ].update(test=["CMD", "curl", "http://127.0.0.1:9200"]),
                 ),
                 (
                     "missing native tmpdir property",
@@ -1455,7 +1609,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "duplicate native tmpdir property",
-                    lambda c: c["services"]["opensearch-search"]["environment"].update(
+                    lambda c: c["services"]["opensearch-search"][
+                        "environment"
+                    ].update(
                         OPENSEARCH_JAVA_OPTS=(
                             c["services"]["opensearch-search"]["environment"][
                                 "OPENSEARCH_JAVA_OPTS"
@@ -1467,20 +1623,24 @@ class SearchComposePolicyTests(unittest.TestCase):
             )
         )
 
-    def test_fess_crawler_chat_login_and_model_policy_is_enforced(self) -> None:
+    def test_fess_crawler_chat_login_and_model_policy_is_enforced(
+        self,
+    ) -> None:
         def mutate_fess_java_options(
             config: dict[str, Any], old: str, new: str
         ) -> None:
             environment = config["services"]["fess-search"]["environment"]
-            environment["FESS_JAVA_OPTS"] = environment["FESS_JAVA_OPTS"].replace(
-                old, new
-            )
+            environment["FESS_JAVA_OPTS"] = environment[
+                "FESS_JAVA_OPTS"
+            ].replace(old, new)
 
         self.assert_mutations_fail(
             (
                 (
                     "redirect-tolerant Fess healthcheck",
-                    lambda c: c["services"]["fess-search"]["healthcheck"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "healthcheck"
+                    ].update(
                         test=[
                             "CMD",
                             "curl",
@@ -1491,9 +1651,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "crawler marker",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_CRAWLER_ENABLED="true"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_CRAWLER_ENABLED="true"),
                 ),
                 (
                     "missing dictionary path",
@@ -1503,15 +1663,17 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "mismatched dictionary path",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         FESS_DICTIONARY_PATH="/usr/share/opensearch/config/"
                     ),
                 ),
                 (
                     "scheduler marker",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_SCHEDULER_ENABLED="true"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_SCHEDULER_ENABLED="true"),
                 ),
                 (
                     "crawler override",
@@ -1523,9 +1685,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "chat marker",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_RAG_CHAT_ENABLED="true"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_RAG_CHAT_ENABLED="true"),
                 ),
                 (
                     "chat override",
@@ -1537,9 +1699,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "login disabled",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_LOGIN_REQUIRED="false"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_LOGIN_REQUIRED="false"),
                 ),
                 (
                     "missing Java login property",
@@ -1557,7 +1719,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "duplicate Java login property",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(
                         FESS_JAVA_OPTS=(
                             c["services"]["fess-search"]["environment"][
                                 "FESS_JAVA_OPTS"
@@ -1568,21 +1732,21 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "malformed Java options",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_JAVA_OPTS='"unterminated'
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_JAVA_OPTS='"unterminated'),
                 ),
                 (
                     "different embedding model",
-                    lambda c: c["services"]["fess-search"]["environment"].update(
-                        FESS_SEMANTIC_MODEL="snowflake-arctic-embed2"
-                    ),
+                    lambda c: c["services"]["fess-search"][
+                        "environment"
+                    ].update(FESS_SEMANTIC_MODEL="snowflake-arctic-embed2"),
                 ),
                 (
                     "second Ollama model",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_MODEL="mistral:7b"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_MODEL="mistral:7b"),
                 ),
                 (
                     "Java property model override",
@@ -1636,9 +1800,9 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "wildcard bind",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_HOST="0.0.0.0:11434"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_HOST="0.0.0.0:11434"),
                 ),
                 (
                     "separate network",
@@ -1654,33 +1818,33 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "visible GPU",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        NVIDIA_VISIBLE_DEVICES="all"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(NVIDIA_VISIBLE_DEVICES="all"),
                 ),
                 (
                     "CUDA GPU",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        CUDA_VISIBLE_DEVICES="0"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(CUDA_VISIBLE_DEVICES="0"),
                 ),
                 (
                     "parallel embeddings",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_NUM_PARALLEL="4"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_NUM_PARALLEL="4"),
                 ),
                 (
                     "expanded embedding queue",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_MAX_QUEUE="4"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_MAX_QUEUE="4"),
                 ),
                 (
                     "multiple loaded models",
-                    lambda c: c["services"]["ollama-embedding"]["environment"].update(
-                        OLLAMA_MAX_LOADED_MODELS="2"
-                    ),
+                    lambda c: c["services"]["ollama-embedding"][
+                        "environment"
+                    ].update(OLLAMA_MAX_LOADED_MODELS="2"),
                 ),
             )
         )
@@ -1693,7 +1857,9 @@ class SearchComposePolicyTests(unittest.TestCase):
             (
                 (
                     "missing data",
-                    lambda c: c["services"]["opensearch-search"]["volumes"].pop(0),
+                    lambda c: c["services"]["opensearch-search"][
+                        "volumes"
+                    ].pop(0),
                 ),
                 (
                     "tmpfs data",
@@ -1717,9 +1883,9 @@ class SearchComposePolicyTests(unittest.TestCase):
                 ),
                 (
                     "duplicate data mount",
-                    lambda c: c["services"]["opensearch-search"]["volumes"].append(
-                        copy.deepcopy(data_mount(c))
-                    ),
+                    lambda c: c["services"]["opensearch-search"][
+                        "volumes"
+                    ].append(copy.deepcopy(data_mount(c))),
                 ),
             )
         )

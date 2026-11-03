@@ -1,4 +1,5 @@
-"""Production native projection: sealed bundles, paginated fake transport only."""
+"""Production native projection: sealed bundles, paginated fake transport
+only."""
 
 from __future__ import annotations
 
@@ -17,7 +18,10 @@ from search.catalog.inventory import InventorySnapshot
 from search.catalog.resources import validate_resource_context
 from search.catalog.vectors import VectorProgressSnapshot
 from search.operations.catalog import projection
-from search.operations.catalog.transport import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
+from search.operations.catalog.transport import (
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+)
 from search.operations.shared import private_io
 from search.planning import index_filters as filters
 from search.vector_journal import state_sha256
@@ -68,7 +72,8 @@ def shards():
 
 
 class ProjectionClient:
-    """Faithful enough to catch missing paging/CAS/item validation, not a server."""
+    """Faithful enough to catch missing paging/CAS/item validation, not a
+    server."""
 
     def __init__(self, bundle):
         self.bundle = bundle
@@ -92,11 +97,16 @@ class ProjectionClient:
             }
         }
         self.rows = []
-        hashes = {url: digest for url, _, digest in bundle.expected_inventory_entries}
+        hashes = {
+            url: digest for url, _, digest in bundle.expected_inventory_entries
+        }
         for number, row in enumerate(bundle.documents):
             source = {key: row[key] for key in ("dataset_id", "url")}
             source.update(
-                {key: list(row[key]) for key in ("role", "label", "virtual_host")}
+                {
+                    key: list(row[key])
+                    for key in ("role", "label", "virtual_host")
+                }
             )
             source.update(
                 {
@@ -109,7 +119,9 @@ class ProjectionClient:
             )
             # Fess 15.8 convertToStorableDoc drops empty top-level collections.
             if row["resource_context"]:
-                source["resource_context"] = _json_wire_copy(row["resource_context"])
+                source["resource_context"] = _json_wire_copy(
+                    row["resource_context"]
+                )
             self.rows.append(
                 {
                     "_index": INDEX,
@@ -144,7 +156,9 @@ class ProjectionClient:
             if start == 0:
                 self.scans += 1
             if payload["sort"] == [{"url": "asc"}]:
-                ordered = sorted(self.rows, key=lambda row: row["_source"]["url"])
+                ordered = sorted(
+                    self.rows, key=lambda row: row["_source"]["url"]
+                )
                 rows = copy.deepcopy(ordered[start : start + size])
                 for row in rows:
                     row["sort"] = [row["_source"]["url"]]
@@ -175,7 +189,8 @@ class ProjectionClient:
         if method == "POST" and path == "/" + INDEX + "/_bulk":
             assert kwargs == {"ndjson": True}
             lines = payload.splitlines()
-            # Preserve first-match behavior and rebuild after any fixture mutation.
+            # Preserve first-match behavior and rebuild after any fixture
+            # mutation.
             rows_by_id = {}
             for row in self.rows:
                 rows_by_id.setdefault(row["_id"], row)
@@ -215,7 +230,9 @@ class ProjectionClient:
 
 
 class CatalogConditionMappingTests(unittest.TestCase):
-    def test_only_top_level_absent_object_type_is_equivalent_without_mutation(self):
+    def test_only_top_level_absent_object_type_is_equivalent_without_mutation(
+        self,
+    ):
         expected = filters.mapping()["properties"][filters.FIELD]
         for omitted in (False, True):
             with self.subTest(omitted=omitted):
@@ -226,11 +243,24 @@ class CatalogConditionMappingTests(unittest.TestCase):
                 self.assertTrue(projection._condition_mapping(actual))
                 self.assertEqual(before, actual)
 
-    def test_explicit_wrong_types_and_nonobject_values_are_not_normalized(self):
+    def test_explicit_wrong_types_and_nonobject_values_are_not_normalized(
+        self,
+    ):
         for value in (None, False, True, 1, [], "object"):
             with self.subTest(value=value):
                 self.assertFalse(projection._condition_mapping(value))
-        for value in (None, False, True, 1, [], {}, "", "nested", "keyword", "OBJECT"):
+        for value in (
+            None,
+            False,
+            True,
+            1,
+            [],
+            {},
+            "",
+            "nested",
+            "keyword",
+            "OBJECT",
+        ):
             with self.subTest(explicit_type=value):
                 actual = filters.mapping()["properties"][filters.FIELD]
                 actual["type"] = value
@@ -249,14 +279,20 @@ class CatalogConditionMappingTests(unittest.TestCase):
             lambda actual: actual.update(properties=None),
             lambda actual: actual.update(properties=[]),
             lambda actual: actual["properties"].pop("catalog"),
-            lambda actual: actual["properties"].update(extra={"type": "keyword"}),
+            lambda actual: actual["properties"].update(
+                extra={"type": "keyword"}
+            ),
             lambda actual: actual["properties"]["record"].pop("type"),
-            lambda actual: actual["properties"]["record"].update(type="integer"),
+            lambda actual: actual["properties"]["record"].update(
+                type="integer"
+            ),
             lambda actual: actual["properties"]["record"].update(type=None),
             lambda actual: actual["properties"]["record"].update(type=False),
             lambda actual: actual["properties"]["record"].update(type=[]),
             lambda actual: actual["properties"]["record"].update(type={}),
-            lambda actual: actual["properties"]["schema"].update(doc_values=False),
+            lambda actual: actual["properties"]["schema"].update(
+                doc_values=False
+            ),
         )
         for omitted in (False, True):
             for change in changes:
@@ -297,7 +333,9 @@ class CatalogResourceProjectionTests(unittest.TestCase):
             "truncated": False,
         }
         cls.bundle = make_bundle(
-            Path(cls.temporary.name), count=1, resource_context={identifier: [entry]}
+            Path(cls.temporary.name),
+            count=1,
+            resource_context={identifier: [entry]},
         )
 
     @classmethod
@@ -308,22 +346,38 @@ class CatalogResourceProjectionTests(unittest.TestCase):
         client = ProjectionClient(self.bundle)
         report = projection.provision_projection(client, self.bundle)
         self.assertEqual(1, report["projection_updated_count"])
-        updates = [body for _, path, body, _ in client.calls if path.endswith("/_bulk")]
+        updates = [
+            body
+            for _, path, body, _ in client.calls
+            if path.endswith("/_bulk")
+        ]
         self.assertEqual(1, len(updates))
         action, body = [json.loads(line) for line in updates[0].splitlines()]
         self.assertEqual(0, action["update"]["if_seq_no"])
         self.assertEqual(1, action["update"]["if_primary_term"])
         self.assertEqual([self.context], body["doc"]["resource_context"])
-        self.assertEqual([self.context], client.rows[0]["_source"]["resource_context"])
+        self.assertEqual(
+            [self.context], client.rows[0]["_source"]["resource_context"]
+        )
         client.calls.clear()
         self.assertEqual(
-            "ready", projection.verify_projection(client, self.bundle, INDEX)["status"]
+            "ready",
+            projection.verify_projection(client, self.bundle, INDEX)["status"],
         )
-        self.assertTrue(all(method != "PUT" for method, _, _, _ in client.calls))
+        self.assertTrue(
+            all(method != "PUT" for method, _, _, _ in client.calls)
+        )
 
-    def test_missing_null_empty_or_tampered_enriched_context_fails_before_write(self):
+    def test_invalid_enriched_context_fails_before_write(
+        self,
+    ):
         missing = object()
-        for value in (missing, None, [], [{**self.context, "columns": ["invented"]}]):
+        for value in (
+            missing,
+            None,
+            [],
+            [{**self.context, "columns": ["invented"]}],
+        ):
             client = ProjectionClient(self.bundle)
             if value is missing:
                 del client.rows[0]["_source"]["resource_context"]
@@ -343,12 +397,14 @@ class CatalogResourceProjectionTests(unittest.TestCase):
                 )
             )
 
-    def test_postscan_rejects_enriched_context_removed_or_mutated_after_cas(self):
+    def test_postscan_rejects_enriched_context_removed_or_mutated_after_cas(
+        self,
+    ):
         for mutate in (
             lambda rows: rows[0]["_source"].pop("resource_context"),
-            lambda rows: rows[0]["_source"]["resource_context"][0]["columns"].append(
-                "invented"
-            ),
+            lambda rows: rows[0]["_source"]["resource_context"][0][
+                "columns"
+            ].append("invented"),
         ):
             client = ProjectionClient(self.bundle)
             client.after_bulk = mutate
@@ -372,7 +428,9 @@ class CatalogResourceProjectionTests(unittest.TestCase):
                     "resource_id": resource_id,
                     "name": astral * 160,
                     "format": "CSV",
-                    "url": prefix + "a" * (2048 - len(prefix) - len(suffix)) + suffix,
+                    "url": prefix
+                    + "a" * (2048 - len(prefix) - len(suffix))
+                    + suffix,
                     "columns": [astral * 64] * 32,
                     "excerpt": "",
                 }
@@ -411,7 +469,8 @@ class CatalogResourceProjectionTests(unittest.TestCase):
         projection._update(client, INDEX, [row] * 100)
         self.assertLess(len(client.payload.encode("utf-8")), MAX_REQUEST_BYTES)
         escaped = "\n".join(
-            json.dumps(json.loads(line)) for line in client.payload.splitlines()
+            json.dumps(json.loads(line))
+            for line in client.payload.splitlines()
         )
         self.assertGreater(len(escaped.encode("ascii")), MAX_REQUEST_BYTES)
         response = {
@@ -428,13 +487,17 @@ class CatalogResourceProjectionTests(unittest.TestCase):
                 * 100
             }
         }
-        self.assertLess(len(private_io.canonical(response)), MAX_RESPONSE_BYTES)
+        self.assertLess(
+            len(private_io.canonical(response)), MAX_RESPONSE_BYTES
+        )
 
 
 class CatalogProjectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="depositar-projection-")
+        cls.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-projection-"
+        )
         cls.bundle = make_bundle(Path(cls.temporary.name))
 
     @classmethod
@@ -472,15 +535,24 @@ class CatalogProjectionTests(unittest.TestCase):
             for _, path, payload, _ in self.client.calls
             if path.endswith("/_search")
         ]
-        self.assertEqual([0, 50, 100, 0, 50, 100], [p["from"] for p in searches])
-        self.assertTrue(all(p["seq_no_primary_term"] is True for p in searches))
-        self.assertTrue(all("resource_context" in p["_source"] for p in searches))
-        self.assertTrue(all(path.startswith("/" + INDEX) for _, path in self.writes()))
+        self.assertEqual(
+            [0, 50, 100, 0, 50, 100], [p["from"] for p in searches]
+        )
+        self.assertTrue(
+            all(p["seq_no_primary_term"] is True for p in searches)
+        )
+        self.assertTrue(
+            all("resource_context" in p["_source"] for p in searches)
+        )
+        self.assertTrue(
+            all(path.startswith("/" + INDEX) for _, path in self.writes())
+        )
         for row in self.client.rows:
             identifier = row["_source"]["dataset_id"]
             self.assertEqual(
                 filters.metadata(
-                    self.bundle.condition_metadata[identifier], self.bundle.bundle_id
+                    self.bundle.condition_metadata[identifier],
+                    self.bundle.bundle_id,
                 ),
                 row["_source"][filters.FIELD],
             )
@@ -494,9 +566,12 @@ class CatalogProjectionTests(unittest.TestCase):
         for payload in updates:
             for body in payload.splitlines()[1::2]:
                 self.assertEqual(
-                    {filters.FIELD, "resource_context"}, set(json.loads(body)["doc"])
+                    {filters.FIELD, "resource_context"},
+                    set(json.loads(body)["doc"]),
                 )
-                self.assertEqual([], json.loads(body)["doc"]["resource_context"])
+                self.assertEqual(
+                    [], json.loads(body)["doc"]["resource_context"]
+                )
 
     def test_verified_repeat_never_rewrites_mapping_or_projection(self):
         first = self.provision()
@@ -506,7 +581,9 @@ class CatalogProjectionTests(unittest.TestCase):
         self.assertEqual(0, second["projection_updated_count"])
         self.assertEqual(first["vectors_sha256"], second["vectors_sha256"])
 
-    def test_doc_order_changes_between_pages_do_not_change_complete_scans(self):
+    def test_doc_order_changes_between_pages_do_not_change_complete_scans(
+        self,
+    ):
         self.assertGreater(len(self.bundle.documents), projection.PAGE_SIZE)
         self.client.reorder_between_pages = True
         before = projection.verify_vectors(self.client, self.bundle)
@@ -530,30 +607,44 @@ class CatalogProjectionTests(unittest.TestCase):
             all(payload["sort"] == [{"url": "asc"}] for payload in searches)
         )
 
-    def test_url_keyword_defaults_and_nonclipping_limits_support_all_gates(self):
+    def test_url_keyword_defaults_and_nonclipping_limits_support_all_gates(
+        self,
+    ):
         maximum = max(len(row["url"]) for row in self.bundle.documents)
         for options in (
             {},
             {"doc_values": True},
             {"normalizer": None},
             {"ignore_above": maximum},
-            {"doc_values": True, "normalizer": None, "ignore_above": maximum + 1},
+            {
+                "doc_values": True,
+                "normalizer": None,
+                "ignore_above": maximum + 1,
+            },
         ):
             with self.subTest(options=options):
                 self.client = ProjectionClient(self.bundle)
-                self.client.mapping[INDEX]["mappings"]["properties"]["url"].update(
-                    options
-                )
+                self.client.mapping[INDEX]["mappings"]["properties"][
+                    "url"
+                ].update(options)
                 before = projection.verify_vectors(self.client, self.bundle)
                 first = self.provision()
                 self.client.calls.clear()
-                final = projection.verify_projection(self.client, self.bundle, INDEX)
-                after = projection.verify_vectors(self.client, self.bundle, INDEX)
+                final = projection.verify_projection(
+                    self.client, self.bundle, INDEX
+                )
+                after = projection.verify_vectors(
+                    self.client, self.bundle, INDEX
+                )
                 self.assertEqual(before, after)
-                self.assertEqual({**first, "projection_updated_count": 0}, final)
+                self.assertEqual(
+                    {**first, "projection_updated_count": 0}, final
+                )
                 self.assertEqual([], self.writes())
 
-    def test_unsortable_normalized_or_clipped_url_mapping_fails_before_writes(self):
+    def test_unsortable_normalized_or_clipped_url_mapping_fails_before_writes(
+        self,
+    ):
         maximum = max(len(row["url"]) for row in self.bundle.documents)
         mappings = [None, False, [], "keyword", {}, {"type": "text"}]
         mappings.extend(
@@ -566,31 +657,49 @@ class CatalogProjectionTests(unittest.TestCase):
         )
         mappings.extend(
             {"type": "keyword", "ignore_above": value}
-            for value in (maximum - 1, 0, -1, True, False, 1.0, "1000", None, 2**31)
+            for value in (
+                maximum - 1,
+                0,
+                -1,
+                True,
+                False,
+                1.0,
+                "1000",
+                None,
+                2**31,
+            )
         )
         for mapping in mappings:
             with self.subTest(mapping=mapping):
                 self.client = ProjectionClient(self.bundle)
-                properties = self.client.mapping[INDEX]["mappings"]["properties"]
+                properties = self.client.mapping[INDEX]["mappings"][
+                    "properties"
+                ]
                 properties.update(filters.mapping()["properties"])
                 if mapping is None:
                     properties.pop("url")
                 else:
                     properties["url"] = mapping
                 for operation in (
-                    lambda: projection.verify_vectors(self.client, self.bundle),
+                    lambda: projection.verify_vectors(
+                        self.client, self.bundle
+                    ),
                     self.provision,
                     lambda: projection.verify_projection(
                         self.client, self.bundle, INDEX
                     ),
                 ):
                     with self.assertRaisesRegex(
-                        projection.ProjectionError, "catalog_projection_mapping_changed"
+                        projection.ProjectionError,
+                        "catalog_projection_mapping_changed",
                     ):
                         operation()
                 self.assertEqual([], self.writes())
                 self.assertTrue(
-                    all(method == "GET" for method, _, _, _ in self.client.calls)
+                    all(
+                        method == "GET"
+                        for method, _, _, _ in self.client.calls
+                    )
                 )
 
     def test_missing_or_forged_hit_sort_values_fail_before_writes(self):
@@ -621,7 +730,8 @@ class CatalogProjectionTests(unittest.TestCase):
 
                 self.client.search_fault = fault
                 with self.assertRaisesRegex(
-                    projection.ProjectionError, "catalog_projection_inventory_changed"
+                    projection.ProjectionError,
+                    "catalog_projection_inventory_changed",
                 ):
                     self.provision()
                 self.assertEqual([], self.writes())
@@ -647,7 +757,7 @@ class CatalogProjectionTests(unittest.TestCase):
             self.provision()
         self.assertEqual([], self.writes())
 
-    def test_server_object_type_omission_passes_provision_repeat_and_readonly_gates(
+    def test_omitted_object_type_passes_provision_repeat_and_readonly(
         self,
     ):
         for omitted in (False, True):
@@ -655,7 +765,9 @@ class CatalogProjectionTests(unittest.TestCase):
                 self.client = ProjectionClient(self.bundle)
 
                 def server_mapping(value):
-                    field = value[INDEX]["mappings"]["properties"].get(filters.FIELD)
+                    field = value[INDEX]["mappings"]["properties"].get(
+                        filters.FIELD
+                    )
                     if omitted and field is not None:
                         field.pop("type", None)
 
@@ -665,24 +777,33 @@ class CatalogProjectionTests(unittest.TestCase):
                 self.assertEqual(101, first["projection_updated_count"])
                 self.client.calls.clear()
                 repeated = self.provision()
-                verified = projection.verify_projection(self.client, self.bundle, INDEX)
-                vectors = projection.verify_vectors(self.client, self.bundle, INDEX)
+                verified = projection.verify_projection(
+                    self.client, self.bundle, INDEX
+                )
+                vectors = projection.verify_vectors(
+                    self.client, self.bundle, INDEX
+                )
                 self.assertEqual(0, repeated["projection_updated_count"])
                 self.assertEqual(0, verified["projection_updated_count"])
                 self.assertEqual([], self.writes())
                 for report in (repeated, verified, vectors):
                     self.assertEqual("ready", report["status"])
-                    self.assertEqual(first["vectors_sha256"], report["vectors_sha256"])
+                    self.assertEqual(
+                        first["vectors_sha256"], report["vectors_sha256"]
+                    )
 
-    def test_existing_null_or_nonobject_condition_mapping_fails_before_writes(self):
+    def test_existing_null_or_nonobject_condition_mapping_fails_before_writes(
+        self,
+    ):
         for value in (None, False, True, 1, [], "object"):
             with self.subTest(value=value):
                 self.client = ProjectionClient(self.bundle)
-                self.client.mapping[INDEX]["mappings"]["properties"][filters.FIELD] = (
-                    value
-                )
+                self.client.mapping[INDEX]["mappings"]["properties"][
+                    filters.FIELD
+                ] = value
                 with self.assertRaisesRegex(
-                    projection.ProjectionError, "catalog_projection_mapping_changed"
+                    projection.ProjectionError,
+                    "catalog_projection_mapping_changed",
                 ):
                     self.provision()
                 self.assertEqual([], self.writes())
@@ -718,20 +839,22 @@ class CatalogProjectionTests(unittest.TestCase):
             )
         )
 
-    def test_mapping_rejects_alias_fanout_wrong_dimensions_and_unknown_engine(self):
+    def test_mapping_rejects_alias_fanout_wrong_dimensions_and_unknown_engine(
+        self,
+    ):
         for fault in (
             lambda value: value.update(
                 {"fess.20261008120001": copy.deepcopy(value[INDEX])}
             ),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"].update(dimension=767),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"].update(dimension=True),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"]["method"].update(engine="unknown"),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"].update(dimension=767),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"].update(dimension=True),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"]["method"].update(engine="unknown"),
         ):
             self.client = ProjectionClient(self.bundle)
             self.client.mapping_fault = fault
@@ -762,7 +885,9 @@ class CatalogProjectionTests(unittest.TestCase):
                 self.provision()
             self.assertEqual([], self.writes())
 
-    def test_url_hash_bundle_acl_foreign_ids_and_duplicates_fail_before_write(self):
+    def test_url_hash_bundle_acl_foreign_ids_and_duplicates_fail_before_write(
+        self,
+    ):
         for change in (
             {"url": "https://evil.invalid/secret"},
             {"depositar_document_sha256": "0" * 64},
@@ -780,7 +905,9 @@ class CatalogProjectionTests(unittest.TestCase):
                 self.provision()
             self.assertEqual([], self.writes())
 
-    def test_native_duplicate_and_absent_concurrency_fields_fail_before_write(self):
+    def test_native_duplicate_and_absent_concurrency_fields_fail_before_write(
+        self,
+    ):
         for mutate in (
             lambda row: row.update(_id="native-0"),
             lambda row: row.pop("_seq_no"),
@@ -803,7 +930,9 @@ class CatalogProjectionTests(unittest.TestCase):
             lambda value: value["_shards"].update(failed=False),
         ):
             self.client = ProjectionClient(self.bundle)
-            self.client.search_fault = lambda value, _start, _scan: fault(value)
+            self.client.search_fault = lambda value, _start, _scan: fault(
+                value
+            )
             with (
                 self.subTest(fault=fault),
                 self.assertRaises(projection.ProjectionError),
@@ -820,7 +949,9 @@ class CatalogProjectionTests(unittest.TestCase):
             lambda value: value["items"][0]["update"].update(
                 error={"reason": "sensitive"}
             ),
-            lambda value: value["items"][0]["update"]["_shards"].update(failed=1),
+            lambda value: value["items"][0]["update"]["_shards"].update(
+                failed=1
+            ),
         ):
             self.client = ProjectionClient(self.bundle)
             self.client.bulk_fault = fault
@@ -844,7 +975,9 @@ class CatalogProjectionTests(unittest.TestCase):
             with self.assertRaises(projection.ProjectionError):
                 self.provision()
 
-    def test_existing_conditions_without_empty_context_are_repaired_in_same_cas(self):
+    def test_conditions_without_empty_context_are_repaired_in_same_cas(
+        self,
+    ):
         self.client.mapping[INDEX]["mappings"]["properties"].update(
             filters.mapping()["properties"]
         )
@@ -856,10 +989,15 @@ class CatalogProjectionTests(unittest.TestCase):
         report = self.provision()
         self.assertEqual(101, report["projection_updated_count"])
         self.assertTrue(
-            all(row["_source"]["resource_context"] == [] for row in self.client.rows)
+            all(
+                row["_source"]["resource_context"] == []
+                for row in self.client.rows
+            )
         )
 
-    def test_null_context_is_not_treated_as_fess_empty_collection_omission(self):
+    def test_null_context_is_not_treated_as_fess_empty_collection_omission(
+        self,
+    ):
         self.client.rows[0]["_source"]["resource_context"] = None
         with self.assertRaisesRegex(
             projection.ProjectionError, "resource_context_changed"
@@ -872,7 +1010,9 @@ class CatalogProjectionTests(unittest.TestCase):
         with self.assertRaises(projection.ProjectionError):
             self.provision()
         self.client = ProjectionClient(self.bundle)
-        self.client.refresh_fault = lambda value: value["_shards"].update(failed=1)
+        self.client.refresh_fault = lambda value: value["_shards"].update(
+            failed=1
+        )
         with self.assertRaises(projection.ProjectionError):
             self.provision()
 
@@ -957,7 +1097,9 @@ class CatalogVectorVerificationTests(unittest.TestCase):
             self.assertEqual(error, str(caught.exception))
         self.assert_readonly()
 
-    def test_complete_unprojected_vectors_return_one_closed_sanitized_report(self):
+    def test_complete_unprojected_vectors_return_one_closed_sanitized_report(
+        self,
+    ):
         before = copy.deepcopy((self.client.mapping, self.client.rows))
         report = self.verify()
         self.assertEqual(
@@ -984,13 +1126,19 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         self.assertEqual("ready", report["status"])
         self.assertEqual(INDEX, report["index"])
         self.assertEqual(self.bundle.bundle_id, report["bundle_id"])
-        self.assertEqual(self.bundle.manifest_sha256, report["manifest_sha256"])
+        self.assertEqual(
+            self.bundle.manifest_sha256, report["manifest_sha256"]
+        )
         self.assertEqual(101, report["document_count"])
         self.assertEqual(101, report["done_count"])
         self.assertEqual(0, report["pending_count"])
         self.assertEqual(768, report["vector_dimension"])
         self.assertEqual(101, report["vector_chunk_count"])
-        for name in ("inventory_verified", "acl_verified", "vector_state_verified"):
+        for name in (
+            "inventory_verified",
+            "acl_verified",
+            "vector_state_verified",
+        ):
             self.assertIs(report[name], True)
         encoded = private_io.canonical(report).decode()
         for forbidden in ("native-", "_source", "role", "projection_verified"):
@@ -999,7 +1147,11 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         self.assert_readonly()
         self.assertEqual(
             ["/fess.search/_mapping", "/fess.search/_mapping"],
-            [path for method, path, _, _ in self.client.calls if method == "GET"],
+            [
+                path
+                for method, path, _, _ in self.client.calls
+                if method == "GET"
+            ],
         )
         self.assertEqual(
             [0, 50, 100],
@@ -1010,30 +1162,42 @@ class CatalogVectorVerificationTests(unittest.TestCase):
             ],
         )
 
-    def test_complete_partition_digest_matches_fess_pass_and_durable_journal(self):
+    def test_complete_partition_digest_matches_fess_pass_and_durable_journal(
+        self,
+    ):
         report = self.verify()
         entries = self.bundle.expected_inventory_entries
         snapshot = VectorProgressSnapshot(
-            InventorySnapshot(entries), done_entries=entries, pending_entries=()
+            InventorySnapshot(entries),
+            done_entries=entries,
+            pending_entries=(),
         )
         self.assertEqual(snapshot.sha256, report["after_state_sha256"])
-        self.assertEqual(state_sha256(snapshot.as_dict()), report["after_state_sha256"])
+        self.assertEqual(
+            state_sha256(snapshot.as_dict()), report["after_state_sha256"]
+        )
         self.assertEqual(
             hashlib.sha256(private_io.canonical(entries)).hexdigest(),
             report["inventory_sha256"],
         )
 
-    def test_physical_index_is_bound_and_invalid_index_fails_before_transport(self):
+    def test_physical_index_is_bound_and_invalid_index_fails_before_transport(
+        self,
+    ):
         report = self.verify(INDEX)
         self.assertEqual(INDEX, report["index"])
         self.assertTrue(
-            all(path.startswith("/" + INDEX) for _, path, _, _ in self.client.calls)
+            all(
+                path.startswith("/" + INDEX)
+                for _, path, _, _ in self.client.calls
+            )
         )
         for index in ("fess.search", "fess.*", "", True, [], "fess.123"):
             with self.subTest(index=index):
                 self.client.calls.clear()
                 with self.assertRaisesRegex(
-                    projection.ProjectionError, "catalog_projection_index_invalid"
+                    projection.ProjectionError,
+                    "catalog_projection_index_invalid",
                 ):
                     self.verify(index)
                 self.assertEqual([], self.client.calls)
@@ -1050,41 +1214,49 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         self.client.mapping_fault = move
         self.reject("catalog_projection_index_changed")
 
-    def test_mapping_fanout_wrong_dimension_or_unknown_engine_remains_rejected(self):
+    def test_mapping_fanout_wrong_dimension_or_unknown_engine_remains_rejected(
+        self,
+    ):
         for fault in (
             lambda value: value.update(
                 {"fess.20261008120001": copy.deepcopy(value[INDEX])}
             ),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"].update(dimension=767),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"].update(dimension=True),
-            lambda value: value[INDEX]["mappings"]["properties"][filters.VECTOR_PATH][
-                "properties"
-            ]["vector"]["method"].update(engine="unknown"),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"].update(dimension=767),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"].update(dimension=True),
+            lambda value: value[INDEX]["mappings"]["properties"][
+                filters.VECTOR_PATH
+            ]["properties"]["vector"]["method"].update(engine="unknown"),
         ):
             with self.subTest(fault=fault):
                 self.client = ProjectionClient(self.bundle)
                 self.client.mapping_fault = fault
                 self.reject()
 
-    def test_transport_exceptions_never_echo_private_response_or_credential(self):
+    def test_transport_exceptions_never_echo_private_response_or_credential(
+        self,
+    ):
         class Broken:
             def request(self, *_args, **_kwargs):
                 raise OSError("private-administrator-password")
 
         with self.assertRaises(projection.ProjectionError) as caught:
             projection.verify_vectors(Broken(), self.bundle)
-        self.assertEqual("catalog_projection_transport_failed", str(caught.exception))
+        self.assertEqual(
+            "catalog_projection_transport_failed", str(caught.exception)
+        )
         self.assertTrue(caught.exception.__suppress_context__)
 
     def test_missing_pending_or_unknown_status_never_returns_complete(self):
         for status in (None, "pending", "failed", "skipped", True, "DONE"):
             with self.subTest(status=status):
                 self.client = ProjectionClient(self.bundle)
-                self.client.rows[-1]["_source"]["content_chunk_status"] = status
+                self.client.rows[-1]["_source"]["content_chunk_status"] = (
+                    status
+                )
                 self.reject("catalog_projection_vectors_incomplete")
         self.client = ProjectionClient(self.bundle)
         self.client.rows[-1]["_source"].pop("content_chunk_status")
@@ -1119,7 +1291,9 @@ class CatalogVectorVerificationTests(unittest.TestCase):
                 self.client.rows[-1]["_source"][filters.VECTOR_PATH] = [chunk]
                 self.reject("catalog_projection_vector_invalid")
 
-    def test_partial_shards_missing_hits_and_nonexact_totals_are_rejected(self):
+    def test_partial_shards_missing_hits_and_nonexact_totals_are_rejected(
+        self,
+    ):
         for fault in (
             lambda value: value.pop("_shards"),
             lambda value: value["_shards"].update(successful=0),
@@ -1133,10 +1307,14 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         ):
             with self.subTest(fault=fault):
                 self.client = ProjectionClient(self.bundle)
-                self.client.search_fault = lambda value, _start, _scan: fault(value)
+                self.client.search_fault = lambda value, _start, _scan: fault(
+                    value
+                )
                 self.reject()
 
-    def test_foreign_duplicate_changed_hash_bundle_or_acl_documents_are_rejected(self):
+    def test_invalid_bundle_and_acl_documents_are_rejected(
+        self,
+    ):
         for change in (
             {"dataset_id": "foreign"},
             {"dataset_id": self.client.rows[0]["_source"]["dataset_id"]},
@@ -1176,10 +1354,14 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         changed = self.verify()
         self.assertEqual(102, changed["vector_chunk_count"])
         self.assertNotEqual(first["vectors_sha256"], changed["vectors_sha256"])
-        self.assertEqual(first["after_state_sha256"], changed["after_state_sha256"])
+        self.assertEqual(
+            first["after_state_sha256"], changed["after_state_sha256"]
+        )
         self.assert_readonly()
 
-    def test_native_text_must_align_with_vectors_and_exact_sealed_content(self):
+    def test_native_text_must_align_with_vectors_and_exact_sealed_content(
+        self,
+    ):
         for content in (None, [], "scalar", ["changed"], ["", "changed"]):
             with self.subTest(content=content):
                 self.client = ProjectionClient(self.bundle)
@@ -1189,7 +1371,7 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         self.client.rows[-1]["_source"].pop("content")
         self.reject("catalog_projection_chunk_content_invalid")
 
-    def test_vector_digest_binds_native_boundaries_when_text_and_vector_count_match(
+    def test_digest_binds_boundaries_despite_matching_text_and_count(
         self,
     ):
         source = self.client.rows[0]["_source"]
@@ -1199,8 +1381,12 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         first = self.verify()
         source["content"] = [content[:2], content[2:]]
         shifted = self.verify()
-        self.assertEqual(first["vector_chunk_count"], shifted["vector_chunk_count"])
-        self.assertEqual(first["after_state_sha256"], shifted["after_state_sha256"])
+        self.assertEqual(
+            first["vector_chunk_count"], shifted["vector_chunk_count"]
+        )
+        self.assertEqual(
+            first["after_state_sha256"], shifted["after_state_sha256"]
+        )
         self.assertNotEqual(first["vectors_sha256"], shifted["vectors_sha256"])
 
     def test_capture_streams_only_locally_validated_native_payloads(self):
@@ -1217,7 +1403,9 @@ class CatalogVectorVerificationTests(unittest.TestCase):
             self.assertEqual(len(content), len(vectors))
         self.assert_readonly()
 
-    def test_capture_rejects_bad_sink_before_network_and_bad_text_before_delivery(self):
+    def test_capture_checks_sink_before_network_and_text_before_delivery(
+        self,
+    ):
         with self.assertRaisesRegex(
             projection.ProjectionError, "^catalog_projection_capture_invalid$"
         ):
@@ -1227,10 +1415,13 @@ class CatalogVectorVerificationTests(unittest.TestCase):
         first = min(self.client.rows, key=lambda row: row["_source"]["url"])
         first["_source"]["content"] = ["private incorrect content"]
         with self.assertRaisesRegex(
-            projection.ProjectionError, "^catalog_projection_chunk_content_invalid$"
+            projection.ProjectionError,
+            "^catalog_projection_chunk_content_invalid$",
         ):
             projection.verify_vectors(
-                self.client, self.bundle, capture=lambda *row: captured.append(row)
+                self.client,
+                self.bundle,
+                capture=lambda *row: captured.append(row),
             )
         self.assertEqual([], captured)
         self.assert_readonly()

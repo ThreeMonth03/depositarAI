@@ -2,7 +2,8 @@
 
 Each hop executes its next SSH client on that host, retaining server-only keys.
 Private operator profiles and SSH configurations are trusted execution inputs.
-Only the first hop's files are local; subsequent paths belong to previous hosts.
+Only the first hop's files are local; subsequent paths belong to previous
+hosts.
 """
 
 from __future__ import annotations
@@ -119,7 +120,9 @@ def validate_profile(value):
         "profile_invalid",
     )
     hops = value["hops"]
-    require(type(hops) is list and 1 <= len(hops) <= 3, "profile", "hops_invalid")
+    require(
+        type(hops) is list and 1 <= len(hops) <= 3, "profile", "hops_invalid"
+    )
     for index, hop in enumerate(hops):
         require(
             type(hop) is dict
@@ -165,7 +168,8 @@ def validate_profile(value):
         )
     require(
         type(expected["conversation_contract_version"]) is int
-        and expected["conversation_contract_version"] == CONVERSATION_CONTRACT_VERSION,
+        and expected["conversation_contract_version"]
+        == CONVERSATION_CONTRACT_VERSION,
         "profile",
         "expected_identity_invalid",
     )
@@ -222,7 +226,9 @@ def ssh_prefix(hop, *, terminal=False, readiness_nonce=None):
         "-o",
         "ControlPath=none",
         "-o",
-        "PermitLocalCommand=yes" if readiness_nonce else "PermitLocalCommand=no",
+        "PermitLocalCommand=yes"
+        if readiness_nonce
+        else "PermitLocalCommand=no",
         "-o",
         "RemoteCommand=none",
         "-o",
@@ -235,7 +241,10 @@ def ssh_prefix(hop, *, terminal=False, readiness_nonce=None):
         "ForwardX11Trusted=no",
     ]
     if readiness_nonce:
-        args += ["-o", f"LocalCommand=printf '{READY_PREFIX}{readiness_nonce}\\n'"]
+        args += [
+            "-o",
+            f"LocalCommand=printf '{READY_PREFIX}{readiness_nonce}\\n'",
+        ]
     return args
 
 
@@ -266,7 +275,9 @@ def ssh_command(profile, *, tunnel, nonce=None):
         args = ssh_prefix(
             hop,
             terminal=tunnel and index != len(hops) - 1,
-            readiness_nonce=nonce if tunnel and index == len(hops) - 1 else None,
+            readiness_nonce=nonce
+            if tunnel and index == len(hops) - 1
+            else None,
         )
         if tunnel:
             target_port = (
@@ -321,7 +332,9 @@ def remote_check(profile):
     except DemoConnectionError:
         raise
     except (OSError, ValueError, subprocess.SubprocessError, RecursionError):
-        raise DemoConnectionError("remote_check", "remote_check_failed") from None
+        raise DemoConnectionError(
+            "remote_check", "remote_check_failed"
+        ) from None
 
 
 def validate_remote_check(value, expected):
@@ -389,7 +402,8 @@ def validate_remote_check(value, expected):
             "remote_check_invalid",
         )
     require(
-        type(value["assets_verified"]) is int and 1 <= value["assets_verified"] <= 16,
+        type(value["assets_verified"]) is int
+        and 1 <= value["assets_verified"] <= 16,
         "remote_check",
         "remote_check_invalid",
     )
@@ -407,7 +421,8 @@ def validate_remote_check(value, expected):
             and type(row["container_id"]) is str
             and HEX64.fullmatch(row["container_id"]) is not None
             and all(
-                type(row[name]) is str and IMAGE.fullmatch(row[name]) is not None
+                type(row[name]) is str
+                and IMAGE.fullmatch(row[name]) is not None
                 for name in ("container_image_index", "platform_manifest")
             ),
             "remote_check",
@@ -471,22 +486,35 @@ class Tunnel:
                                 pending = bytearray(rest)
                                 # Each intermediate PTY may add another CR.
                                 line = bytes(line).rstrip(b"\r")
-                                if line.startswith(READY_PREFIX.encode("ascii")):
-                                    if line != self.marker or self.ready.is_set():
-                                        self.failure = "forward_readiness_invalid"
+                                if line.startswith(
+                                    READY_PREFIX.encode("ascii")
+                                ):
+                                    if (
+                                        line != self.marker
+                                        or self.ready.is_set()
+                                    ):
+                                        self.failure = (
+                                            "forward_readiness_invalid"
+                                        )
                                         return
                                     self.ready.set()
         except (OSError, ValueError):
             self.failure = "tunnel_output_failed"
 
     def verify(self):
-        require(self.failure is None, "tunnel", self.failure or "tunnel_failed")
+        require(
+            self.failure is None, "tunnel", self.failure or "tunnel_failed"
+        )
         require(self.process.poll() is None, "tunnel", "tunnel_closed")
 
     def wait_ready(self, deadline):
         while not self.ready.wait(0.05):
             self.verify()
-            require(time.monotonic() < deadline, "tunnel", "forward_readiness_timeout")
+            require(
+                time.monotonic() < deadline,
+                "tunnel",
+                "forward_readiness_timeout",
+            )
         self.verify()
 
     def close(self):
@@ -533,12 +561,16 @@ def open_tunnel(profile):
 
 class Loopback(AbortableConnection, http.client.HTTPConnection):
     def __init__(self, timeout):
-        http.client.HTTPConnection.__init__(self, "127.0.0.1", 18081, timeout=timeout)
+        http.client.HTTPConnection.__init__(
+            self, "127.0.0.1", 18081, timeout=timeout
+        )
         self._init_abortable()
 
     def connect(self):
         self._publish_channel(
-            socket.create_connection(("127.0.0.1", 18081), timeout=self.timeout)
+            socket.create_connection(
+                ("127.0.0.1", 18081), timeout=self.timeout
+            )
         )
 
 
@@ -563,7 +595,9 @@ def get(path, *, deadline, maximum):
         require(
             response.status == 200,
             "http",
-            "origin_denied" if response.status == 403 else "http_status_invalid",
+            "origin_denied"
+            if response.status == 403
+            else "http_status_invalid",
         )
         body = response.read(maximum + 1)
         require(
@@ -593,7 +627,8 @@ def local_check(*, deadline=None):
     )
     page = get("/", deadline=deadline, maximum=65536)
     require(
-        b'<div id="root"></div>' in page and b"<title>depositar AI</title>" in page,
+        b'<div id="root"></div>' in page
+        and b"<title>depositar AI</title>" in page,
         "http",
         "homepage_invalid",
     )
@@ -624,12 +659,16 @@ def verify_local(tunnel):
             tunnel.verify()
             return
         except (OSError, http.client.HTTPException):
-            require(time.monotonic() < deadline, "http", "tunnel_not_reachable")
+            require(
+                time.monotonic() < deadline, "http", "tunnel_not_reachable"
+            )
             time.sleep(0.1)
         except (ValueError, TypeError, RecursionError) as error:
             if isinstance(error, DemoConnectionError):
                 raise
-            raise DemoConnectionError("http", "http_response_invalid") from None
+            raise DemoConnectionError(
+                "http", "http_response_invalid"
+            ) from None
 
 
 def run(profile, *, connect=False, emit=print):
@@ -659,7 +698,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("check", "connect"))
     parser.add_argument(
-        "--config", required=True, help="operator-owned 0400/0600 private JSON profile"
+        "--config",
+        required=True,
+        help="operator-owned 0400/0600 private JSON profile",
     )
     options = parser.parse_args(argv)
     try:

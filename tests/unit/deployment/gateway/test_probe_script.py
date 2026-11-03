@@ -1,4 +1,6 @@
-"""Exercise the image-owned gateway SCRIPT with bounded offline HTTP fixtures."""
+"""Exercise the image-owned gateway SCRIPT with bounded offline HTTP
+fixtures.
+"""
 
 from __future__ import annotations
 
@@ -41,14 +43,22 @@ class GatewayScriptTests(unittest.TestCase):
             )
         self.assertEqual(errors.getvalue(), "")
         encoded = json.dumps(report, allow_nan=False)
-        for secret in (private.PRIVATE, self.contract.token, self.contract.replacement):
+        for secret in (
+            private.PRIVATE,
+            self.contract.token,
+            self.contract.replacement,
+        ):
             self.assertNotIn(secret, encoded)
         self.assertNotIn("尋找", encoded)
         self.assertNotIn("http://", encoded)
-        release_probe._web(report, private.REVISION, private.BUNDLE, private.MANIFEST)
+        release_probe._web(
+            report, private.REVISION, private.BUNDLE, private.MANIFEST
+        )
         return report, fixture
 
-    def test_two_turns_refinement_and_reset_use_fixed_gateway_without_ops_import(self):
+    def test_refinement_and_reset_use_fixed_gateway_without_ops_import(
+        self,
+    ):
         report, fixture = self.verify()
         self.assertEqual(report["code"], "ready")
         self.assertEqual(
@@ -68,7 +78,9 @@ class GatewayScriptTests(unittest.TestCase):
         self.assertTrue(probe.SCRIPT.startswith(release_probe._COMMON_SCRIPT))
         for request, timeout, maximum in fixture.calls:
             self.assertTrue(request.url.startswith("http://127.0.0.1:18083/"))
-            self.assertEqual(dict(request.headers)["Origin"], "http://127.0.0.1:18083")
+            self.assertEqual(
+                dict(request.headers)["Origin"], "http://127.0.0.1:18083"
+            )
             self.assertGreater(timeout, 0)
             self.assertLessEqual(timeout, 130)
             self.assertEqual(maximum, 256 * 1024)
@@ -91,7 +103,9 @@ class GatewayScriptTests(unittest.TestCase):
         self.assertFalse(report["two_turn_search_verified"])
         self.assertEqual(len(fixture.calls), 3)
 
-    def test_missing_or_invalid_nginx_homepage_blocks_before_session_creation(self):
+    def test_missing_or_invalid_nginx_homepage_blocks_before_session_creation(
+        self,
+    ):
         for status, page in (
             (404, private.PRIVATE.encode()),
             (200, b'<div id="root"></div>'),
@@ -106,7 +120,10 @@ class GatewayScriptTests(unittest.TestCase):
                 self.assertEqual(report["turns"], [])
                 self.assertEqual(len(fixture.calls), 2)
                 self.assertTrue(
-                    all(request.method == "GET" for request, _, _ in fixture.calls)
+                    all(
+                        request.method == "GET"
+                        for request, _, _ in fixture.calls
+                    )
                 )
 
     def test_second_turn_failure_preserves_partial_counts_and_cleans(self):
@@ -119,25 +136,44 @@ class GatewayScriptTests(unittest.TestCase):
         self.assertEqual(fixture.calls[-1][0].method, "DELETE")
 
     def test_old_token_must_return_exact_410_and_new_token_must_differ(self):
-        for change in ("old_status", "old_body", "replacement", "final_cleanup"):
+        for change in (
+            "old_status",
+            "old_body",
+            "replacement",
+            "final_cleanup",
+        ):
             with self.subTest(change=change):
                 self.setUp()
                 responses = self.contract.responses(include_assets=True)
                 if change == "old_status":
-                    responses[6] = ("/api/turn", 200, {"error": private.PRIVATE})
+                    responses[6] = (
+                        "/api/turn",
+                        200,
+                        {"error": private.PRIVATE},
+                    )
                     responses = responses[:7] + responses[-1:]
                 elif change == "old_body":
-                    responses[6] = ("/api/turn", 410, {"error": {"code": "other"}})
+                    responses[6] = (
+                        "/api/turn",
+                        410,
+                        {"error": {"code": "other"}},
+                    )
                     responses = responses[:7] + responses[-1:]
                 elif change == "replacement":
                     responses[7][2]["token"] = self.contract.token
                 else:
-                    responses[9] = ("/api/session", 503, {"error": private.PRIVATE})
+                    responses[9] = (
+                        "/api/session",
+                        503,
+                        {"error": private.PRIVATE},
+                    )
                 report, _ = self.verify(responses)
                 self.assertEqual(report["code"], "web_probe_failed")
                 self.assertFalse(report["session_reset_verified"])
 
-    def test_invalid_json_duplicate_keys_nonfinite_and_oversized_bodies_reject(self):
+    def test_invalid_json_duplicate_keys_nonfinite_and_oversized_bodies_reject(
+        self,
+    ):
         for body in (
             b'{"status":"ok","status":"ok"}',
             b'{"status":NaN}',
@@ -183,7 +219,9 @@ class GatewayScriptTests(unittest.TestCase):
 
     def test_global_deadline_prevents_cleanup_request_and_cannot_pass(self):
         now = [0.0]
-        fixture = private.ScriptFixture(self.contract.responses(include_assets=True))
+        fixture = private.ScriptFixture(
+            self.contract.responses(include_assets=True)
+        )
         send = fixture.send
 
         def slow_send(request, **kwargs):

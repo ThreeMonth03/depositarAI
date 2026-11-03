@@ -16,7 +16,11 @@ from search.operations.shared import private_io
 
 
 SERVICES = frozenset({"scope-model", "answer-model", "reranker"})
-ROLES = {"scope-model": "scope", "answer-model": "planner", "reranker": "reranker"}
+ROLES = {
+    "scope-model": "scope",
+    "answer-model": "planner",
+    "reranker": "reranker",
+}
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -30,10 +34,14 @@ def _environment(value):
     result = {}
     for entry in value:
         if type(entry) is not str or "=" not in entry:
-            raise InferenceRuntimeError("inference_runtime_environment_invalid")
+            raise InferenceRuntimeError(
+                "inference_runtime_environment_invalid"
+            )
         key, content = entry.split("=", 1)
         if not key or key in result:
-            raise InferenceRuntimeError("inference_runtime_environment_invalid")
+            raise InferenceRuntimeError(
+                "inference_runtime_environment_invalid"
+            )
         result[key] = content
     return result
 
@@ -62,7 +70,13 @@ def _resources(row, service):
         or host.get("Annotations")
         or any(
             host.get(key) not in (None, [], "")
-            for key in ("Links", "ExtraHosts", "Dns", "DnsOptions", "DnsSearch")
+            for key in (
+                "Links",
+                "ExtraHosts",
+                "Dns",
+                "DnsOptions",
+                "DnsSearch",
+            )
         )
         or host.get("CgroupnsMode", "") not in {"", "private"}
         or host.get("SecurityOpt") != ["no-new-privileges:true"]
@@ -91,7 +105,8 @@ def _resources(row, service):
             "Type": service["logging"]["driver"],
             "Config": service["logging"]["options"],
         }
-        or policy._tmpfs(host.get("Tmpfs") or {}) != policy._tmpfs(service["tmpfs"])
+        or policy._tmpfs(host.get("Tmpfs") or {})
+        != policy._tmpfs(service["tmpfs"])
         or policy._ulimits(host.get("Ulimits") or [])
         or state.get("Running") is not True
         or state.get("Paused") is not False
@@ -106,7 +121,9 @@ def _resources(row, service):
         or type(state.get("StartedAt")) is not str
         or not state["StartedAt"]
     ):
-        raise InferenceRuntimeError("inference_runtime_resource_or_health_changed")
+        raise InferenceRuntimeError(
+            "inference_runtime_resource_or_health_changed"
+        )
     health, expected = config.get("Healthcheck") or {}, service["healthcheck"]
     if (
         health.get("Test") != expected["test"]
@@ -114,7 +131,8 @@ def _resources(row, service):
         or health["Retries"] != expected["retries"]
         or any(
             type(health.get(actual, 0)) is not int
-            or health.get(actual, 0) != policy._duration(expected.get(setting, "0s"))
+            or health.get(actual, 0)
+            != policy._duration(expected.get(setting, "0s"))
             for actual, setting in (
                 ("Interval", "interval"),
                 ("Timeout", "timeout"),
@@ -136,7 +154,9 @@ def _resources(row, service):
     ):
         raise InferenceRuntimeError("inference_runtime_publishes_port")
     requests = host.get("DeviceRequests")
-    ids = service["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"]
+    ids = service["deploy"]["resources"]["reservations"]["devices"][0][
+        "device_ids"
+    ]
     if (
         type(requests) is not list
         or len(requests) != 1
@@ -145,10 +165,17 @@ def _resources(row, service):
         != {"Driver", "Count", "DeviceIDs", "Capabilities", "Options"}
         or requests[0]["Options"] not in ({}, None)
     ):
-        raise InferenceRuntimeError("inference_runtime_device_requests_changed")
+        raise InferenceRuntimeError(
+            "inference_runtime_device_requests_changed"
+        )
     _equal(
         {key: value for key, value in requests[0].items() if key != "Options"},
-        {"Driver": "nvidia", "Count": 0, "DeviceIDs": ids, "Capabilities": [["gpu"]]},
+        {
+            "Driver": "nvidia",
+            "Count": 0,
+            "DeviceIDs": ids,
+            "Capabilities": [["gpu"]],
+        },
         "inference_runtime_device_requests_changed",
     )
 
@@ -183,11 +210,14 @@ def _mounts(row, service):
 
 
 def validate_runtime(compose, images, containers, networks):
-    """Prove exact running IDs, image Env/commands, resources, devices and peers.
+    """Prove exact running IDs, image Env/commands, resources, devices and
+    peers.
 
-    The caller authenticates ``compose`` and ``images`` independently from clean
+    The caller authenticates ``compose`` and ``images`` independently from
+    clean
     source/configuration and immutable image inspection. A caller dictionary is
-    not itself attestation. Nothing here trusts a service name as GPU authority.
+    not itself attestation. Nothing here trusts a service name as GPU
+    authority.
     """
     return _validate_runtime(compose, images, containers, networks)
 
@@ -222,7 +252,8 @@ def _validate_runtime(
             or DIGEST.fullmatch(plan["inference_source_sha256"]) is None
             or type(plan.get("recipe_sha256")) is not str
             or DIGEST.fullmatch(plan["recipe_sha256"]) is None
-            or compose["name"] != "depositar-ai-inference-" + plan["recipe_sha256"][:12]
+            or compose["name"]
+            != "depositar-ai-inference-" + plan["recipe_sha256"][:12]
             or (images["reranker"]["Config"].get("Labels") or {}).get(
                 "io.depositar.ai.source.sha256"
             )
@@ -235,7 +266,9 @@ def _validate_runtime(
                 type(row.get(key)) is not dict
                 for key in ("Config", "HostConfig", "State", "NetworkSettings")
             ):
-                raise InferenceRuntimeError("inference_runtime_container_invalid")
+                raise InferenceRuntimeError(
+                    "inference_runtime_container_invalid"
+                )
             labels = row["Config"].get("Labels") or {}
             name = labels.get("com.docker.compose.service")
             if (
@@ -255,7 +288,9 @@ def _validate_runtime(
                     ).items()
                 )
             ):
-                raise InferenceRuntimeError("inference_runtime_identity_changed")
+                raise InferenceRuntimeError(
+                    "inference_runtime_identity_changed"
+                )
             seen.add(row["Id"])
             by_service[name] = row
             service, image = compose["services"][name], images[name]["Config"]
@@ -263,7 +298,10 @@ def _validate_runtime(
             _mounts(row, service)
             environment = _environment(image.get("Env") or [])
             environment.update(
-                {key: str(value) for key, value in service["environment"].items()}
+                {
+                    key: str(value)
+                    for key, value in service["environment"].items()
+                }
             )
             _equal(
                 _environment(row["Config"].get("Env") or []),
@@ -271,12 +309,17 @@ def _validate_runtime(
                 "inference_runtime_environment_changed",
             )
             if (
-                row["Config"].get("Cmd") != service.get("command", image.get("Cmd"))
+                row["Config"].get("Cmd")
+                != service.get("command", image.get("Cmd"))
                 or row["Config"].get("Entrypoint") != image.get("Entrypoint")
-                or row["Config"].get("WorkingDir", "") != image.get("WorkingDir", "")
-                or row["Config"].get("StopSignal", "") != image.get("StopSignal", "")
+                or row["Config"].get("WorkingDir", "")
+                != image.get("WorkingDir", "")
+                or row["Config"].get("StopSignal", "")
+                != image.get("StopSignal", "")
             ):
-                raise InferenceRuntimeError("inference_runtime_command_changed")
+                raise InferenceRuntimeError(
+                    "inference_runtime_command_changed"
+                )
             network = compose["networks"][service["networks"][0]]["name"]
             if row["HostConfig"].get("NetworkMode") != network or set(
                 row["NetworkSettings"].get("Networks") or {}
@@ -285,7 +328,9 @@ def _validate_runtime(
                     "inference_runtime_network_attachment_changed"
                 )
         if any(seen & set(item["expected_peer_ids"]) for item in clients):
-            raise InferenceRuntimeError("inference_client_container_identity_collision")
+            raise InferenceRuntimeError(
+                "inference_client_container_identity_collision"
+            )
         by_network = {}
         for row in networks:
             if type(row) is not dict or row.get("Name") in by_network:
@@ -293,9 +338,13 @@ def _validate_runtime(
                     "inference_runtime_network_inventory_changed"
                 )
             by_network[row.get("Name")] = row
-        expected_names = {entry["name"] for entry in compose["networks"].values()}
+        expected_names = {
+            entry["name"] for entry in compose["networks"].values()
+        }
         if set(by_network) != expected_names:
-            raise InferenceRuntimeError("inference_runtime_network_inventory_changed")
+            raise InferenceRuntimeError(
+                "inference_runtime_network_inventory_changed"
+            )
         network_ids = {}
         for key, expected in compose["networks"].items():
             row = by_network[expected["name"]]
@@ -307,7 +356,9 @@ def _validate_runtime(
             for item in clients:
                 peers.add(item["api_container_id"])
                 if row.get("Id") != item["network_ids"][expected["name"]]:
-                    raise InferenceRuntimeError("inference_client_network_id_changed")
+                    raise InferenceRuntimeError(
+                        "inference_client_network_id_changed"
+                    )
                 if type(row.get("Containers")) is not dict:
                     raise InferenceRuntimeError(
                         "inference_runtime_network_peers_changed"
@@ -322,10 +373,13 @@ def _validate_runtime(
                 or row.get("Scope") != "local"
                 or row.get("Labels", {}).get("com.docker.compose.project")
                 != compose["name"]
-                or row.get("Labels", {}).get("com.docker.compose.network") != key
+                or row.get("Labels", {}).get("com.docker.compose.network")
+                != key
                 or set(row.get("Containers") or {}) != peers
             ):
-                raise InferenceRuntimeError("inference_runtime_network_peers_changed")
+                raise InferenceRuntimeError(
+                    "inference_runtime_network_peers_changed"
+                )
             network_ids[key] = row["Id"]
             for name, container in by_service.items():
                 if container["Id"] in peers:
@@ -343,18 +397,22 @@ def _validate_runtime(
                 name: row["Id"] for name, row in sorted(by_service.items())
             },
             "network_ids": network_ids,
-            "start_identity_sha256": process_identity.start_identity_sha256(by_service),
+            "start_identity_sha256": process_identity.start_identity_sha256(
+                by_service
+            ),
         }
     except InferenceRuntimeError:
         raise
     except (KeyError, TypeError, AttributeError, ValueError, OverflowError):
-        raise InferenceRuntimeError("inference_runtime_snapshot_invalid") from None
+        raise InferenceRuntimeError(
+            "inference_runtime_snapshot_invalid"
+        ) from None
 
 
 def _client_model_networks(compose, release_compose):
-    project = release_compose["networks"]["existing-inference"]["name"].removesuffix(
-        "_inference"
-    )
+    project = release_compose["networks"]["existing-inference"][
+        "name"
+    ].removesuffix("_inference")
     if compose.get("name") != project or any(
         compose["networks"][key]["name"] != project + "_" + key
         or compose["networks"][key]["name"]
@@ -364,7 +422,9 @@ def _client_model_networks(compose, release_compose):
             ("ranking", "ranking"),
         )
     ):
-        raise InferenceRuntimeError("inference_client_source_or_network_changed")
+        raise InferenceRuntimeError(
+            "inference_client_source_or_network_changed"
+        )
 
 
 def validate_shared_runtime(compose, images, containers, networks, clients):
@@ -379,14 +439,22 @@ def validate_shared_runtime(compose, images, containers, networks, clients):
         try:
             proofs = client_lease.validate_clients(clients)
         except client_lease.LeaseError:
-            raise InferenceRuntimeError("inference_client_lease_invalid") from None
+            raise InferenceRuntimeError(
+                "inference_client_lease_invalid"
+            ) from None
         for item in clients:
             _client_model_networks(compose, item["release_compose"])
-        proof = _validate_runtime(compose, images, containers, networks, clients=proofs)
+        proof = _validate_runtime(
+            compose, images, containers, networks, clients=proofs
+        )
         return {
             **proof,
-            "api_container_ids": sorted(item["api_container_id"] for item in proofs),
-            "client_lease_sha256s": sorted(item["lease_sha256"] for item in proofs),
+            "api_container_ids": sorted(
+                item["api_container_id"] for item in proofs
+            ),
+            "client_lease_sha256s": sorted(
+                item["lease_sha256"] for item in proofs
+            ),
         }
     except InferenceRuntimeError:
         raise
@@ -398,7 +466,9 @@ def validate_shared_runtime(compose, images, containers, networks, clients):
         OverflowError,
         RecursionError,
     ):
-        raise InferenceRuntimeError("inference_client_snapshot_invalid") from None
+        raise InferenceRuntimeError(
+            "inference_client_snapshot_invalid"
+        ) from None
 
 
 def validate_leased_runtime(
@@ -418,17 +488,21 @@ def validate_leased_runtime(
     """Prove three GPU roles plus exactly one separately sealed CPU API client.
 
     The host authenticates source/configuration, completed image/query/lease
-    receipts and actual immutable image inspections before supplying these facts.
+    receipts and actual immutable image inspections before supplying these
+    facts.
     It retains product/catalog locks, separately validates catalog core runtime
     and every other release service/network, and collects one current Docker
     snapshot. These dictionaries do not authenticate themselves. GPU ownership,
-    warmup, HTTP readiness and route activation remain separate host obligations.
+    warmup, HTTP readiness and route activation remain separate host
+    obligations.
 
     The API's full catalog lease is checked here, including image/source/Env,
     resources, mounts and all four network IDs. The two inference networks and
-    the catalog network must be passed UNFILTERED. An ID allowlist or a fabricated
+    the catalog network must be passed UNFILTERED. An ID allowlist or a
+    fabricated
     baseline snapshot cannot substitute for that API proof. Inputs are not
-    modified; output contains only identities/digests, never Env or mount paths.
+    modified; output contains only identities/digests, never Env or mount
+    paths.
     """
     try:
         try:
@@ -442,9 +516,13 @@ def validate_leased_runtime(
                 catalog_network=catalog_network,
             )
         except client_lease.LeaseError:
-            raise InferenceRuntimeError("inference_client_lease_invalid") from None
+            raise InferenceRuntimeError(
+                "inference_client_lease_invalid"
+            ) from None
         _client_model_networks(compose, release_compose)
-        proof = _validate_runtime(compose, images, containers, networks, client=client)
+        proof = _validate_runtime(
+            compose, images, containers, networks, client=client
+        )
         return {
             **proof,
             "client_lease_sha256": client["lease_sha256"],
@@ -461,20 +539,24 @@ def validate_leased_runtime(
         OverflowError,
         RecursionError,
     ):
-        raise InferenceRuntimeError("inference_client_snapshot_invalid") from None
+        raise InferenceRuntimeError(
+            "inference_client_snapshot_invalid"
+        ) from None
 
 
 def ownership_proofs(compose, proof, images):
-    """Construct GPU allowance only after this exact runtime proof was checked."""
+    """Construct GPU allowance only after this exact runtime proof was
+    checked.
+    """
     return tuple(
         GPUContainerProof(
             proof["container_ids"][name],
             images[name]["Id"],
             ROLES[name],
             tuple(
-                compose["services"][name]["deploy"]["resources"]["reservations"][
-                    "devices"
-                ][0]["device_ids"]
+                compose["services"][name]["deploy"]["resources"][
+                    "reservations"
+                ]["devices"][0]["device_ids"]
             ),
         )
         for name in sorted(SERVICES)

@@ -28,7 +28,9 @@ class InventorySnapshot:
         seen = set()
         for entry in self.entries:
             if not isinstance(entry, tuple) or len(entry) != 3:
-                raise ProtocolError("inventory adapter returned an invalid entry")
+                raise ProtocolError(
+                    "inventory adapter returned an invalid entry"
+                )
             url, bundle_id, document_sha256 = entry
             if (
                 not isinstance(url, str)
@@ -37,7 +39,9 @@ class InventorySnapshot:
                 or not isinstance(document_sha256, str)
                 or SHA256_RE.fullmatch(document_sha256) is None
             ):
-                raise ProtocolError("inventory adapter returned invalid values")
+                raise ProtocolError(
+                    "inventory adapter returned invalid values"
+                )
             if url in seen or (previous is not None and url < previous):
                 raise ProtocolError(
                     "inventory adapter entries must be unique and sorted"
@@ -75,7 +79,9 @@ def _search_list_rows(
     expected_total: Optional[int] = None
     entries: Dict[str, Tuple[str, str, Optional[str]]] = {}
     while expected_total is None or start < expected_total:
-        response = session.search_list(token, start, MAX_INVENTORY_PAGE, deadline)
+        response = session.search_list(
+            token, start, MAX_INVENTORY_PAGE, deadline
+        )
         docs = response.get("docs")
         total = response.get("record_count")
         relation = response.get("record_count_relation")
@@ -98,7 +104,9 @@ def _search_list_rows(
         if expected_total is None:
             expected_total = total
         elif total != expected_total:
-            raise InventoryUnstable("SearchList inventory changed while paging")
+            raise InventoryUnstable(
+                "SearchList inventory changed while paging"
+            )
         if len(docs) > MAX_INVENTORY_PAGE or (start < total and not docs):
             raise ProtocolError("SearchList inventory page is invalid")
         for document in docs:
@@ -114,13 +122,20 @@ def _search_list_rows(
                 or SHA256_RE.fullmatch(bundle_id) is None
                 or not isinstance(document_sha256, str)
                 or SHA256_RE.fullmatch(document_sha256) is None
-                or (status_value is not None and not isinstance(status_value, str))
+                or (
+                    status_value is not None
+                    and not isinstance(status_value, str)
+                )
             ):
-                raise ProtocolError("SearchList document lacks catalog identity")
+                raise ProtocolError(
+                    "SearchList document lacks catalog identity"
+                )
             # Inventory is deliberately global. Any non-catalog document blocks
             # activation instead of being hidden by the product query scope.
             if url in entries:
-                raise InventoryUnstable("SearchList inventory changed while paging")
+                raise InventoryUnstable(
+                    "SearchList inventory changed while paging"
+                )
             entries[url] = (bundle_id, document_sha256, status_value)
         start += len(docs)
         if expected_total == 0:
@@ -142,9 +157,12 @@ class SearchListInventory:
         return InventorySnapshot(
             tuple(
                 (url, bundle_id, document_sha256)
-                for url, bundle_id, document_sha256, _status in _search_list_rows(
-                    session, token, deadline
-                )
+                for (
+                    url,
+                    bundle_id,
+                    document_sha256,
+                    _status,
+                ) in _search_list_rows(session, token, deadline)
             )
         )
 

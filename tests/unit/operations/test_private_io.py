@@ -32,11 +32,15 @@ class PrivateIOTests(unittest.TestCase):
         return io.read_file(self.fd, name, mode=0o600, max_bytes=limit)
 
     def write(self, name, value, *, replace=False, limit=256):
-        return io.write_json(self.fd, name, value, replace=replace, max_bytes=limit)
+        return io.write_json(
+            self.fd, name, value, replace=replace, max_bytes=limit
+        )
 
     def test_canonical_json_is_stable_unicode_and_rejects_nonfinite(self):
         self.assertEqual(b'{"a":1,"z":2}\n', io.canonical({"z": 2, "a": 1}))
-        self.assertEqual('{"主題":"降雨"}\n'.encode(), io.canonical({"主題": "降雨"}))
+        self.assertEqual(
+            '{"主題":"降雨"}\n'.encode(), io.canonical({"主題": "降雨"})
+        )
         with self.assertRaises(ValueError):
             io.canonical({"value": float("nan")})
 
@@ -60,7 +64,15 @@ class PrivateIOTests(unittest.TestCase):
         self.assertEqual(errno.EBADF, error.exception.errno)
 
     def test_invalid_names_cannot_escape_the_directory(self):
-        for name in ("", ".", "..", "../outside.json", "/outside.json", "a/b", "a\0b"):
+        for name in (
+            "",
+            ".",
+            "..",
+            "../outside.json",
+            "/outside.json",
+            "a/b",
+            "a\0b",
+        ):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.read(name)
             with self.subTest(write=name), self.assertRaises(ValueError):
@@ -71,7 +83,8 @@ class PrivateIOTests(unittest.TestCase):
         original = os.open
 
         def checked_open(name, flags, **kwargs):
-            # Fail immediately if a regression removes NONBLOCK, not by hanging CI.
+            # Fail immediately if a regression removes NONBLOCK, not by hanging
+            # CI.
             self.assertTrue(flags & os.O_NONBLOCK)
             return original(name, flags, **kwargs)
 
@@ -88,7 +101,10 @@ class PrivateIOTests(unittest.TestCase):
             self.read("symbolic.json")
         os.link(target, self.root / "hard.json")
         for name in ("target.json", "hard.json"):
-            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsafe"):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(ValueError, "unsafe"),
+            ):
                 self.read(name)
 
     def test_file_mode_and_owner_are_not_relaxed(self):
@@ -106,7 +122,10 @@ class PrivateIOTests(unittest.TestCase):
         self.private_file("empty.json", b"")
         self.private_file("large.json", b"x" * 257)
         for name in ("empty.json", "large.json"):
-            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "size"):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(ValueError, "size"),
+            ):
                 self.read(name)
         for limit in (0, -1, True, 1.5):
             with self.subTest(limit=limit), self.assertRaises(ValueError):
@@ -148,7 +167,9 @@ class PrivateIOTests(unittest.TestCase):
         raw = b"a" * 64 + b"\n"
         io.write_file(self.fd, "query-secret", raw, max_bytes=65)
         self.assertEqual(raw, self.read("query-secret"))
-        self.assertEqual(0o600, (self.root / "query-secret").stat().st_mode & 0o777)
+        self.assertEqual(
+            0o600, (self.root / "query-secret").stat().st_mode & 0o777
+        )
         self.assertEqual(1, (self.root / "query-secret").stat().st_nlink)
         with self.assertRaises(FileExistsError):
             io.write_file(self.fd, "query-secret", b"b" * 65, max_bytes=65)
@@ -206,7 +227,9 @@ class PrivateIOTests(unittest.TestCase):
     def test_failed_file_fsync_cleans_temporary_and_preserves_old_record(self):
         self.write("receipt.json", {"value": 1})
         with (
-            patch.object(io.os, "fsync", side_effect=OSError("injected failure")),
+            patch.object(
+                io.os, "fsync", side_effect=OSError("injected failure")
+            ),
             self.assertRaises(OSError),
         ):
             self.write("receipt.json", {"value": 2}, replace=True)
@@ -227,8 +250,14 @@ class PrivateIOTests(unittest.TestCase):
             io.open_directory(self.root / "missing" / "leaf", create=True)
         self.assertFalse((self.root / "missing").exists())
 
-    def test_directory_paths_permissions_and_symlink_ancestors_are_rejected(self):
-        for path in (Path("relative"), Path("/"), self.root / ".." / self.root.name):
+    def test_directory_paths_permissions_and_symlink_ancestors_are_rejected(
+        self,
+    ):
+        for path in (
+            Path("relative"),
+            Path("/"),
+            self.root / ".." / self.root.name,
+        ):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 io.open_directory(path)
         unsafe = self.root / "public"
@@ -294,7 +323,9 @@ class PrivateIOTests(unittest.TestCase):
             fd = io.open_child_directory(self.fd, "child", create=True)
         try:
             self.assertEqual(0o700, stat.S_IMODE(os.fstat(fd).st_mode))
-            self.assertEqual((self.root / "child").stat().st_ino, os.fstat(fd).st_ino)
+            self.assertEqual(
+                (self.root / "child").stat().st_ino, os.fstat(fd).st_ino
+            )
         finally:
             os.close(fd)
         self.assertEqual(1, fsync.call_count)

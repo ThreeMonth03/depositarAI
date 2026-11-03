@@ -1,9 +1,10 @@
 """Real Compose pair updates preserve OIDC admission and durable quotas.
 
-The support fixture owns HTTPS/OIDC/probe services. A managed Compose project
-owns the production admission, Redis, Nginx frontend and Django BFF roles. Failed
-candidates leave admission stopped until an explicit operator rollback. Only
-disposable networks, images and directories are used; no host ports or GPUs.
+The support fixture owns HTTPS/OIDC/probe services. A managed Compose
+project owns the production admission, Redis, Nginx frontend and
+Django BFF roles. Failed candidates leave admission stopped until an
+explicit operator rollback. Only disposable networks, images and
+directories are used; no host ports or GPUs.
 """
 
 from __future__ import annotations
@@ -35,13 +36,16 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         root = Path(cls.temporary.name)
         cls.managed_root = root / "managed-state"
         cls.managed_root.mkdir(mode=0o700)
-        cls.managed_project = "depositar-entry-updates-test-" + uuid.uuid4().hex[:12]
+        cls.managed_project = (
+            "depositar-entry-updates-test-" + uuid.uuid4().hex[:12]
+        )
         cls.managed_compose = cls.managed_root / "public-entry/compose.json"
         cls.support_id = cls.compose("ps", "--quiet", "fixture").stdout.strip()
         cls.support_before = cls.inspect(cls.support_id)
         initial = json.loads(cls.compose_file.read_text())
 
-        # Remove only the base fixture's disposable entrance. Its TLS/OIDC/probe
+        # Remove only the base fixture's disposable entrance. Its
+        # TLS/OIDC/probe
         # containers remain running and will resolve the managed entrance's
         # service alias on their existing private outbound network.
         cls.compose(
@@ -74,7 +78,9 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         # The original support container now serves OIDC only on this network.
         # Its independent private counter cannot shadow the genuine release's
         # conversation-api alias used by the website and probe.
-        cls.command(["docker", "network", "disconnect", outbound, cls.support_id])
+        cls.command(
+            ["docker", "network", "disconnect", outbound, cls.support_id]
+        )
         cls.command(
             [
                 "docker",
@@ -123,7 +129,9 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                 "CMD",
                 "python",
                 "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__calls', timeout=2).read()",
+                "import urllib.request; urllib.request."
+                "urlopen('http://127.0.0.1:8000/__calls', "
+                "timeout=2).read()",
             ],
             "interval": "1s",
             "timeout": "3s",
@@ -184,7 +192,8 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
 
         def isolated_bind(*args, **kwargs):
             bound = original_bind(*args, **kwargs)
-            # Probe disposable BFF startup promptly without changing steady-state
+            # Probe disposable BFF startup promptly without changing
+            # steady-state
             # health checks, their commands, or deployment readiness deadlines.
             for role in ("public-web", "public-frontend"):
                 bound["compose"]["services"][role]["healthcheck"].update(
@@ -214,7 +223,8 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                     "state_root": str(cls.managed_root),
                     "public_origin": ORIGIN,
                     "oidc_issuer": ISSUER,
-                    "oidc_discovery": ISSUER + "/.well-known/openid-configuration",
+                    "oidc_discovery": ISSUER
+                    + "/.well-known/openid-configuration",
                     "oidc_client_id": "public-entry-test",
                     "oidc_client_secret_file": str(root / "client-secret"),
                     "oidc_session_secret_file": str(root / "session-secret"),
@@ -261,9 +271,17 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         cls.addClassCleanup(cls.remove_managed_project)
         bases = {}
         for role in ("public-web", "public-frontend"):
-            base = "depositar-entry-update-base-" + role + ":" + uuid.uuid4().hex
+            base = (
+                "depositar-entry-update-base-" + role + ":" + uuid.uuid4().hex
+            )
             cls.command(
-                ["docker", "image", "tag", initial["services"][role]["image"], base]
+                [
+                    "docker",
+                    "image",
+                    "tag",
+                    initial["services"][role]["image"],
+                    base,
+                ]
             )
             cls.image_tags.append(base)
             bases[role] = base
@@ -271,11 +289,15 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         cls.new_pair = cls.derive_pair(root, bases, "new")
         cls.broken_pair = cls.derive_pair(root, bases, "broken")
         if len(set(cls.old_pair + cls.new_pair + cls.broken_pair)) != 6:
-            raise AssertionError("pair fixture requires six distinct immutable images")
+            raise AssertionError(
+                "pair fixture requires six distinct immutable images"
+            )
 
     @classmethod
     def inspect(cls, identifier):
-        row = json.loads(cls.command(["docker", "inspect", identifier]).stdout)[0]
+        row = json.loads(
+            cls.command(["docker", "inspect", identifier]).stdout
+        )[0]
         return {
             "id": row["Id"],
             "image": row["Image"],
@@ -285,7 +307,9 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
 
     @classmethod
     def derive_pair(cls, root, bases, version):
-        revision = hashlib.sha1((cls.managed_project + version).encode()).hexdigest()
+        revision = hashlib.sha1(
+            (cls.managed_project + version).encode()
+        ).hexdigest()
         images = []
         for role, base in bases.items():
             directory = root / ("image-" + version + "-" + role)
@@ -302,9 +326,18 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                 + "\n"
             )
             if version == "broken" and role == "public-frontend":
-                dockerfile += 'ENTRYPOINT ["/bin/sh", "-c", "exit 1"]\nCMD []\n'
+                dockerfile += (
+                    'ENTRYPOINT ["/bin/sh", "-c", "exit 1"]\nCMD []\n'
+                )
             (directory / "Dockerfile").write_text(dockerfile)
-            tag = "depositar-entry-" + version + "-" + role + ":" + uuid.uuid4().hex
+            tag = (
+                "depositar-entry-"
+                + version
+                + "-"
+                + role
+                + ":"
+                + uuid.uuid4().hex
+            )
             cls.image_tags.append(tag)
             cls.command(
                 [
@@ -334,9 +367,13 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         for tag in reversed(cls.image_tags):
             removed = cls.command(["docker", "image", "rm", tag], check=False)
             if removed.returncode:
-                exists = cls.command(["docker", "image", "inspect", tag], check=False)
+                exists = cls.command(
+                    ["docker", "image", "inspect", tag], check=False
+                )
                 if exists.returncode == 0:
-                    raise AssertionError("disposable pair image cleanup failed")
+                    raise AssertionError(
+                        "disposable pair image cleanup failed"
+                    )
 
     @classmethod
     def private_compose(cls, *arguments):
@@ -371,16 +408,20 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         argv = list(argv)
         if argv[:2] == ["docker", "compose"]:
             if any(
-                operation in argv for operation in ("up", "stop", "start", "down", "rm")
+                operation in argv
+                for operation in ("up", "stop", "start", "down", "rm")
             ):
                 cls.compose_mutations.append(argv)
             if "--wait-timeout" in argv and "--no-deps" in argv:
-                profile = json.loads(Path(argv[argv.index("-f") + 1]).read_text())
+                profile = json.loads(
+                    Path(argv[argv.index("-f") + 1]).read_text()
+                )
                 if (
                     profile["services"]["public-frontend"]["image"]
                     == cls.broken_pair[1]
                 ):
-                    # Keep real health checks; only shorten the intentional crash wait.
+                    # Keep real health checks; only shorten the intentional
+                    # crash wait.
                     argv[argv.index("--wait-timeout") + 1] = "5"
         return subprocess.run(argv, **kwargs)
 
@@ -404,7 +445,9 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         cls.compose("exec", "--no-TTY", "probe", "python", "-c", script)
 
     def active(self):
-        return json.loads((self.managed_root / "public-entry/active.json").read_text())
+        return json.loads(
+            (self.managed_root / "public-entry/active.json").read_text()
+        )
 
     def runtime(self):
         output = self.command(
@@ -423,7 +466,11 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
         rows = (
             json.loads(output)
             if output.lstrip().startswith("[")
-            else [json.loads(line) for line in output.splitlines() if line.strip()]
+            else [
+                json.loads(line)
+                for line in output.splitlines()
+                if line.strip()
+            ]
         )
         self.assertEqual(
             {row["Service"] for row in rows},
@@ -434,7 +481,9 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
     def assert_unchanged_dependencies(self, original):
         current = self.runtime()
         self.assertEqual(current["quota-redis"], original["quota-redis"])
-        self.assertEqual(current["public-entry"]["id"], original["public-entry"]["id"])
+        self.assertEqual(
+            current["public-entry"]["id"], original["public-entry"]["id"]
+        )
         self.assertEqual(
             current["public-entry"]["image"], original["public-entry"]["image"]
         )
@@ -458,21 +507,29 @@ class PublicEntryUpdatesRuntimeFixture(PublicEntryRuntimeFixture):
                 row["Config"]["Labels"]["org.opencontainers.image.revision"],
                 state["revision"],
             )
-        self.assertFalse((self.managed_root / "public-entry/pending.json").exists())
+        self.assertFalse(
+            (self.managed_root / "public-entry/pending.json").exists()
+        )
         self.assertEqual(self.probe("access")["status"], 401)
         self.assertEqual(self.probe("access", "alice")["status"], 200)
         return state, current
 
     def assert_quotas_retained(self):
         for account in ("alice", "carol"):
-            rejected = self.probe("turn", account, {"query": "氣候", "version": 0})
+            rejected = self.probe(
+                "turn", account, {"query": "氣候", "version": 0}
+            )
             self.assertEqual(rejected["status"], 429)
-            self.assertEqual(rejected["value"], {"error": {"code": "quota_exceeded"}})
+            self.assertEqual(
+                rejected["value"], {"error": {"code": "quota_exceeded"}}
+            )
         self.assertEqual(self.calls(), 4)
 
 
 class PublicEntryUpdatesRuntimeTests(PublicEntryUpdatesRuntimeFixture):
-    def test_pair_update_manual_rollback_and_failed_frontend_preserve_quotas(self):
+    def test_pair_update_manual_rollback_and_failed_frontend_preserve_quotas(
+        self,
+    ):
         started = updates.bootstrap_public_entry(
             self.config_path,
             self.release_path,
@@ -487,9 +544,9 @@ class PublicEntryUpdatesRuntimeTests(PublicEntryUpdatesRuntimeFixture):
         for account in ("alice", "bob"):
             for version in range(2):
                 self.assertEqual(
-                    self.probe("turn", account, {"query": "氣候", "version": version})[
-                        "status"
-                    ],
+                    self.probe(
+                        "turn", account, {"query": "氣候", "version": version}
+                    )["status"],
                     200,
                 )
         self.assert_quotas_retained()
@@ -498,7 +555,9 @@ class PublicEntryUpdatesRuntimeTests(PublicEntryUpdatesRuntimeFixture):
         # A frontend from a different revision is rejected before touching the
         # healthy entrance or accepting a half-updated website.
         self.__class__.compose_mutations.clear()
-        with self.assertRaisesRegex(ValueError, "public_entry_frontend_image_invalid"):
+        with self.assertRaisesRegex(
+            ValueError, "public_entry_frontend_image_invalid"
+        ):
             updates.update_public_entry(
                 self.config_path,
                 self.release_path,
@@ -531,11 +590,17 @@ class PublicEntryUpdatesRuntimeTests(PublicEntryUpdatesRuntimeFixture):
         self.assert_quotas_retained()
 
         rolled_back = updates.rollback_public_entry(
-            self.config_path, runner=self.compose_runner, smoke_probe=self.smoke
+            self.config_path,
+            runner=self.compose_runner,
+            smoke_probe=self.smoke,
         )
-        self.assertEqual(rolled_back["status"], "public_entry_rolled_back", rolled_back)
+        self.assertEqual(
+            rolled_back["status"], "public_entry_rolled_back", rolled_back
+        )
         previous_state, previous_runtime = self.assert_pair(self.old_pair)
-        self.assertEqual(previous_state["generation"], original_state["generation"])
+        self.assertEqual(
+            previous_state["generation"], original_state["generation"]
+        )
         for role in ("public-web", "public-frontend"):
             self.assertNotEqual(
                 previous_runtime[role]["id"], current_runtime[role]["id"]
@@ -554,20 +619,26 @@ class PublicEntryUpdatesRuntimeTests(PublicEntryUpdatesRuntimeFixture):
         self.assertTrue(failed["entrance_stop_requested"])
         self.assertTrue(failed["manual_rollback_required"])
         self.assertEqual(self.active(), previous_state)
-        self.assertTrue((self.managed_root / "public-entry/pending.json").is_file())
+        self.assertTrue(
+            (self.managed_root / "public-entry/pending.json").is_file()
+        )
         entrance_id = self.runtime()["public-entry"]["id"]
-        entrance = json.loads(self.command(["docker", "inspect", entrance_id]).stdout)[
-            0
-        ]
+        entrance = json.loads(
+            self.command(["docker", "inspect", entrance_id]).stdout
+        )[0]
         self.assertFalse(entrance["State"]["Running"])
         self.assertIn(self.probe("access", "alice")["status"], (502, 503, 504))
         self.assert_unchanged_dependencies(original_runtime)
         self.assertEqual(self.calls(), 4)
 
         restored = updates.rollback_public_entry(
-            self.config_path, runner=self.compose_runner, smoke_probe=self.smoke
+            self.config_path,
+            runner=self.compose_runner,
+            smoke_probe=self.smoke,
         )
-        self.assertEqual(restored["status"], "public_entry_rolled_back", restored)
+        self.assertEqual(
+            restored["status"], "public_entry_rolled_back", restored
+        )
         self.assert_pair(self.old_pair)
         self.assert_unchanged_dependencies(original_runtime)
         self.assert_quotas_retained()

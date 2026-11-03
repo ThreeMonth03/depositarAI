@@ -22,7 +22,9 @@ from search.operations.shared import private_io
 from search.operations.state import locked_state
 from tests.unit.deployment.gateway import test_preparation as preparation_tests
 from tests.unit.deployment.gateway import test_probe_runtime as native_tests
-from tests.unit.deployment.gateway.test_runtime import evidence as gateway_evidence
+from tests.unit.deployment.gateway.test_runtime import (
+    evidence as gateway_evidence,
+)
 from tests.unit.deployment.catalog_fixtures import sealed_catalog_storage
 from tests.unit.deployment.release.test_host import (
     SnapshotDocker,
@@ -40,20 +42,30 @@ REAL_VALIDATE_IMAGE = activation.source_bundle.validate_built_image
 
 @unittest.skipUnless(
     os.environ.get("DEPOSITAR_TEST_GATEWAY_IMAGE"),
-    "native bootstrap smoke requires an explicit existing immutable Nginx image",
+    "native bootstrap smoke requires an explicit existing immutable "
+    "Nginx image",
 )
 class NativeBootstrapTests(unittest.TestCase):
     def run_bootstrap(self, config):
-        """No pulls, models, bridge networks, published ports, or live services."""
+        """No pulls, models, bridge networks, published ports, or live
+        services.
+        """
         image = os.environ["DEPOSITAR_TEST_GATEWAY_IMAGE"]
         self.assertRegex(image, r"\Asha256:[0-9a-f]{64}\Z")
-        uid, gid = (os.geteuid(), os.getegid()) if os.geteuid() else (65532, 65532)
-        with tempfile.TemporaryDirectory(prefix="depositar-bootstrap-test-") as name:
+        uid, gid = (
+            (os.geteuid(), os.getegid()) if os.geteuid() else (65532, 65532)
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-bootstrap-test-"
+        ) as name:
             root = Path(name)
             fixture = root / "fixture"
             fixture.mkdir(mode=0o755)
             fixture.chmod(0o755)
-            config_path, cidfile = fixture / "bootstrap.conf", root / "container.cid"
+            config_path, cidfile = (
+                fixture / "bootstrap.conf",
+                root / "container.cid",
+            )
             config_path.write_bytes(config)
             config_path.chmod(0o644)
             client = root / "docker-client"
@@ -65,28 +77,32 @@ class NativeBootstrapTests(unittest.TestCase):
                 "--config",
                 str(client),
             ]
-            script = r"""
-set -eu
-nginx -t -c /fixture/bootstrap.conf
-nginx -c /fixture/bootstrap.conf -g 'daemon off;' &
-nginx_pid=$!
-trap 'kill "$nginx_pid" 2>/dev/null || true; wait "$nginx_pid" 2>/dev/null || true' EXIT
-ready=0
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if wget -q -S -O /dev/null http://127.0.0.1:8080/healthz 2>/tmp/health.headers; then
-        ready=1
-        break
-    fi
-    sleep 1
-done
-test "$ready" = 1
-grep -q 'HTTP/1.1 200' /tmp/health.headers
-if wget -q -S -O /dev/null http://127.0.0.1:8080/ 2>/tmp/root.headers; then
-    exit 1
-fi
-grep -q 'HTTP/1.1 503' /tmp/root.headers
-printf '{"nginx_t":true,"healthz":200,"other":503}\n'
-"""
+            script = (
+                "\n"
+                "set -eu\n"
+                "nginx -t -c /fixture/bootstrap.conf\n"
+                "nginx -c /fixture/bootstrap.conf -g 'daemon off;' &\n"
+                "nginx_pid=$!\n"
+                'trap \'kill "$nginx_pid" 2>/dev/null || true; wait '
+                '"$nginx_pid" 2>/dev/null || true\' EXIT\n'
+                "ready=0\n"
+                "for attempt in 1 2 3 4 5 6 7 8 9 10; do\n"
+                "    if wget -q -S -O /dev/null "
+                "http://127.0.0.1:8080/healthz 2>/tmp/health.headers; then\n"
+                "        ready=1\n"
+                "        break\n"
+                "    fi\n"
+                "    sleep 1\n"
+                "done\n"
+                'test "$ready" = 1\n'
+                "grep -q 'HTTP/1.1 200' /tmp/health.headers\n"
+                "if wget -q -S -O /dev/null http://127.0.0.1:8080/ "
+                "2>/tmp/root.headers; then\n"
+                "    exit 1\n"
+                "fi\n"
+                "grep -q 'HTTP/1.1 503' /tmp/root.headers\n"
+                'printf \'{"nginx_t":true,"healthz":200,"other":503}\\n\'\n'
+            )
             argv = [
                 *prefix,
                 "run",
@@ -134,7 +150,8 @@ printf '{"nginx_t":true,"healthz":200,"other":503}\n'
                     argv, timeout=30, environment=environment
                 )
             finally:
-                # A timed-out Docker client does not prove its container exited.
+                # A timed-out Docker client does not prove its container
+                # exited.
                 # Remove only this test's exact cid; never force any live peer.
                 if cidfile.is_file():
                     cid = cidfile.read_text().strip()
@@ -145,11 +162,16 @@ printf '{"nginx_t":true,"healthz":200,"other":503}\n'
                             environment=environment,
                         )
 
-    def test_exact_bootstrap_serves_health_only_on_readonly_nonroot_rootfs(self):
+    def test_exact_bootstrap_serves_health_only_on_readonly_nonroot_rootfs(
+        self,
+    ):
         result = self.run_bootstrap(activation.BOOTSTRAP)
-        self.assertEqual(result.returncode, 0, "readonly Nginx bootstrap failed")
         self.assertEqual(
-            json.loads(result.stdout), {"nginx_t": True, "healthz": 200, "other": 503}
+            result.returncode, 0, "readonly Nginx bootstrap failed"
+        )
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"nginx_t": True, "healthz": 200, "other": 503},
         )
 
 
@@ -171,7 +193,9 @@ def routed_fixture(test):
     gateway["NetworkSettings"]["Networks"][ingress]["NetworkID"] = ingress_id
     host.docker.groups[composition.GATEWAY_PROJECT] = [gateway]
     host.docker.networks[website]["EnableIPv6"] = False
-    host.docker.networks[website]["Containers"][gateway_id] = {"EndpointID": "f" * 64}
+    host.docker.networks[website]["Containers"][gateway_id] = {
+        "EndpointID": "f" * 64
+    }
     host.docker.networks[ingress] = network
     args = (
         host.docker,
@@ -200,7 +224,7 @@ def routed_fixture(test):
 
 
 class RoutedHostTests(unittest.TestCase):
-    def test_full_four_peer_route_keeps_original_catalog_gpu_and_private_strict_three(
+    def test_four_peer_route_keeps_catalog_gpu_and_private_strict_three(
         self,
     ):
         private, routed = routed_fixture(self)
@@ -211,7 +235,9 @@ class RoutedHostTests(unittest.TestCase):
         self.assertEqual(4, len(routed.last[1]["container_ids"]))
         self.assertEqual(3, len(routed.last[0]["container_ids"]))
         self.assertEqual(private.lease, routed.lease)
-        self.assertEqual(1, len(routed.docker.groups[composition.GATEWAY_PROJECT]))
+        self.assertEqual(
+            1, len(routed.docker.groups[composition.GATEWAY_PROJECT])
+        )
 
     def test_foreign_peer_is_rejected_on_each_unfiltered_network(self):
         for kind in ("website", "ingress", "catalog", "inference", "ranking"):
@@ -222,7 +248,9 @@ class RoutedHostTests(unittest.TestCase):
                 elif kind == "ingress":
                     name = composition.GATEWAY_PROJECT + "_ingress"
                 elif kind == "catalog":
-                    name = routed.context["plan"]["project"] + "_search_backend"
+                    name = (
+                        routed.context["plan"]["project"] + "_search_backend"
+                    )
                 else:
                     name = routed.inference_compose["networks"][kind]["name"]
                 routed.docker.networks[name]["Containers"]["f" * 64] = {
@@ -231,7 +259,9 @@ class RoutedHostTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     routed.observe()
 
-    def test_unknown_gateway_project_container_and_endpoint_mismatch_are_rejected(self):
+    def test_unknown_gateway_project_container_or_endpoint_rejects(
+        self,
+    ):
         for changed in ("extra", "endpoint"):
             with self.subTest(changed=changed):
                 unused_private, routed = routed_fixture(self)
@@ -239,10 +269,14 @@ class RoutedHostTests(unittest.TestCase):
                 if changed == "extra":
                     other = copy.deepcopy(row)
                     other["Id"] = "e" * 64
-                    routed.docker.groups[composition.GATEWAY_PROJECT].append(other)
+                    routed.docker.groups[composition.GATEWAY_PROJECT].append(
+                        other
+                    )
                 else:
                     name = routed.compose["networks"]["website"]["name"]
-                    row["NetworkSettings"]["Networks"][name]["EndpointID"] = "0" * 64
+                    row["NetworkSettings"]["Networks"][name]["EndpointID"] = (
+                        "0" * 64
+                    )
                 with self.assertRaises(ValueError):
                     routed.observe()
 
@@ -255,7 +289,10 @@ class GatewayActivationTests(unittest.TestCase):
         preparation_tests.GatewayPreparationTests.setUp(self)
         self.private_proof = copy.deepcopy(self.values["release_proof"])
         self.completed.update(self.private_proof)
-        self.acceptance.return_value = {**self.completed, "runtime_reused": True}
+        self.acceptance.return_value = {
+            **self.completed,
+            "runtime_reused": True,
+        }
         with locked_state(self.config) as store:
             descriptor = private_io.open_directory(self.slot)
             try:
@@ -284,7 +321,11 @@ class GatewayActivationTests(unittest.TestCase):
         }
         self.gpu_compose = {
             "name": "depositar-ai-inference-" + "1" * 12,
-            "services": {"scope-model": {}, "answer-model": {}, "reranker": {}},
+            "services": {
+                "scope-model": {},
+                "answer-model": {},
+                "reranker": {},
+            },
             "networks": {},
         }
         self.gpu_images = {
@@ -313,7 +354,11 @@ class GatewayActivationTests(unittest.TestCase):
             (activation.execution, "operation_lock", nullcontext()),
             (activation.query, "read_authority", self.authority),
             (activation.credentials, "read_api_key_authority", self.key),
-            (activation.image_evidence, "read_completed_images", self.image_authority),
+            (
+                activation.image_evidence,
+                "read_completed_images",
+                self.image_authority,
+            ),
             (activation.inference, "_authority", self.image_authority),
             (activation.inference, "_refresh_authority", self.image_authority),
             (activation.composition, "_inference", self.gpu_compose),
@@ -336,7 +381,11 @@ class GatewayActivationTests(unittest.TestCase):
                 "render_composition",
                 {"inference": self.gpu_compose},
             ),
-            (activation.inference, "_runtime_identity", {"fixture": "gpu-identity"}),
+            (
+                activation.inference,
+                "_runtime_identity",
+                {"fixture": "gpu-identity"},
+            ),
             (activation.release, "_sealed_inference", lambda proof: None),
             (activation.inference, "_gpu", None),
             (activation.inference_runtime, "ownership_proofs", []),
@@ -380,7 +429,9 @@ class GatewayActivationTests(unittest.TestCase):
                 self.last = (
                     {"fixture": "gpu-proof"},
                     copy.deepcopy(
-                        fixture.routed_proof if self.routed else fixture.private_proof
+                        fixture.routed_proof
+                        if self.routed
+                        else fixture.private_proof
                     ),
                 )
                 return {}, [], {}
@@ -395,7 +446,11 @@ class GatewayActivationTests(unittest.TestCase):
 
     def runtime_inventory(self, docker, project):
         self.assertEqual(composition.GATEWAY_PROJECT, project)
-        return (["d" * 64], {project + "_ingress"}) if self.started else ([], set())
+        return (
+            (["d" * 64], {project + "_ingress"})
+            if self.started
+            else ([], set())
+        )
 
     def query(self, context, *, observe_runtime):
         observe_runtime()
@@ -406,8 +461,12 @@ class GatewayActivationTests(unittest.TestCase):
         if arguments[0] == "info":
             return b'"linux"'
         if arguments[:2] == ["network", "inspect"]:
-            return json.dumps([{"Id": "0" * 64, "Name": arguments[-1]}]).encode()
-        self.assertTrue((self.gateway_root / "activation/intent.json").exists())
+            return json.dumps(
+                [{"Id": "0" * 64, "Name": arguments[-1]}]
+            ).encode()
+        self.assertTrue(
+            (self.gateway_root / "activation/intent.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
         if arguments[0] == "compose":
             phase = "up" if "up" in arguments else "config"
@@ -417,7 +476,9 @@ class GatewayActivationTests(unittest.TestCase):
                     (self.gateway_root / "routes/active.conf").read_bytes(),
                 )
                 self.assertIn("--no-build", arguments)
-                self.assertEqual("never", arguments[arguments.index("--pull") + 1])
+                self.assertEqual(
+                    "never", arguments[arguments.index("--pull") + 1]
+                )
                 self.started = True
         elif arguments[0] == "exec":
             self.assertEqual("d" * 64, arguments[1])
@@ -441,12 +502,19 @@ class GatewayActivationTests(unittest.TestCase):
         self.events.append("http")
         self.assertIs(self.docker, docker)
         identity = {
-            key: options[key] for key in ("revision", "bundle_id", "manifest_sha256")
+            key: options[key]
+            for key in ("revision", "bundle_id", "manifest_sha256")
         }
-        self.assertEqual(self.image_authority["images"]["web"], options["image_proof"])
-        self.assertEqual(self.values["images"]["web"], options["image_inspection"])
+        self.assertEqual(
+            self.image_authority["images"]["web"], options["image_proof"]
+        )
+        self.assertEqual(
+            self.values["images"]["web"], options["image_inspection"]
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
-        self.assertTrue((self.gateway_root / "activation/routed.json").exists())
+        self.assertTrue(
+            (self.gateway_root / "activation/routed.json").exists()
+        )
         self.assertEqual(
             (self.gateway_root / "routes/candidate.conf").read_bytes(),
             (self.gateway_root / "routes/active.conf").read_bytes(),
@@ -489,7 +557,8 @@ class GatewayActivationTests(unittest.TestCase):
             **identity,
             "run_id": options["run_id"],
             "image_id": options["image_proof"]["image_id"],
-            "container_name": "depositar-ai-gateway-probe-" + options["run_id"],
+            "container_name": "depositar-ai-gateway-probe-"
+            + options["run_id"],
             "probe_sha256": activation.hashlib.sha256(
                 activation.gateway_probe_runtime.SCRIPT.encode()
             ).hexdigest(),
@@ -525,7 +594,7 @@ class GatewayActivationTests(unittest.TestCase):
                 http_probe=self.http,
             )
 
-    def test_first_activation_publishes_pointer_only_after_native_route_http_fresh_proof(
+    def test_first_activation_publishes_after_fresh_native_route_http_proof(
         self,
     ):
         result = self.activate()
@@ -546,10 +615,16 @@ class GatewayActivationTests(unittest.TestCase):
             pointer["activation_complete_sha256"],
         )
         self.assertEqual("private-proof", self.events[0])
-        self.assertLess(self.events.index("candidate-t"), self.events.index("active-t"))
-        self.assertLess(self.events.index("active-t"), self.events.index("reload"))
+        self.assertLess(
+            self.events.index("candidate-t"), self.events.index("active-t")
+        )
+        self.assertLess(
+            self.events.index("active-t"), self.events.index("reload")
+        )
         self.assertLess(self.events.index("reload"), self.events.index("http"))
-        self.assertIn("routed-proof", self.events[self.events.index("http") + 1 :])
+        self.assertIn(
+            "routed-proof", self.events[self.events.index("http") + 1 :]
+        )
         self.http.assert_called_once()
         self.start_release.assert_not_called()
         self.private_probe.assert_not_called()
@@ -567,7 +642,9 @@ class GatewayActivationTests(unittest.TestCase):
                 0o700 if path.is_dir() else 0o600, path.stat().st_mode & 0o777
             )
 
-    def test_default_native_probe_does_not_import_host_pydantic_or_wire_models(self):
+    def test_default_native_probe_does_not_import_host_pydantic_or_wire_models(
+        self,
+    ):
         original_import = builtins.__import__
 
         def missing(name, *args, **kwargs):
@@ -600,7 +677,9 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertIs(result["active_changed"], True)
         self.http.assert_not_called()
 
-    def test_insufficient_shared_native_budget_refuses_before_intent_or_ports(self):
+    def test_insufficient_shared_native_budget_refuses_before_intent_or_ports(
+        self,
+    ):
         self.docker.calls = 44
         with self.assertRaisesRegex(
             activation.GatewayActivationError, "command_budget"
@@ -610,12 +689,14 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertNotIn("up", self.events)
         self.http.assert_not_called()
 
-    def test_native_collectors_and_probe_keep_128_calls_and_six_volume_observations(
+    def test_native_collection_and_probe_keep_128_calls_and_six_volumes(
         self,
     ):
         self.native_call_budget()
 
-    def test_changed_volume_metadata_blocks_before_gateway_intent_or_ports(self):
+    def test_changed_volume_metadata_blocks_before_gateway_intent_or_ports(
+        self,
+    ):
         self.native_call_budget(bad_metadata=True)
 
     def native_call_budget(self, *, bad_metadata=False):
@@ -642,7 +723,9 @@ class GatewayActivationTests(unittest.TestCase):
         source_plan, web, web_proof = native_tests.materials()
         web_proof = REAL_VALIDATE_IMAGE(source_plan, "web", web["Id"], web)
         self.image_authority["images"]["web"] = web_proof
-        self.image_authority["images"]["reranker"] = {"image_id": "sha256:" + "c" * 64}
+        self.image_authority["images"]["reranker"] = {
+            "image_id": "sha256:" + "c" * 64
+        }
         self.image_authority["images"]["conversation-api"] = {
             **self.values["image_proof"],
             "image_id": "sha256:" + "2" * 64,
@@ -656,7 +739,8 @@ class GatewayActivationTests(unittest.TestCase):
             Os="linux",
             Architecture="amd64",
             RepoDigests=[
-                "ollama/ollama@" + activation.composition.OLLAMA_IMAGE.split("@", 1)[1]
+                "ollama/ollama@"
+                + activation.composition.OLLAMA_IMAGE.split("@", 1)[1]
             ],
         )
         images = {
@@ -668,7 +752,9 @@ class GatewayActivationTests(unittest.TestCase):
             "reranker": {"Id": "sha256:" + "c" * 64, "Config": {}},
             "web-nginx": self.values["gateway_image"],
         }
-        inspections = {image["Id"]: image for image in (*images.values(), ollama)}
+        inspections = {
+            image["Id"]: image for image in (*images.values(), ollama)
+        }
         catalog_images = {
             role: {"image_id": "sha256:" + digit * 64}
             for role, digit in zip(
@@ -699,7 +785,9 @@ class GatewayActivationTests(unittest.TestCase):
         }
         index_row = groups[self.plan["project"]][-1]
         index_row.update(
-            Config={"Labels": {"com.docker.compose.service": "opensearch-search"}},
+            Config={
+                "Labels": {"com.docker.compose.service": "opensearch-search"}
+            },
             Mounts=[
                 {
                     "Type": "volume",
@@ -713,7 +801,10 @@ class GatewayActivationTests(unittest.TestCase):
         )
         names = [
             projects[0] + "_search_backend",
-            *(entry["name"] for entry in self.gpu_compose["networks"].values()),
+            *(
+                entry["name"]
+                for entry in self.gpu_compose["networks"].values()
+            ),
             self.compose["networks"]["website"]["name"],
         ]
         snapshots = SnapshotDocker(
@@ -737,7 +828,9 @@ class GatewayActivationTests(unittest.TestCase):
             activation.execution.validate_storage_mounts(
                 storage, actual_groups[self.plan["project"]]
             )
-            fixture.events.append("routed-proof" if routed else "private-proof")
+            fixture.events.append(
+                "routed-proof" if routed else "private-proof"
+            )
             host.last = (
                 {"fixture": "gpu-proof"},
                 copy.deepcopy(
@@ -769,7 +862,9 @@ class GatewayActivationTests(unittest.TestCase):
             elif arguments[0] in {"compose", "exec"}:
                 output = self.command(arguments)
                 if arguments[0] == "compose" and "up" in arguments:
-                    snapshots.groups[composition.GATEWAY_PROJECT] = [{"Id": "d" * 64}]
+                    snapshots.groups[composition.GATEWAY_PROJECT] = [
+                        {"Id": "d" * 64}
+                    ]
                     name = composition.GATEWAY_PROJECT + "_ingress"
                     snapshots.networks[name] = {"Id": "0" * 64, "Name": name}
             else:
@@ -787,7 +882,9 @@ class GatewayActivationTests(unittest.TestCase):
             return self.image_authority["images"][role]
 
         with (
-            mock.patch.object(activation.runtime_docker, "Docker", side_effect=docker),
+            mock.patch.object(
+                activation.runtime_docker, "Docker", side_effect=docker
+            ),
             mock.patch.object(
                 activation.inference, "_images", side_effect=REAL_GPU_IMAGES
             ),
@@ -800,14 +897,18 @@ class GatewayActivationTests(unittest.TestCase):
                 side_effect=REAL_INVENTORY,
             ),
             mock.patch.object(
-                activation.source_bundle, "validate_built_image", side_effect=validate
+                activation.source_bundle,
+                "validate_built_image",
+                side_effect=validate,
             ),
             mock.patch.object(
                 activation.source_bundle,
                 "validate_compatible_built_image",
-                side_effect=lambda plan, role, revision, image_id, inspection: validate(
-                    plan, role, image_id, inspection
-                ),
+                side_effect=lambda plan,
+                role,
+                revision,
+                image_id,
+                inspection: validate(plan, role, image_id, inspection),
             ),
             mock.patch.object(
                 activation.source_bundle,
@@ -825,7 +926,8 @@ class GatewayActivationTests(unittest.TestCase):
         ):
             if bad_metadata:
                 with self.assertRaisesRegex(
-                    activation.GatewayActivationError, "^gateway_activation_failed$"
+                    activation.GatewayActivationError,
+                    "^gateway_activation_failed$",
                 ):
                     activation.activate_gateway(
                         self.config,
@@ -840,7 +942,11 @@ class GatewayActivationTests(unittest.TestCase):
                 self.assertEqual(14, len(all_calls))
                 return
             result = activation.activate_gateway(
-                self.config, store, self.revision, self.plan, repo_root=self.root
+                self.config,
+                store,
+                self.revision,
+                self.plan,
+                repo_root=self.root,
             )
         self.assertIs(result["active_changed"], True)
         self.assertEqual(128, len(all_calls))
@@ -893,7 +999,9 @@ class GatewayActivationTests(unittest.TestCase):
             activation.GatewayActivationError, "probe_receipts_invalid"
         ):
             self.activate()
-        self.assertTrue((self.gateway_root / "activation/probe/complete.json").exists())
+        self.assertTrue(
+            (self.gateway_root / "activation/probe/complete.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def test_probe_receipt_cannot_substitute_another_image(self):
@@ -918,7 +1026,9 @@ class GatewayActivationTests(unittest.TestCase):
             self.activate()
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_final_activation_completion_read_cannot_hide_probe_receipt_drift(self):
+    def test_final_activation_completion_read_cannot_hide_probe_receipt_drift(
+        self,
+    ):
         original = activation.private_io.read_file
 
         def drift(fd, name, **options):
@@ -927,17 +1037,21 @@ class GatewayActivationTests(unittest.TestCase):
                 name == "complete.json"
                 and (self.gateway_root / "activation/complete.json").exists()
             ):
-                (self.gateway_root / "activation/probe/intent.json").write_bytes(
-                    b"changed\n"
-                )
+                (
+                    self.gateway_root / "activation/probe/intent.json"
+                ).write_bytes(b"changed\n")
             return value
 
-        with mock.patch.object(activation.private_io, "read_file", side_effect=drift):
+        with mock.patch.object(
+            activation.private_io, "read_file", side_effect=drift
+        ):
             with self.assertRaisesRegex(
                 activation.GatewayActivationError, "probe_changed"
             ):
                 self.activate()
-        self.assertTrue((self.gateway_root / "activation/complete.json").exists())
+        self.assertTrue(
+            (self.gateway_root / "activation/complete.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def native_failure(self, phase):
@@ -946,12 +1060,15 @@ class GatewayActivationTests(unittest.TestCase):
             activation.GatewayActivationError, "^gateway_activation_failed$"
         ):
             self.activate()
-        self.assertTrue((self.gateway_root / "activation/intent.json").exists())
+        self.assertTrue(
+            (self.gateway_root / "activation/intent.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
         self.http.assert_not_called()
         calls = len(self.docker.call.call_args_list)
         with self.assertRaisesRegex(
-            activation.GatewayActivationError, "partial_state_recovery_required"
+            activation.GatewayActivationError,
+            "partial_state_recovery_required",
         ):
             self.activate()
         self.assertEqual(calls, len(self.docker.call.call_args_list))
@@ -976,7 +1093,9 @@ class GatewayActivationTests(unittest.TestCase):
     def test_reload_failure_never_probes_or_promotes(self):
         self.native_failure("reload")
 
-    def test_false_http_claim_never_publishes_completion_or_active_pointer(self):
+    def test_false_http_claim_never_publishes_completion_or_active_pointer(
+        self,
+    ):
         self.http.side_effect = lambda docker, **options: {
             **self.probe(docker, **options),
             "gateway_http_verified": 1,
@@ -985,13 +1104,17 @@ class GatewayActivationTests(unittest.TestCase):
             activation.GatewayActivationError, "http_contract_invalid"
         ):
             self.activate()
-        self.assertFalse((self.gateway_root / "activation/complete.json").exists())
+        self.assertFalse(
+            (self.gateway_root / "activation/complete.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def test_candidate_drift_during_http_is_not_repaired_or_promoted(self):
         def drift(docker, **options):
             result = self.probe(docker, **options)
-            (self.gateway_root / "routes/candidate.conf").write_bytes(b"untrusted\n")
+            (self.gateway_root / "routes/candidate.conf").write_bytes(
+                b"untrusted\n"
+            )
             return result
 
         self.http.side_effect = drift
@@ -1019,12 +1142,15 @@ class GatewayActivationTests(unittest.TestCase):
 
         self.http.side_effect = restart
         with self.assertRaisesRegex(
-            activation.GatewayActivationError, "runtime_changed_during_acceptance"
+            activation.GatewayActivationError,
+            "runtime_changed_during_acceptance",
         ):
             self.activate()
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_final_deadline_after_complete_record_check_never_publishes_pointer(self):
+    def test_final_deadline_after_completion_check_never_publishes(
+        self,
+    ):
         clock = [0.0]
         original = activation.private_io.read_file
 
@@ -1041,11 +1167,17 @@ class GatewayActivationTests(unittest.TestCase):
             mock.patch.object(
                 activation.time, "monotonic", side_effect=lambda: clock[0]
             ),
-            mock.patch.object(activation.private_io, "read_file", side_effect=expire),
+            mock.patch.object(
+                activation.private_io, "read_file", side_effect=expire
+            ),
         ):
-            with self.assertRaisesRegex(activation.GatewayActivationError, "deadline"):
+            with self.assertRaisesRegex(
+                activation.GatewayActivationError, "deadline"
+            ):
                 self.activate()
-        self.assertTrue((self.gateway_root / "activation/complete.json").exists())
+        self.assertTrue(
+            (self.gateway_root / "activation/complete.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def test_model_handle_exit_failure_never_publishes_completion(self):
@@ -1058,10 +1190,13 @@ class GatewayActivationTests(unittest.TestCase):
             activation.inference, "_verified_models", side_effect=broken
         ):
             with self.assertRaisesRegex(
-                activation.GatewayActivationError, "^gateway_activation_failed$"
+                activation.GatewayActivationError,
+                "^gateway_activation_failed$",
             ):
                 self.activate()
-        self.assertFalse((self.gateway_root / "activation/complete.json").exists())
+        self.assertFalse(
+            (self.gateway_root / "activation/complete.json").exists()
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def test_preexisting_singleton_runtime_is_not_adopted_before_intent(self):

@@ -28,7 +28,9 @@ def lint_roots(source: str) -> tuple[str, ...]:
 
 def covered_by_roots(relative: str, roots: tuple[str, ...]) -> bool:
     path = Path(relative)
-    return any(path == Path(root) or Path(root) in path.parents for root in roots)
+    return any(
+        path == Path(root) or Path(root) in path.parents for root in roots
+    )
 
 
 class SearchCIScopeTests(unittest.TestCase):
@@ -73,7 +75,9 @@ class SearchCIScopeTests(unittest.TestCase):
         ):
             with self.subTest(module=module):
                 self.assertIn(module, suite)
-        api_gate = (ROOT / "scripts/test-search-api.sh").read_text(encoding="utf-8")
+        api_gate = (ROOT / "scripts/test-search-api.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("search.tests.test_readiness", api_gate)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("product-up-private", makefile)
@@ -83,14 +87,18 @@ class SearchCIScopeTests(unittest.TestCase):
         self.assertIn("product-start-release", makefile)
         self.assertIn("product-prepare-gateway", makefile)
         self.assertIn("product-activate-gateway", makefile)
-        self.assertNotRegex(makefile, r"(?m)^product-(?:install|update|rollback):")
+        self.assertNotRegex(
+            makefile, r"(?m)^product-(?:install|update|rollback):"
+        )
 
     def test_quality_and_native_components_remain_in_current_product_checks(
         self,
     ) -> None:
         suite = (ROOT / "scripts/search-ci.sh").read_text(encoding="utf-8")
         self.assertIn("search.tests.test_reranker_service", suite)
-        style = (ROOT / "scripts/test-search-api.sh").read_text(encoding="utf-8")
+        style = (ROOT / "scripts/test-search-api.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("search.tests.test_pipeline", style)
         self.assertEqual(LINT_ROOTS, lint_roots(style))
         for relative in (
@@ -101,10 +109,12 @@ class SearchCIScopeTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 self.assertTrue(covered_by_roots(relative, lint_roots(style)))
 
-    def test_style_gate_covers_every_product_root_not_a_parallel_file_inventory(
+    def test_style_gate_covers_product_roots_directly(
         self,
     ) -> None:
-        source = (ROOT / "scripts/test-search-api.sh").read_text(encoding="utf-8")
+        source = (ROOT / "scripts/test-search-api.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertEqual(LINT_ROOTS, lint_roots(source))
         self.assertIn('cd "$project_dir"', source)
         self.assertNotIn("api_python=", source)
@@ -127,7 +137,9 @@ class SearchCIScopeTests(unittest.TestCase):
                 self.assertFalse(covered_by_roots(outside, lint_roots(source)))
 
     def test_workflow_runs_only_the_search_product_suite(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("make search-ci", workflow)
         self.assertNotIn("research-components:", workflow)
         self.assertNotIn("calendar-research:", workflow)
@@ -167,7 +179,9 @@ class SearchCIScopeTests(unittest.TestCase):
         for name in entrypoints:
             with self.subTest(name=name):
                 source = (ROOT / "scripts" / name).read_text(encoding="utf-8")
-                self.assertIn('source "$project_dir/scripts/search-lib.sh"', source)
+                self.assertIn(
+                    'source "$project_dir/scripts/search-lib.sh"', source
+                )
                 self.assertNotIn("scripts/lib.sh", source)
 
         ci_script = (ROOT / "scripts/search-ci.sh").read_text(encoding="utf-8")
@@ -223,7 +237,10 @@ class SearchCIScopeTests(unittest.TestCase):
         }
         self.assertTrue(required <= targets)
         self.assertTrue(
-            all(name in required or name.startswith("product-") for name in targets)
+            all(
+                name in required or name.startswith("product-")
+                for name in targets
+            )
         )
         self.assertRegex(makefile, r"(?m)^test: search-ci$")
         self.assertRegex(makefile, r"(?m)^ci: search-ci$")
@@ -248,7 +265,10 @@ class SpecialistChangedScopeTests(unittest.TestCase):
     def test_only_explicitly_unrelated_paths_skip_specialist_builds(self):
         cases = (
             (["README.md", "docs/guide/architecture.md"], set()),
-            (["web/src/App.tsx", "web/package-lock.json"], {"private-website"}),
+            (
+                ["web/src/App.tsx", "web/package-lock.json"],
+                {"private-website"},
+            ),
             (["scripts/test-search-web.sh"], {"private-website"}),
         )
         for paths, expected in cases:
@@ -272,20 +292,26 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             ["docs/report\nmalformed.md"],
         ):
             with self.subTest(paths=paths):
-                self.assertEqual(self.scope.JOBS, self.scope.required_jobs(paths))
+                self.assertEqual(
+                    self.scope.JOBS, self.scope.required_jobs(paths)
+                )
 
     def test_non_pr_events_and_invalid_sha_do_not_even_query_git(self):
         environments = [
-            {"GITHUB_EVENT_NAME": event} for event in ("push", "workflow_dispatch", "")
+            {"GITHUB_EVENT_NAME": event}
+            for event in ("push", "workflow_dispatch", "")
         ]
         environments.append(
             {"GITHUB_EVENT_NAME": "pull_request", "CI_BASE_SHA": "main"}
         )
-        with patch.object(self.scope.subprocess, "run", side_effect=AssertionError):
+        with patch.object(
+            self.scope.subprocess, "run", side_effect=AssertionError
+        ):
             for environment in environments:
                 with self.subTest(environment=environment):
                     self.assertEqual(
-                        self.scope.JOBS, self.scope.changed_jobs(environment, cwd=ROOT)
+                        self.scope.JOBS,
+                        self.scope.changed_jobs(environment, cwd=ROOT),
                     )
 
     def test_git_failure_and_timeout_fall_back_to_all_gates(self):
@@ -296,9 +322,12 @@ class SpecialistChangedScopeTests(unittest.TestCase):
         }
         for error in (OSError(), subprocess.TimeoutExpired("git", 10)):
             with self.subTest(error=type(error).__name__):
-                with patch.object(self.scope.subprocess, "run", side_effect=error):
+                with patch.object(
+                    self.scope.subprocess, "run", side_effect=error
+                ):
                     self.assertEqual(
-                        self.scope.JOBS, self.scope.changed_jobs(environment, cwd=ROOT)
+                        self.scope.JOBS,
+                        self.scope.changed_jobs(environment, cwd=ROOT),
                     )
 
     def test_real_git_diff_covers_whole_pr_deletions_and_renames(self):
@@ -355,29 +384,40 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 self.scope.changed_jobs(environment, cwd=directory),
             )
             (directory / "docs").mkdir()
-            (directory / "search/shared.py").rename(directory / "docs/moved.md")
-            environment["CI_HEAD_SHA"] = commit()
-            # Treating a rename as just its destination would miss removed code.
-            self.assertEqual(
-                self.scope.JOBS, self.scope.changed_jobs(environment, cwd=directory)
+            (directory / "search/shared.py").rename(
+                directory / "docs/moved.md"
             )
-            (directory / "docs/moved.md").write_text("later documentation edit\n")
+            environment["CI_HEAD_SHA"] = commit()
+            # Treating a rename as just its destination would miss removed
+            # code.
+            self.assertEqual(
+                self.scope.JOBS,
+                self.scope.changed_jobs(environment, cwd=directory),
+            )
+            (directory / "docs/moved.md").write_text(
+                "later documentation edit\n"
+            )
             environment["CI_HEAD_SHA"] = commit()
             # Looking only at HEAD~1 would now miss the earlier shared removal.
             self.assertEqual(
-                self.scope.JOBS, self.scope.changed_jobs(environment, cwd=directory)
+                self.scope.JOBS,
+                self.scope.changed_jobs(environment, cwd=directory),
             )
             environment["CI_BASE_SHA"] = "f" * 40
             self.assertEqual(
-                self.scope.JOBS, self.scope.changed_jobs(environment, cwd=directory)
+                self.scope.JOBS,
+                self.scope.changed_jobs(environment, cwd=directory),
             )
             environment["CI_BASE_SHA"] = base
             environment["CI_HEAD_SHA"] = head
             self.assertEqual(
-                self.scope.JOBS, self.scope.changed_jobs(environment, cwd=directory)
+                self.scope.JOBS,
+                self.scope.changed_jobs(environment, cwd=directory),
             )
 
-    def test_workflow_keeps_required_checks_and_the_complete_validate_gate(self):
+    def test_workflow_keeps_required_checks_and_the_complete_validate_gate(
+        self,
+    ):
         source = (ROOT / ".github/workflows/ci.yml").read_text()
         jobs = {
             match[1]: match[2]
@@ -398,7 +438,9 @@ class SpecialistChangedScopeTests(unittest.TestCase):
         self.assertIn("run: make search-ci", jobs["validate"])
         self.assertIn("needs: [lint]", jobs["validate"])
         self.assertIn("if: always()", jobs["validate"])
-        self.assertIn("LINT_RESULT: ${{ needs.lint.result }}", jobs["validate"])
+        self.assertIn(
+            "LINT_RESULT: ${{ needs.lint.result }}", jobs["validate"]
+        )
         self.assertIn('run: test "$LINT_RESULT" = success', jobs["validate"])
         for name in sorted(website_jobs):
             gate = "private-website"
@@ -407,14 +449,17 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             self.assertIn("fetch-depth: 2", jobs[name])
             self.assertIn(f"scripts/ci/changed-scope.py {gate}", jobs[name])
             self.assertIn(
-                "CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}", jobs[name]
+                "CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                jobs[name],
             )
             self.assertIn("CI_HEAD_SHA: ${{ github.sha }}", jobs[name])
             self.assertIn("if: steps.scope.outputs.run != 'false'", jobs[name])
             self.assertIn("Report unaffected gate", jobs[name])
         for suite in ("oss-policy", "oss-gateway", "browser"):
             job = jobs["private-website-" + suite]
-            self.assertIn("run: bash scripts/test-search-web.sh --suite " + suite, job)
+            self.assertIn(
+                "run: bash scripts/test-search-web.sh --suite " + suite, job
+            )
             self.assertIn("id: website", job)
             for field, value in (
                 ("scope_run", "steps.scope.outputs.run"),
@@ -425,7 +470,8 @@ class SpecialistChangedScopeTests(unittest.TestCase):
                 self.assertIn(field + ": ${{ " + value + " }}", job)
         aggregate = jobs["private-website"]
         self.assertIn(
-            "needs: [private-website-oss-policy, private-website-oss-gateway, private-website-browser]",
+            "needs: [private-website-oss-policy, "
+            "private-website-oss-gateway, private-website-browser]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
@@ -449,7 +495,8 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             job = jobs[name]
             for action in ("restore", "save"):
                 self.assertIn(
-                    f"actions/cache/{action}@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
+                    f"actions/cache/{action}@"
+                    f"55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
                     job,
                 )
             self.assertEqual(
@@ -461,10 +508,13 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             self.assertEqual(2, job.count("continue-on-error: true"))
             self.assertIn("SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1", job)
             self.assertIn(
-                "github.event.pull_request.head.repo.full_name == github.repository",
+                "github.event.pull_request.head.repo.full_name == "
+                "github.repository",
                 job,
             )
-            self.assertIn("success() && steps.scope.outputs.run != 'false'", job)
+            self.assertIn(
+                "success() && steps.scope.outputs.run != 'false'", job
+            )
         self.assertEqual(6, source.count("continue-on-error: true"))
         self.assertNotIn("path: web/node_modules", source)
         self.assertNotRegex(
@@ -513,16 +563,23 @@ class WebsiteNpmCacheInvocationTests(unittest.TestCase):
                 if log.exists()
                 else []
             )
-            return result, calls, str(directory / "cache root/depositar-ai/npm")
+            return (
+                result,
+                calls,
+                str(directory / "cache root/depositar-ai/npm"),
+            )
 
-    def test_actual_install_mounts_persistent_download_cache_and_still_uses_ci(self):
+    def test_actual_install_mounts_persistent_download_cache_and_still_uses_ci(
+        self,
+    ):
         result, calls, expected_cache = self.run_npm_install()
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(1, len(calls))
         self.assertIn(f"type=bind,src={expected_cache},dst=/tmp/npm", calls[0])
         self.assertIn("npm_config_cache=/tmp/npm", calls[0])
         self.assertEqual(
-            ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], calls[0][-5:]
+            ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+            calls[0][-5:],
         )
 
     def test_invalid_cache_paths_fail_before_any_docker_call(self):
@@ -547,23 +604,30 @@ class WebsiteNpmCacheInvocationTests(unittest.TestCase):
 
 
 class SearchCIStyleInvocationTests(unittest.TestCase):
-    """Run the real lint-loop bytes using a fake Docker binary, never a daemon."""
+    """Run the real lint-loop bytes using a fake Docker binary, never a
+    daemon.
+    """
 
     def run_lint_loop(self, failure: str = ""):
-        source = (ROOT / "scripts/test-search-api.sh").read_text(encoding="utf-8")
+        source = (ROOT / "scripts/test-search-api.sh").read_text(
+            encoding="utf-8"
+        )
         start = source.index("lint_roots=(")
         end = source.index("\ndone", start) + len("\ndone")
         # Only the standalone reviewed loop runs. The build/runtime/network
         # phases outside it are intentionally not simulated as acceptance.
         program = 'set -euo pipefail\nproject_dir="$1"\n' + source[start:end]
-        with tempfile.TemporaryDirectory(prefix="depositar-lint-scope-") as raw:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-lint-scope-"
+        ) as raw:
             temporary = Path(raw)
             fake_docker = temporary / "docker"
             fake_docker.write_text(
                 f"#!{sys.executable}\n"
                 "import json, os, sys\n"
                 "arguments = sys.argv[1:]\n"
-                "with open(os.environ['DEPOSITAR_LINT_TEST_LOG'], 'a') as log:\n"
+                "with open(os.environ['DEPOSITAR_LINT_TEST_LOG'], "
+                "'a') as log:\n"
                 "    log.write(json.dumps(arguments) + '\\n')\n"
                 "failure = os.environ.get('DEPOSITAR_LINT_TEST_FAILURE', '')\n"
                 "if 'ruff' in arguments and failure in {'check', 'format'}:\n"
@@ -610,11 +674,17 @@ class SearchCIStyleInvocationTests(unittest.TestCase):
                 expected = ["ruff", action, "--no-cache"]
                 if action == "format":
                     expected.append("--check")
-                self.assertEqual(expected + list(LINT_ROOTS), arguments[index:])
+                self.assertEqual(
+                    expected + list(LINT_ROOTS), arguments[index:]
+                )
                 self.assertEqual("run", arguments[0])
                 self.assertIn("--rm", arguments)
-                self.assertEqual("none", arguments[arguments.index("--network") + 1])
-                self.assertEqual("/source", arguments[arguments.index("--workdir") + 1])
+                self.assertEqual(
+                    "none", arguments[arguments.index("--network") + 1]
+                )
+                self.assertEqual(
+                    "/source", arguments[arguments.index("--workdir") + 1]
+                )
                 self.assertEqual(
                     f"{os.geteuid()}:{os.getegid()}",
                     arguments[arguments.index("--user") + 1],
@@ -623,7 +693,12 @@ class SearchCIStyleInvocationTests(unittest.TestCase):
                     f"type=bind,src={ROOT},dst=/source,readonly",
                     arguments[arguments.index("--mount") + 1],
                 )
-                for forbidden in ("--fix", "--publish", "--gpus", "--privileged"):
+                for forbidden in (
+                    "--fix",
+                    "--publish",
+                    "--gpus",
+                    "--privileged",
+                ):
                     self.assertNotIn(forbidden, arguments)
 
     def test_lint_failure_stops_before_format_and_propagates(self) -> None:
@@ -640,7 +715,9 @@ class SearchCIStyleInvocationTests(unittest.TestCase):
 
 
 class WebsiteBrowserPullInvocationTests(unittest.TestCase):
-    """Exercise the shell lifecycle with fake clients and a real GNU timeout."""
+    """Exercise the shell lifecycle with fake clients and a real GNU
+    timeout.
+    """
 
     def runtime_ids(self, names):
         pending = [unittest.defaultTestLoader.loadTestsFromNames(names)]
@@ -660,7 +737,7 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "public_entry.test_antibot_runtime.AntibotRuntimeTests."
             "test_real_challenge_gate_keeps_json_and_post_boundaries_across_restart",
             "public_entry.test_antibot_gateway.AntibotGatewayTests."
-            "test_anonymous_and_oidc_admission_use_challenge_gate_and_durable_quotas",
+            "test_guest_and_oidc_challenges_preserve_durable_quotas",
             "public_entry.test_runtime.PublicEntryConcurrencyTests."
             "test_authenticated_bursts_keep_account_global_and_session_caps",
             "public_entry.test_runtime.PublicEntryMixedAccessTests."
@@ -686,7 +763,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         selected = {}
         for suite in ("all", "oss", "oss-policy", "oss-gateway"):
             with self.subTest(suite=suite):
-                result, calls, running = self.run_website_gate("cold", suite=suite)
+                result, calls, running = self.run_website_gate(
+                    "cold", suite=suite
+                )
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertFalse(running)
                 invocation = [
@@ -703,23 +782,32 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 if names[:2] == ["--durations", "25"]:
                     names = names[2:]
                 selected[suite] = self.runtime_ids(names)
-                self.assertEqual(len(selected[suite]), len(set(selected[suite])))
+                self.assertEqual(
+                    len(selected[suite]), len(set(selected[suite]))
+                )
         policy_modules = {
             "tests.integration.public_entry.test_identity_adapter",
             "tests.integration.public_entry.test_antibot_runtime",
             "tests.integration.public_entry.test_runtime",
             "tests.integration.test_gpu_local_volume",
         }
-        policy = {name for name in original if name.rsplit(".", 2)[0] in policy_modules}
+        policy = {
+            name
+            for name in original
+            if name.rsplit(".", 2)[0] in policy_modules
+        }
         self.assertEqual(original, set(selected["all"]))
         self.assertEqual(original, set(selected["oss"]))
         self.assertEqual(policy, set(selected["oss-policy"]))
         self.assertEqual(original - policy, set(selected["oss-gateway"]))
         self.assertEqual(7, len(selected["oss-policy"]))
         self.assertEqual(6, len(selected["oss-gateway"]))
-        self.assertFalse(set(selected["oss-policy"]) & set(selected["oss-gateway"]))
+        self.assertFalse(
+            set(selected["oss-policy"]) & set(selected["oss-gateway"])
+        )
         self.assertEqual(
-            original, set(selected["oss-policy"]) | set(selected["oss-gateway"])
+            original,
+            set(selected["oss-policy"]) | set(selected["oss-gateway"]),
         )
 
     def run_website_gate(
@@ -732,7 +820,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             common = (
                 f"#!{sys.executable}\n"
                 "import json, os, pathlib, signal, sys, time\n"
-                "root = pathlib.Path(os.environ['DEPOSITAR_WEB_CI_TEST_ROOT'])\n"
+                "root = pathlib.Path(os.environ['DEPOSITAR_WEB_CI_TE"
+                "ST_ROOT'])\n"
                 "mode = os.environ['DEPOSITAR_WEB_CI_TEST_MODE']\n"
                 "suite = os.environ['DEPOSITAR_WEB_CI_TEST_SUITE']\n"
                 "arguments = sys.argv[1:]\n"
@@ -743,22 +832,27 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             fake_docker = temporary / "docker"
             fake_docker.write_text(
                 common + "record('docker')\n"
-                "if mode == 'style-failure' and 'ruff' in arguments and 'check' in arguments:\n"
+                "if mode == 'style-failure' and 'ruff' in arguments "
+                "and 'check' in arguments:\n"
                 "    sys.exit(26)\n"
-                "if mode == 'browser-failure' and arguments[-2:] == ['npm', 'test']:\n"
+                "if mode == 'browser-failure' and arguments[-2:] == "
+                "['npm', 'test']:\n"
                 "    sys.exit(27)\n"
                 "if arguments[:2] == ['image', 'inspect']:\n"
                 "    if 'playwright' in arguments[-1]:\n"
                 "        sys.exit(0 if mode == 'cached' else 1)\n"
                 "    print('sha256:' + 'a' * 64)\n"
                 "if arguments[:1] == ['pull']:\n"
-                "    if mode in {'early-failure', 'signal-term', 'signal-int', 'stubborn-timeout'}:\n"
+                "    if mode in {'early-failure', 'signal-term', "
+                "'signal-int', 'stubborn-timeout'}:\n"
                 "        signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                # Publish readiness only after signal setup and the full PID write.
+                # Publish readiness only after signal setup and the full PID
+                # write.
                 "    ready = root / 'pull-pid.tmp'\n"
                 "    ready.write_text(str(os.getpid()))\n"
                 "    ready.replace(root / 'pull-pid')\n"
-                "    if mode in {'early-failure', 'signal-term', 'signal-int'}:\n"
+                "    if mode in {'early-failure', 'signal-term', "
+                "'signal-int'}:\n"
                 "        time.sleep(10)\n"
                 "    deadline = time.monotonic() + 3\n"
                 "    while not (root / 'work-started').exists():\n"
@@ -774,12 +868,18 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             fake_python = temporary / "python3"
             fake_python.write_text(
                 common + "record('python')\n"
-                "if arguments[:1] == ['-c'] and 'supported = sys.version_info' in arguments[1]:\n"
-                "    sys.exit(0 if os.environ.get('DEPOSITAR_TEST_DURATION_SUPPORT') == '1' else 1)\n"
-                "if mode == 'contract-failure' and 'tests.test_search_web_deploy' in arguments:\n"
+                "if arguments[:1] == ['-c'] and 'supported = sys."
+                "version_info' in arguments[1]:\n"
+                "    sys.exit(0 if os.environ."
+                "get('DEPOSITAR_TEST_DURATION_SUPPORT') == '1' else "
+                "1)\n"
+                "if mode == 'contract-failure' and 'tests."
+                "test_search_web_deploy' in arguments:\n"
                 "    sys.exit(17)\n"
-                "is_oss = any(item.startswith('tests.integration.public_entry.') for item in arguments)\n"
-                "is_bootstrap = 'tests.unit.deployment.gateway.test_activation.NativeBootstrapTests' in arguments\n"
+                "is_oss = any(item.startswith('tests.integration."
+                "public_entry.') for item in arguments)\n"
+                "is_bootstrap = 'tests.unit.deployment.gateway."
+                "test_activation.NativeBootstrapTests' in arguments\n"
                 "if is_oss or (suite == 'browser' and is_bootstrap):\n"
                 "    (root / 'work-started').touch()\n"
                 "    if suite in {'all', 'browser'} and mode != 'cached':\n"
@@ -788,11 +888,13 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 "            if time.monotonic() > deadline: sys.exit(24)\n"
                 "            time.sleep(0.005)\n"
                 "    if mode == 'early-failure': sys.exit(19)\n"
-                "    signals = {'signal-term': signal.SIGTERM, 'signal-int': signal.SIGINT}\n"
+                "    signals = {'signal-term': signal.SIGTERM, "
+                "'signal-int': signal.SIGINT}\n"
                 "    if mode in signals:\n"
                 "        os.kill(os.getppid(), signals[mode])\n"
                 "        sys.exit(0)\n"
-                "if arguments == ['-'] or arguments[:1] == ['scripts/validate_search_web.py']:\n"
+                "if arguments == ['-'] or arguments[:1] == "
+                "['scripts/validate_search_web.py']:\n"
                 "    sys.stdin.read()\n",
                 encoding="utf-8",
             )
@@ -800,8 +902,10 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             fake_timeout.write_text(
                 common + "record('timeout')\n"
                 "assert arguments[:2] == ['--kill-after=5s', '180s']\n"
-                "if mode in {'timeout', 'stubborn-timeout'}: arguments[1] = '0.2s'\n"
-                "if mode == 'stubborn-timeout': arguments[0] = '--kill-after=0.2s'\n"
+                "if mode in {'timeout', 'stubborn-timeout'}: "
+                "arguments[1] = '0.2s'\n"
+                "if mode == 'stubborn-timeout': arguments[0] = "
+                "'--kill-after=0.2s'\n"
                 "os.execv('/usr/bin/timeout', ['timeout', *arguments])\n",
                 encoding="utf-8",
             )
@@ -810,7 +914,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             client_environment = dict(os.environ)
             client_environment.update(environment or {})
             client_environment.update(
-                PATH=str(temporary) + os.pathsep + client_environment.get("PATH", ""),
+                PATH=str(temporary)
+                + os.pathsep
+                + client_environment.get("PATH", ""),
                 CI_NPM_CACHE=str(temporary / "npm"),
                 DEPOSITAR_WEB_CI_TEST_ROOT=str(temporary),
                 DEPOSITAR_WEB_CI_TEST_MODE=mode,
@@ -840,7 +946,10 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 deadline = time.monotonic() + 1
                 while True:
                     try:
-                        running = process.read_text().split(")", 1)[1].split()[0] != "Z"
+                        running = (
+                            process.read_text().split(")", 1)[1].split()[0]
+                            != "Z"
+                        )
                     except (FileNotFoundError, ProcessLookupError):
                         running = False
                     remaining = deadline - time.monotonic()
@@ -870,7 +979,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 self.assertEqual(2, len(invocations))
                 for args in invocations:
                     options = args[2:4]
-                    self.assertEqual(supported, options == ["--durations", "25"])
+                    self.assertEqual(
+                        supported, options == ["--durations", "25"]
+                    )
                 commands[supported] = invocations
         self.assertEqual(
             commands[False], [args[:2] + args[4:] for args in commands[True]]
@@ -880,7 +991,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         result, calls, running = self.run_website_gate("cold")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertFalse(running)
-        completed = next(i for i, row in enumerate(calls) if row[0] == "pull-completed")
+        completed = next(
+            i for i, row in enumerate(calls) if row[0] == "pull-completed"
+        )
         browser = next(
             i
             for i, row in enumerate(calls)
@@ -889,11 +1002,15 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertLess(completed, browser)
         self.assertEqual(1, sum(row[0] == "timeout" for row in calls))
         phases = [
-            line for line in result.stdout.splitlines() if line.startswith("CI_PHASE ")
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("CI_PHASE ")
         ]
         self.assertEqual(14, len(phases))
         for line in phases:
-            self.assertRegex(line, r"^CI_PHASE phase=[a-z-]+ seconds=\d+ exit=0$")
+            self.assertRegex(
+                line, r"^CI_PHASE phase=[a-z-]+ seconds=\d+ exit=0$"
+            )
 
     def test_cached_image_is_not_pulled_again(self):
         result, calls, running = self.run_website_gate("cached")
@@ -901,9 +1018,13 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertFalse(running)
         self.assertFalse(any(row[0] == "timeout" for row in calls))
         self.assertFalse(any(row[1][:1] == ["pull"] for row in calls))
-        self.assertIn("CI_PHASE phase=browser-image seconds=0 exit=0", result.stdout)
+        self.assertIn(
+            "CI_PHASE phase=browser-image seconds=0 exit=0", result.stdout
+        )
 
-    def test_failed_or_timed_out_pull_fails_before_browser_and_cleans_fixture(self):
+    def test_failed_or_timed_out_pull_fails_before_browser_and_cleans_fixture(
+        self,
+    ):
         for mode, status in (
             ("pull-failure", 23),
             ("timeout", 124),
@@ -913,18 +1034,29 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 result, calls, running = self.run_website_gate(mode)
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertFalse(running)
-                self.assertFalse(any(row[1][-2:] == ["npm", "test"] for row in calls))
-                self.assertTrue(any(row[1][:2] == ["rm", "--force"] for row in calls))
-                self.assertTrue(any(row[1][:2] == ["network", "rm"] for row in calls))
+                self.assertFalse(
+                    any(row[1][-2:] == ["npm", "test"] for row in calls)
+                )
+                self.assertTrue(
+                    any(row[1][:2] == ["rm", "--force"] for row in calls)
+                )
+                self.assertTrue(
+                    any(row[1][:2] == ["network", "rm"] for row in calls)
+                )
                 self.assertRegex(
                     result.stdout,
-                    rf"CI_PHASE phase=browser-image-wait seconds=\d+ exit={status}\n",
+                    rf"CI_PHASE phase=browser-image-wait "
+                    rf"seconds=\d+ exit={status}\n",
                 )
 
-    def test_earlier_oss_failure_terminates_the_running_pull_and_keeps_exit_code(self):
+    def test_oss_failure_terminates_pull_and_preserves_exit_code(
+        self,
+    ):
         result, calls, running = self.run_website_gate("early-failure")
         self.assertEqual(19, result.returncode, result.stderr)
-        self.assertFalse(running, "background Docker pull survived the EXIT trap")
+        self.assertFalse(
+            running, "background Docker pull survived the EXIT trap"
+        )
         self.assertFalse(any(row[1][-2:] == ["npm", "test"] for row in calls))
         self.assertRegex(
             result.stdout,
@@ -937,8 +1069,12 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, calls, running = self.run_website_gate(mode)
                 self.assertEqual(status, result.returncode, result.stderr)
-                self.assertFalse(running, "background pull survived interruption")
-                self.assertFalse(any(row[1][-2:] == ["npm", "test"] for row in calls))
+                self.assertFalse(
+                    running, "background pull survived interruption"
+                )
+                self.assertFalse(
+                    any(row[1][-2:] == ["npm", "test"] for row in calls)
+                )
                 self.assertRegex(
                     result.stdout, rf"CI_TOTAL seconds=\d+ exit={status}\n"
                 )
@@ -972,7 +1108,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertIn("CI_SUITE suite=all\n", default.stdout)
         self.assertIn("CI_SUITE suite=all\n", explicit.stdout)
 
-    def test_split_suites_keep_the_common_checks_and_select_the_runtime_phases(self):
+    def test_split_suites_keep_the_common_checks_and_select_the_runtime_phases(
+        self,
+    ):
         common_phases = {
             "contracts",
             "python-images",
@@ -995,17 +1133,24 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         }
         for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
             with self.subTest(suite=suite):
-                result, calls, running = self.run_website_gate("cold", suite=suite)
+                result, calls, running = self.run_website_gate(
+                    "cold", suite=suite
+                )
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertFalse(running)
                 docker = [args for kind, args in calls if kind == "docker"]
                 python = [args for kind, args in calls if kind == "python"]
                 self.assertEqual(
                     1,
-                    sum("tests.test_search_web_deploy" in args for args in python),
+                    sum(
+                        "tests.test_search_web_deploy" in args
+                        for args in python
+                    ),
                 )
                 unit = next(
-                    args for args in docker if "search.tests.test_conversation" in args
+                    args
+                    for args in docker
+                    if "search.tests.test_conversation" in args
                 )
                 self.assertEqual(
                     [
@@ -1024,20 +1169,35 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     1,
                     sum(
                         args[-5:]
-                        == ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+                        == [
+                            "npm",
+                            "ci",
+                            "--ignore-scripts",
+                            "--no-audit",
+                            "--no-fund",
+                        ]
                         for args in docker
                     ),
                 )
                 self.assertEqual(
                     1,
-                    sum(args[-3:] == ["npm", "run", "format:check"] for args in docker),
+                    sum(
+                        args[-3:] == ["npm", "run", "format:check"]
+                        for args in docker
+                    ),
                 )
                 self.assertEqual(
                     {"conversation", "web"},
-                    {args[-1] for args in docker if args[0] == "run" and "-I" in args},
+                    {
+                        args[-1]
+                        for args in docker
+                        if args[0] == "run" and "-I" in args
+                    },
                 )
                 builds = [
-                    args[args.index("-f") + 1] for args in docker if args[0] == "build"
+                    args[args.index("-f") + 1]
+                    for args in docker
+                    if args[0] == "build"
                 ]
                 expected_builds = [
                     "deploy/docker/api/Dockerfile",
@@ -1075,7 +1235,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     any(args[-2:] == ["npm", "test"] for args in docker),
                 )
                 self.assertEqual(
-                    suite == "browser", any(args[0] == "pull" for args in docker)
+                    suite == "browser",
+                    any(args[0] == "pull" for args in docker),
                 )
                 gateways = [
                     args
@@ -1085,17 +1246,24 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 ]
                 self.assertEqual(1 if suite == "browser" else 0, len(gateways))
                 for gateway in gateways:
-                    self.assertEqual("depositar-search-web-nginx:ci", gateway[-1])
+                    self.assertEqual(
+                        "depositar-search-web-nginx:ci", gateway[-1]
+                    )
                     self.assertNotIn("--entrypoint", gateway)
                 self.assertFalse(
-                    any("gateway-control" in item for args in docker for item in args)
+                    any(
+                        "gateway-control" in item
+                        for args in docker
+                        for item in args
+                    )
                 )
                 self.assertEqual(
                     suite == "browser",
                     any(args[:2] == ["network", "create"] for args in docker),
                 )
                 phases = re.findall(
-                    r"(?m)^CI_PHASE phase=([a-z-]+) seconds=\d+ exit=0$", result.stdout
+                    r"(?m)^CI_PHASE phase=([a-z-]+) seconds=\d+ exit=0$",
+                    result.stdout,
                 )
                 if suite == "browser":
                     expected = common_phases | browser_phases
@@ -1109,8 +1277,12 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     self.assertIn("runtime checks passed.", result.stdout)
                     self.assertNotIn("browser checks passed.", result.stdout)
                 else:
-                    self.assertIn("real HTTP browser checks passed.", result.stdout)
-                    self.assertNotIn("OSS runtime checks passed.", result.stdout)
+                    self.assertIn(
+                        "real HTTP browser checks passed.", result.stdout
+                    )
+                    self.assertNotIn(
+                        "OSS runtime checks passed.", result.stdout
+                    )
 
     def test_invalid_suite_arguments_fail_before_any_client_is_invoked(self):
         for arguments in (
@@ -1129,14 +1301,18 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 self.assertFalse(running)
                 self.assertEqual([], calls)
 
-    def test_all_suites_propagate_contract_and_style_failures_before_runtime(self):
+    def test_all_suites_propagate_contract_and_style_failures_before_runtime(
+        self,
+    ):
         for suite in ("all", "oss", "oss-policy", "oss-gateway", "browser"):
             for mode, status, phase in (
                 ("contract-failure", 17, "contracts"),
                 ("style-failure", 26, "python-style"),
             ):
                 with self.subTest(suite=suite, mode=mode):
-                    result, calls, running = self.run_website_gate(mode, suite=suite)
+                    result, calls, running = self.run_website_gate(
+                        mode, suite=suite
+                    )
                     self.assertEqual(status, result.returncode, result.stderr)
                     self.assertFalse(running)
                     self.assertFalse(
@@ -1165,9 +1341,12 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 self.assertFalse(any(kind == "timeout" for kind, _ in calls))
                 self.assertRegex(
                     result.stdout,
-                    r"CI_PHASE phase=public-entry-runtime seconds=\d+ exit=19\n",
+                    "CI_PHASE phase=public-entry-runtime "
+                    "seconds=\\d+ exit=19\\n",
                 )
-                self.assertRegex(result.stdout, r"CI_TOTAL seconds=\d+ exit=19\n")
+                self.assertRegex(
+                    result.stdout, r"CI_TOTAL seconds=\d+ exit=19\n"
+                )
 
     def test_partial_suites_cannot_emit_a_complete_tested_image_receipt(self):
         for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
@@ -1176,7 +1355,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     "cold",
                     suite=suite,
                     environment={
-                        "CI_FRONTEND_TESTED_IMAGES_FILE": "/unused-complete-receipt.json"
+                        "CI_FRONTEND_TESTED_IMAGES_FILE": (
+                            "/unused-complete-receipt.json"
+                        )
                     },
                 )
                 self.assertEqual(64, result.returncode, result.stderr)
@@ -1191,26 +1372,43 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             ("stubborn-timeout", 137),
         ):
             with self.subTest(mode=mode):
-                result, calls, running = self.run_website_gate(mode, suite="browser")
+                result, calls, running = self.run_website_gate(
+                    mode, suite="browser"
+                )
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertFalse(running)
-                self.assertFalse(any(args[-2:] == ["npm", "test"] for _, args in calls))
-                self.assertTrue(any(args[:2] == ["rm", "--force"] for _, args in calls))
-                self.assertTrue(any(args[:2] == ["network", "rm"] for _, args in calls))
+                self.assertFalse(
+                    any(args[-2:] == ["npm", "test"] for _, args in calls)
+                )
+                self.assertTrue(
+                    any(args[:2] == ["rm", "--force"] for _, args in calls)
+                )
+                self.assertTrue(
+                    any(args[:2] == ["network", "rm"] for _, args in calls)
+                )
                 self.assertRegex(
                     result.stdout, rf"CI_TOTAL seconds=\d+ exit={status}\n"
                 )
 
-    def test_browser_only_bootstrap_failure_terminates_the_pull_before_fixture_start(
+    def test_browser_bootstrap_failure_stops_pull_before_fixture(
         self,
     ):
-        result, calls, running = self.run_website_gate("early-failure", suite="browser")
+        result, calls, running = self.run_website_gate(
+            "early-failure", suite="browser"
+        )
         self.assertEqual(19, result.returncode, result.stderr)
-        self.assertFalse(running, "background pull survived the bootstrap failure")
-        self.assertFalse(any(args[:2] == ["network", "create"] for _, args in calls))
-        self.assertFalse(any(args[-2:] == ["npm", "test"] for _, args in calls))
+        self.assertFalse(
+            running, "background pull survived the bootstrap failure"
+        )
+        self.assertFalse(
+            any(args[:2] == ["network", "create"] for _, args in calls)
+        )
+        self.assertFalse(
+            any(args[-2:] == ["npm", "test"] for _, args in calls)
+        )
         self.assertRegex(
-            result.stdout, r"CI_PHASE phase=gateway-bootstrap seconds=\d+ exit=19\n"
+            result.stdout,
+            r"CI_PHASE phase=gateway-bootstrap seconds=\d+ exit=19\n",
         )
 
     def test_browser_only_failed_browser_command_cleans_the_fixture(self):
@@ -1220,17 +1418,31 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertEqual(27, result.returncode, result.stderr)
         self.assertFalse(running)
         self.assertTrue(any(args[-2:] == ["npm", "test"] for _, args in calls))
-        self.assertTrue(any(args[:2] == ["rm", "--force"] for _, args in calls))
-        self.assertTrue(any(args[:2] == ["network", "rm"] for _, args in calls))
-        self.assertRegex(result.stdout, r"CI_PHASE phase=browser seconds=\d+ exit=27\n")
+        self.assertTrue(
+            any(args[:2] == ["rm", "--force"] for _, args in calls)
+        )
+        self.assertTrue(
+            any(args[:2] == ["network", "rm"] for _, args in calls)
+        )
+        self.assertRegex(
+            result.stdout, r"CI_PHASE phase=browser seconds=\d+ exit=27\n"
+        )
 
-    def test_browser_only_signals_terminate_the_pull_and_keep_signal_exit(self):
+    def test_browser_only_signals_terminate_the_pull_and_keep_signal_exit(
+        self,
+    ):
         for mode, status in (("signal-term", 143), ("signal-int", 130)):
             with self.subTest(mode=mode):
-                result, calls, running = self.run_website_gate(mode, suite="browser")
+                result, calls, running = self.run_website_gate(
+                    mode, suite="browser"
+                )
                 self.assertEqual(status, result.returncode, result.stderr)
-                self.assertFalse(running, "background pull survived interruption")
-                self.assertFalse(any(args[-2:] == ["npm", "test"] for _, args in calls))
+                self.assertFalse(
+                    running, "background pull survived interruption"
+                )
+                self.assertFalse(
+                    any(args[-2:] == ["npm", "test"] for _, args in calls)
+                )
                 self.assertRegex(
                     result.stdout, rf"CI_TOTAL seconds=\d+ exit={status}\n"
                 )

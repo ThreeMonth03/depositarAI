@@ -1,8 +1,9 @@
 """Trusted, bounded multi-turn execution against one registered CPU candidate.
 
 Scoring belongs to the quality evaluator. This coordinator amortizes full
-catalog audits, retains runtime/model checkpoints, and captures raw observations
-only in the explicitly selected private directory. Normal output is sanitized.
+catalog audits, retains runtime/model checkpoints, and captures raw
+observations only in the explicitly selected private directory. Normal output
+is sanitized.
 """
 
 from collections.abc import Mapping
@@ -32,14 +33,17 @@ def _plain(value):
         return [_plain(item) for item in value]
     if value is None or type(value) in {str, int, float, bool}:
         return value
-    raise controller.SharedBackendError("shared_backend_capture_metadata_invalid")
+    raise controller.SharedBackendError(
+        "shared_backend_capture_metadata_invalid"
+    )
 
 
 def _diagnostic(error):
     if isinstance(error, KeyboardInterrupt):
         return "shared_backend_interrupted"
     if isinstance(
-        error, (controller.SharedBackendError, controller.catalog.SharedCatalogError)
+        error,
+        (controller.SharedBackendError, controller.catalog.SharedCatalogError),
     ):
         code = str(error)
         if re.fullmatch(r"shared_backend_[a-z_]+", code):
@@ -48,7 +52,9 @@ def _diagnostic(error):
 
 
 def _observations(case, report, bundle):
-    """Project exact responses into the existing offline quality input schema."""
+    """Project exact responses into the existing offline quality input
+    schema.
+    """
     turns, outcomes = [], []
     observed = report["turns"]
     controller.require(
@@ -78,7 +84,9 @@ def _observations(case, report, bundle):
             outcomes.append({"turn": number + 1, "status": "not_run"})
             continue
         row = observed[number]
-        outcome = {key: value for key, value in row.items() if key != "response"}
+        outcome = {
+            key: value for key, value in row.items() if key != "response"
+        }
         outcome["turn"] = number + 1
         outcomes.append(outcome)
         if row["status"] != "ok":
@@ -122,7 +130,9 @@ def _observations(case, report, bundle):
 
 
 def runtime_identity(session, record, resident, operator_revision):
-    """Bind the complete batch target after the retained session's full audit."""
+    """Bind the complete batch target after the retained session's full
+    audit.
+    """
     context = session.query_context
     controller.require(
         context["bundle"].manifest_sha256
@@ -134,25 +144,39 @@ def runtime_identity(session, record, resident, operator_revision):
         "operator_revision": operator_revision,
         "candidate_revision": record["revision"],
         "production_revision": session.context["source_revision"],
-        "catalog_manifest_sha256": session.query_context["plan"]["manifest_sha256"],
+        "catalog_manifest_sha256": session.query_context["plan"][
+            "manifest_sha256"
+        ],
         "catalog_source_revision": session.query_context["source_revision"],
-        "catalog_query_authority_sha256": controller.digest(session.query_authority),
+        "catalog_query_authority_sha256": controller.digest(
+            session.query_authority
+        ),
         "bundle_id": session.query_context["bundle"].bundle_id,
         "request_policy_sha256": record["policy"]["request_policy_sha256"],
-        "model_manifest_sha256": session.inputs.identity["model_manifest_sha256"],
+        "model_manifest_sha256": session.inputs.identity[
+            "model_manifest_sha256"
+        ],
         "resident_models": resident["models"],
         "gpu_compute_sha256": record["compute_sha256"],
         "gpu_image_ids": {
-            role: image["Id"] for role, image in session.native.inference_images.items()
+            role: image["Id"]
+            for role, image in session.native.inference_images.items()
         },
         "candidate_runtime": record["runtime"],
     }
 
 
 def run_batch(
-    filename, *, cases, destination, expected_revision, expected_identity_sha256=None
+    filename,
+    *,
+    cases,
+    destination,
+    expected_revision,
+    expected_identity_sha256=None,
 ):
-    """Execute only the explicitly selected running candidate, never prepare it."""
+    """
+    Execute only the explicitly selected running candidate, never prepare it.
+    """
     controller.require(
         type(expected_revision) is str
         and controller.HEX40.fullmatch(expected_revision),
@@ -161,7 +185,9 @@ def run_batch(
     controller.require(
         expected_identity_sha256 is None
         or type(expected_identity_sha256) is str
-        and controller.source_bundle.DIGEST.fullmatch(expected_identity_sha256),
+        and controller.source_bundle.DIGEST.fullmatch(
+            expected_identity_sha256
+        ),
         "batch_identity_invalid",
     )
     operator_revision = controller.require_clean_revision(controller.ROOT)
@@ -195,7 +221,8 @@ def run_batch(
     with controller.journal(profile["state_root"]) as store:
         record = controller.current(store)
         controller.require(
-            record is not None and record["phase"] == "running", "candidate_not_running"
+            record is not None and record["phase"] == "running",
+            "candidate_not_running",
         )
         controller.require(
             record["revision"] == expected_revision, "batch_candidate_changed"
@@ -212,26 +239,33 @@ def run_batch(
                         session, record, resident, operator_revision
                     )
                     endpoint = session.candidate_endpoint
-                    query_deadline = session.docker.deadline - FINAL_AUDIT_RESERVE
+                    query_deadline = (
+                        session.docker.deadline - FINAL_AUDIT_RESERVE
+                    )
 
                     def checkpoint():
                         sink.verify()
                         session.remaining(1, deadline=query_deadline)
                         session.check_models(
-                            policy, record["compute_sha256"], deadline=query_deadline
+                            policy,
+                            record["compute_sha256"],
+                            deadline=query_deadline,
                         )
                         session.remaining(1, deadline=query_deadline)
 
                     try:
                         controller.require(
                             expected_identity_sha256 is None
-                            or controller.digest(identity) == expected_identity_sha256,
+                            or controller.digest(identity)
+                            == expected_identity_sha256,
                             "batch_identity_changed",
                         )
                         for case in specification["cases"]:
                             sink.verify()
                             controller.require(
-                                controller.require_clean_revision(controller.ROOT)
+                                controller.require_clean_revision(
+                                    controller.ROOT
+                                )
                                 == operator_revision,
                                 "batch_operator_changed",
                             )
@@ -256,14 +290,19 @@ def run_batch(
                             if observed is not None:
                                 captured.append(observed)
                             if report["status"] != "complete":
-                                error = report["error"] or "shared_backend_batch_failed"
+                                error = (
+                                    report["error"]
+                                    or "shared_backend_batch_failed"
+                                )
                                 break
                     finally:
                         after = time.monotonic()
                         session.verify(policy, record["compute_sha256"])
                         audits["after_seconds"] = time.monotonic() - after
-                # The retained source/model FDs and original native records must
-                # close successfully before a capture can claim trusted identity.
+                # The retained source/model FDs and original native records
+                # must
+                # close successfully before a capture can claim trusted
+                # identity.
                 controller.require(
                     controller.require_clean_revision(controller.ROOT)
                     == operator_revision,
@@ -294,7 +333,9 @@ def run_batch(
                 else "quarantined"
             )
             completed = sum(
-                turn["status"] == "ok" for case in outcomes for turn in case["turns"]
+                turn["status"] == "ok"
+                for case in outcomes
+                for turn in case["turns"]
             )
             receipt = {
                 "schema_version": 1,
@@ -305,8 +346,12 @@ def run_batch(
                 "identity": identity,
                 "plan_sha256": plan_digest(specification),
                 "requested_cases": len(specification["cases"]),
-                "requested_turns": sum(len(c["turns"]) for c in specification["cases"]),
-                "completed_cases": sum(c["status"] == "complete" for c in outcomes),
+                "requested_turns": sum(
+                    len(c["turns"]) for c in specification["cases"]
+                ),
+                "completed_cases": sum(
+                    c["status"] == "complete" for c in outcomes
+                ),
                 "completed_turns": completed,
                 "audit_timing": audits,
                 "operator_seconds": time.monotonic() - started,

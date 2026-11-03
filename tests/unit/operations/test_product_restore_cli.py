@@ -1,4 +1,5 @@
-"""Offline restore dispatch must not require runtime paths or disclose errors."""
+"""Offline restore dispatch must not require runtime paths or disclose
+errors."""
 
 import contextlib
 import io
@@ -46,7 +47,13 @@ class ProductRestoreCLITests(unittest.TestCase):
         self.assertEqual(report, json.loads(output.getvalue()))
 
     def test_runtime_commands_still_require_config_before_dispatch(self):
-        for command in ("status", "doctor", "sync", "start-inference", "start-release"):
+        for command in (
+            "status",
+            "doctor",
+            "sync",
+            "start-inference",
+            "start-release",
+        ):
             with (
                 self.subTest(command=command),
                 patch("search.operations.config.load_config") as config,
@@ -92,14 +99,23 @@ class ProductRestoreCLITests(unittest.TestCase):
         code = sorted(product_restore.ERROR_CODES)[0]
         errors = [
             (product_restore.ProductRestoreError(code), code),
-            (product_restore.ProductRestoreError("private-token-do-not-print"), None),
+            (
+                product_restore.ProductRestoreError(
+                    "private-token-do-not-print"
+                ),
+                None,
+            ),
             (ValueError("private-token-do-not-print"), None),
         ]
         for exception, expected in errors:
             output, error = io.StringIO(), io.StringIO()
             with (
-                self.subTest(error=type(exception).__name__, expected=expected),
-                patch.object(product_restore, "restore_product", side_effect=exception),
+                self.subTest(
+                    error=type(exception).__name__, expected=expected
+                ),
+                patch.object(
+                    product_restore, "restore_product", side_effect=exception
+                ),
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(error),
             ):

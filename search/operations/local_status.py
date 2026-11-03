@@ -25,7 +25,13 @@ _CATALOG_OPERATIONS = frozenset(
         "build-vectors",
     }
 )
-_APP_DIRECTORIES = {"image-builds", "secrets", "inference", "releases", "gateway"}
+_APP_DIRECTORIES = {
+    "image-builds",
+    "secrets",
+    "inference",
+    "releases",
+    "gateway",
+}
 _APP_RECORDS = {
     "image-candidate.json",
     "api-key-identity.json",
@@ -70,7 +76,9 @@ def _require(condition):
 
 
 def _digest(value):
-    return type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    return (
+        type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    )
 
 
 def _record(descriptor, name):
@@ -85,7 +93,8 @@ def _recorded_activation(store):
     _require(
         type(pointer) is dict
         and set(pointer)
-        == _IDENTITY | {"status", "activation_complete_sha256", "active_changed"}
+        == _IDENTITY
+        | {"status", "activation_complete_sha256", "active_changed"}
         and type(pointer["schema_version"]) is int
         and pointer["schema_version"] == 1
         and pointer["status"] == "gateway_active"
@@ -95,7 +104,11 @@ def _recorded_activation(store):
         and pointer["project"] == GATEWAY_PROJECT
         and all(
             _digest(pointer[key])
-            for key in ("bundle_id", "manifest_sha256", "activation_complete_sha256")
+            for key in (
+                "bundle_id",
+                "manifest_sha256",
+                "activation_complete_sha256",
+            )
         )
     )
     _require(
@@ -123,10 +136,14 @@ def _recorded_activation(store):
             and all(complete[key] == pointer[key] for key in _IDENTITY)
             and type(complete["schema_version"]) is int
             and complete["status"] == "gateway_active"
-            and all(complete[key] is value for key, value in _COMPLETED_FLAGS.items())
+            and all(
+                complete[key] is value
+                for key, value in _COMPLETED_FLAGS.items()
+            )
             and all(_digest(complete[key]) for key in _DIGESTS)
             and type(complete["probe_run_id"]) is str
-            and re.fullmatch(r"[0-9a-f]{32}", complete["probe_run_id"]) is not None
+            and re.fullmatch(r"[0-9a-f]{32}", complete["probe_run_id"])
+            is not None
             and type(complete["proof"]) is dict
             and type(complete["http_acceptance"]) is dict
         )
@@ -146,13 +163,17 @@ def _recorded_activation(store):
             == complete["source_manifest_sha256"]
         )
         private_io.verify_directory(gateway, store.root / "gateway")
-        private_io.verify_directory(activation, store.root / "gateway/activation")
+        private_io.verify_directory(
+            activation, store.root / "gateway/activation"
+        )
         _require(store.read("active.json") == pointer)
     return pointer
 
 
 def classify_local_state(store, operations):
-    """Return a local summary; failed or ambiguous evidence requires recovery."""
+    """Return a local summary; failed or ambiguous evidence requires
+    recovery.
+    """
     names = set(os.listdir(store.fd))
     reasons = set()
     active = None
@@ -169,7 +190,9 @@ def classify_local_state(store, operations):
             info.st_uid != os.geteuid()
             or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600)
             or not (
-                stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+                stat.S_ISDIR(info.st_mode)
+                if directory
+                else stat.S_ISREG(info.st_mode)
             )
             or (not directory and info.st_nlink != 1)
         ):

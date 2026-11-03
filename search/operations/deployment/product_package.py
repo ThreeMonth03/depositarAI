@@ -1,7 +1,9 @@
-"""Offline product payloads, with optional explicit external model dependencies.
+"""Offline product payloads, with optional explicit external model
+dependencies.
 
 The caller supplies trusted, same-source build/catalog receipts and previously
-scanned source artifacts. This layer checks that narrow identity, freshly checks
+scanned source artifacts. This layer checks that narrow identity, freshly
+checks
 immutable Docker images, and copies only the approved source/catalog files. It
 does not authenticate a caller's build attestation, scan arbitrary image layers
 for secrets, include credentials, install services, or activate a release.
@@ -41,13 +43,16 @@ MAX_ASSET_BYTES = 1024**3
 MAX_ARCHIVE_BYTES = 64 * 1024**3
 MAX_MEMBERS = 100000
 SECRET_KEY = re.compile(
-    r"(?:^|[_.-])(?:passwords?|secrets?|credentials?|tokens?|api[_-]?key|access[_-]?key|private[_-]?key)(?:$|[_.-])",
+    "(?:^|[_.-])(?:passwords?|secrets?|credentials?|tokens?|api[_-]?key|access"
+    "[_-]?key|private[_-]?key)(?:$|[_.-])",
     re.I,
 )
 
 
 class ProductPackageError(ValueError):
-    """Fixed diagnostic codes; never include source, paths, or Docker output."""
+    """Fixed diagnostic codes; never include source, paths, or Docker
+    output.
+    """
 
 
 def _fail(code):
@@ -83,7 +88,9 @@ def _relative(value, *, reviewed_model_file=False):
     return value
 
 
-def _files(value, *, names=None, maximum=MAX_ASSET_BYTES, reviewed_hashes=None):
+def _files(
+    value, *, names=None, maximum=MAX_ASSET_BYTES, reviewed_hashes=None
+):
     if type(value) is not dict or not 1 <= len(value) <= 64:
         _fail("asset_inventory_invalid")
     if any(type(name) is not str for name in value):
@@ -105,10 +112,16 @@ def _files(value, *, names=None, maximum=MAX_ASSET_BYTES, reviewed_hashes=None):
                 and entry["sha256"] == reviewed_hashes[name]
             ),
         )
-        if type(entry["bytes"]) is not int or not 1 <= entry["bytes"] <= maximum:
+        if (
+            type(entry["bytes"]) is not int
+            or not 1 <= entry["bytes"] <= maximum
+        ):
             _fail("asset_size_invalid")
         total += entry["bytes"]
-        result[name] = {"bytes": entry["bytes"], "sha256": _hash(entry["sha256"])}
+        result[name] = {
+            "bytes": entry["bytes"],
+            "sha256": _hash(entry["sha256"]),
+        }
     if total > maximum:
         _fail("asset_size_invalid")
     return result
@@ -117,19 +130,27 @@ def _files(value, *, names=None, maximum=MAX_ASSET_BYTES, reviewed_hashes=None):
 def source_names(revision):
     _hash(revision, source_bundle.REVISION)
     prefix = "depositar-ai-" + revision
-    return (prefix + ".tar.gz", prefix + ".bundle", "SOURCE_REVISION", "SHA256SUMS")
+    return (
+        prefix + ".tar.gz",
+        prefix + ".bundle",
+        "SOURCE_REVISION",
+        "SHA256SUMS",
+    )
 
 
 def plan_product_package(
     revision, *, source, images, models, metadata, catalog, include_models=True
 ):
-    """Validate trusted receipt projections without reading paths or using Docker.
+    """Validate trusted receipt projections without reading paths or using
+    Docker.
 
     ``source`` is a filename-to-{bytes,sha256} map from source_artifact.py's
     reviewed output. ``metadata`` describes the four exact sealed bundle files.
-    ``models`` maps api/embedding/reranker to complete relative-file inventories;
+    ``models`` maps api/embedding/reranker to complete relative-file
+    inventories;
     their bytes are bundled by default. The explicit external profile records
-    their complete required inventory without pretending those files are present.
+    their complete required inventory without pretending those files are
+    present.
     Application build proofs bind the current source; catalog images retain
     their original revision. The caller must freshly verify both source sets
     and their data compatibility, not accept arbitrary user JSON as evidence.
@@ -166,7 +187,9 @@ def plan_product_package(
         or not 1 <= metadata["document_count"] <= 10000
     ):
         _fail("metadata_count_invalid")
-    metadata_files = _files(metadata["files"], names=(*ARTIFACT_NAMES, MANIFEST_NAME))
+    metadata_files = _files(
+        metadata["files"], names=(*ARTIFACT_NAMES, MANIFEST_NAME)
+    )
     if metadata_files[MANIFEST_NAME]["sha256"] != metadata["manifest_sha256"]:
         _fail("metadata_manifest_mismatch")
     _keys(
@@ -189,7 +212,8 @@ def plan_product_package(
         + catalog["revision"][:12]
     )
     if catalog["project"] != expected_project or any(
-        catalog[key] != metadata[key] for key in ("bundle_id", "manifest_sha256")
+        catalog[key] != metadata[key]
+        for key in ("bundle_id", "manifest_sha256")
     ):
         _fail("catalog_identity_mismatch")
     for key in ("compose_sha256", "image_receipt_sha256"):
@@ -198,7 +222,9 @@ def plan_product_package(
     clean_images = {}
     for role in IMAGE_ROLES:
         fields = {"image_id", "image_environment_sha256"} | (
-            {"reference"} if role == "ollama" else {"revision", "source_sha256"}
+            {"reference"}
+            if role == "ollama"
+            else {"revision", "source_sha256"}
         )
         entry = images[role]
         _keys(entry, fields, "image_record_invalid")
@@ -214,7 +240,9 @@ def plan_product_package(
         else:
             _hash(entry["source_sha256"])
         clean_images[role] = dict(entry)
-    if len({entry["image_id"] for entry in clean_images.values()}) != len(IMAGE_ROLES):
+    if len({entry["image_id"] for entry in clean_images.values()}) != len(
+        IMAGE_ROLES
+    ):
         _fail("image_role_overlap")
     _keys(models, MODEL_ROLES, "model_inventory_incomplete")
     from search.reranker.model import MODEL_HASHES
@@ -237,7 +265,11 @@ def plan_product_package(
             "delivery": "bundled" if include_models else "external",
             "files": clean_models,
         },
-        "metadata": {**metadata, "delivery": "bundled", "files": metadata_files},
+        "metadata": {
+            **metadata,
+            "delivery": "bundled",
+            "files": metadata_files,
+        },
         "catalog": dict(catalog),
         "credentials_included": False,
         "payload_self_contained": include_models,
@@ -325,7 +357,10 @@ def _catalog_images(plan, receipt):
                 catalog_execution.service_sources(service),
                 "catalog_images_sources_invalid",
             )
-            sources = {name: _hash(digest) for name, digest in entry["sources"].items()}
+            sources = {
+                name: _hash(digest)
+                for name, digest in entry["sources"].items()
+            }
             if (
                 catalog_execution.digest_record(sources)
                 != plan["images"][role]["source_sha256"]
@@ -351,7 +386,8 @@ def _catalog_images(plan, receipt):
     raw = private_io.canonical(clean)
     if (
         len(raw) > MAX_RECORD_BYTES
-        or hashlib.sha256(raw).hexdigest() != plan["catalog"]["image_receipt_sha256"]
+        or hashlib.sha256(raw).hexdigest()
+        != plan["catalog"]["image_receipt_sha256"]
     ):
         _fail("catalog_images_receipt_mismatch")
     return raw
@@ -378,7 +414,9 @@ def _copy_files(inputs, expected, destination, *, sealed_metadata=False):
             parts = PurePosixPath(relative).parts
             if tuple(path.parts[-len(parts) :]) != parts:
                 _fail("input_filename_mismatch")
-            parent, name = target.relative_parent(relative, private=True, create=True)
+            parent, name = target.relative_parent(
+                relative, private=True, create=True
+            )
             output_fd = os.open(
                 name,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -395,7 +433,9 @@ def _copy_files(inputs, expected, destination, *, sealed_metadata=False):
                     # ancestor policy stays intact; the sealed child and file
                     # are still opened no-follow and verified through its FDs.
                     sources.enter_context(
-                        search_model_source.open_private_root(source_root.parent)
+                        search_model_source.open_private_root(
+                            source_root.parent
+                        )
                     )
                     source_relative = source_root.name + "/" + relative
                     source_root = source_root.parent
@@ -418,7 +458,9 @@ def _copy_files(inputs, expected, destination, *, sealed_metadata=False):
 
 def _verify_copies(destination, copies):
     for relative, identities in copies.items():
-        with search_model_source.open_private_root(destination / relative) as root:
+        with search_model_source.open_private_root(
+            destination / relative
+        ) as root:
             for name, expected in identities.items():
                 parent, leaf = root.relative_parent(name, private=True)
                 if (
@@ -477,7 +519,10 @@ def _check_image(role, entry, inspected, plan):
     if labels.get("org.opencontainers.image.revision") != entry["revision"]:
         _fail("image_source_mismatch")
     if role in image_build.SERVICES:
-        if labels.get(source_bundle.LABEL_PREFIX + "sha256") != entry["source_sha256"]:
+        if (
+            labels.get(source_bundle.LABEL_PREFIX + "sha256")
+            != entry["source_sha256"]
+        ):
             _fail("image_source_digest_mismatch")
     elif role != "opensearch-hash":
         prefix = "io.depositar.ai.catalog."
@@ -489,7 +534,9 @@ def _check_image(role, entry, inspected, plan):
 
 
 def _check_archive(fd, images):
-    """Read Docker save's manifest/config/layers without extracting any path."""
+    """Read Docker save's manifest/config/layers without extracting any
+    path.
+    """
     digests, small, sizes, total = {}, {}, {}, 0
     os.lseek(fd, 0, os.SEEK_SET)
     with (
@@ -529,13 +576,17 @@ def _check_archive(fd, images):
     expected = {entry["image_id"] for entry in images.values()}
     found = set()
     for row in manifest:
-        _keys(row, {"Config", "RepoTags", "Layers"}, "archive_manifest_invalid")
+        _keys(
+            row, {"Config", "RepoTags", "Layers"}, "archive_manifest_invalid"
+        )
         config_name = _relative(row["Config"])
         image_id = "sha256:" + (digests.get(config_name) or "")
         if image_id not in expected or image_id in found:
             _fail("archive_image_mismatch")
         config = image_build._json(small.get(config_name))
-        _image_environment(config.get("config") if type(config) is dict else None)
+        _image_environment(
+            config.get("config") if type(config) is dict else None
+        )
         rootfs = config.get("rootfs", {})
         diff_ids = rootfs.get("diff_ids") if type(rootfs) is dict else None
         layers = row["Layers"]
@@ -558,12 +609,16 @@ def _check_archive(fd, images):
 def _check_oci_archive(digests, sizes, small, images):
     """Verify containerd Docker-save roots, selecting the required amd64 graph.
 
-    Docker 29 may inspect an OCI index/manifest ID rather than the config digest.
-    Its save archive includes gzip layer blobs, and indexes can retain references
+    Docker 29 may inspect an OCI index/manifest ID rather than the config
+    digest.
+    Its save archive includes gzip layer blobs, and indexes can retain
+    references
     to platforms not cached locally. Only linux/amd64 is a supported payload;
     unavailable other-platform references never count as available images.
     """
-    if image_build._json(small.get("oci-layout")) != {"imageLayoutVersion": "1.0.0"}:
+    if image_build._json(small.get("oci-layout")) != {
+        "imageLayoutVersion": "1.0.0"
+    }:
         _fail("archive_layout_invalid")
     indexes = {
         "application/vnd.oci.image.index.v1+json",
@@ -589,9 +644,11 @@ def _check_oci_archive(digests, sizes, small, images):
             _fail("archive_blob_digest_mismatch")
 
     def blob(descriptor, *, json_value=False):
-        if type(descriptor) is not dict or not {"digest", "size", "mediaType"} <= set(
-            descriptor
-        ):
+        if type(descriptor) is not dict or not {
+            "digest",
+            "size",
+            "mediaType",
+        } <= set(descriptor):
             _fail("archive_descriptor_invalid")
         identifier = _hash(descriptor["digest"], source_bundle.IMAGE_ID)
         name = "blobs/sha256/" + identifier[7:]
@@ -729,13 +786,16 @@ def export_product_package(
     runner=None,
     before_publish=None,
 ):
-    """Copy approved payloads and Docker-save immutable IDs into a new directory.
+    """Copy approved payloads and Docker-save immutable IDs into a new
+    directory.
 
     The runner follows image_build._run(argv, timeout, environment)'s contract.
     No Docker mutation besides image save occurs. Failed output is preserved;
-    package.json is published only after payload checks and fresh post-inspection.
+    package.json is published only after payload checks and fresh
+    post-inspection.
     The caller retains its product lock and owns durable outer operation state.
-    ``before_publish`` lets that trusted caller reverify original source/catalog/
+    ``before_publish`` lets that trusted caller reverify original
+    source/catalog/
     build authority after copying and exporting, before any completion marker.
     ``catalog_images`` optionally includes the verified exact-project prebuilt
     receipt accepted by start-index; arbitrary receipt fields are rejected.
@@ -768,12 +828,17 @@ def export_product_package(
         copies = {}
         if catalog_raw is not None:
             private_io.write_file(
-                root_fd, "catalog-images.json", catalog_raw, max_bytes=MAX_RECORD_BYTES
+                root_fd,
+                "catalog-images.json",
+                catalog_raw,
+                max_bytes=MAX_RECORD_BYTES,
             )
             copies[""] = {
                 "catalog-images.json": private_io.identity(
                     os.stat(
-                        "catalog-images.json", dir_fd=root_fd, follow_symlinks=False
+                        "catalog-images.json",
+                        dir_fd=root_fd,
+                        follow_symlinks=False,
                     )
                 )
             }
@@ -782,7 +847,9 @@ def export_product_package(
             ("metadata", metadata_files, plan["metadata"]["files"]),
         ]
         if plan["models"]["delivery"] == "bundled":
-            models_fd = private_io.open_child_directory(root_fd, "models", create=True)
+            models_fd = private_io.open_child_directory(
+                root_fd, "models", create=True
+            )
             os.close(models_fd)
             assets.extend(
                 ("models/" + role, model_files[role], files)
@@ -809,8 +876,16 @@ def export_product_package(
                 os.close(child)
                 if model_fd is not None:
                     os.close(model_fd)
-        with tempfile.TemporaryDirectory(prefix="depositar-package-docker-") as client:
-            prefix = ["docker", "--host", image_build.DOCKER_HOST, "--config", client]
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-package-docker-"
+        ) as client:
+            prefix = [
+                "docker",
+                "--host",
+                image_build.DOCKER_HOST,
+                "--config",
+                client,
+            ]
             environment = {
                 "PATH": "/usr/local/bin:/usr/bin:/bin",
                 "LANG": "C.UTF-8",
@@ -819,9 +894,14 @@ def export_product_package(
 
             def command(arguments, timeout=30):
                 result = runner(
-                    prefix + arguments, timeout=timeout, environment=dict(environment)
+                    prefix + arguments,
+                    timeout=timeout,
+                    environment=dict(environment),
                 )
-                if type(result.returncode) is not int or result.returncode != 0:
+                if (
+                    type(result.returncode) is not int
+                    or result.returncode != 0
+                ):
                     _fail("docker_command_failed")
                 raw = (
                     result.stdout.encode()
@@ -858,7 +938,8 @@ def export_product_package(
             private_io.verify_directory(root_fd, destination)
             if "images.tar" in os.listdir(root_fd):
                 _fail("archive_already_exists")
-            # Docker 29 uses atomicwriter: /proc/.../fd symlinks are refused and
+            # Docker 29 uses atomicwriter: /proc/.../fd symlinks are refused
+            # and
             # the client renames a temporary inode. Save only inside this new
             # private directory, then open/recheck the resulting regular file.
             output = str(destination / "images.tar")
@@ -868,13 +949,17 @@ def export_product_package(
                     "save",
                     "--output",
                     output,
-                    *sorted(entry["image_id"] for entry in plan["images"].values()),
+                    *sorted(
+                        entry["image_id"] for entry in plan["images"].values()
+                    ),
                 ],
                 timeout=1800,
             )
             private_io.verify_directory(root_fd, destination)
             archive_fd = os.open(
-                "images.tar", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd
+                "images.tar",
+                os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=root_fd,
             )
             _file_info(archive_fd)
             os.fchmod(archive_fd, 0o600)
@@ -928,10 +1013,14 @@ def export_product_package(
         }
         checksums = {
             "images.tar": digest.hexdigest(),
-            "package.json": hashlib.sha256(private_io.canonical(result)).hexdigest(),
+            "package.json": hashlib.sha256(
+                private_io.canonical(result)
+            ).hexdigest(),
         }
         if catalog_raw is not None:
-            checksums["catalog-images.json"] = plan["catalog"]["image_receipt_sha256"]
+            checksums["catalog-images.json"] = plan["catalog"][
+                "image_receipt_sha256"
+            ]
         for directory in ("source", "metadata"):
             checksums.update(
                 {
@@ -948,7 +1037,8 @@ def export_product_package(
                     }
                 )
         encoded = "".join(
-            value + "  " + name + "\n" for name, value in sorted(checksums.items())
+            value + "  " + name + "\n"
+            for name, value in sorted(checksums.items())
         ).encode("ascii")
         private_io.write_file(
             root_fd, "SHA256SUMS", encoded, max_bytes=MAX_RECORD_BYTES

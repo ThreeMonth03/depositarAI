@@ -68,7 +68,8 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
         web = next(
             i
             for i, call in enumerate(actions)
-            if call[0] == "up" and call[-2:] == ["public-web", "public-frontend"]
+            if call[0] == "up"
+            and call[-2:] == ["public-web", "public-frontend"]
         )
         edge = next(
             i
@@ -85,7 +86,7 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
         self.assertLess(edge, gateway)
         self.assertTrue(all("down" not in call for call in actions))
 
-    def test_protected_assets_are_sealed_and_all_services_have_lifecycle_ownership(
+    def test_protected_assets_sealed_and_services_have_lifecycle_ownership(
         self,
     ):
         started = self.invoke(updates.bootstrap_public_entry)
@@ -110,7 +111,9 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
                     self.assertRaisesRegex(ValueError, "preparation_changed"),
                 ):
                     self.invoke(
-                        updates.update_public_entry, fixture.NEW, fixture.NEW_FRONT
+                        updates.update_public_entry,
+                        fixture.NEW,
+                        fixture.NEW_FRONT,
                     )
                 self.assertEqual(self.runner.commands[count:], [])
             finally:
@@ -132,9 +135,11 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
             count = len(self.runner.commands)
             self.invoke(function, web, frontend)
             self.assert_activation_order(self.runner.commands[count:])
-            self.assertTrue({"public-edge", "public-entry"} <= self.runner.running)
+            self.assertTrue(
+                {"public-edge", "public-entry"} <= self.runner.running
+            )
 
-    def test_antibot_and_quota_state_remain_private_and_survive_failure_and_rollback(
+    def test_private_antibot_and_quota_state_survive_failure_and_rollback(
         self,
     ):
         self.invoke(updates.bootstrap_public_entry)
@@ -150,7 +155,9 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
             path.write_bytes(b"existing protected admission state")
             path.chmod(0o600)
             sentinels[path] = (path.read_bytes(), path.stat().st_ino)
-        self.invoke(updates.update_public_entry, fixture.NEW, fixture.NEW_FRONT)
+        self.invoke(
+            updates.update_public_entry, fixture.NEW, fixture.NEW_FRONT
+        )
         self.invoke(updates.rollback_public_entry)
         self.runner.fail_image = fixture.NEW_FRONT
         failed = self.invoke(
@@ -166,9 +173,13 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(self.runner.redis_starts, 1)
 
-    def test_extra_secret_drift_rejects_update_and_rollback_before_mutation(self):
+    def test_extra_secret_drift_rejects_update_and_rollback_before_mutation(
+        self,
+    ):
         self.invoke(updates.bootstrap_public_entry)
-        self.invoke(updates.update_public_entry, fixture.NEW, fixture.NEW_FRONT)
+        self.invoke(
+            updates.update_public_entry, fixture.NEW, fixture.NEW_FRONT
+        )
         raw = json.loads(self.config_path.read_text())
         for field in ("guest_session_secret_file", "antibot_signing_key_file"):
             path = self.root / field
@@ -198,14 +209,16 @@ class AntibotUpdatesTests(fixture.PublicEntryUpdatesTests):
             fixture.FRONT,
             image_inspector=self.inspector,
         )
-        (self.base / "antibot-data" / "unowned.bdb").write_bytes(b"unowned state")
+        (self.base / "antibot-data" / "unowned.bdb").write_bytes(
+            b"unowned state"
+        )
         with self.assertRaisesRegex(ValueError, "runtime_changed"):
             self.invoke(updates.bootstrap_public_entry)
         self.assertTrue(
             all(operation(call)[0] == "ps" for call in self.runner.commands)
         )
 
-    def test_failed_challenge_service_start_closes_edge_and_can_resume_same_bootstrap(
+    def test_challenge_start_failure_closes_edge_and_resumes_same_bootstrap(
         self,
     ):
         self.runner.fail_service = "antibot"

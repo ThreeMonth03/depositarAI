@@ -18,7 +18,9 @@ from scripts import search_model_source as model_source
 
 class SearchModelSourceTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-model-source-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-model-source-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.shared = self.root / "allocated"
@@ -49,7 +51,9 @@ class SearchModelSourceTests(unittest.TestCase):
         def altered(info):
             changes = {}
             if (info.st_dev, info.st_ino) == (shared.st_dev, shared.st_ino):
-                changes["st_uid"] = os.geteuid() + 10000 if uid is None else uid
+                changes["st_uid"] = (
+                    os.geteuid() + 10000 if uid is None else uid
+                )
                 changes["st_gid"] = os.getegid() if gid is None else gid
             if source_uid is not None and (info.st_dev, info.st_ino) == (
                 source.st_dev,
@@ -69,12 +73,16 @@ class SearchModelSourceTests(unittest.TestCase):
             patch.object(
                 model_source.os,
                 "stat",
-                side_effect=lambda *args, **kw: altered(real_stat(*args, **kw)),
+                side_effect=lambda *args, **kw: altered(
+                    real_stat(*args, **kw)
+                ),
             ),
             patch.object(
                 model_source.os,
                 "fstat",
-                side_effect=lambda *args, **kw: altered(real_fstat(*args, **kw)),
+                side_effect=lambda *args, **kw: altered(
+                    real_fstat(*args, **kw)
+                ),
             ),
         ):
             yield
@@ -89,10 +97,14 @@ class SearchModelSourceTests(unittest.TestCase):
             **options,
         )
 
-    def test_foreign_sticky_primary_group_ancestor_accepts_private_pinned_source(self):
+    def test_foreign_sticky_group_ancestor_accepts_private_pinned_source(
+        self,
+    ):
         with self.shared_metadata():
             with model_source.open_source_root(self.source) as root:
-                self.assertEqual(self.source.stat().st_ino, os.fstat(root.fd).st_ino)
+                self.assertEqual(
+                    self.source.stat().st_ino, os.fstat(root.fd).st_ino
+                )
             self.copy()
         self.assertEqual(self.content, self.destination.read_bytes())
         self.assertEqual(self.content, self.artifact.read_bytes())
@@ -100,7 +112,9 @@ class SearchModelSourceTests(unittest.TestCase):
         self.assertEqual(0o700, stat.S_IMODE(self.source.stat().st_mode))
         self.assertEqual(0o400, stat.S_IMODE(self.artifact.stat().st_mode))
 
-    def test_nonsticky_group_writable_world_writable_and_wrong_gid_are_rejected(self):
+    def test_unsafe_modes_and_wrong_gid_are_rejected(
+        self,
+    ):
         cases = (
             (0o770, os.getegid()),
             (0o1777, os.getegid()),
@@ -116,7 +130,9 @@ class SearchModelSourceTests(unittest.TestCase):
                         self.copy()
                 self.assertEqual(b"", self.destination.read_bytes())
 
-    def test_allocated_source_root_requires_operator_owner_and_exact_0700(self):
+    def test_allocated_source_root_requires_operator_owner_and_exact_0700(
+        self,
+    ):
         self.source.chmod(0o750)
         with self.shared_metadata():
             with self.assertRaisesRegex(
@@ -130,7 +146,9 @@ class SearchModelSourceTests(unittest.TestCase):
             ):
                 self.copy()
 
-    def test_root_owned_sticky_legacy_ancestor_still_accepts_read_only_source(self):
+    def test_root_owned_sticky_legacy_ancestor_still_accepts_read_only_source(
+        self,
+    ):
         self.shared.chmod(0o1777)
         self.source.chmod(0o755)
         with self.shared_metadata(uid=0):
@@ -153,7 +171,9 @@ class SearchModelSourceTests(unittest.TestCase):
 
         with (
             self.shared_metadata(),
-            patch.object(model_source.os, "read", side_effect=replace_ancestor),
+            patch.object(
+                model_source.os, "read", side_effect=replace_ancestor
+            ),
         ):
             with self.assertRaisesRegex(
                 model_source.ModelSourceError, "directory_changed"
@@ -175,14 +195,18 @@ class SearchModelSourceTests(unittest.TestCase):
 
         with (
             self.shared_metadata(),
-            patch.object(model_source.os, "read", side_effect=replace_directory),
+            patch.object(
+                model_source.os, "read", side_effect=replace_directory
+            ),
         ):
             with self.assertRaisesRegex(
                 model_source.ModelSourceError, "directory_changed"
             ):
                 self.copy()
 
-    def test_named_source_replacement_is_rejected_even_with_identical_bytes(self):
+    def test_named_source_replacement_is_rejected_even_with_identical_bytes(
+        self,
+    ):
         real_read = os.read
         replaced = False
 
@@ -200,7 +224,9 @@ class SearchModelSourceTests(unittest.TestCase):
             self.shared_metadata(),
             patch.object(model_source.os, "read", side_effect=replace_file),
         ):
-            with self.assertRaisesRegex(model_source.ModelSourceError, "file_changed"):
+            with self.assertRaisesRegex(
+                model_source.ModelSourceError, "file_changed"
+            ):
                 self.copy()
 
     def test_source_growth_is_bounded_and_never_writes_extra_bytes(self):
@@ -223,10 +249,14 @@ class SearchModelSourceTests(unittest.TestCase):
             self.shared_metadata(),
             patch.object(model_source.os, "read", side_effect=grow),
         ):
-            with self.assertRaisesRegex(model_source.ModelSourceError, "file_changed"):
+            with self.assertRaisesRegex(
+                model_source.ModelSourceError, "file_changed"
+            ):
                 self.copy()
         self.assertLessEqual(count, 2)
-        self.assertLessEqual(self.destination.stat().st_size, len(self.content))
+        self.assertLessEqual(
+            self.destination.stat().st_size, len(self.content)
+        )
 
     def test_files_keep_owner_mode_link_size_and_sha_authority(self):
         for mutation in ("group-write", "hardlink", "sha", "size"):
@@ -245,16 +275,22 @@ class SearchModelSourceTests(unittest.TestCase):
                     with self.assertRaises(model_source.ModelSourceError):
                         self.copy(**arguments)
 
-    def test_fifo_symlink_source_and_staging_links_are_rejected_before_blocking(self):
+    def test_fifo_and_source_or_staging_links_reject_without_blocking(
+        self,
+    ):
         self.artifact.unlink()
         os.mkfifo(self.artifact, 0o400)
         with self.shared_metadata():
-            with self.assertRaisesRegex(model_source.ModelSourceError, "file_unsafe"):
+            with self.assertRaisesRegex(
+                model_source.ModelSourceError, "file_unsafe"
+            ):
                 self.copy()
         self.artifact.unlink()
         self.artifact.symlink_to(self.destination)
         with self.shared_metadata():
-            with self.assertRaisesRegex(model_source.ModelSourceError, "file_unsafe"):
+            with self.assertRaisesRegex(
+                model_source.ModelSourceError, "file_unsafe"
+            ):
                 self.copy()
         self.artifact.unlink()
         self.artifact.write_bytes(self.content)
@@ -291,7 +327,9 @@ class SearchModelSourceTests(unittest.TestCase):
 
         with (
             self.shared_metadata(),
-            patch.object(model_source.os, "read", side_effect=replace_destination),
+            patch.object(
+                model_source.os, "read", side_effect=replace_destination
+            ),
         ):
             with self.assertRaisesRegex(
                 model_source.ModelSourceError, "staging_file_changed"
@@ -333,10 +371,15 @@ class SearchModelSourceTests(unittest.TestCase):
                 ):
                     self.copy(destination=destination)
 
-    def test_cli_check_and_copy_use_the_same_policy_and_hide_raw_io_errors(self):
+    def test_cli_check_and_copy_use_the_same_policy_and_hide_raw_io_errors(
+        self,
+    ):
         with self.shared_metadata():
             self.assertEqual(
-                0, model_source.main(["check", "--source-root", str(self.source)])
+                0,
+                model_source.main(
+                    ["check", "--source-root", str(self.source)]
+                ),
             )
             self.assertEqual(
                 0,
@@ -359,27 +402,41 @@ class SearchModelSourceTests(unittest.TestCase):
         stderr = io.StringIO()
         with (
             patch.object(
-                model_source.os, "open", side_effect=OSError("private raw path")
+                model_source.os,
+                "open",
+                side_effect=OSError("private raw path"),
             ),
             patch.object(model_source.sys, "stderr", stderr),
         ):
             self.assertEqual(
-                1, model_source.main(["check", "--source-root", str(self.source)])
+                1,
+                model_source.main(
+                    ["check", "--source-root", str(self.source)]
+                ),
             )
         self.assertEqual("Error: model_source_io_failed\n", stderr.getvalue())
         stderr = io.StringIO()
         with patch.object(model_source.sys, "stderr", stderr):
             self.assertEqual(
-                1, model_source.main(["check", "--source-root", "/invalid-\ud800"])
+                1,
+                model_source.main(
+                    ["check", "--source-root", "/invalid-\ud800"]
+                ),
             )
         self.assertEqual("Error: model_source_io_failed\n", stderr.getvalue())
 
-    def test_private_parents_are_created_0700_at_every_depth_under_umask_0002(self):
+    def test_private_parents_are_created_0700_at_every_depth_under_umask_0002(
+        self,
+    ):
         previous = os.umask(0o002)
         try:
-            with model_source.create_private_root(self.target, "new-store") as root:
+            with model_source.create_private_root(
+                self.target, "new-store"
+            ) as root:
                 first = root.relative_parent(
-                    "manifests/registry/library/model/tag", private=True, create=True
+                    "manifests/registry/library/model/tag",
+                    private=True,
+                    create=True,
                 )
                 self.assertEqual(
                     first[0],
@@ -391,7 +448,9 @@ class SearchModelSourceTests(unittest.TestCase):
                 )
                 for relative in root.directory_fds:
                     directory = root.root / relative
-                    self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+                    self.assertEqual(
+                        stat.S_IMODE(directory.stat().st_mode), 0o700
+                    )
                 self.assertEqual(
                     root.relative_parent(
                         "blobs/sha256-test", private=True, create=True
@@ -401,7 +460,9 @@ class SearchModelSourceTests(unittest.TestCase):
         finally:
             os.umask(previous)
 
-    def test_private_parents_reject_existing_nonprivate_modes_without_repair(self):
+    def test_private_parents_reject_existing_nonprivate_modes_without_repair(
+        self,
+    ):
         for mode in (0o750, 0o755, 0o770, 0o775):
             with self.subTest(mode=oct(mode)):
                 with model_source.create_private_root(
@@ -418,16 +479,22 @@ class SearchModelSourceTests(unittest.TestCase):
                     self.assertEqual(list(unsafe.iterdir()), [])
 
     def test_private_parent_symlink_is_not_followed_or_modified(self):
-        with model_source.create_private_root(self.target, "linked-store") as root:
+        with model_source.create_private_root(
+            self.target, "linked-store"
+        ) as root:
             alias = root.root / "alias"
             alias.symlink_to(self.source, target_is_directory=True)
             with self.assertRaises((OSError, model_source.ModelSourceError)):
-                root.relative_parent("alias/new/file", private=True, create=True)
+                root.relative_parent(
+                    "alias/new/file", private=True, create=True
+                )
             self.assertFalse((self.source / "new").exists())
             self.assertTrue(alias.is_symlink())
 
     def test_private_cached_parent_and_root_replacement_are_rejected(self):
-        with model_source.create_private_root(self.target, "cached-store") as root:
+        with model_source.create_private_root(
+            self.target, "cached-store"
+        ) as root:
             root.relative_parent("nested/file", private=True, create=True)
             (root.root / "nested").rename(root.root / "saved")
             (root.root / "nested").mkdir(mode=0o700)
@@ -437,14 +504,18 @@ class SearchModelSourceTests(unittest.TestCase):
                 root.relative_parent("nested/other", private=True, create=True)
             (root.root / "nested").rmdir()
             (root.root / "saved").rename(root.root / "nested")
-        with self.assertRaisesRegex(model_source.ModelSourceError, "directory_changed"):
+        with self.assertRaisesRegex(
+            model_source.ModelSourceError, "directory_changed"
+        ):
             with model_source.create_private_root(
                 self.target, "replaced-store"
             ) as root:
                 root.root.rename(self.target / "saved-store")
                 root.root.mkdir(mode=0o700)
 
-    def test_private_creation_requires_explicit_policy_and_one_new_root_leaf(self):
+    def test_private_creation_requires_explicit_policy_and_one_new_root_leaf(
+        self,
+    ):
         with model_source.open_private_root(self.target) as root:
             for options in (
                 {"create": True},
@@ -453,11 +524,21 @@ class SearchModelSourceTests(unittest.TestCase):
             ):
                 with self.subTest(options=options):
                     with self.assertRaisesRegex(
-                        model_source.ModelSourceError, "creation_policy_invalid"
+                        model_source.ModelSourceError,
+                        "creation_policy_invalid",
                     ):
                         root.relative_parent("new/file", **options)
             self.assertFalse((self.target / "new").exists())
-        for name in ("", ".", "..", "../escaped", "/absolute", "a\x00b", "a\nb", None):
+        for name in (
+            "",
+            ".",
+            "..",
+            "../escaped",
+            "/absolute",
+            "a\x00b",
+            "a\nb",
+            None,
+        ):
             with self.subTest(name=name):
                 with self.assertRaisesRegex(
                     model_source.ModelSourceError, "root_name_invalid"

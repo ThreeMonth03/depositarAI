@@ -1,4 +1,6 @@
-"""Durable, private product-operation receipts; never infer deployment success."""
+"""Durable, private product-operation receipts; never infer deployment
+success.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +42,9 @@ OPERATIONS = frozenset(
 
 
 class ActivationOutcomeError(ValueError):
-    """An activation changed, or may have changed, before persistence failed."""
+    """An activation changed, or may have changed, before persistence
+    failed.
+    """
 
     def __init__(self, *, active_changed):
         if active_changed is not True and active_changed is not None:
@@ -64,7 +68,8 @@ class StateStore:
 
     def __init__(self, root: Path, fd: int):
         self.root, self.fd = root, fd
-        # This invocation's write evidence, never an observation of live services.
+        # This invocation's write evidence, never an observation of live
+        # services.
         self._activation_changed = False
 
     def _check_directory(self):
@@ -83,7 +88,9 @@ class StateStore:
     def read(self, name):
         self._name(name)
         self._check_directory()
-        data = private_io.read_file(self.fd, name, mode=0o600, max_bytes=MAX_BYTES)
+        data = private_io.read_file(
+            self.fd, name, mode=0o600, max_bytes=MAX_BYTES
+        )
         try:
             return strict_json(data)
         except ValueError as error:
@@ -113,7 +120,8 @@ class StateStore:
 
 def _marker(config):
     identity = config.to_dict()
-    # A freshness policy may change without relabelling GPU or storage ownership.
+    # A freshness policy may change without relabelling GPU or storage
+    # ownership.
     identity.pop("cache_ttl_seconds")
     return {
         "schema_version": 1,
@@ -125,7 +133,9 @@ def _marker(config):
 
 
 def operation_receipts(store):
-    """Strict receipt validation before interpreting a possibly interrupted run."""
+    """Strict receipt validation before interpreting a possibly interrupted
+    run.
+    """
     values = []
     base = {
         "schema_version",
@@ -143,7 +153,9 @@ def operation_receipts(store):
         if (
             type(value) is not dict
             or not base <= set(value)
-            or set(value) - base - {"bundle_id", "manifest_sha256", "error_type"}
+            or set(value)
+            - base
+            - {"bundle_id", "manifest_sha256", "error_type"}
             or type(value.get("schema_version")) is not int
             or value["schema_version"] != 1
             or type(value["operation"]) is not str
@@ -154,7 +166,8 @@ def operation_receipts(store):
             or value["status"] not in {"started", "staged", "failed"}
             or value["active_changed"]
             is not (
-                value["operation"] == "activate-gateway" and value["status"] == "staged"
+                value["operation"] == "activate-gateway"
+                and value["status"] == "staged"
             )
         ):
             raise ValueError("product_operation_receipt_invalid")
@@ -166,7 +179,8 @@ def operation_receipts(store):
                 raise ValueError("product_operation_receipt_invalid")
         if "error_type" in value and (
             type(value["error_type"]) is not str
-            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,80}", value["error_type"]) is None
+            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,80}", value["error_type"])
+            is None
         ):
             raise ValueError("product_operation_receipt_invalid")
         values.append(value)
@@ -175,12 +189,16 @@ def operation_receipts(store):
 
 @contextmanager
 def locked_state(config: ProductConfig, *, create=False):
-    """Reject unmarked nonempty directories and concurrent product operations."""
+    """Reject unmarked nonempty directories and concurrent product
+    operations.
+    """
     root_fd = private_io.open_directory(config.state_root, create=create)
     lock_fd = None
     try:
         try:
-            fd = os.open("operations.lock", os.O_RDWR | os.O_NOFOLLOW, dir_fd=root_fd)
+            fd = os.open(
+                "operations.lock", os.O_RDWR | os.O_NOFOLLOW, dir_fd=root_fd
+            )
         except FileNotFoundError:
             if not create:
                 raise
@@ -226,7 +244,9 @@ def locked_state(config: ProductConfig, *, create=False):
 
 @contextmanager
 def operation(store: StateStore, name: str, revision: str):
-    """Leave a started receipt on SIGKILL; failures never become success receipts."""
+    """Leave a started receipt on SIGKILL; failures never become success
+    receipts.
+    """
     if name not in OPERATIONS:
         raise ValueError("product_operation_invalid")
     receipts = operation_receipts(store)
@@ -250,7 +270,10 @@ def operation(store: StateStore, name: str, revision: str):
     try:
         yield outcome
     except Exception as error:
-        if name == "activate-gateway" and store._activation_changed is not False:
+        if (
+            name == "activate-gateway"
+            and store._activation_changed is not False
+        ):
             # Retain the started intent: a failed/unchanged receipt would lie,
             # and another write may mask the original storage failure.
             raise ActivationOutcomeError(
@@ -264,8 +287,13 @@ def operation(store: StateStore, name: str, revision: str):
         raise
     else:
         try:
-            store.write(receipt, {**value, "status": "staged", **outcome}, replace=True)
+            store.write(
+                receipt, {**value, "status": "staged", **outcome}, replace=True
+            )
         except Exception as error:
-            if name == "activate-gateway" and outcome.get("active_changed") is True:
+            if (
+                name == "activate-gateway"
+                and outcome.get("active_changed") is True
+            ):
                 raise ActivationOutcomeError(active_changed=True) from error
             raise

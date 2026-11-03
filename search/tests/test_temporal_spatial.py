@@ -1,4 +1,6 @@
-"""Offline contract tests: unknown is neither a positive nor a silent exclusion."""
+"""Offline contract tests: unknown is neither a positive nor a silent
+exclusion.
+"""
 
 from copy import deepcopy
 from datetime import date
@@ -59,7 +61,9 @@ class DateTests(unittest.TestCase):
         self.assertEqual(project(source)["time_status"], "partial")
         self.assertEqual(source["temporal"]["start"], "2025-5-12")
         self.assertEqual(
-            classify(project(source), {"time": {"start": "2020", "end": "2020"}}),
+            classify(
+                project(source), {"time": {"start": "2020", "end": "2020"}}
+            ),
             "outside",
         )
 
@@ -69,10 +73,12 @@ class DateTests(unittest.TestCase):
             classify(meta, {"time": {"start": "1783", "end": "1783"}}), "match"
         )
         self.assertEqual(
-            classify(meta, {"time": {"start": "1783-06", "end": "1783-06"}}), "unknown"
+            classify(meta, {"time": {"start": "1783-06", "end": "1783-06"}}),
+            "unknown",
         )
         self.assertEqual(
-            classify(meta, {"time": {"start": "1784", "end": "1784"}}), "outside"
+            classify(meta, {"time": {"start": "1784", "end": "1784"}}),
+            "outside",
         )
 
     def test_gap_between_uncertain_endpoints_supports_overlap(self):
@@ -87,28 +93,38 @@ class DateTests(unittest.TestCase):
     def test_day_boundary_is_inclusive(self):
         meta = project(condition_document("2020-01-01", "2020-01-31"))
         self.assertEqual(
-            classify(meta, {"time": {"start": "2020-01-31", "end": "2020-01-31"}}),
+            classify(
+                meta, {"time": {"start": "2020-01-31", "end": "2020-01-31"}}
+            ),
             "match",
         )
         self.assertEqual(
-            classify(meta, {"time": {"start": "2020-02-01", "end": None}}), "outside"
+            classify(meta, {"time": {"start": "2020-02-01", "end": None}}),
+            "outside",
         )
 
     def test_partial_is_not_silently_infinite(self):
         meta = project(condition_document("2026-03", None))
         self.assertEqual(
-            classify(meta, {"time": {"start": "2025", "end": "2025"}}), "outside"
+            classify(meta, {"time": {"start": "2025", "end": "2025"}}),
+            "outside",
         )
         self.assertEqual(
-            classify(meta, {"time": {"start": "2026", "end": "2028"}}), "unknown"
+            classify(meta, {"time": {"start": "2026", "end": "2028"}}),
+            "unknown",
         )
         meta = project(condition_document(None, "2000"))
         self.assertEqual(
-            classify(meta, {"time": {"start": "2025", "end": "2025"}}), "outside"
+            classify(meta, {"time": {"start": "2025", "end": "2025"}}),
+            "outside",
         )
 
     def test_missing_and_invalid_remain_unknown(self):
-        for start, end in ((None, None), ("2020-02-30", "2021"), ("2025", "2020")):
+        for start, end in (
+            (None, None),
+            ("2020-02-30", "2021"),
+            ("2025", "2020"),
+        ):
             with self.subTest(start=start):
                 meta = project(condition_document(start, end))
                 self.assertEqual(
@@ -129,14 +145,20 @@ class ConditionTests(unittest.TestCase):
     def test_bbox_boundary_and_missing(self):
         query = {"bbox": [120, 23, 121, 24]}
         self.assertEqual(
-            classify(project(condition_document(bbox=[121, 24, 122, 25])), query),
+            classify(
+                project(condition_document(bbox=[121, 24, 122, 25])), query
+            ),
             "match",
         )
         self.assertEqual(
-            classify(project(condition_document(bbox=[121.1, 24, 122, 25])), query),
+            classify(
+                project(condition_document(bbox=[121.1, 24, 122, 25])), query
+            ),
             "outside",
         )
-        self.assertEqual(classify(project(condition_document()), query), "unknown")
+        self.assertEqual(
+            classify(project(condition_document()), query), "unknown"
+        )
 
     def test_invalid_bbox_is_unknown_data_but_rejected_query(self):
         for bbox in (
@@ -151,7 +173,9 @@ class ConditionTests(unittest.TestCase):
             with self.subTest(bbox=bbox):
                 with self.assertRaises(ValueError):
                     checked_bbox(bbox)
-                self.assertFalse(project(condition_document(bbox=bbox))["bbox_known"])
+                self.assertFalse(
+                    project(condition_document(bbox=bbox))["bbox_known"]
+                )
 
     def test_format_alternatives_and_unknown(self):
         conditions = {"formats": ["PDF", "CSV"]}
@@ -162,12 +186,18 @@ class ConditionTests(unittest.TestCase):
         ):
             with self.subTest(formats=formats):
                 self.assertEqual(
-                    classify(project(condition_document(formats=formats)), conditions),
+                    classify(
+                        project(condition_document(formats=formats)),
+                        conditions,
+                    ),
                     state,
                 )
 
     def test_unknown_and_false_is_outside(self):
-        conditions = {"time": {"start": "2020", "end": "2020"}, "formats": ["PDF"]}
+        conditions = {
+            "time": {"start": "2020", "end": "2020"},
+            "formats": ["PDF"],
+        }
         self.assertEqual(
             classify(project(condition_document(formats=["CSV"])), conditions),
             "outside",
@@ -197,12 +227,18 @@ class ConditionTests(unittest.TestCase):
             {"bbox": [1, 2]},
         ]
         for conditions in invalid:
-            with self.subTest(conditions=conditions), self.assertRaises(ValueError):
+            with (
+                self.subTest(conditions=conditions),
+                self.assertRaises(ValueError),
+            ):
                 compile_filters(conditions)
 
     def test_explicit_open_query_is_supported(self):
         self.assertEqual(
-            validate_conditions({"time": {"start": None, "end": "2020"}})["time"][0], 1
+            validate_conditions({"time": {"start": None, "end": "2020"}})[
+                "time"
+            ][0],
+            1,
         )
 
     def test_no_conditions_does_not_exclude_missing_metadata(self):

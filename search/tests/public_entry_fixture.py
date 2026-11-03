@@ -1,4 +1,6 @@
-"""Isolated CI identity provider and inference counter; never a production IdP."""
+"""Isolated CI identity provider and inference counter; never a
+production IdP.
+"""
 
 import argparse
 import base64
@@ -20,7 +22,12 @@ import threading
 import time
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener
+from urllib.request import (
+    HTTPCookieProcessor,
+    HTTPSHandler,
+    Request,
+    build_opener,
+)
 
 
 ISSUER = "https://oidc.test:9443"
@@ -49,11 +56,20 @@ def signed_token(claims, key):
 
 
 def serve(directory):
-    """Both services are reachable only on the disposable internal test network."""
+    """Both services are reachable only on the disposable internal test
+    network.
+    """
     root = Path(directory)
     modulus = (
         subprocess.run(
-            ["openssl", "rsa", "-in", str(root / "idp.key"), "-noout", "-modulus"],
+            [
+                "openssl",
+                "rsa",
+                "-in",
+                str(root / "idp.key"),
+                "-noout",
+                "-modulus",
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -92,7 +108,9 @@ def serve(directory):
         def do_GET(self):
             path = urlsplit(self.path)
             if path.path == "/v1/version":
-                authenticated = self.headers.get("Authorization") == "Bearer " + API_KEY
+                authenticated = (
+                    self.headers.get("Authorization") == "Bearer " + API_KEY
+                )
                 with counter_lock:
                     version_requests.append(
                         {
@@ -164,7 +182,9 @@ def serve(directory):
                 )
                 return self.reply(302, {}, [("Location", location)])
             if path.path == "/userinfo":
-                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                token = self.headers.get("Authorization", "").removeprefix(
+                    "Bearer "
+                )
                 account = access_tokens.get(token)
                 if account is None:
                     return self.reply(401, {"error": "invalid_token"})
@@ -225,7 +245,9 @@ def serve(directory):
                 elif account == "array-audience":
                     claims["aud"] = [CLIENT_ID, "another-client"]
                     claims["azp"] = CLIENT_ID
-                key = root / ("attacker.key" if account == "forged" else "idp.key")
+                key = root / (
+                    "attacker.key" if account == "forged" else "idp.key"
+                )
                 access = secrets.token_urlsafe(32)
                 access_tokens[access] = account
                 return self.reply(
@@ -248,7 +270,11 @@ def serve(directory):
                     {
                         "status": "ok",
                         "message": "isolated fixture",
-                        "state": {"topic": "fixture", "time": None, "formats": []},
+                        "state": {
+                            "topic": "fixture",
+                            "time": None,
+                            "formats": [],
+                        },
                         "reason": "none",
                         "revision": "a" * 40,
                         "timing_ms": {},
@@ -280,7 +306,9 @@ def burst(directory, payload):
         or type(payload["requests"]) is not list
         or not 1 <= len(payload["requests"]) <= 12
     ):
-        raise ValueError("bounded burst fixture requires one through twelve requests")
+        raise ValueError(
+            "bounded burst fixture requires one through twelve requests"
+        )
     action = payload["action"]
     browsers = {}
     for item in payload["requests"]:
@@ -300,9 +328,9 @@ def burst(directory, payload):
             jar.load(ignore_discard=True, ignore_expires=True)
             token = None
             if action == "turn":
-                token = json.loads(Path("/tmp/" + account + ".session").read_text())[
-                    "token"
-                ]
+                token = json.loads(
+                    Path("/tmp/" + account + ".session").read_text()
+                )["token"]
             browsers[account] = (tuple(jar), token)
     barrier = threading.Barrier(len(payload["requests"]))
     context = ssl.create_default_context(cafile=root / "tls.crt")
@@ -313,7 +341,9 @@ def burst(directory, payload):
         jar = MozillaCookieJar()
         for cookie in cookies:
             jar.set_cookie(copy.copy(cookie))
-        opener = build_opener(HTTPCookieProcessor(jar), HTTPSHandler(context=context))
+        opener = build_opener(
+            HTTPCookieProcessor(jar), HTTPSHandler(context=context)
+        )
         headers = {"Origin": ORIGIN, "Content-Type": "application/json"}
         if token is not None:
             headers["Authorization"] = "Bearer " + token
@@ -352,7 +382,9 @@ def probe(action, account, directory, payload=None):
     if Path(jar.filename).exists():
         jar.load(ignore_discard=True, ignore_expires=True)
     context = ssl.create_default_context(cafile=root / "tls.crt")
-    opener = build_opener(HTTPCookieProcessor(jar), HTTPSHandler(context=context))
+    opener = build_opener(
+        HTTPCookieProcessor(jar), HTTPSHandler(context=context)
+    )
     headers = {}
     data = None
     method = "GET"
@@ -361,7 +393,8 @@ def probe(action, account, directory, payload=None):
         def fetch(url):
             try:
                 return opener.open(
-                    Request(url, headers={"Accept-Encoding": "gzip"}), timeout=10
+                    Request(url, headers={"Accept-Encoding": "gzip"}),
+                    timeout=10,
                 )
             except HTTPError as error:
                 return error
@@ -374,7 +407,9 @@ def probe(action, account, directory, payload=None):
                 raw = gzip.decompress(raw)
             text = raw.decode("utf-8")
         match = re.search(
-            r'<script[^>]*id="anubis_challenge"[^>]*>(.*?)</script>', text, re.S
+            r'<script[^>]*id="anubis_challenge"[^>]*>(.*?)</script>',
+            text,
+            re.S,
         )
         if not match:
             raise ValueError("fixture expected bounded Anubis challenge")
@@ -385,7 +420,10 @@ def probe(action, account, directory, payload=None):
             or type(challenge.get("rules")) is not dict
         ):
             raise ValueError("fixture expected bounded Anubis challenge")
-        data, difficulty = challenge["challenge"], challenge["rules"].get("difficulty")
+        data, difficulty = (
+            challenge["challenge"],
+            challenge["rules"].get("difficulty"),
+        )
         if type(difficulty) is not int or not 1 <= difficulty <= 4:
             raise ValueError("fixture challenge difficulty exceeded")
         for nonce in range(1000000):
@@ -406,7 +444,9 @@ def probe(action, account, directory, payload=None):
             }
         )
         with fetch(
-            ORIGIN + "/.within.website/x/cmd/anubis/api/pass-challenge?" + query
+            ORIGIN
+            + "/.within.website/x/cmd/anubis/api/pass-challenge?"
+            + query
         ) as response:
             response.read(128 * 1024)
             status = response.status
@@ -450,11 +490,15 @@ def probe(action, account, directory, payload=None):
         )
         method = payload.get("method", "POST") if action == "path" else "POST"
         data = json.dumps(
-            {"query": "氣候", "version": 0} if action == "path" else payload or {}
+            {"query": "氣候", "version": 0}
+            if action == "path"
+            else payload or {}
         ).encode()
         headers = {"Origin": ORIGIN, "Content-Type": "application/json"}
         if action == "turn":
-            saved = json.loads(Path("/tmp/" + account + ".session").read_text())
+            saved = json.loads(
+                Path("/tmp/" + account + ".session").read_text()
+            )
             headers["Authorization"] = "Bearer " + saved["token"]
         if action in ("spoof", "path"):
             headers.update(
@@ -503,7 +547,13 @@ def probe(action, account, directory, payload=None):
         if cookie.domain == "public.test"
     ]
     print(
-        json.dumps({"status": response.status, "value": value, "cookies": cookie_flags})
+        json.dumps(
+            {
+                "status": response.status,
+                "value": value,
+                "cookies": cookie_flags,
+            }
+        )
     )
 
 

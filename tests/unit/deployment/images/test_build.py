@@ -1,4 +1,6 @@
-"""Image builder transaction tests with fake Docker; real harmless pipe probes."""
+"""Image builder transaction tests with fake Docker; real harmless pipe
+probes.
+"""
 
 from __future__ import annotations
 
@@ -29,7 +31,9 @@ REVISION = "a" * 40
 
 class ProductImageBuildTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-image-build-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-image-build-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.parent = Path(temporary.name)
         self.root = self.parent / "staged"
@@ -45,7 +49,9 @@ class ProductImageBuildTests(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(raw)
             destination.chmod(
-                0o755 if self.plan["files"][path]["mode"] == "100755" else 0o644
+                0o755
+                if self.plan["files"][path]["mode"] == "100755"
+                else 0o644
             )
         self.write_manifest(self.plan)
         self.docker = FakeDocker(self.root, self.plan)
@@ -61,9 +67,15 @@ class ProductImageBuildTests(unittest.TestCase):
         )
 
     def commands(self, operation):
-        return [argv[5:] for argv, _, _ in self.docker.calls if argv[5] == operation]
+        return [
+            argv[5:]
+            for argv, _, _ in self.docker.calls
+            if argv[5] == operation
+        ]
 
-    def test_four_fixed_builds_intent_then_iid_inspection_then_private_receipts(self):
+    def test_four_builds_record_intent_iid_and_private_receipts(
+        self,
+    ):
         result = self.invoke()
         self.assertEqual(set(build.SERVICES), set(result["images"]))
         self.assertFalse(result["services_started"])
@@ -77,7 +89,9 @@ class ProductImageBuildTests(unittest.TestCase):
                 command[command.index("--file") + 1],
             )
             self.assertEqual(str(self.context), command[-1])
-            self.assertEqual("linux/amd64", command[command.index("--platform") + 1])
+            self.assertEqual(
+                "linux/amd64", command[command.index("--platform") + 1]
+            )
             self.assertIn("--pull", command)
             self.assertIn("SOURCE_REVISION=" + REVISION, command)
             for name, value in recipe["required_labels"].items():
@@ -89,13 +103,16 @@ class ProductImageBuildTests(unittest.TestCase):
             )
             for name in ("started.json", "complete.json"):
                 self.assertEqual(0o600, (slot / name).stat().st_mode & 0o777)
-                self.assertNotIn("never-save-this-value", (slot / name).read_text())
+                self.assertNotIn(
+                    "never-save-this-value", (slot / name).read_text()
+                )
                 self.assertNotIn("PRIVATE_SENTINEL", (slot / name).read_text())
             self.assertEqual(
-                self.docker.images[service]["Id"], result["images"][service]["image_id"]
+                self.docker.images[service]["Id"],
+                result["images"][service]["image_id"],
             )
 
-    def test_same_source_reuse_reinspects_every_image_without_build_or_receipt_rewrite(
+    def test_reuse_reinspects_images_without_build_or_receipt_rewrite(
         self,
     ):
         first = self.invoke()
@@ -120,7 +137,9 @@ class ProductImageBuildTests(unittest.TestCase):
             },
         )
 
-    def test_source_bytes_tamper_on_reuse_is_rejected_before_any_docker_call(self):
+    def test_source_bytes_tamper_on_reuse_is_rejected_before_any_docker_call(
+        self,
+    ):
         self.invoke()
         self.docker.calls.clear()
         (self.context / "web/src/styles.css").write_bytes(b"changed source\n")
@@ -128,15 +147,21 @@ class ProductImageBuildTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.docker.calls)
 
-    def test_independent_expected_manifest_digest_binds_source_before_docker(self):
+    def test_independent_expected_manifest_digest_binds_source_before_docker(
+        self,
+    ):
         expected = build._digest(self.plan)
         first = self.invoke(expected_manifest_sha256=expected)
         self.docker.calls.clear()
         self.assertEqual(first, self.invoke(expected_manifest_sha256=expected))
         self.assertEqual([], self.commands("build"))
 
-    def test_wrong_expected_manifest_rejected_before_lock_or_docker_mutation(self):
-        with self.assertRaisesRegex(build.ImageBuildError, "expected_manifest_changed"):
+    def test_wrong_expected_manifest_rejected_before_lock_or_docker_mutation(
+        self,
+    ):
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "expected_manifest_changed"
+        ):
             self.invoke(expected_manifest_sha256="f" * 64)
         self.assertEqual([], self.docker.calls)
         self.assertFalse((self.root / "images").exists())
@@ -151,17 +176,21 @@ class ProductImageBuildTests(unittest.TestCase):
                     self.invoke(expected_manifest_sha256=value)
         self.assertEqual([], self.docker.calls)
 
-    def test_completed_image_labels_and_environment_are_reverified_on_reuse(self):
+    def test_completed_image_labels_and_environment_are_reverified_on_reuse(
+        self,
+    ):
         self.invoke()
         self.docker.calls.clear()
         self.docker.images["conversation-api"]["Config"]["Env"].append(
             "ADDED=unexpected"
         )
-        with self.assertRaisesRegex(build.ImageBuildError, "completed_image_changed"):
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "completed_image_changed"
+        ):
             self.invoke()
         self.assertEqual([], self.commands("build"))
 
-    def test_environment_and_local_daemon_cannot_be_overridden_by_parent_environment(
+    def test_parent_environment_cannot_override_daemon_or_build_env(
         self,
     ):
         with mock.patch.dict(
@@ -176,7 +205,9 @@ class ProductImageBuildTests(unittest.TestCase):
             self.assertEqual(build.DOCKER_HOST, argv[2])
             self.assertEqual({"PATH", "LANG", "LC_ALL"}, set(environment))
             self.assertNotIn("HOME", environment)
-            self.assertFalse(any(key.startswith("DOCKER_") for key in environment))
+            self.assertFalse(
+                any(key.startswith("DOCKER_") for key in environment)
+            )
             self.assertNotIn("must-not-inherit", str(environment))
             self.assertNotIn("--context", argv)
             self.assertNotIn("push", argv)
@@ -187,18 +218,24 @@ class ProductImageBuildTests(unittest.TestCase):
 
     def test_non_linux_daemon_rejected_before_any_started_receipt(self):
         self.docker.info = "windows"
-        with self.assertRaisesRegex(build.ImageBuildError, "daemon_unsupported"):
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "daemon_unsupported"
+        ):
             self.invoke()
         self.assertEqual([], self.commands("build"))
         self.assertEqual([], list((self.root / "images").iterdir()))
 
     def test_build_failure_preserves_started_and_never_blindly_retries(self):
         self.docker.return_failure = True
-        with self.assertRaisesRegex(build.ImageBuildError, "command_failed") as caught:
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "command_failed"
+        ) as caught:
             self.invoke()
         self.assertNotIn("private", str(caught.exception))
         slot = self.root / "images/conversation-api"
-        self.assertEqual({"started.json"}, {path.name for path in slot.iterdir()})
+        self.assertEqual(
+            {"started.json"}, {path.name for path in slot.iterdir()}
+        )
         self.docker.return_failure = False
         self.docker.calls.clear()
         with self.assertRaisesRegex(build.ImageBuildError, "partial_state"):
@@ -222,13 +259,15 @@ class ProductImageBuildTests(unittest.TestCase):
             self.invoke()
         self.assertEqual(b"preserve evidence", marker.read_bytes())
 
-    def test_invalid_manifest_revision_recipe_flags_and_extra_root_files_fail_preflight(
+    def test_preflight_rejects_invalid_manifest_recipe_and_root_files(
         self,
     ):
         for change in (
             lambda p: p.update(revision="b" * 40),
             lambda p: p.update(schema_version=True),
-            lambda p: p["services"]["web"].update(base_images=["python:latest"]),
+            lambda p: p["services"]["web"].update(
+                base_images=["python:latest"]
+            ),
         ):
             plan = copy.deepcopy(self.plan)
             change(plan)
@@ -238,10 +277,14 @@ class ProductImageBuildTests(unittest.TestCase):
             self.assertEqual([], self.docker.calls)
         self.write_manifest(self.plan)
         (self.root / "private-unexpected").write_bytes(b"preserve")
-        with self.assertRaisesRegex(build.ImageBuildError, "unknown_root_state"):
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "unknown_root_state"
+        ):
             self.invoke()
 
-    def test_manifest_json_duplicate_nonfinite_and_noncanonical_forms_rejected(self):
+    def test_manifest_json_duplicate_nonfinite_and_noncanonical_forms_rejected(
+        self,
+    ):
         path = self.root / "manifest.json"
         for raw in (
             b'{"schema_version":1,"schema_version":2}',
@@ -272,7 +315,9 @@ class ProductImageBuildTests(unittest.TestCase):
             self.root.chmod(0o700)
         self.assertEqual([], self.docker.calls)
 
-    def test_context_or_lock_tampering_during_build_never_gets_complete_receipt(self):
+    def test_build_tampering_never_gets_complete_receipt(
+        self,
+    ):
         def tamper(service, iid):
             (self.context / "search/api/conversation/app.py").write_bytes(
                 b"changed after durable started"
@@ -295,9 +340,13 @@ class ProductImageBuildTests(unittest.TestCase):
         self.docker.on_build = tamper
         with self.assertRaisesRegex(build.ImageBuildError, "manifest_changed"):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
-    def test_replaced_lock_cannot_complete_a_build_under_a_different_mutex(self):
+    def test_replaced_lock_cannot_complete_a_build_under_a_different_mutex(
+        self,
+    ):
         def replace_lock(service, iid):
             path = self.root / "image-build.lock"
             path.rename(self.root / "old-image-build.lock")
@@ -306,9 +355,13 @@ class ProductImageBuildTests(unittest.TestCase):
         self.docker.on_build = replace_lock
         with self.assertRaisesRegex(build.ImageBuildError, "lock_unsafe"):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
-    def test_later_build_cannot_silently_change_a_previously_verified_receipt(self):
+    def test_later_build_cannot_silently_change_a_previously_verified_receipt(
+        self,
+    ):
         def tamper_previous_receipt(service, iid):
             if service == "web":
                 path = self.root / "images/conversation-api/complete.json"
@@ -317,9 +370,13 @@ class ProductImageBuildTests(unittest.TestCase):
                 path.write_bytes(private_io.canonical(complete))
 
         self.docker.on_build = tamper_previous_receipt
-        with self.assertRaisesRegex(build.ImageBuildError, "final_receipt_changed"):
+        with self.assertRaisesRegex(
+            build.ImageBuildError, "final_receipt_changed"
+        ):
             self.invoke()
-        self.assertTrue((self.root / "images/conversation-api/complete.json").exists())
+        self.assertTrue(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
     def test_held_lock_rejects_concurrent_builder_before_docker(self):
         descriptor = os.open(
@@ -341,14 +398,17 @@ class ProductImageBuildTests(unittest.TestCase):
         self.docker.on_build = invalid_iid
         with self.assertRaisesRegex(build.ImageBuildError, "iid_invalid"):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
     def test_builder_644_iid_is_accepted_inside_private_role_directory(self):
         self.docker.iid_mode = 0o644
         self.docker.iid_suffix = b""
         self.invoke()
         self.assertEqual(
-            0o700, (self.root / "images/conversation-api").stat().st_mode & 0o777
+            0o700,
+            (self.root / "images/conversation-api").stat().st_mode & 0o777,
         )
 
     def test_symlink_iid_never_read_or_followed(self):
@@ -363,13 +423,17 @@ class ProductImageBuildTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.commands("image"))
 
-    def test_missing_source_labels_or_wrong_revision_environment_rejected(self):
+    def test_missing_source_labels_or_wrong_revision_environment_rejected(
+        self,
+    ):
         self.docker.images["conversation-api"]["Config"]["Labels"].pop(
             "org.opencontainers.image.revision"
         )
         with self.assertRaises(build.ImageBuildError):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
     def test_wrong_source_revision_environment_rejected(self):
         environment = self.docker.images["conversation-api"]["Config"]["Env"]
@@ -378,7 +442,9 @@ class ProductImageBuildTests(unittest.TestCase):
         )
         with self.assertRaises(build.ImageBuildError):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
     def test_iid_fifo_is_rejected_before_image_inspection(self):
         def bad_iid(service, iid):
@@ -395,13 +461,17 @@ class ProductImageBuildTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.commands("image"))
 
-    def test_duplicate_image_environment_is_rejected_without_saving_values(self):
+    def test_duplicate_image_environment_is_rejected_without_saving_values(
+        self,
+    ):
         self.docker.images["conversation-api"]["Config"]["Env"].append(
             "SOURCE_REVISION=" + REVISION
         )
         with self.assertRaises(build.ImageBuildError):
             self.invoke()
-        self.assertFalse((self.root / "images/conversation-api/complete.json").exists())
+        self.assertFalse(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
 
     def test_completed_receipt_and_iid_modes_are_checked_before_reuse(self):
         self.invoke()
@@ -413,13 +483,18 @@ class ProductImageBuildTests(unittest.TestCase):
 
 
 class ImageBuildRunnerTests(unittest.TestCase):
-    def test_input_is_private_binary_stdin_with_fixed_arguments_and_environment(self):
-        program = """
-import hashlib, json, os, sys
-raw = sys.stdin.buffer.read()
-print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
-                  'arguments': sys.argv[1:], 'environment': sorted(os.environ)}))
-"""
+    def test_private_binary_input_uses_fixed_arguments_and_environment(
+        self,
+    ):
+        program = (
+            "\n"
+            "import hashlib, json, os, sys\n"
+            "raw = sys.stdin.buffer.read()\n"
+            "print(json.dumps({'bytes': len(raw), 'sha256': "
+            "hashlib.sha256(raw).hexdigest(),\n"
+            "                  'arguments': sys.argv[1:], 'environment': "
+            "sorted(os.environ)}))\n"
+        )
         argv = [sys.executable, "-I", "-S", "-B", "-c", program]
         environment = {"LANG": "C.UTF-8"}
         before = dict(os.environ)
@@ -440,7 +515,9 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
         self.assertEqual(environment, {"LANG": "C.UTF-8"})
         self.assertEqual(before, dict(os.environ))
 
-    def test_absent_input_remains_devnull_and_explicit_empty_input_reaches_eof(self):
+    def test_absent_input_remains_devnull_and_explicit_empty_input_reaches_eof(
+        self,
+    ):
         argv = [
             sys.executable,
             "-c",
@@ -455,7 +532,11 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
 
     def test_maximum_input_is_delivered_without_truncation(self):
         result = build._run(
-            [sys.executable, "-c", "import sys; print(len(sys.stdin.buffer.read()))"],
+            [
+                sys.executable,
+                "-c",
+                "import sys; print(len(sys.stdin.buffer.read()))",
+            ],
             timeout=2,
             environment={},
             input_bytes=b"x" * 4096,
@@ -485,7 +566,9 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
                     input_bytes=payload,
                 )
             spawn.assert_not_called()
-            self.assertNotIn("private-input-sentinel-100", str(caught.exception))
+            self.assertNotIn(
+                "private-input-sentinel-100", str(caught.exception)
+            )
 
     def test_input_runner_timeout_closes_all_pipes_and_reaps_the_child(self):
         original_popen = subprocess.Popen
@@ -517,7 +600,9 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
         self.assertTrue(process.stdout.closed)
         self.assertTrue(process.stderr.closed)
 
-    def test_binary_output_and_nonzero_exit_keep_completed_process_contract(self):
+    def test_binary_output_and_nonzero_exit_keep_completed_process_contract(
+        self,
+    ):
         argv = [
             sys.executable,
             "-c",
@@ -542,7 +627,9 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
         self.assertEqual((b"abcd", b"efgh"), (result.stdout, result.stderr))
         with (
             mock.patch.object(build, "MAX_OUTPUT_BYTES", 7),
-            self.assertRaisesRegex(build.ImageBuildError, "^image_build_output_limit$"),
+            self.assertRaisesRegex(
+                build.ImageBuildError, "^image_build_output_limit$"
+            ),
         ):
             build._run(argv, timeout=2, environment={})
 
@@ -574,12 +661,14 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
         self.assertEqual(1, len(created))
         process = created[0]
         # A capture-loop timeout would reach only the five-second cleanup wait.
-        self.assertLessEqual(process.wait.call_args_list[0].kwargs["timeout"], 1)
+        self.assertLessEqual(
+            process.wait.call_args_list[0].kwargs["timeout"], 1
+        )
         self.assertIsNotNone(process.returncode)
         self.assertTrue(process.stdout.closed)
         self.assertTrue(process.stderr.closed)
 
-    def test_actual_harmless_subprocess_has_private_umask_and_no_global_env_mutation(
+    def test_real_subprocess_has_private_umask_and_unchanged_global_env(
         self,
     ):
         before = dict(os.environ)
@@ -595,7 +684,11 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
         with mock.patch.object(build, "MAX_OUTPUT_BYTES", 4096):
             with self.assertRaisesRegex(build.ImageBuildError, "output_limit"):
                 build._run(
-                    [sys.executable, "-c", "import os; os.write(2,b'x'*65536)"],
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os; os.write(2,b'x'*65536)",
+                    ],
                     timeout=2,
                     environment={},
                 )
@@ -606,11 +699,22 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
                 environment={},
             )
 
-    def test_exited_parent_with_child_retaining_pipe_is_killed_as_a_group(self):
-        program = "import os,time; child=os.fork(); time.sleep(10) if child==0 else os._exit(0)"
+    def test_exited_parent_with_child_retaining_pipe_is_killed_as_a_group(
+        self,
+    ):
+        program = (
+            "import os,time; child=os.fork(); time.sleep(10) if child==0 else "
+            "os._exit(0)"
+        )
         with mock.patch.object(build.os, "killpg", wraps=os.killpg) as kill:
-            with self.assertRaisesRegex(build.ImageBuildError, "command_timeout"):
-                build._run([sys.executable, "-c", program], timeout=0.1, environment={})
+            with self.assertRaisesRegex(
+                build.ImageBuildError, "command_timeout"
+            ):
+                build._run(
+                    [sys.executable, "-c", program],
+                    timeout=0.1,
+                    environment={},
+                )
         self.assertEqual(1, kill.call_count)
 
     def test_injected_command_output_and_count_budgets_are_checked(self):

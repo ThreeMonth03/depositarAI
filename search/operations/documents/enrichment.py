@@ -1,4 +1,6 @@
-"""Import explicit private profiles into the existing sealed catalog builder."""
+"""Import explicit private profiles into the existing sealed catalog
+builder.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +36,9 @@ ERROR_CODES = frozenset(
 
 
 class EnrichmentError(ValueError):
-    """An explicit profile does not match this catalog or extraction contract."""
+    """An explicit profile does not match this catalog or extraction
+    contract.
+    """
 
 
 def _read_profile(path):
@@ -46,7 +50,10 @@ def _read_profile(path):
         descriptor = private_io.open_directory(parent)
         try:
             raw = private_io.read_file(
-                descriptor, path.name, mode=0o600, max_bytes=controller.MAX_RECORD_BYTES
+                descriptor,
+                path.name,
+                mode=0o600,
+                max_bytes=controller.MAX_RECORD_BYTES,
             )
             private_io.verify_directory(descriptor, parent)
         finally:
@@ -63,12 +70,17 @@ def _read_profile(path):
 def _profile_fields(profile, manifest_sha256):
     if (
         type(profile) is not dict
-        or set(profile) != {"schema_version", "source", "extractor", "policy", "result"}
+        or set(profile)
+        != {"schema_version", "source", "extractor", "policy", "result"}
         or type(profile["schema_version"]) is not int
         or profile["schema_version"] != 1
     ):
         raise EnrichmentError("document_enrichment_profile_invalid")
-    origin, tool, policy = profile["source"], profile["extractor"], profile["policy"]
+    origin, tool, policy = (
+        profile["source"],
+        profile["extractor"],
+        profile["policy"],
+    )
     if (
         type(origin) is not dict
         or set(origin)
@@ -86,8 +98,13 @@ def _profile_fields(profile, manifest_sha256):
         or type(origin["complete"]) is not bool
         or origin["complete"] is not True
         or any(
-            type(origin[key]) is not str or _SHA256.fullmatch(origin[key]) is None
-            for key in ("catalog_manifest_sha256", "url_sha256", "content_sha256")
+            type(origin[key]) is not str
+            or _SHA256.fullmatch(origin[key]) is None
+            for key in (
+                "catalog_manifest_sha256",
+                "url_sha256",
+                "content_sha256",
+            )
         )
         or any(
             type(origin[key]) is not str
@@ -120,7 +137,9 @@ def _check_deadline(deadline):
 
 
 def _references(paths, profile_set, manifest_sha256, deadline):
-    if not isinstance(paths, (list, tuple)) or (paths and profile_set is not None):
+    if not isinstance(paths, (list, tuple)) or (
+        paths and profile_set is not None
+    ):
         raise EnrichmentError("document_enrichment_selection_invalid")
     if profile_set is not None:
         record, digest = sets.read(profile_set)
@@ -139,8 +158,10 @@ def _references(paths, profile_set, manifest_sha256, deadline):
     if not 1 <= len(paths) <= controller.MAX_RESOURCES:
         raise EnrichmentError("document_enrichment_selection_invalid")
     references = []
-    # Only identity references survive this bounded discovery pass. Profile text
-    # is reread and authenticated when consumed, never accumulated across a set.
+    # Only identity references survive this bounded discovery pass. Profile
+    # text
+    # is reread and authenticated when consumed, never accumulated across a
+    # set.
     for path in paths:
         _check_deadline(deadline)
         digest, profile = _read_profile(path)
@@ -179,12 +200,14 @@ def load_profiles(
     profile_set=None,
     deadline=None,
 ):
-    """Return grounded enrichment plus an ID-only report; never fetch or parse files.
+    """Return grounded enrichment plus an ID-only report; never fetch or parse
+    files.
 
-    Profiles must refer to the metadata-only bundle built from this exact snapshot.
-    A frozen set may span execution batches; explicit files remain a small one-off
-    selection. Neither path scans caches or performs resource IO. ``deadline`` is
-    an optional absolute monotonic time, checked between profile reads.
+    Profiles must refer to the metadata-only bundle built from this exact
+    snapshot. A frozen set may span execution batches; explicit files remain a
+    small one-off selection. Neither path scans caches or performs resource IO.
+    ``deadline`` is an optional absolute monotonic time, checked between
+    profile reads.
     """
     if deadline is not None and (
         type(deadline) not in (int, float) or not math.isfinite(deadline)
@@ -206,7 +229,9 @@ def load_profiles(
             metadata_only=True,
         )
     except controller.ProfileError as error:
-        raise EnrichmentError("document_enrichment_selection_invalid") from error
+        raise EnrichmentError(
+            "document_enrichment_selection_invalid"
+        ) from error
     if source_digest is not None and source_digest != _source_sha256(
         bundle_path, manifest_sha256
     ):
@@ -232,7 +257,11 @@ def load_profiles(
     context_bytes = sum(
         len(
             private_io.canonical(
-                {"schema_version": 1, "dataset_id": dataset_id, "resources": []}
+                {
+                    "schema_version": 1,
+                    "dataset_id": dataset_id,
+                    "resources": [],
+                }
             )
         )
         for dataset_id in corpus
@@ -272,7 +301,9 @@ def load_profiles(
                 header_policy=policy["header_policy"],
             )
         except (ValueError, TypeError) as error:
-            raise EnrichmentError("document_enrichment_result_invalid") from error
+            raise EnrichmentError(
+                "document_enrichment_result_invalid"
+            ) from error
         if result["input_sha256"] != origin["content_sha256"]:
             raise EnrichmentError("document_enrichment_content_mismatch")
         row = {
@@ -283,7 +314,10 @@ def load_profiles(
         reason = None
         if result["status"] != "ok":
             reason = result["status"]
-        elif identity["format"] == "CSV" and policy["header_policy"] != "first_record":
+        elif (
+            identity["format"] == "CSV"
+            and policy["header_policy"] != "first_record"
+        ):
             reason = "csv_header_absent"
         elif identity["format"] == "CSV" and not result["columns"]:
             reason = "csv_columns_empty"
@@ -300,7 +334,9 @@ def load_profiles(
             counters={},
         )
         if not prepared["index_text"]:
-            report_row({**row, "status": "skipped", "reason": "no_public_text"})
+            report_row(
+                {**row, "status": "skipped", "reason": "no_public_text"}
+            )
             continue
         raw = {
             "context": {
@@ -331,7 +367,9 @@ def load_profiles(
         try:
             resources.validate_enrichment_resources(entries)
         except ValueError as error:
-            raise EnrichmentError("document_enrichment_selection_invalid") from error
+            raise EnrichmentError(
+                "document_enrichment_selection_invalid"
+            ) from error
         report_row({**row, "status": "included"})
     _check_deadline(deadline)
     return contexts, {

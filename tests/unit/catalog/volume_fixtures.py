@@ -17,7 +17,8 @@ IMAGE = "sha256:" + "a" * 64
 
 
 class VolumeDocker:
-    """Stateful Docker volume commands reusable by complete runtime fixtures."""
+    """Stateful Docker volume commands reusable by complete runtime
+    fixtures."""
 
     mountpoint = "/opaque/docker/volume"
 
@@ -78,7 +79,9 @@ class CatalogVolumeFixture(VolumeDocker):
 
     def __init__(self, test):
         super().__init__(test)
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-volume-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-volume-test-"
+        )
         self.test.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.data = self.root / "data"
@@ -118,7 +121,9 @@ class CatalogVolumeFixture(VolumeDocker):
         }
         self.security = self.patched(execution, "verify_security_material")
         self.image = self.patched(
-            volumes.administration, "_admin_image", return_value={"image_id": IMAGE}
+            volumes.administration,
+            "_admin_image",
+            return_value={"image_id": IMAGE},
         )
         self.inspect_image = self.patched(
             execution,

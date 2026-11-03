@@ -52,7 +52,9 @@ class PublicEntryBindingTests(unittest.TestCase):
             "name": name,
             "services": {
                 "web": {
-                    "environment": {"WEB_UPSTREAM": "http://conversation-api:8000"},
+                    "environment": {
+                        "WEB_UPSTREAM": "http://conversation-api:8000"
+                    },
                     "volumes": [
                         {
                             "type": "bind",
@@ -87,19 +89,25 @@ class PublicEntryBindingTests(unittest.TestCase):
             kwargs.get("frontend_proof", self.frontend_proof),
         )
 
-    def test_binding_preserves_private_release_and_publishes_no_backend_port(self):
+    def test_binding_preserves_private_release_and_publishes_no_backend_port(
+        self,
+    ):
         before = copy.deepcopy((self.rendered, self.release))
         result = self.bind()
         self.assertEqual(before, (self.rendered, self.release))
         web = result["compose"]["services"]["public-web"]
         self.assertEqual(web["image"], IMAGE)
-        self.assertEqual(web["environment"]["WEB_ORIGIN"], self.config.public_origin)
         self.assertEqual(
-            web["environment"]["WEB_EDGE_SECRET_FILE"], "/run/secrets/public_edge_key"
+            web["environment"]["WEB_ORIGIN"], self.config.public_origin
+        )
+        self.assertEqual(
+            web["environment"]["WEB_EDGE_SECRET_FILE"],
+            "/run/secrets/public_edge_key",
         )
         self.assertEqual(web["runtime"], "runc")
         self.assertEqual(
-            web["networks"], {"website": {"aliases": ["web"]}, "existing-release": {}}
+            web["networks"],
+            {"website": {"aliases": ["web"]}, "existing-release": {}},
         )
         frontend = result["compose"]["services"]["public-frontend"]
         self.assertEqual(frontend["image"], FRONTEND)
@@ -120,7 +128,9 @@ class PublicEntryBindingTests(unittest.TestCase):
             },
         )
 
-    def test_existing_plan_metadata_is_preserved_while_backend_identity_is_bound(self):
+    def test_binding_backend_identity_preserves_existing_plan_metadata(
+        self,
+    ):
         self.rendered["compose"]["x-depositar-plan"] = {
             "schema_version": 1,
             "status": "public_entry_planned",
@@ -148,11 +158,15 @@ class PublicEntryBindingTests(unittest.TestCase):
             release["services"]["conversation-api"]["image"] = image
             with (
                 self.subTest(image=image),
-                self.assertRaisesRegex(ValueError, "^public_entry_release_invalid$"),
+                self.assertRaisesRegex(
+                    ValueError, "^public_entry_release_invalid$"
+                ),
             ):
                 self.bind(release=release)
         del release["services"]["conversation-api"]["image"]
-        with self.assertRaisesRegex(ValueError, "^public_entry_release_invalid$"):
+        with self.assertRaisesRegex(
+            ValueError, "^public_entry_release_invalid$"
+        ):
             self.bind(release=release)
 
     def test_old_or_unbound_image_cannot_start_public_website(self):
@@ -184,7 +198,9 @@ class PublicEntryBindingTests(unittest.TestCase):
                 proof["Labels"][host.CONVERSATION_CAPABILITY] = version
             with (
                 self.subTest(version=version),
-                self.assertRaisesRegex(ValueError, "^public_entry_web_image_invalid$"),
+                self.assertRaisesRegex(
+                    ValueError, "^public_entry_web_image_invalid$"
+                ),
             ):
                 self.bind(proof=proof)
         self.assertNotIn("public-web", self.rendered["compose"]["services"])
@@ -203,7 +219,10 @@ class PublicEntryBindingTests(unittest.TestCase):
                     "org.opencontainers.image.revision": "c" * 40,
                 },
             },
-            {"Id": FRONTEND, "Labels": {"org.opencontainers.image.revision": REVISION}},
+            {
+                "Id": FRONTEND,
+                "Labels": {"org.opencontainers.image.revision": REVISION},
+            },
         ):
             with (
                 self.subTest(proof=proof),
@@ -213,8 +232,12 @@ class PublicEntryBindingTests(unittest.TestCase):
 
     def test_unexpected_release_network_and_published_api_are_rejected(self):
         for mutate in (
-            lambda release: release["services"].update({"conversation-api": None}),
-            lambda release: release["networks"]["website"].update(name="unrelated"),
+            lambda release: release["services"].update(
+                {"conversation-api": None}
+            ),
+            lambda release: release["networks"]["website"].update(
+                name="unrelated"
+            ),
             lambda release: release["services"]["conversation-api"].update(
                 ports=[8000]
             ),
@@ -245,10 +268,14 @@ class PublicEntryBindingTests(unittest.TestCase):
             release_file.chmod(0o600)
         with (
             patch.object(
-                host.public_entry, "load_public_entry_config", return_value=self.config
+                host.public_entry,
+                "load_public_entry_config",
+                return_value=self.config,
             ),
             patch.object(
-                host.public_entry, "render_public_entry", return_value=self.rendered
+                host.public_entry,
+                "render_public_entry",
+                return_value=self.rendered,
             ),
         ):
             return host.prepare_public_entry(
@@ -261,7 +288,7 @@ class PublicEntryBindingTests(unittest.TestCase):
                 else self.frontend_proof,
             )
 
-    def test_prepare_reverifies_identical_output_and_rejects_drift_without_overwrite(
+    def test_prepare_reverifies_output_and_rejects_drift_without_overwrite(
         self,
     ):
         report = self.prepare()
@@ -273,20 +300,23 @@ class PublicEntryBindingTests(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         prepared = json.loads(path.read_text())
         self.assertEqual(
-            prepared["x-depositar-plan"]["private_backend"]["api_image"], API_IMAGE
+            prepared["x-depositar-plan"]["private_backend"]["api_image"],
+            API_IMAGE,
         )
         path.write_text("tampered")
         with self.assertRaisesRegex(ValueError, "preparation_changed"):
             self.prepare()
         self.assertEqual(path.read_text(), "tampered")
 
-    def test_offline_prepare_rejects_missing_api_identity_without_publishing_state(
+    def test_offline_prepare_missing_api_identity_publishes_no_state(
         self,
     ):
         del self.release["services"]["conversation-api"]["image"]
         with (
             patch.object(host.subprocess, "run") as runner,
-            self.assertRaisesRegex(ValueError, "^public_entry_release_invalid$"),
+            self.assertRaisesRegex(
+                ValueError, "^public_entry_release_invalid$"
+            ),
         ):
             self.prepare()
         runner.assert_not_called()
@@ -303,7 +333,9 @@ class PublicEntryBindingTests(unittest.TestCase):
 
     def test_interrupted_preparation_can_retry_without_deleting_state(self):
         with patch.object(
-            host.private_io, "write_file", side_effect=OSError("disk interrupted")
+            host.private_io,
+            "write_file",
+            side_effect=OSError("disk interrupted"),
         ):
             with self.assertRaises(OSError):
                 self.prepare()
@@ -321,7 +353,9 @@ class PublicEntryBindingTests(unittest.TestCase):
             destination.mkdir(mode=0o700)
             (destination / "operator-sentinel").write_text("keep")
 
-        with patch.object(host.private_io, "write_json", side_effect=concurrent):
+        with patch.object(
+            host.private_io, "write_json", side_effect=concurrent
+        ):
             with self.assertRaisesRegex(ValueError, "destination_exists"):
                 self.prepare()
         self.assertEqual(

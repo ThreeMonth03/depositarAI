@@ -1,4 +1,6 @@
-"""Synthetic plans and captures for quality and batch-consumer regression tests."""
+"""Synthetic plans and captures for quality and batch-consumer
+regression tests.
+"""
 
 import copy
 
@@ -10,7 +12,9 @@ from search.tests.fixtures import IDS, condition_document, report
 
 def turn(time, *, version=1, formats=None, source=None, retain_topic=False):
     formats = formats or []
-    source = source or condition_document("2020", "2025", formats=["CSV", "PDF"])
+    source = source or condition_document(
+        "2020", "2025", formats=["CSV", "PDF"]
+    )
     conditions = {}
     if time is not None:
         conditions["time"] = time
@@ -38,7 +42,11 @@ def turn(time, *, version=1, formats=None, source=None, retain_topic=False):
     counts[label] = 1
     return {
         "query": "找氣候資料" if version == 1 else "改查2024年",
-        "expected": {"time": time, "formats": formats, "retain_topic": retain_topic},
+        "expected": {
+            "time": time,
+            "formats": formats,
+            "retain_topic": retain_topic,
+        },
         "response": {
             "version": version,
             "result": {
@@ -53,7 +61,9 @@ def turn(time, *, version=1, formats=None, source=None, retain_topic=False):
                     "cards": [card],
                     "parsed_conditions": parsed,
                     "applied_conditions": parsed if conditions else None,
-                    "filter_scope": "index_prefilter" if conditions else "none",
+                    "filter_scope": "index_prefilter"
+                    if conditions
+                    else "none",
                     "candidate_count": 1,
                     "condition_counts": counts,
                     "ranking": "nvidia-rerank",
@@ -69,12 +79,17 @@ def turn(time, *, version=1, formats=None, source=None, retain_topic=False):
 
 
 def capture(*turns):
-    return {"schema_version": 1, "cases": [{"id": "climate", "turns": list(turns)}]}
+    return {
+        "schema_version": 1,
+        "cases": [{"id": "climate", "turns": list(turns)}],
+    }
 
 
 def non_search(status, reason, *, version=1, state=None, retain_topic=False):
     state = copy.deepcopy(
-        state if state is not None else {"topic": "", "time": None, "formats": []}
+        state
+        if state is not None
+        else {"topic": "", "time": None, "formats": []}
     )
     value = turn(
         state["time"],
@@ -106,7 +121,10 @@ def plan_for(value):
             {
                 "id": case["id"],
                 "turns": [
-                    {key: copy.deepcopy(row[key]) for key in ("query", "expected")}
+                    {
+                        key: copy.deepcopy(row[key])
+                        for key in ("query", "expected")
+                    }
                     for row in case["turns"]
                 ],
             }

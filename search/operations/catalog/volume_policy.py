@@ -7,7 +7,11 @@ import hashlib
 import json
 import stat
 
-from search.operations.catalog.policy import IMAGE_ID, LABEL_PREFIX, RuntimeError
+from search.operations.catalog.policy import (
+    IMAGE_ID,
+    LABEL_PREFIX,
+    RuntimeError,
+)
 
 ALIAS = "catalog-index"
 TARGET = "/usr/share/opensearch/data"
@@ -33,13 +37,16 @@ def _canonical(value):
 
 
 def identity(catalog_identity, *, compose, work_root, data_root, uid, gid):
-    """Bind supplied catalog identity and operator roots without touching paths."""
+    """Bind supplied catalog identity and operator roots without touching
+    paths."""
     if type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
         raise RuntimeError("catalog_volume_operator_must_be_nonroot")
     name = catalog_identity["project"] + "-index"
     declarations = compose.get("volumes") if type(compose) is dict else None
     services = compose.get("services") if type(compose) is dict else None
-    service = services.get("opensearch-search") if type(services) is dict else None
+    service = (
+        services.get("opensearch-search") if type(services) is dict else None
+    )
     mounts = service.get("volumes") if type(service) is dict else None
     if (
         type(declarations) is not dict
@@ -71,7 +78,9 @@ def identity(catalog_identity, *, compose, work_root, data_root, uid, gid):
         "uid": uid,
         "gid": gid,
         "roots_sha256": hashlib.sha256(
-            _canonical({"work_root": str(work_root), "data_root": str(data_root)})
+            _canonical(
+                {"work_root": str(work_root), "data_root": str(data_root)}
+            )
         ).hexdigest(),
     }
 
@@ -84,11 +93,19 @@ def labels(identity):
 
 
 def inspect_metadata(value, identity):
-    """Validate one Docker projection; treat Mountpoint solely as opaque text."""
+    """Validate Docker metadata; treat Mountpoint only as opaque text."""
     if (
         type(value) is not dict
         or set(value)
-        != {"name", "driver", "scope", "options", "labels", "created_at", "mountpoint"}
+        != {
+            "name",
+            "driver",
+            "scope",
+            "options",
+            "labels",
+            "created_at",
+            "mountpoint",
+        }
         or value["name"] != identity["name"]
         or value["driver"] != "local"
         or value["scope"] != "local"
@@ -104,9 +121,16 @@ def inspect_metadata(value, identity):
 
 
 def started(identity, helper_image_id):
-    if type(helper_image_id) is not str or IMAGE_ID.fullmatch(helper_image_id) is None:
+    if (
+        type(helper_image_id) is not str
+        or IMAGE_ID.fullmatch(helper_image_id) is None
+    ):
         raise RuntimeError("catalog_volume_helper_image_invalid")
-    return {**identity, "status": "started", "helper_image_id": helper_image_id}
+    return {
+        **identity,
+        "status": "started",
+        "helper_image_id": helper_image_id,
+    }
 
 
 def expected_receipt(identity, helper_image_id, metadata):
