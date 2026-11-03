@@ -8,7 +8,7 @@ exception; all files remain bound to reviewed sizes, ownership and SHA-256.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import os
 from pathlib import Path
@@ -175,39 +175,40 @@ def open_source_root(path):
     descriptor = os.open("/", DIRECTORY_FLAGS)
     descriptors, records = [descriptor], []
     allocated = False
-    try:
-        for index, name in enumerate(root.parts[1:]):
-            named = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            child = os.open(name, DIRECTORY_FLAGS, dir_fd=descriptor)
-            descriptors.append(child)
-            opened = os.fstat(child)
-            if not stat.S_ISDIR(named.st_mode) or _directory_identity(
-                named
-            ) != _directory_identity(opened):
-                raise ModelSourceError("model_source_directory_changed")
-            final = index == len(root.parts) - 2
-            if final:
-                _source_directory_policy(opened, uid)
-                if allocated and (
-                    opened.st_uid != uid
-                    or stat.S_IMODE(opened.st_mode) != 0o700
-                ):
-                    raise ModelSourceError(
-                        "model_source_allocated_root_not_private"
-                    )
-            else:
-                allocated = _ancestor_policy(opened, uid, gid) or allocated
-            records.append(
-                (descriptor, name, child, _directory_identity(opened))
-            )
-            descriptor = child
-        pinned = _PinnedRoot(root, descriptor, uid, records, descriptors)
-        pinned.verify()
-        yield pinned
-        pinned.verify()
-    finally:
-        for opened in reversed(descriptors):
-            os.close(opened)
+    with ExitStack() as cleanup:
+        try:
+            for index, name in enumerate(root.parts[1:]):
+                named = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                child = os.open(name, DIRECTORY_FLAGS, dir_fd=descriptor)
+                descriptors.append(child)
+                opened = os.fstat(child)
+                if not stat.S_ISDIR(named.st_mode) or _directory_identity(
+                    named
+                ) != _directory_identity(opened):
+                    raise ModelSourceError("model_source_directory_changed")
+                final = index == len(root.parts) - 2
+                if final:
+                    _source_directory_policy(opened, uid)
+                    if allocated and (
+                        opened.st_uid != uid
+                        or stat.S_IMODE(opened.st_mode) != 0o700
+                    ):
+                        raise ModelSourceError(
+                            "model_source_allocated_root_not_private"
+                        )
+                else:
+                    allocated = _ancestor_policy(opened, uid, gid) or allocated
+                records.append(
+                    (descriptor, name, child, _directory_identity(opened))
+                )
+                descriptor = child
+            pinned = _PinnedRoot(root, descriptor, uid, records, descriptors)
+            pinned.verify()
+            yield pinned
+            pinned.verify()
+        finally:
+            for opened in descriptors:
+                cleanup.callback(os.close, opened)
 
 
 @contextmanager
@@ -315,69 +316,75 @@ def copy_verified_file(
         _source_file_policy(before, source.uid, expected_size)
         source_fd = os.open(name, READ_FLAGS, dir_fd=parent)
         destination_fd = None
-        try:
-            opened = os.fstat(source_fd)
-            _source_file_policy(opened, source.uid, expected_size)
-            if _file_identity(opened) != _file_identity(before):
-                raise ModelSourceError("model_source_file_changed")
-            staged = os.stat(
-                destination.name, dir_fd=target.fd, follow_symlinks=False
-            )
-            _destination_policy(staged, source.uid)
-            if (staged.st_dev, staged.st_ino) == (
-                opened.st_dev,
-                opened.st_ino,
-            ):
-                raise ModelSourceError("model_staging_overlaps_source")
-            destination_fd = os.open(
-                destination.name, WRITE_FLAGS, dir_fd=target.fd
-            )
-            if _file_identity(os.fstat(destination_fd)) != _file_identity(
-                staged
-            ):
-                raise ModelSourceError("model_staging_file_changed")
-            os.ftruncate(destination_fd, 0)
-            digest, size = hashlib.sha256(), 0
-            while size <= expected_size:
-                block = os.read(
-                    source_fd, min(CHUNK_BYTES, expected_size + 1 - size)
-                )
-                if not block:
-                    break
-                size += len(block)
-                if size > expected_size:
+        with ExitStack() as cleanup:
+            try:
+                opened = os.fstat(source_fd)
+                _source_file_policy(opened, source.uid, expected_size)
+                if _file_identity(opened) != _file_identity(before):
                     raise ModelSourceError("model_source_file_changed")
-                digest.update(block)
-                view = memoryview(block)
-                while view:
-                    written = os.write(destination_fd, view)
-                    if written <= 0:
-                        raise ModelSourceError("model_staging_short_write")
-                    view = view[written:]
-            os.fsync(destination_fd)
-            after = os.fstat(source_fd)
-            named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if _file_identity(opened) != _file_identity(
-                after
-            ) or _file_identity(after) != _file_identity(named):
-                raise ModelSourceError("model_source_file_changed")
-            if size != expected_size or digest.hexdigest() != expected_sha256:
-                raise ModelSourceError("model_source_sha256_mismatch")
-            completed = os.fstat(destination_fd)
-            target_named = os.stat(
-                destination.name, dir_fd=target.fd, follow_symlinks=False
-            )
-            _destination_policy(completed, source.uid)
-            if (
-                _directory_identity(completed) != _directory_identity(staged)
-                or completed.st_size != expected_size
-                or _file_identity(completed) != _file_identity(target_named)
-            ):
-                raise ModelSourceError("model_staging_file_changed")
-        finally:
-            if destination_fd is not None:
-                os.close(destination_fd)
-            os.close(source_fd)
+                staged = os.stat(
+                    destination.name, dir_fd=target.fd, follow_symlinks=False
+                )
+                _destination_policy(staged, source.uid)
+                if (staged.st_dev, staged.st_ino) == (
+                    opened.st_dev,
+                    opened.st_ino,
+                ):
+                    raise ModelSourceError("model_staging_overlaps_source")
+                destination_fd = os.open(
+                    destination.name, WRITE_FLAGS, dir_fd=target.fd
+                )
+                if _file_identity(os.fstat(destination_fd)) != _file_identity(
+                    staged
+                ):
+                    raise ModelSourceError("model_staging_file_changed")
+                os.ftruncate(destination_fd, 0)
+                digest, size = hashlib.sha256(), 0
+                while size <= expected_size:
+                    block = os.read(
+                        source_fd, min(CHUNK_BYTES, expected_size + 1 - size)
+                    )
+                    if not block:
+                        break
+                    size += len(block)
+                    if size > expected_size:
+                        raise ModelSourceError("model_source_file_changed")
+                    digest.update(block)
+                    view = memoryview(block)
+                    while view:
+                        written = os.write(destination_fd, view)
+                        if written <= 0:
+                            raise ModelSourceError("model_staging_short_write")
+                        view = view[written:]
+                os.fsync(destination_fd)
+                after = os.fstat(source_fd)
+                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if _file_identity(opened) != _file_identity(
+                    after
+                ) or _file_identity(after) != _file_identity(named):
+                    raise ModelSourceError("model_source_file_changed")
+                if (
+                    size != expected_size
+                    or digest.hexdigest() != expected_sha256
+                ):
+                    raise ModelSourceError("model_source_sha256_mismatch")
+                completed = os.fstat(destination_fd)
+                target_named = os.stat(
+                    destination.name, dir_fd=target.fd, follow_symlinks=False
+                )
+                _destination_policy(completed, source.uid)
+                if (
+                    _directory_identity(completed)
+                    != _directory_identity(staged)
+                    or completed.st_size != expected_size
+                    or _file_identity(completed)
+                    != _file_identity(target_named)
+                ):
+                    raise ModelSourceError("model_staging_file_changed")
+            finally:
+                cleanup.callback(os.close, source_fd)
+                if destination_fd is not None:
+                    cleanup.callback(os.close, destination_fd)
 
 
 def main(argv=None):
