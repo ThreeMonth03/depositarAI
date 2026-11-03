@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+phase=all
+if [[ $# != 0 ]]; then
+  if [[ $# != 2 || "$1" != --phase || ! "$2" =~ ^(all|host|api)$ ]]; then
+    echo 'Usage: search-ci.sh [--phase {all|host|api}]' >&2
+    exit 64
+  fi
+  phase="$2"
+fi
+
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 
@@ -16,6 +25,17 @@ docker compose version >/dev/null 2>&1 || {
   echo "Error: Docker Compose v2 is required" >&2
   exit 1
 }
+
+run_api_checks() {
+  local phase_started=$SECONDS
+  ./scripts/test-search-api.sh
+  printf 'CI_PHASE phase=api seconds=%s exit=0\n' "$((SECONDS - phase_started))"
+}
+
+if [[ "$phase" == api ]]; then
+  run_api_checks
+  exit
+fi
 
 unittest_timing=()
 if python3 -c '
@@ -235,6 +255,6 @@ python3 scripts/validate_catalog_compose.py <"$normalized_cpu_config"
 printf 'CI_PHASE phase=catalog-config seconds=%s exit=0\n' "$((SECONDS - phase_started))"
 
 echo "Search-only CI checks passed."
-phase_started=$SECONDS
-./scripts/test-search-api.sh
-printf 'CI_PHASE phase=api seconds=%s exit=0\n' "$((SECONDS - phase_started))"
+if [[ "$phase" == all ]]; then
+  run_api_checks
+fi

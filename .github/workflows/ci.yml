@@ -47,37 +47,172 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  validate:
+  core-source:
     needs: [lint]
-    if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      source_tree: ${{ steps.source.outputs.tree }}
+      gate_outcome: ${{ steps.scan.outcome }}
     steps:
-      - name: Require successful Python lint
-        env:
-          LINT_RESULT: ${{ needs.lint.result }}
-        run: test "$LINT_RESULT" = success
-
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
+      - name: Record actual checkout
+        id: source
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ && "$source_sha" == "$GITHUB_SHA" ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
+          printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
 
       - name: Install and self-test the verified secret scanner
         run: bash scripts/ci/install-gitleaks.sh
 
       - name: Scan selected history and verify source packaging
+        id: scan
         run: |
           bash scripts/ci/source-package.sh \
             "$RUNNER_TEMP/depositar-source-check" "$GITHUB_SHA" "$GITLEAKS_BINARY"
 
+  core-host:
+    needs: [core-source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      source_tree: ${{ steps.source.outputs.tree }}
+      gate_outcome: ${{ steps.check.outcome }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require checked source before product checks
+        id: source
+        env:
+          SOURCE_GATE_OUTCOME: ${{ needs.core-source.outputs.gate_outcome }}
+          EXPECTED_SHA: ${{ needs.core-source.outputs.source_sha }}
+          EXPECTED_TREE: ${{ needs.core-source.outputs.source_tree }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ && "$source_sha" == "$GITHUB_SHA" ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_GATE_OUTCOME" == success ]]
+          [[ "$source_sha" == "$EXPECTED_SHA" && "$source_tree" == "$EXPECTED_TREE" ]]
+          printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
+          printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
       - name: Install verified Docker Compose
         run: bash scripts/ci/install-compose.sh
+      - name: Run host checks
+        id: check
+        run: bash scripts/search-ci.sh --phase host
 
-      - name: Run Depositár search CI suite
-        run: make search-ci
+  core-api:
+    needs: [core-source]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      source_tree: ${{ steps.source.outputs.tree }}
+      gate_outcome: ${{ steps.check.outcome }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require checked source before product checks
+        id: source
+        env:
+          SOURCE_GATE_OUTCOME: ${{ needs.core-source.outputs.gate_outcome }}
+          EXPECTED_SHA: ${{ needs.core-source.outputs.source_sha }}
+          EXPECTED_TREE: ${{ needs.core-source.outputs.source_tree }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ && "$source_sha" == "$GITHUB_SHA" ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_GATE_OUTCOME" == success ]]
+          [[ "$source_sha" == "$EXPECTED_SHA" && "$source_tree" == "$EXPECTED_TREE" ]]
+          printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
+          printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
+      - name: Install verified Docker Compose
+        run: bash scripts/ci/install-compose.sh
+      - name: Run api checks
+        id: check
+        run: bash scripts/search-ci.sh --phase api
+
+  validate:
+    needs: [lint, core-source, core-host, core-api]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Require successful core jobs
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          SOURCE_RESULT: ${{ needs.core-source.result }}
+          HOST_RESULT: ${{ needs.core-host.result }}
+          API_RESULT: ${{ needs.core-api.result }}
+        run: |
+          set -euo pipefail
+          test "$LINT_RESULT" = success
+          test "$SOURCE_RESULT" = success
+          test "$HOST_RESULT" = success
+          test "$API_RESULT" = success
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record actual checkout
+        id: source
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ && "$source_sha" == "$GITHUB_SHA" ]]
+          [[ "$source_tree" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\ntree=%s\n' "$source_sha" "$source_tree" >> "$GITHUB_OUTPUT"
+          printf 'CI_SOURCE sha=%s tree=%s\n' "$source_sha" "$source_tree"
+      - name: Require all core checks and matching source evidence
+        env:
+          SOURCE_GATE_OUTCOME: ${{ needs.core-source.outputs.gate_outcome }}
+          SOURCE_SOURCE_SHA: ${{ needs.core-source.outputs.source_sha }}
+          SOURCE_SOURCE_TREE: ${{ needs.core-source.outputs.source_tree }}
+          HOST_GATE_OUTCOME: ${{ needs.core-host.outputs.gate_outcome }}
+          HOST_SOURCE_SHA: ${{ needs.core-host.outputs.source_sha }}
+          HOST_SOURCE_TREE: ${{ needs.core-host.outputs.source_tree }}
+          API_GATE_OUTCOME: ${{ needs.core-api.outputs.gate_outcome }}
+          API_SOURCE_SHA: ${{ needs.core-api.outputs.source_sha }}
+          API_SOURCE_TREE: ${{ needs.core-api.outputs.source_tree }}
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          EXPECTED_TREE: ${{ steps.source.outputs.tree }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$EXPECTED_SHA" == "$GITHUB_SHA" ]]
+          [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_GATE_OUTCOME" == success && "$HOST_GATE_OUTCOME" == success && "$API_GATE_OUTCOME" == success ]]
+          [[ "$SOURCE_SOURCE_SHA" == "$GITHUB_SHA" && "$HOST_SOURCE_SHA" == "$GITHUB_SHA" && "$API_SOURCE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$SOURCE_SOURCE_TREE" == "$EXPECTED_TREE" && "$HOST_SOURCE_TREE" == "$EXPECTED_TREE" && "$API_SOURCE_TREE" == "$EXPECTED_TREE" ]]
+          echo 'All core checks passed on the exact workflow source.'
+      - name: Reject cancelled workflow
+        if: cancelled()
+        run: exit 1
 
   private-website-oss-policy:
     runs-on: ubuntu-24.04

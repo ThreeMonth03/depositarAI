@@ -140,7 +140,8 @@ class SearchCIScopeTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("make search-ci", workflow)
+        for phase in ("host", "api"):
+            self.assertIn("scripts/search-ci.sh --phase " + phase, workflow)
         self.assertNotIn("research-components:", workflow)
         self.assertNotIn("calendar-research:", workflow)
         self.assertIn("bash scripts/test-search-web.sh", workflow)
@@ -433,15 +434,33 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             "private-website-browser",
         }
         self.assertEqual(
-            {"lint", "validate", *self.scope.JOBS, *website_jobs}, set(jobs)
+            {
+                "lint",
+                "core-source",
+                "core-host",
+                "core-api",
+                "validate",
+                *self.scope.JOBS,
+                *website_jobs,
+            },
+            set(jobs),
         )
-        self.assertIn("run: make search-ci", jobs["validate"])
-        self.assertIn("needs: [lint]", jobs["validate"])
+        self.assertIn(
+            "needs: [lint, core-source, core-host, core-api]", jobs["validate"]
+        )
         self.assertIn("if: always()", jobs["validate"])
         self.assertIn(
             "LINT_RESULT: ${{ needs.lint.result }}", jobs["validate"]
         )
-        self.assertIn('run: test "$LINT_RESULT" = success', jobs["validate"])
+        self.assertIn('test "$LINT_RESULT" = success', jobs["validate"])
+        self.assertIn("needs: [lint]", jobs["core-source"])
+        self.assertIn("scripts/ci/source-package.sh", jobs["core-source"])
+        for phase in ("host", "api"):
+            job = jobs["core-" + phase]
+            self.assertIn("needs: [core-source]", job)
+            self.assertIn(
+                "run: bash scripts/search-ci.sh --phase " + phase, job
+            )
         for name in sorted(website_jobs):
             gate = "private-website"
             self.assertIn("runs-on: ubuntu-24.04", jobs[name])
@@ -1446,6 +1465,175 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 self.assertRegex(
                     result.stdout, rf"CI_TOTAL seconds=\d+ exit={status}\n"
                 )
+
+
+class CorePhaseInvocationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="core-ci-phase-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        source = (ROOT / "scripts/search-ci.sh").read_text()
+        shell_files = source.split("shell_files=(", 1)[1].split(")", 1)[0]
+        for relative in shlex.split(shell_files):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / relative).read_bytes())
+            target.chmod(0o700)
+        (self.root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
+        binary = self.root / "bin"
+        binary.mkdir()
+        program = (
+            f"#!{sys.executable}\n"
+            + r"""
+import json, os, pathlib, sys
+name = pathlib.Path(sys.argv[0]).name
+arguments = sys.argv[1:]
+record = {"tool": name, "argv": arguments}
+if name == "python3" and arguments == ["-"]:
+    record["stdin"] = sys.stdin.read()
+with open(os.environ["CI_FAKE_TRACE"], "a") as stream:
+    stream.write(json.dumps(record) + "\n")
+if name == "bash":
+    os.execv("/bin/bash", ["/bin/bash", *arguments])
+mode = os.environ.get("CI_FAKE_FAILURE", "")
+if name == "python3":
+    if mode == "host" and arguments[:2] == ["-m", "unittest"]:
+        raise SystemExit(17)
+    if mode == "syntax" and arguments == ["-"]:
+        raise SystemExit(18)
+    if (mode == "config"
+            and arguments == ["scripts/validate_catalog_compose.py"]):
+        raise SystemExit(19)
+if name == "docker":
+    if mode == "api-build" and arguments[0] == "build":
+        raise SystemExit(20)
+    if (mode == "api-tests"
+            and "search.tests.test_conversation_boundary" in arguments):
+        raise SystemExit(21)
+    if (mode == "shellcheck"
+            and any("koalaman/shellcheck:" in a for a in arguments)):
+        raise SystemExit(22)
+    if (mode == "compose" and arguments[0] == "compose"
+            and "config" in arguments):
+        raise SystemExit(23)
+raise SystemExit(0)
+"""
+        )
+        for name in ("bash", "python3", "docker"):
+            target = binary / name
+            target.write_text(program)
+            target.chmod(0o700)
+        self.trace = self.root / "trace.jsonl"
+        self.environment = {
+            **os.environ,
+            "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+            "CI_FAKE_TRACE": str(self.trace),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+
+    def invoke(self, arguments=(), *, failure="", make=False):
+        self.trace.unlink(missing_ok=True)
+        command = (
+            ["make", "search-ci"]
+            if make
+            else ["/bin/bash", "scripts/search-ci.sh", *arguments]
+        )
+        result = subprocess.run(
+            command,
+            cwd=self.root,
+            env={**self.environment, "CI_FAKE_FAILURE": failure},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        rows = (
+            [json.loads(line) for line in self.trace.read_text().splitlines()]
+            if self.trace.exists()
+            else []
+        )
+        return result, rows
+
+    @staticmethod
+    def product_commands(rows):
+        # Only repeated process preflight and the make entry are excluded.
+        return [
+            row
+            for row in rows
+            if not (
+                row["tool"] == "docker"
+                and row["argv"] == ["compose", "version"]
+                or row["tool"] == "bash"
+                and row["argv"] == ["./scripts/search-ci.sh"]
+            )
+        ]
+
+    def test_full_local_gate_equals_the_ordered_union_of_host_and_api(self):
+        complete, all_rows = self.invoke(make=True)
+        explicit, explicit_rows = self.invoke(("--phase", "all"))
+        host, host_rows = self.invoke(("--phase", "host"))
+        api, api_rows = self.invoke(("--phase", "api"))
+        for result in (complete, explicit, host, api):
+            self.assertEqual(0, result.returncode, result.stderr)
+        expected = self.product_commands(all_rows)
+        self.assertEqual(expected, self.product_commands(explicit_rows))
+        self.assertEqual(expected, self.product_commands(host_rows + api_rows))
+        unit_commands = [
+            row for row in host_rows if row["argv"][:2] == ["-m", "unittest"]
+        ]
+        self.assertEqual(1, len(unit_commands))
+        self.assertIn("tests.unit.jobs.test_archive", unit_commands[0]["argv"])
+        self.assertIn(
+            "tests.unit.catalog.test_projection", unit_commands[0]["argv"]
+        )
+        self.assertFalse(any(row["argv"][0] == "build" for row in host_rows))
+        self.assertFalse(any(row["tool"] == "python3" for row in api_rows))
+        self.assertIn("CI_PHASE phase=host-unit", host.stdout)
+        self.assertNotIn("CI_PHASE phase=api", host.stdout)
+        self.assertIn("CI_PHASE phase=api", api.stdout)
+        self.assertNotIn("CI_PHASE phase=host-unit", api.stdout)
+
+    def test_invalid_phase_arguments_reject_before_any_tool(self):
+        for arguments in (
+            ("host",),
+            ("--phase",),
+            ("--phase", ""),
+            ("--phase", "unknown"),
+            ("--phase", "host", "extra"),
+            ("--unknown", "host"),
+        ):
+            with self.subTest(arguments=arguments):
+                result, rows = self.invoke(arguments)
+                self.assertEqual(64, result.returncode)
+                self.assertEqual([], rows)
+
+    def test_host_failures_prevent_api_and_preserve_exact_exit_status(self):
+        for failure, code in (
+            ("host", 17),
+            ("syntax", 18),
+            ("config", 19),
+            ("shellcheck", 22),
+            ("compose", 23),
+        ):
+            for phase in ("all", "host"):
+                with self.subTest(failure=failure, phase=phase):
+                    result, rows = self.invoke(
+                        ("--phase", phase), failure=failure
+                    )
+                    self.assertEqual(code, result.returncode, result.stderr)
+                    self.assertFalse(
+                        any(row["argv"][0] == "build" for row in rows)
+                    )
+                    self.assertNotIn("CI_PHASE phase=api", result.stdout)
+
+    def test_api_failures_preserve_exit_and_never_report_success(self):
+        for failure, code in (("api-build", 20), ("api-tests", 21)):
+            for phase in ("all", "api"):
+                with self.subTest(failure=failure, phase=phase):
+                    result, _ = self.invoke(
+                        ("--phase", phase), failure=failure
+                    )
+                    self.assertEqual(code, result.returncode, result.stderr)
+                    self.assertNotIn("CI_PHASE phase=api", result.stdout)
 
 
 if __name__ == "__main__":
