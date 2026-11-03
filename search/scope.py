@@ -483,6 +483,10 @@ class OllamaScopeClassifier:
         if not isinstance(value, Mapping) or set(value) != {"decision"}:
             raise OllamaAdapterError("invalid_model_output")
         decision = value.get("decision")
-        if decision not in {"search", "out_of_scope", "unsafe"}:
+        if not isinstance(decision, str) or decision not in {
+            "search",
+            "out_of_scope",
+            "unsafe",
+        }:
             raise OllamaAdapterError("invalid_model_output")
         return str(decision)
