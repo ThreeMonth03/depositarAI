@@ -124,13 +124,13 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.operations.test_public_entry_cli \
   tests.unit.operations.test_metadata_sync \
   tests.unit.operations.test_metadata_storage \
-  tests.unit.operations.test_document_source \
-  tests.unit.operations.test_document_cache \
-  tests.unit.operations.test_document_derivation \
-  tests.unit.operations.test_document_extractor \
-  tests.unit.operations.test_document_profiles \
-  tests.unit.operations.test_document_batches \
-  tests.unit.operations.test_document_sets \
+  tests.unit.operations.documents.test_source \
+  tests.unit.operations.documents.test_cache \
+  tests.unit.operations.documents.test_derivation \
+  tests.unit.operations.documents.test_extractor \
+  tests.unit.operations.documents.test_controller \
+  tests.unit.operations.documents.test_batches \
+  tests.unit.operations.documents.test_sets \
   tests.unit.jobs.test_queue \
   tests.unit.jobs.test_pueue \
   tests.unit.jobs.test_namespace \
@@ -140,7 +140,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.jobs.test_archive \
   tests.unit.jobs.test_archive_sources \
   tests.unit.jobs.test_archive_integration \
-  tests.unit.operations.test_resource_enrichment \
+  tests.unit.operations.documents.test_enrichment \
   tests.unit.operations.test_private_io \
   tests.unit.operations.test_namespace \
   tests.unit.quality.test_evaluator \
