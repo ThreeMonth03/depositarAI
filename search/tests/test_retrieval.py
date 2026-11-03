@@ -1,4 +1,4 @@
-"""Current retrieval/filter/rerank contracts, independent of HTTP and models."""
+"""Protect retrieval, filters and reranking without HTTP or models."""
 
 import asyncio
 import copy
@@ -11,9 +11,13 @@ from unittest.mock import patch
 from search.api.retrieval.engine import RetrievalEngine
 from search.api.retrieval.schemas import RetrievalRequest, RetrievalResponse
 from search.api.retrieval.worker import RetrievalBackend, run as worker_run
-from search.api.shared.backend import BackendFailure, BackendTimeout, SubprocessBackend
+from search.api.shared.backend import (
+    BackendFailure,
+    BackendTimeout,
+    SubprocessBackend,
+)
 from search.api.shared.config import Settings
-from search.reranker.contract import MODEL_REVISION
+from search.reranker.contract import MODEL_REVISION, REQUEST_DEADLINE_S
 from search.tests.fixtures import CONDITIONS, IDS, RetrievalFixture, report
 
 
@@ -34,10 +38,15 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_filter_before_rerank_top_k_and_no_model_selection(self):
         self.backend.retrieval = report("氣候", count=3, conditions=CONDITIONS)
-        self.backend.states = {IDS[0]: "unknown", IDS[1]: "match", IDS[2]: "match"}
+        self.backend.states = {
+            IDS[0]: "unknown",
+            IDS[1]: "match",
+            IDS[2]: "match",
+        }
         self.backend.rerank["order"] = [2, 1, 0]
         result = await self.search(
-            top_k=2, conditions={"time": {"start": "2025-01-01", "end": "2025-12-31"}}
+            top_k=2,
+            conditions={"time": {"start": "2025-01-01", "end": "2025-12-31"}},
         )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["candidate_count"], 3)
@@ -47,7 +56,8 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([c["dataset_id"] for c in result["cards"]], [IDS[2], IDS[1]])
         self.assertEqual(
-            [c["condition_status"] for c in result["cards"]], ["match", "match"]
+            [c["condition_status"] for c in result["cards"]],
+            ["match", "match"],
         )
         self.assertEqual(
             [c[0] for c in self.backend.calls],
@@ -88,7 +98,9 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         await self.search(top_k=20)
         self.assertEqual(self.backend.calls[0][1]["top_k"], 20)
 
-    async def test_card_coverage_is_required_and_preserved_after_reranking(self):
+    async def test_card_coverage_is_required_and_preserved_after_reranking(
+        self,
+    ):
         self.backend.retrieval = report("氣候", count=5)
         coverage = {"start": "2024-2", "end": None, "status": "partial"}
         self.backend.retrieval["results"][4]["temporal_coverage"] = coverage
@@ -101,12 +113,13 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
                 del malformed["cards"][0]["temporal_coverage"]
             else:
                 malformed["cards"][0]["temporal_coverage"] = mutation
-            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaises(ValueError),
+            ):
                 RetrievalResponse.model_validate(malformed)
 
-    async def test_resource_context_survives_rerank_and_fallback_with_required_schema(
-        self,
-    ):
+    async def test_resource_context_survives_rerank_and_fallback(self):
         self.backend.retrieval = report("氣候", count=5)
         row = self.backend.retrieval["results"][4]
         context = {
@@ -125,13 +138,20 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
             "PDF excerpt: " + context["excerpt"],
             self.backend.calls[1][1]["passages"][4],
         )
-        for mutation in (None, "missing", [{**context, "columns": ["invented"]}]):
+        for mutation in (
+            None,
+            "missing",
+            [{**context, "columns": ["invented"]}],
+        ):
             malformed = copy.deepcopy(result)
             if mutation == "missing":
                 del malformed["cards"][0]["resource_context"]
             else:
                 malformed["cards"][0]["resource_context"] = mutation
-            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaises(ValueError),
+            ):
                 RetrievalResponse.model_validate(malformed)
         self.backend.rerank = BackendTimeout("PRIVATE")
         fallback = await self.search(top_k=5)
@@ -141,7 +161,8 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_reranking_uses_requested_bound_and_no_llm(self):
         self.engine = RetrievalEngine(
-            self.backend, dataclasses.replace(self.settings, rerank_enabled=False)
+            self.backend,
+            dataclasses.replace(self.settings, rerank_enabled=False),
         )
         self.backend.retrieval = report("氣候", count=1)
         result = await self.search(top_k=1)
@@ -153,16 +174,25 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
     async def test_rerank_failure_preserves_exact_original_cards(self):
         self.backend.rerank = BackendTimeout("PRIVATE")
         original = (await self.search())["cards"]
-        for value in (
-            BackendTimeout("PRIVATE"),
-            BackendFailure("PRIVATE"),
-            {"order": [0, 1], "model_revision": MODEL_REVISION},
-            {"order": [0, 1, 2, 3, 4], "model_revision": "wrong"},
-            {
-                "order": [0, 1, 2, 3, 4],
-                "model_revision": MODEL_REVISION,
-                "url": "https://evil.invalid",
-            },
+        for value, warning in (
+            (BackendTimeout("PRIVATE"), "rerank_timeout"),
+            (BackendFailure("PRIVATE"), "rerank_unavailable"),
+            (
+                {"order": [0, 1], "model_revision": MODEL_REVISION},
+                "rerank_unavailable",
+            ),
+            (
+                {"order": [0, 1, 2, 3, 4], "model_revision": "wrong"},
+                "rerank_unavailable",
+            ),
+            (
+                {
+                    "order": [0, 1, 2, 3, 4],
+                    "model_revision": MODEL_REVISION,
+                    "url": "https://evil.invalid",
+                },
+                "rerank_unavailable",
+            ),
         ):
             self.backend.rerank = value
             result = await self.search()
@@ -170,8 +200,27 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["ranking"], "opensearch-haystack-rrf")
             self.assertEqual(result["rerank_status"], "fallback")
-            self.assertTrue(result["warnings"])
+            self.assertEqual(result["warnings"], [warning])
             self.assertNotIn("PRIVATE", str(result))
+
+    async def test_rerank_uses_normalized_query_and_all_candidates(self):
+        query = "ＣＳＶ 氣候"
+        self.backend.retrieval = report(query, count=3)
+        self.backend.rerank["order"] = [2, 0, 1]
+        result = await self.engine.search(
+            RetrievalRequest(query=query, top_k=1), "test"
+        )
+        RetrievalResponse.model_validate(result)
+        operation, payload, timeout = self.backend.calls[-1]
+        self.assertEqual(operation, "rerank")
+        self.assertEqual(payload["query"], "CSV 氣候")
+        self.assertEqual(len(payload["passages"]), 3)
+        self.assertIn("第 1 個氣候資料集", payload["passages"][0])
+        self.assertEqual(timeout, REQUEST_DEADLINE_S)
+        self.assertEqual(result["candidate_count"], 3)
+        self.assertEqual(result["cards"][0]["dataset_id"], IDS[2])
+        self.assertEqual(len(result["cards"]), 1)
+        self.assertEqual(result["rerank_status"], "applied")
 
     async def test_empty_results_do_not_call_reranker_or_pad_cards(self):
         self.backend.retrieval = report("氣候", count=0)
@@ -205,7 +254,8 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["cards"], [])
         self.assertIsNone(result["applied_conditions"])
         self.assertEqual(
-            [c[0] for c in self.backend.calls], ["retrieve", "condition_states"]
+            [c[0] for c in self.backend.calls],
+            ["retrieve", "condition_states"],
         )
         self.assertNotIn("PRIVATE", str(result))
 
@@ -226,9 +276,7 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["cards"], [])
 
-    async def test_unknowns_remain_visible_and_prefilter_disagreement_fails_closed(
-        self,
-    ):
+    async def test_unknowns_and_prefilter_disagreement_fail_closed(self):
         self.backend.states = dict.fromkeys(self.backend.states, "unknown")
         result = await self.search(conditions={"formats": ["CSV"]})
         self.assertEqual(len(result["cards"]), 5)
@@ -243,7 +291,8 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["cards"], [])
         self.assertIn("condition_filter_unavailable", result["warnings"])
         self.assertEqual(
-            [c[0] for c in self.backend.calls], ["retrieve", "condition_states"]
+            [c[0] for c in self.backend.calls],
+            ["retrieve", "condition_states"],
         )
 
     async def test_worker_deadlines_shrink_with_remaining_request_budget(self):
@@ -304,6 +353,25 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertEqual(self.engine.retrieval_slots.used, 0)
 
+    async def test_cancellation_releases_reranking_capacity(self):
+        entered = asyncio.Event()
+        original = self.backend.call
+
+        async def slow_rerank(operation, payload, timeout):
+            if operation == "rerank":
+                entered.set()
+                await asyncio.Event().wait()
+            return await original(operation, payload, timeout)
+
+        self.backend.call = slow_rerank
+        task = asyncio.create_task(self.search())
+        await asyncio.wait_for(entered.wait(), 1)
+        self.assertEqual(self.engine.rerank_slots.used, 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.engine.rerank_slots.used, 0)
+
 
 class RetrievalBoundaryTests(unittest.TestCase):
     def test_settings_reject_invalid_reranker_configuration(self):
@@ -330,7 +398,8 @@ class RetrievalBoundaryTests(unittest.TestCase):
 
     def test_worker_allowlist_contains_only_current_operations(self):
         self.assertEqual(
-            SubprocessBackend.operations, {"scope", "retrieve", "rerank", "ready"}
+            SubprocessBackend.operations,
+            {"scope", "retrieve", "rerank", "ready"},
         )
         self.assertEqual(
             RetrievalBackend.operations,
@@ -344,7 +413,13 @@ class RetrievalBoundaryTests(unittest.TestCase):
             ("condition_states", {"ids": [], "conditions": {}}),
             ("condition_states", {"ids": ["x"] * 21, "conditions": {}}),
             ("condition_states", {"ids": ["x", "x"], "conditions": {}}),
-            ("condition_states", {"ids": ["x"], "conditions": {"bbox": [1, 1, 2, 2]}}),
+            (
+                "condition_states",
+                {"ids": ["x"], "conditions": {"bbox": [1, 1, 2, 2]}},
+            ),
         ):
-            with self.subTest(operation=operation), self.assertRaises(ValueError):
+            with (
+                self.subTest(operation=operation),
+                self.assertRaises(ValueError),
+            ):
                 worker_run(operation, payload, None)
