@@ -30,19 +30,24 @@
 - 型別優先補在 HTTP 契約、跨模組介面與重要狀態。舊型別寫法在相關修改時整理，
   不為形式一致而一次要求整個專案通過 strict type checking。
 
-Python lint 使用 `search/api/requirements-test.lock` 固定的 Ruff 版本。
+Python lint 使用 `search/api/requirements-test.lock` 固定的 Ruff 與 Vulture。
 `ruff.toml` 明列目前已使用的 `E4`、`E7`、`E9`、`F`，目前未啟用命名、import
 排序或 docstring lint。新增規則須另提變更，說明實際收益。
 
-在 repository root、已有對應依賴的開發環境中執行：
+先在 repository 外建立並啟用 Python virtual environment，安裝同一份 lock 中的
+lint 工具；不會安裝 API 或模型依賴：
 
 ```sh
-ruff check search scripts tests deploy/docker
-ruff format --check search scripts tests deploy/docker
+python3 -m venv /absolute/private/lint-env
+. /absolute/private/lint-env/bin/activate
+bash scripts/ci/python-lint.sh install
+make lint
 ```
 
-需要修正格式時，對本次修改的檔案執行 `ruff format`，再檢查 diff。
-CI 使用相同根目錄設定；只掛載部分來源的網站與曆法檢查也須掛載 `ruff.toml`。
+`make lint` 只執行 Ruff check、formatter check 與既有 Vulture 規則，不改來源或
+安裝套件；工具版本不符時拒絕執行。需要明確套用格式時執行 `make format`，
+再檢查 diff。兩個命令沿用已啟用環境中的同一個 `python3`，不需 Docker。
+CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆法檢查也須掛載 `ruff.toml`。
 
 未使用的 import 與區域變數由 Ruff 的 `F401`、`F841` 檢查。
 `bash scripts/ci/python-unused.sh` 使用固定版本的 Vulture，阻擋信心為100的

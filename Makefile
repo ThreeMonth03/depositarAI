@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help search-ci test ci
+.PHONY: help lint format search-ci test ci
 
 help:
 	@printf '%s\n' \
@@ -7,7 +7,14 @@ help:
 	  'Product steps: make product-<command> CONFIG=/absolute/path/to/product.json' \
 	  'Start here: docs/guide/operations.md' \
 	  'Remote frontend: docs/SEARCH_WEBSITE.md' \
-	  'Checks: make test | make search-web-ci'
+	  'Checks: make lint | make test | make search-web-ci' \
+	  'Explicit Python formatting: make format'
+
+lint:
+	bash scripts/ci/python-lint.sh check
+
+format:
+	bash scripts/ci/python-lint.sh format
 
 search-ci:
 	./scripts/search-ci.sh

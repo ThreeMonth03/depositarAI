@@ -211,6 +211,8 @@ class SearchCIScopeTests(unittest.TestCase):
         }
         required = {
             "help",
+            "lint",
+            "format",
             "search-ci",
             "test",
             "ci",
@@ -390,9 +392,14 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             "private-website-oss-gateway",
             "private-website-browser",
         }
-        self.assertEqual({"validate", *self.scope.JOBS, *website_jobs}, set(jobs))
+        self.assertEqual(
+            {"lint", "validate", *self.scope.JOBS, *website_jobs}, set(jobs)
+        )
         self.assertIn("run: make search-ci", jobs["validate"])
-        self.assertNotIn("if:", jobs["validate"])
+        self.assertIn("needs: [lint]", jobs["validate"])
+        self.assertIn("if: always()", jobs["validate"])
+        self.assertIn("LINT_RESULT: ${{ needs.lint.result }}", jobs["validate"])
+        self.assertIn('run: test "$LINT_RESULT" = success', jobs["validate"])
         for name in sorted(website_jobs):
             gate = "private-website"
             self.assertIn("runs-on: ubuntu-24.04", jobs[name])
