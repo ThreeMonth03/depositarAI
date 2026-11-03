@@ -55,6 +55,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/planning`、`search/api/retrieval`、`search/operations/cli.py`。
 - `search/api/conversation/calendar.py`。
 - `search/operations/config.py`、`search/operations/doctor.py`。
+- `search/operations/local_status.py`。
 - `search/http`、`search/api/shared/middleware.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/quality`、`search/operations/deployment/candidate`。

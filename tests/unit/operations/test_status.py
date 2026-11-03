@@ -4,6 +4,7 @@ health."""
 from __future__ import annotations
 
 from dataclasses import replace
+import errno
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ import unittest
 from unittest import mock
 
 from search.catalog.errors import BundleError
-from search.operations import lifecycle, state
+from search.operations import lifecycle, local_status, state
 from search.operations.shared import private_io
 from tests.unit.deployment.test_composition import product
 
@@ -134,6 +135,246 @@ class LocalStatusTests(unittest.TestCase):
         result = lifecycle.status(self.config)
         self.assertIs(result["runtime_verified"], False)
         return result
+
+    def test_known_activation_record_faults_become_only_recovery_reasons(self):
+        self.initialize()
+        self.write(self.config.state_root / "active.json", {})
+        for error_type in (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RecursionError,
+            OverflowError,
+        ):
+            error = error_type("PRIVATE_SENTINEL")
+            with state.locked_state(self.config) as store:
+                with (
+                    self.subTest(error_type=error_type.__name__),
+                    mock.patch.object(
+                        local_status, "_recorded_activation", side_effect=error
+                    ),
+                ):
+                    result = local_status.classify_local_state(store, [])
+            self.assertEqual(
+                {
+                    "status": "recovery_required",
+                    "active_release": None,
+                    "recovery_reasons": ["activation_record_invalid"],
+                },
+                result,
+            )
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
+
+    def test_unexpected_activation_faults_and_interrupts_propagate(self):
+        self.initialize()
+        self.write(self.config.state_root / "active.json", {})
+        for error in (RuntimeError("synthetic"), KeyboardInterrupt()):
+            with state.locked_state(self.config) as store:
+                with (
+                    self.subTest(error_type=type(error).__name__),
+                    mock.patch.object(
+                        local_status, "_recorded_activation", side_effect=error
+                    ),
+                    self.assertRaises(type(error)) as failure,
+                ):
+                    local_status.classify_local_state(store, [])
+                self.assertIs(error, failure.exception)
+
+    def test_matching_operation_fault_is_outside_activation_record_catch(
+        self,
+    ):
+        self.activation(receipt_status=None)
+        with state.locked_state(self.config) as store:
+            with (
+                mock.patch.object(
+                    local_status,
+                    "_recorded_activation",
+                    wraps=local_status._recorded_activation,
+                ) as read_activation,
+                self.assertRaises(KeyError) as failure,
+            ):
+                local_status.classify_local_state(
+                    store, [{"status": "staged"}]
+                )
+            read_activation.assert_called_once_with(store)
+            self.assertEqual(("operation",), failure.exception.args)
+
+    def test_entry_or_artifact_fault_does_not_read_activation(self):
+        self.initialize()
+        (self.config.state_root / "gateway").mkdir(mode=0o700)
+        for name in ("listdir", "stat"):
+            error = PermissionError("synthetic metadata failure")
+            with state.locked_state(self.config) as store:
+                with (
+                    self.subTest(boundary=name),
+                    mock.patch.object(
+                        local_status.os, name, side_effect=error
+                    ),
+                    mock.patch.object(
+                        local_status, "_recorded_activation"
+                    ) as read_activation,
+                    mock.patch.object(
+                        private_io, "open_child_directory"
+                    ) as open_child,
+                    self.assertRaises(PermissionError) as failure,
+                ):
+                    local_status.classify_local_state(store, [])
+                self.assertIs(error, failure.exception)
+                read_activation.assert_not_called()
+                open_child.assert_not_called()
+
+    def test_gateway_intent_fd_closes_on_success_and_observation_faults(self):
+        self.initialize()
+        gateway = self.config.state_root / "gateway"
+        gateway.mkdir(mode=0o700)
+        (gateway / "activation").mkdir(mode=0o700)
+        for fault in (None, "listdir", "verify"):
+            with state.locked_state(self.config) as store:
+                opened = []
+                native_open = private_io.open_child_directory
+                native_listdir = os.listdir
+                native_verify = private_io.verify_directory
+                error = PermissionError("synthetic gateway failure")
+
+                def open_child(parent, name):
+                    descriptor = native_open(parent, name)
+                    opened.append(descriptor)
+                    return descriptor
+
+                def list_directory(descriptor):
+                    if descriptor in opened and fault == "listdir":
+                        raise error
+                    return native_listdir(descriptor)
+
+                def verify_directory(descriptor, path, **options):
+                    if descriptor in opened and fault == "verify":
+                        raise error
+                    return native_verify(descriptor, path, **options)
+
+                with (
+                    self.subTest(fault=fault),
+                    mock.patch.object(
+                        private_io, "open_child_directory", open_child
+                    ),
+                    mock.patch.object(os, "listdir", list_directory),
+                    mock.patch.object(
+                        private_io, "verify_directory", verify_directory
+                    ),
+                ):
+                    if fault is None:
+                        result = local_status.classify_local_state(store, [])
+                        self.assertEqual(
+                            ["activation_pointer_missing"],
+                            result["recovery_reasons"],
+                        )
+                    else:
+                        with self.assertRaises(PermissionError) as failure:
+                            local_status.classify_local_state(store, [])
+                        self.assertIs(error, failure.exception)
+                self.assertEqual(1, len(opened))
+                with self.assertRaises(OSError) as closed:
+                    os.fstat(opened[0])
+                self.assertEqual(errno.EBADF, closed.exception.errno)
+
+    def test_gateway_open_fault_does_not_close_an_unowned_fd(self):
+        self.initialize()
+        (self.config.state_root / "gateway").mkdir(mode=0o700)
+        error = PermissionError("synthetic gateway open failure")
+        with state.locked_state(self.config) as store:
+            held = os.fstat(store.fd)
+            with (
+                mock.patch.object(
+                    private_io, "open_child_directory", side_effect=error
+                ),
+                mock.patch.object(os, "close", wraps=os.close) as close,
+                self.assertRaises(PermissionError) as failure,
+            ):
+                local_status.classify_local_state(store, [])
+            self.assertIs(error, failure.exception)
+            close.assert_not_called()
+            self.assertEqual(held.st_ino, os.fstat(store.fd).st_ino)
+
+    def test_invalid_artifact_skips_intent_but_not_active_pointer(self):
+        self.initialize()
+        gateway = self.config.state_root / "gateway"
+        gateway.mkdir(mode=0o700)
+        artifact = self.config.state_root / "image-candidate.json"
+        artifact.write_text("PRIVATE_SENTINEL")
+        artifact.chmod(0o644)
+        with state.locked_state(self.config) as store:
+            with mock.patch.object(
+                private_io, "open_child_directory"
+            ) as open_child:
+                result = local_status.classify_local_state(store, [])
+            open_child.assert_not_called()
+        self.assertEqual(["artifact_invalid"], result["recovery_reasons"])
+        gateway.rmdir()
+        pointer, _ = self.activation()
+        with state.locked_state(self.config) as store:
+            with mock.patch.object(
+                local_status,
+                "_recorded_activation",
+                wraps=local_status._recorded_activation,
+            ) as read_activation:
+                result = local_status.classify_local_state(
+                    store, state.operation_receipts(store)
+                )
+            read_activation.assert_called_once_with(store)
+        self.assertEqual(pointer, result["active_release"])
+        self.assertEqual(["artifact_invalid"], result["recovery_reasons"])
+
+    def test_single_names_snapshot_and_metadata_precede_activation(self):
+        self.activation()
+        self.write(self.config.state_root / "image-candidate.json", {})
+        with state.locked_state(self.config) as store:
+            operations = state.operation_receipts(store)
+            events = []
+            native_listdir, native_stat = os.listdir, os.stat
+            native_activation = local_status._recorded_activation
+
+            def list_directory(descriptor):
+                events.append(("listdir", descriptor == store.fd))
+                return native_listdir(descriptor)
+
+            def observe_stat(path, *args, **options):
+                if options.get("dir_fd") == store.fd:
+                    events.append(("stat", path))
+                return native_stat(path, *args, **options)
+
+            def activation(actual_store):
+                events.append(("activation", None))
+                return native_activation(actual_store)
+
+            with (
+                mock.patch.object(os, "listdir", list_directory),
+                mock.patch.object(os, "stat", observe_stat),
+                mock.patch.object(
+                    local_status, "_recorded_activation", activation
+                ),
+            ):
+                result = local_status.classify_local_state(store, operations)
+        self.assertEqual("active_recorded", result["status"])
+        self.assertEqual(1, events.count(("listdir", True)))
+        start = events.index(("activation", None))
+        self.assertEqual(
+            {"gateway", "image-candidate.json"},
+            {path for kind, path in events[:start] if kind == "stat"},
+        )
+
+    def test_activation_history_short_circuits_gateway_inspection(self):
+        self.receipt("activate-gateway", bundle=True)
+        (self.config.state_root / "gateway").mkdir(mode=0o700)
+        with state.locked_state(self.config) as store:
+            operations = state.operation_receipts(store)
+            with mock.patch.object(
+                private_io, "open_child_directory"
+            ) as open_child:
+                result = local_status.classify_local_state(store, operations)
+            open_child.assert_not_called()
+        self.assertEqual(
+            ["activation_pointer_missing"], result["recovery_reasons"]
+        )
 
     def test_absent_and_empty_initialized_state_do_not_invent_activation(self):
         result = self.status()

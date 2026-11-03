@@ -170,33 +170,9 @@ def _recorded_activation(store):
     return pointer
 
 
-def classify_local_state(store, operations):
-    """Return a local summary; failed or ambiguous evidence requires
-    recovery.
-    """
-    names = set(os.listdir(store.fd))
-    reasons = set()
+def _activation_evidence(store, operations, names, reasons):
+    """Match retained activation with its receipt or missing-pointer intent."""
     active = None
-    for status, reason in (
-        ("started", "operation_incomplete"),
-        ("failed", "operation_failed"),
-    ):
-        if any(item["status"] == status for item in operations):
-            reasons.add(reason)
-    for name in names & (_APP_DIRECTORIES | _APP_RECORDS):
-        info = os.stat(name, dir_fd=store.fd, follow_symlinks=False)
-        directory = name in _APP_DIRECTORIES
-        if (
-            info.st_uid != os.geteuid()
-            or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600)
-            or not (
-                stat.S_ISDIR(info.st_mode)
-                if directory
-                else stat.S_ISREG(info.st_mode)
-            )
-            or (not directory and info.st_nlink != 1)
-        ):
-            reasons.add("artifact_invalid")
     if "active.json" in names:
         try:
             active = _recorded_activation(store)
@@ -230,6 +206,36 @@ def classify_local_state(store, operations):
             private_io.verify_directory(gateway, store.root / "gateway")
         finally:
             os.close(gateway)
+    return active
+
+
+def classify_local_state(store, operations):
+    """Return a local summary; failed or ambiguous evidence requires
+    recovery.
+    """
+    names = set(os.listdir(store.fd))
+    reasons = set()
+    for status, reason in (
+        ("started", "operation_incomplete"),
+        ("failed", "operation_failed"),
+    ):
+        if any(item["status"] == status for item in operations):
+            reasons.add(reason)
+    for name in names & (_APP_DIRECTORIES | _APP_RECORDS):
+        info = os.stat(name, dir_fd=store.fd, follow_symlinks=False)
+        directory = name in _APP_DIRECTORIES
+        if (
+            info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600)
+            or not (
+                stat.S_ISDIR(info.st_mode)
+                if directory
+                else stat.S_ISREG(info.st_mode)
+            )
+            or (not directory and info.st_nlink != 1)
+        ):
+            reasons.add("artifact_invalid")
+    active = _activation_evidence(store, operations, names, reasons)
     if reasons:
         status = "recovery_required"
     elif active is not None:
