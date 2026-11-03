@@ -110,6 +110,7 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/operations/documents/controller.py",
                 "search/operations/documents/derivation.py",
                 "search/operations/documents/batches.py",
+                "search/operations/metadata/source.py",
                 "scripts/ci",
                 "scripts/search_jobs.py",
             ],
@@ -193,6 +194,7 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/operations/documents/controller.py",
                 "search/operations/documents/derivation.py",
                 "search/operations/documents/batches.py",
+                "search/operations/metadata/source.py",
                 "scripts/ci/policy.py",
                 "scripts/search_jobs.py",
             )
