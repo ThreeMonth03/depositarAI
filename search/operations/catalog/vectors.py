@@ -15,7 +15,7 @@ import uuid
 
 from search.operations.catalog import (
     administration,
-    backend,
+    commands,
     execution,
     results,
     reuse,
@@ -392,7 +392,7 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
     try:
         runtime, _ = execution.require_runtime(context)
         fess_id = runtime["container_ids"]["fess-search"]
-        container_id = backend._command(
+        container_id = commands.command_output(
             context["runner"],
             administration._admin_create(
                 context, image, identity, fess_id, secret, journal=journal
@@ -433,8 +433,8 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
         if previous and result["before_state_sha256"] != previous["after_state_sha256"]:
             raise RuntimeError("catalog_vector_progress_checkpoint_changed")
         execution.require_runtime(context)
-        backend._command(context["runner"], ["docker", "rm", container_id])
-        remaining = backend._command(
+        commands.command_output(context["runner"], ["docker", "rm", container_id])
+        remaining = commands.command_output(
             context["runner"],
             [
                 "docker",

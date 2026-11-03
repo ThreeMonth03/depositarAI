@@ -562,6 +562,7 @@ class CatalogBackendTests(unittest.TestCase):
             "search/catalog/bundle.py",
             "search/catalog/embedding.py",
             "search/operations/catalog/projection.py",
+            "search/operations/catalog/administration.py",
             "deploy/docker/fess/Dockerfile",
         ):
             with self.subTest(relative=relative):
@@ -629,14 +630,22 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual({"any", "execution", "RuntimeError"}, loaded - local)
 
     def test_explicit_incompatible_origin_refuses_before_slot_or_docker_mutations(self):
-        relative = "search/catalog/embedding.py"
-        self.original_sources[(REVISION, relative)] = (
-            ROOT / relative
-        ).read_text() + "\n# model changed\n"
-        with self.assertRaisesRegex(backend.IncompatibleCatalog, "recipe changed"):
-            self.prepare(revision="b" * 40, catalog_revision=REVISION)
-        self.assertFalse((self.config.state_root / "catalogs").exists())
-        self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
+        for relative in (
+            "search/catalog/embedding.py",
+            "search/operations/catalog/administration.py",
+        ):
+            with self.subTest(relative=relative):
+                self.original_sources.clear()
+                self.calls.clear()
+                self.original_sources[(REVISION, relative)] = (
+                    ROOT / relative
+                ).read_text() + "\n# Different original recipe\n"
+                with self.assertRaisesRegex(
+                    backend.IncompatibleCatalog, "recipe changed"
+                ):
+                    self.prepare(revision="b" * 40, catalog_revision=REVISION)
+                self.assertFalse((self.config.state_root / "catalogs").exists())
+                self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
     def test_missing_origin_history_cannot_turn_into_a_cache_miss(self):
         first = self.prepare()

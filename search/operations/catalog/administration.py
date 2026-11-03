@@ -9,7 +9,7 @@ import re
 import subprocess
 import uuid
 
-from search.operations.catalog import backend, execution, results
+from search.operations.catalog import commands, execution, results
 from search.operations.catalog.policy import (
     CONTAINER_ID,
     IMAGE_ID,
@@ -119,7 +119,7 @@ def _admin_image(context, *, read_only=False):
 
 
 def _admin_ids(context):
-    raw = backend._command(
+    raw = commands.command_output(
         context["runner"],
         [
             "docker",
@@ -454,7 +454,7 @@ def admin(config, plan, *, repo_root, operation, runner=None):
         )
         container_id = None
         try:
-            container_id = backend._command(
+            container_id = commands.command_output(
                 runner,
                 _admin_create(
                     context,
@@ -559,6 +559,6 @@ def admin(config, plan, *, repo_root, operation, runner=None):
                         runtime["container_ids"]["fess-search"],
                         secret,
                     )
-                    backend._command(runner, ["docker", "rm", container_id])
+                    commands.command_output(runner, ["docker", "rm", container_id])
                 except (OSError, ValueError, subprocess.SubprocessError):
                     pass
