@@ -59,7 +59,12 @@ class Docker:
         )
         self.calls, self.total_bytes = 0, 0
 
-    def call(self, arguments, *, timeout=30):
+    def call(self, arguments, *, timeout=30, input_bytes=None):
+        if input_bytes is not None and (
+            type(input_bytes) is not bytes
+            or len(input_bytes) > image_build.MAX_INPUT_BYTES
+        ):
+            raise InferenceError("inference_input_invalid")
         if self.verify_client is not None:
             self.verify_client()
         self.calls += 1
@@ -71,6 +76,7 @@ class Docker:
                 self.prefix + arguments,
                 timeout=min(timeout, remaining),
                 environment=dict(self.environment),
+                **({} if input_bytes is None else {"input_bytes": input_bytes}),
             )
             if self.verify_client is not None:
                 self.verify_client()

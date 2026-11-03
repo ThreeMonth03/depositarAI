@@ -16,9 +16,11 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -39,6 +41,7 @@ from search.operations.deployment.release import runtime
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 from search.operations.state import StateStore, locked_state
+from search.planning.contract import checked_query
 from search.serialization import strict_json
 from . import catalog
 from .policy import (
@@ -58,10 +61,19 @@ FIELDS = {
 }
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 ROLES = frozenset({"web", "conversation-api", "filtered-embedding"})
+MAX_QUERY_INPUT_BYTES = 4096
+QUERY_INPUT_SECONDS = 30
 
 
 class SharedBackendError(ValueError):
     """Closed diagnostics, without paths, keys or child output."""
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # Parser diagnostics may repeat rejected query arguments verbatim.
+        del message
+        self.exit(2, '{"error":"shared_backend_arguments_invalid"}\n')
 
 
 def require(value, code):
@@ -1112,15 +1124,58 @@ def operate(filename, operation, *, source=None, text=None, batch_identity=False
         return result
 
 
+def _query_stdin():
+    """Read one bounded UTF-8 query through EOF without waiting indefinitely."""
+    deadline = time.monotonic() + QUERY_INPUT_SECONDS
+    try:
+        descriptor = sys.stdin.fileno()
+        require(
+            type(descriptor) is int and descriptor >= 0 and not os.isatty(descriptor),
+            "query_invalid",
+        )
+        blocking = os.get_blocking(descriptor)
+        os.set_blocking(descriptor, False)
+        try:
+            raw = bytearray()
+            while True:
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, "query_input_timeout")
+                ready, _, _ = select.select([descriptor], [], [], remaining)
+                require(ready and time.monotonic() < deadline, "query_input_timeout")
+                try:
+                    part = os.read(descriptor, MAX_QUERY_INPUT_BYTES + 1 - len(raw))
+                except BlockingIOError:
+                    continue
+                raw.extend(part)
+                require(len(raw) <= MAX_QUERY_INPUT_BYTES, "query_invalid")
+                if not part:
+                    text = raw.decode("utf-8", "strict")
+                    if text.endswith("\n"):
+                        text = text[:-1]
+                        if text.endswith("\r"):
+                            text = text[:-1]
+                    text = checked_query(text)
+                    require(time.monotonic() < deadline, "query_input_timeout")
+                    return text
+        finally:
+            os.set_blocking(descriptor, blocking)
+    except SharedBackendError:
+        raise
+    except (OSError, ValueError, TypeError, UnicodeError):
+        raise SharedBackendError("shared_backend_query_invalid") from None
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("prepare").add_argument("--source", required=True)
     commands.add_parser("start")
     commands.add_parser("status").add_argument("--batch-identity", action="store_true")
     commands.add_parser("stop")
-    commands.add_parser("query").add_argument("--query", required=True)
+    commands.add_parser("query").add_argument(
+        "--stdin", action="store_true", required=True
+    )
     batch = commands.add_parser("batch")
     batch.add_argument("--cases", required=True)
     batch.add_argument("--capture", required=True)
@@ -1144,11 +1199,12 @@ def main(argv=None):
                 print(json.dumps({"error": str(error)}))
                 return 1
         else:
+            text = _query_stdin() if args.operation == "query" else None
             value = operate(
                 args.config,
                 args.operation,
                 source=getattr(args, "source", None),
-                text=getattr(args, "query", None),
+                text=text,
                 batch_identity=getattr(args, "batch_identity", False),
             )
     except KeyboardInterrupt:

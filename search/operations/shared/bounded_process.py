@@ -12,29 +12,63 @@ import signal
 import time
 
 
+MAX_INPUT_BYTES = 4096
+
+
 @contextmanager
-def captured_pipes(process, *, timeout, max_bytes, timeout_error, output_error):
+def captured_pipes(
+    process, *, timeout, max_bytes, timeout_error, output_error, input_bytes=None
+):
     """Yield remaining wait time and raw stdout/stderr chunk lists.
 
     The process must have PIPE stdout/stderr and its own session. Error factories
     retain caller diagnostics; final wait errors remain caller policy. No bytes
-    are decoded and the cap counts both streams together.
+    are decoded and the cap counts both output streams together. Optional input
+    is bounded and written concurrently, then its pipe closes to deliver EOF.
     """
     selector = None
     chunks, size = {"stdout": [], "stderr": []}, 0
     try:
+        if input_bytes is not None and (
+            type(input_bytes) is not bytes or len(input_bytes) > MAX_INPUT_BYTES
+        ):
+            raise ValueError("process_input_invalid")
         selector = selectors.DefaultSelector()
         deadline = time.monotonic() + timeout
         for name in chunks:
             stream = getattr(process, name)
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
+        offset = 0
+        if input_bytes is not None:
+            if process.stdin is None:
+                raise ValueError("process_input_invalid")
+            os.set_blocking(process.stdin.fileno(), False)
+            if input_bytes:
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise timeout_error()
             for key, _ in selector.select(min(remaining, 0.1)):
-                part = os.read(key.fileobj.fileno(), 65536)
+                if key.data == "stdin":
+                    try:
+                        written = os.write(key.fd, input_bytes[offset:])
+                    except BlockingIOError:
+                        continue
+                    if written == 0:
+                        raise OSError("process_input_closed")
+                    offset += written
+                    if offset == len(input_bytes):
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                    continue
+                try:
+                    part = os.read(key.fd, 65536)
+                except BlockingIOError:
+                    continue
                 if not part:
                     selector.unregister(key.fileobj)
                     continue
@@ -54,10 +88,17 @@ def captured_pipes(process, *, timeout, max_bytes, timeout_error, output_error):
             # A child may retain the pipes after the leader exits. Address the
             # original process group even when the leader has already completed.
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if process.poll() is None:
-                process.wait(timeout=5)
-            for name in chunks:
-                getattr(process, name).close()
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                if process.poll() is None:
+                    process.wait(timeout=5)
+            finally:
+                for name in ("stdin", *chunks):
+                    stream = getattr(process, name, None)
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass

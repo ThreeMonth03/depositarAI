@@ -158,6 +158,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.candidate.test_probe \
   tests.unit.deployment.candidate.test_catalog \
   tests.unit.deployment.candidate.test_controller \
+  tests.unit.deployment.candidate.test_cli \
   tests.unit.deployment.candidate.batch.test_capture \
   tests.unit.deployment.candidate.batch.test_probe \
   tests.unit.deployment.candidate.batch.test_execution \

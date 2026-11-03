@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -412,6 +413,110 @@ class ProductImageBuildTests(unittest.TestCase):
 
 
 class ImageBuildRunnerTests(unittest.TestCase):
+    def test_input_is_private_binary_stdin_with_fixed_arguments_and_environment(self):
+        program = """
+import hashlib, json, os, sys
+raw = sys.stdin.buffer.read()
+print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                  'arguments': sys.argv[1:], 'environment': sorted(os.environ)}))
+"""
+        argv = [sys.executable, "-I", "-S", "-B", "-c", program]
+        environment = {"LANG": "C.UTF-8"}
+        before = dict(os.environ)
+        payload = b"private-input-sentinel-100\x00\xff\n"
+        result = build._run(
+            argv, timeout=2, environment=environment, input_bytes=payload
+        )
+        report = json.loads(result.stdout)
+        self.assertEqual(report["bytes"], len(payload))
+        self.assertEqual(report["sha256"], hashlib.sha256(payload).hexdigest())
+        self.assertEqual(report["arguments"], [])
+        self.assertLessEqual(set(report["environment"]), {"LANG", "LC_CTYPE"})
+        self.assertIs(result.args, argv)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, b"")
+        self.assertNotIn(payload, result.stdout + result.stderr)
+        self.assertNotIn(payload[:26].decode(), repr(result.args))
+        self.assertEqual(environment, {"LANG": "C.UTF-8"})
+        self.assertEqual(before, dict(os.environ))
+
+    def test_absent_input_remains_devnull_and_explicit_empty_input_reaches_eof(self):
+        argv = [
+            sys.executable,
+            "-c",
+            "import sys; print(sys.stdin.buffer.read() == b'')",
+        ]
+        for options in ({}, {"input_bytes": None}, {"input_bytes": b""}):
+            with self.subTest(options=options):
+                result = build._run(argv, timeout=2, environment={}, **options)
+                self.assertEqual(result.stdout, b"True\n")
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(result.returncode, 0)
+
+    def test_maximum_input_is_delivered_without_truncation(self):
+        result = build._run(
+            [sys.executable, "-c", "import sys; print(len(sys.stdin.buffer.read()))"],
+            timeout=2,
+            environment={},
+            input_bytes=b"x" * 4096,
+        )
+        self.assertEqual(result.stdout, b"4096\n")
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.returncode, 0)
+
+    def test_invalid_or_oversized_input_is_rejected_before_spawning(self):
+        for payload in (
+            "private-input-sentinel-100",
+            bytearray(b"input"),
+            True,
+            b"x" * 4097,
+        ):
+            with (
+                self.subTest(kind=type(payload).__name__),
+                mock.patch.object(build.subprocess, "Popen") as spawn,
+                self.assertRaisesRegex(
+                    build.ImageBuildError, "^image_build_input_invalid$"
+                ) as caught,
+            ):
+                build._run(
+                    [sys.executable, "-c", "raise SystemExit(0)"],
+                    timeout=2,
+                    environment={},
+                    input_bytes=payload,
+                )
+            spawn.assert_not_called()
+            self.assertNotIn("private-input-sentinel-100", str(caught.exception))
+
+    def test_input_runner_timeout_closes_all_pipes_and_reaps_the_child(self):
+        original_popen = subprocess.Popen
+        created = []
+
+        def spawn(*args, **kwargs):
+            process = original_popen(*args, **kwargs)
+            created.append(process)
+            return process
+
+        with (
+            mock.patch.object(build.subprocess, "Popen", side_effect=spawn),
+            self.assertRaisesRegex(
+                build.ImageBuildError, "^image_build_command_timeout$"
+            ),
+        ):
+            build._run(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=0.1,
+                environment={},
+                input_bytes=b"private-input-sentinel-100",
+            )
+        self.assertEqual(len(created), 1)
+        process = created[0]
+        self.assertIsNotNone(process.returncode)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(process.pid, os.WNOHANG)
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+
     def test_binary_output_and_nonzero_exit_keep_completed_process_contract(self):
         argv = [
             sys.executable,

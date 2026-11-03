@@ -74,7 +74,7 @@ python3 scripts/share_search_backend.py --config /absolute/private/shared-backen
 python3 scripts/share_search_backend.py --config /absolute/private/shared-backend.json start
 python3 scripts/share_search_backend.py --config /absolute/private/shared-backend.json status
 python3 scripts/share_search_backend.py --config /absolute/private/shared-backend.json \
-  query --query '找河川水質觀測資料'
+  query --stdin < /absolute/private/query.txt
 python3 scripts/share_search_backend.py --config /absolute/private/shared-backend.json stop
 ```
 
@@ -88,6 +88,14 @@ running 狀態的 `status` 重新核對身分、唯讀 query authority、GPU own
 現有模型駐留；它不發送使用者的 `/api/turn`，也不暖機。其他狀態只回報 journal phase，例如 empty、
 prepared 或 failed，並不表示服務健康。`query` 要求 running，並在查詢前後驗證同一組
 基準；只有查詢與最後驗證均成功才回覆結果。
+
+單筆查詢由 UTF-8 標準輸入讀到 EOF；先在私有檔案填入查詢，再以重導向傳入，
+避免把內容放進 shell 歷史或程序參數。輸入檔設為 `0600`，並放在 Git checkout 之外。
+輸入須在 30 秒內結束、最多 4096 bytes，
+並沿用 512 字元及字元正規化限制。檔尾可有一個 LF 或 CRLF 換行，不計入查詢
+字元數。終端直接輸入與 `--query` 參數不接受。
+查詢資料只經標準輸入傳給固定的 namespace helper；
+互動結果仍會顯示於 stdout，需另行保護儲存的輸出。
 
 `stop` 只移除這次登記且仍能證明擁有的候選資源與其來源/build cache。
 無法證明 ownership 時應保留 journal 並調查，不以全域 prune 或模糊名稱清除。
@@ -156,7 +164,8 @@ query 沿用既有 512 字元與 Unicode 驗證，輸出實際 `result` 和 `con
 busy、timeout、身分不符或 reset 失敗回固定診斷，不反射 HTTP error body。
 CLI 另有查詢前後的來源、catalog 與 runtime 稽核時間，130 秒是單次查詢 probe 的上限。
 session token 與服務 credential 不離開 namespace process RAM，也不寫入 argv 或 stdout。
-query 文字會以參數傳入 Docker exec；操作 receipt 只保留來源、身分、policy 與操作狀態，
+query 文字經有界標準輸入傳入固定腳本的 Docker exec，不寫入 argv 或 environment；
+操作 receipt 只保留來源、身分、policy 與操作狀態，
 不保存 raw query、cards、token 或 HTTP headers。請不要把互動 query 輸出當成交接 receipt。
 
 probe 的內嵌腳本僅使用 Python stdlib，現役舊映像不需安裝新的 operator 模組。
