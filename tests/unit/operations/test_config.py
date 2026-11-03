@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import copy
 import json
 import os
@@ -10,6 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from search.operations import config as product_config
 from search.operations.config import (
     load_config,
     validate_config,
@@ -20,6 +22,37 @@ from search.operations.config import (
 UUIDS = tuple(
     f"GPU-00000000-0000-0000-0000-{index:012x}" for index in range(1, 5)
 )
+
+
+@contextmanager
+def validation_calls():
+    calls = []
+    gpu = product_config._gpu
+    root_path = product_config._root_path
+    directory = product_config._directory
+
+    def checked_gpu(raw):
+        calls.append(("gpu", raw))
+        return gpu(raw)
+
+    def checked_root(raw, **options):
+        calls.append(("root", raw))
+        return root_path(raw, **options)
+
+    def checked_directory(path, uid, *, private):
+        calls.append(("directory", path, private))
+        return directory(path, uid, private=private)
+
+    with (
+        mock.patch.object(product_config, "_gpu", side_effect=checked_gpu),
+        mock.patch.object(
+            product_config, "_root_path", side_effect=checked_root
+        ),
+        mock.patch.object(
+            product_config, "_directory", side_effect=checked_directory
+        ),
+    ):
+        yield calls
 
 
 class ProductConfigTests(unittest.TestCase):
@@ -64,6 +97,173 @@ class ProductConfigTests(unittest.TestCase):
 
     def load(self):
         return load_config(self.path, repo_root=self.repo)
+
+    def snapshot(self):
+        return {
+            path.relative_to(self.root): (
+                path.lstat().st_mode,
+                path.read_bytes() if path.is_file() else None,
+            )
+            for path in self.root.rglob("*")
+        }
+
+    def test_value_errors_precede_gpu_and_root_admission(self):
+        cases = (
+            ({"extra": 1, "schema_version": True}, "product_config_fields"),
+            (
+                {"schema_version": True, "catalog_storage": "bind"},
+                "product_config_schema",
+            ),
+            (
+                {"catalog_storage": "bind", "cache_ttl_seconds": True},
+                "product_catalog_storage_invalid",
+            ),
+            (
+                {"cache_ttl_seconds": True, "gpus": {}},
+                "product_cache_ttl_invalid",
+            ),
+            ({"gpus": {}, "state_root": "relative"}, "product_gpu_fields"),
+            (
+                {"gpus": {**self.value["gpus"], "planner": [UUIDS[1]]}},
+                "product_planner_requires_two_gpus",
+            ),
+        )
+        before = self.snapshot()
+        for changes, code in cases:
+            with self.subTest(code=code), validation_calls() as calls:
+                with self.assertRaisesRegex(ValueError, "^" + code + "$"):
+                    self.validate({**self.value, **changes})
+                self.assertEqual([], calls)
+        self.assertEqual(before, self.snapshot())
+
+    def test_uuid_validation_order_precedes_root_validation(self):
+        for index in range(4):
+            values = list(UUIDS)
+            values[index] = "invalid"
+            value = {
+                **self.value,
+                "state_root": "relative",
+                "gpus": {
+                    "scope": values[0],
+                    "planner": values[1:3],
+                    "reranker": values[3],
+                },
+            }
+            with self.subTest(index=index), validation_calls() as calls:
+                with self.assertRaisesRegex(ValueError, "gpu_uuid_invalid"):
+                    self.validate(value)
+                self.assertEqual(
+                    [("gpu", raw) for raw in values[: index + 1]], calls
+                )
+
+    def test_all_paths_precede_overlap_and_directory_admission(self):
+        self.state_parent.chmod(0o755)
+        names = (
+            "state_root",
+            "api_model_root",
+            "embedding_model_root",
+            "reranker_model_root",
+        )
+        for state in (self.value["state_root"], self.value["api_model_root"]):
+            value = {
+                **self.value,
+                "state_root": state,
+                "reranker_model_root": "relative",
+            }
+            with self.subTest(state=state), validation_calls() as calls:
+                with self.assertRaisesRegex(ValueError, "path_not_absolute"):
+                    self.validate(value)
+                self.assertEqual(
+                    [("gpu", raw) for raw in UUIDS]
+                    + [("root", value[name]) for name in names],
+                    calls,
+                )
+
+    def test_valid_root_admission_preserves_order_and_all_fixture_bytes(self):
+        before = self.snapshot()
+        value = copy.deepcopy(self.value)
+        with validation_calls() as calls:
+            config = self.validate(value)
+        self.assertEqual(self.value, value)
+        self.assertEqual(value, config.to_dict())
+        self.assertEqual(
+            [("directory", self.state_parent, True)]
+            + [("directory", path, False) for path in self.models],
+            calls[-4:],
+        )
+        self.assertEqual(before, self.snapshot())
+
+    def test_state_and_model_admission_preserve_first_failure(self):
+        value = {**self.value, "api_model_root": str(self.root / "missing")}
+        self.models[1].chmod(0o775)
+        for state_mode, error_type, admitted in (
+            (0o755, ValueError, [("directory", self.state_parent, True)]),
+            (
+                0o700,
+                FileNotFoundError,
+                [
+                    ("directory", self.state_parent, True),
+                    ("directory", self.root / "missing", False),
+                ],
+            ),
+        ):
+            self.state_parent.chmod(state_mode)
+            before = self.snapshot()
+            with (
+                self.subTest(state_mode=state_mode),
+                validation_calls() as calls,
+            ):
+                with self.assertRaises(error_type):
+                    self.validate(value)
+                self.assertEqual(admitted, calls[8:])
+            self.assertEqual(before, self.snapshot())
+
+    def test_existing_state_admits_leaf_without_repairing_parent(self):
+        state = self.state_parent / "state"
+        state.mkdir(mode=0o700)
+        self.state_parent.chmod(0o755)
+        before = self.snapshot()
+        with validation_calls() as calls:
+            self.validate()
+        self.assertEqual(("directory", state, True), calls[8])
+        self.assertEqual(before, self.snapshot())
+
+    def test_keyword_resolution_precedes_input_validation_and_keeps_defaults(
+        self,
+    ):
+        calls = []
+        home, resolve, uid = Path.home, Path.resolve, os.geteuid
+
+        def checked_home():
+            calls.append("home")
+            return home()
+
+        def checked_uid():
+            calls.append("uid")
+            return uid()
+
+        def checked_repo(path, **options):
+            calls.append("repo")
+            return resolve(path, **options)
+
+        with (
+            mock.patch.object(Path, "home", side_effect=checked_home),
+            mock.patch.object(os, "geteuid", side_effect=checked_uid),
+            mock.patch.object(
+                Path, "resolve", autospec=True, side_effect=checked_repo
+            ),
+            self.assertRaisesRegex(ValueError, "product_config_fields"),
+        ):
+            validate_config(None, repo_root=self.repo)
+        self.assertEqual(["home", "uid", "repo"], calls)
+        for function in (validate_config, load_config):
+            self.assertIs(
+                product_config.ROOT, function.__kwdefaults__["repo_root"]
+            )
+        self.assertEqual(
+            Path(product_config.__file__).resolve().parents[2],
+            product_config.ROOT,
+        )
 
     def test_round_trip_and_missing_state_are_read_only(self):
         before = self.path.read_bytes()

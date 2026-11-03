@@ -14,6 +14,7 @@ GATED_PATHS = (
     "search/api/retrieval",
     "search/api/conversation/calendar.py",
     "search/operations/cli.py",
+    "search/operations/config.py",
     "search/api/shared/middleware.py",
     "search/http",
     "search/web/app.py",
