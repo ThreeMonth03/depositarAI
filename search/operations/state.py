@@ -204,12 +204,13 @@ def locked_state(config: ProductConfig, *, create=False):
                 raise
             if os.listdir(root_fd):
                 raise ValueError("product_state_unmarked_nonempty") from None
-            fd = os.open(
+            lock_fd = os.open(
                 "operations.lock",
                 os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                 0o600,
                 dir_fd=root_fd,
             )
+            fd = lock_fd
             os.fsync(root_fd)
         lock_fd = fd
         before = os.fstat(fd)
