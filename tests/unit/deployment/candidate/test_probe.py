@@ -48,8 +48,8 @@ class FakeDocker:
         self.value = value
         self.calls = []
 
-    def call(self, arguments, *, timeout):
-        self.calls.append((arguments, timeout))
+    def call(self, arguments, *, timeout, input_bytes):
+        self.calls.append((arguments, timeout, input_bytes))
         if isinstance(self.value, Exception):
             raise self.value
         return (
@@ -106,8 +106,10 @@ class FakeHTTP:
         return Connection()
 
 
-def run_script(script, arguments, http, *, timers=None):
+def run_script(script, payload, http, *, timers=None):
     output = io.StringIO()
+    raw = payload if type(payload) is bytes else json.dumps(payload).encode()
+    input_stream = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")
 
     def timer(delay, callback):
         if timers is not None:
@@ -117,7 +119,8 @@ def run_script(script, arguments, http, *, timers=None):
     with (
         patch.object(http_client, "HTTPConnection", side_effect=http.connection),
         patch("threading.Timer", side_effect=timer),
-        patch.object(sys, "argv", ["namespace-probe", *arguments]),
+        patch.object(sys, "argv", ["namespace-probe"]),
+        patch("sys.stdin", input_stream),
         patch("sys.stdout", output),
     ):
         exec(
@@ -152,7 +155,7 @@ class ResidencyScriptTests(unittest.TestCase):
     def run_probe(self, values):
         http = FakeHTTP([(200, value) for value in values])
         result, output = run_script(
-            probe._RESIDENCY_SCRIPT, [json.dumps(probe._expected(POLICY))], http
+            probe._RESIDENCY_SCRIPT, probe._expected(POLICY), http
         )
         return result, output, http
 
@@ -210,7 +213,7 @@ class ResidencyScriptTests(unittest.TestCase):
             with self.subTest(response=response):
                 http = FakeHTTP([response])
                 result, output = run_script(
-                    probe._RESIDENCY_SCRIPT, [json.dumps(probe._expected(POLICY))], http
+                    probe._RESIDENCY_SCRIPT, probe._expected(POLICY), http
                 )
                 self.assertEqual(result, {"error": "shared_backend_residency_failed"})
                 self.assertNotIn("PRIVATE_SENTINEL", output)
@@ -220,9 +223,28 @@ class QueryScriptTests(unittest.TestCase):
     def run_query(self, responses):
         http = FakeHTTP(responses)
         result, output = run_script(
-            probe._QUERY_SCRIPT, [REVISION, json.dumps("找 CSV 資料")], http
+            probe._QUERY_SCRIPT, {"revision": REVISION, "query": "找 CSV 資料"}, http
         )
         return result, output, http
+
+    def test_invalid_stdin_never_creates_a_session_or_echoes_input(self):
+        for raw in (
+            b"PRIVATE_SENTINEL",
+            b"\xff",
+            b"x" * 4097,
+            b'{"revision":"a","query":"PRIVATE_SENTINEL"}',
+            json.dumps({"revision": REVISION, "query": "x" * 513}).encode(),
+            (
+                '{"revision":"' + REVISION + '","query":"PRIVATE_SENTINEL",'
+                '"query":"PRIVATE_SENTINEL"}'
+            ).encode(),
+        ):
+            with self.subTest(size=len(raw)):
+                http = FakeHTTP([])
+                result, output = run_script(probe._QUERY_SCRIPT, raw, http)
+                self.assertEqual(result, {"error": "shared_backend_query_failed"})
+                self.assertEqual(http.calls, [])
+                self.assertNotIn("PRIVATE_SENTINEL", output)
 
     def test_one_turn_identity_check_and_final_reset_keep_token_in_namespace(self):
         result, output, http = self.run_query(
@@ -333,7 +355,10 @@ class QueryScriptTests(unittest.TestCase):
             detach_socket=True,
         )
         result, output = run_script(
-            probe._QUERY_SCRIPT, [REVISION, json.dumps("找資料")], http, timers=timers
+            probe._QUERY_SCRIPT,
+            {"revision": REVISION, "query": "找資料"},
+            http,
+            timers=timers,
         )
         self.assertEqual(result, {"error": "shared_backend_query_timeout"})
         self.assertEqual(http.calls[-1][3], "DELETE")
@@ -363,13 +388,26 @@ class HostWrapperTests(unittest.TestCase):
         docker = FakeDocker({"result": RESULT, "context_used": CONTEXT})
         result = probe.query(docker, CONTAINER, "  找 CSV 資料  ", REVISION)
         self.assertEqual(set(result), {"result", "context_used"})
-        arguments, timeout = docker.calls[0]
+        arguments, timeout, payload = docker.calls[0]
         self.assertEqual(
-            arguments[:7], ["exec", CONTAINER, "python", "-I", "-S", "-B", "-c"]
+            arguments,
+            [
+                "exec",
+                "-i",
+                CONTAINER,
+                "python",
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                probe._QUERY_SCRIPT,
+            ],
         )
         self.assertEqual(timeout, 130)
-        self.assertEqual(arguments[-2], REVISION)
-        self.assertEqual(json.loads(arguments[-1]), "找 CSV 資料")
+        self.assertEqual(
+            json.loads(payload), {"revision": REVISION, "query": "找 CSV 資料"}
+        )
+        self.assertNotIn("找 CSV 資料", str(arguments))
         self.assertNotIn(TOKEN, str(arguments))
 
     def test_invalid_input_never_executes_docker(self):

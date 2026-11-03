@@ -54,6 +54,7 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.deployment.gateway.test_probe_script",
             "tests.unit.deployment.gateway.test_probe_runtime",
             "tests.unit.deployment.gateway.test_activation",
+            "tests.unit.deployment.candidate.test_cli",
             "tests.unit.operations.test_bounded_http",
             "tests.unit.operations.test_cli",
             "tests.unit.jobs.test_queue",

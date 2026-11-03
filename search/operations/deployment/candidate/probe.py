@@ -14,6 +14,7 @@ import subprocess
 
 from search.planning.contract import checked_query
 from search.serialization import strict_json
+from search.operations.shared.bounded_process import MAX_INPUT_BYTES
 from ..runtime_docker import InferenceError
 
 
@@ -59,7 +60,10 @@ watchdog.daemon = True
 watchdog.start()
 code = "shared_backend_residency_failed"
 try:
-    expected = json.loads(sys.argv[1])
+    raw = sys.stdin.buffer.read(4097)
+    if len(raw) > 4096:
+        raise ValueError()
+    expected = json.loads(raw.decode("utf-8"))
     models = []
     for item, host in zip(expected, ("scope-model", "answer-model")):
         code = "shared_backend_residency_failed"
@@ -189,7 +193,17 @@ interrupter.daemon = True
 interrupter.start()
 token = None
 try:
-    revision, text = sys.argv[1], json.loads(sys.argv[2])
+    raw = sys.stdin.buffer.read(4097)
+    if len(raw) > 4096:
+        raise ValueError()
+    payload = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs)
+    if (type(payload) is not dict or set(payload) != {"revision", "query"}
+        or type(payload["revision"]) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", payload["revision"]) is None
+        or type(payload["query"]) is not str
+        or not 1 <= len(payload["query"]) <= 512):
+        raise ValueError()
+    revision, text = payload["revision"], payload["query"]
     session = request("POST", "/api/session", payload={})
     if (type(session) is not dict or type(session.get("token")) is not str
         or re.fullmatch(r"[A-Za-z0-9_-]{43}", session["token"]) is None):
@@ -239,13 +253,23 @@ print(encoded, flush=True)
 """
 
 
-def _invoke(docker, container, script, arguments, *, timeout, maximum, failure):
+def _invoke(docker, container, script, payload, *, timeout, maximum, failure):
     if type(container) is not str or CONTAINER.fullmatch(container) is None:
         raise SharedBackendProbeError("shared_backend_probe_invalid")
     try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        if len(encoded) > MAX_INPUT_BYTES:
+            raise ValueError()
         raw = docker.call(
-            ["exec", container, "python", "-I", "-S", "-B", "-c", script, *arguments],
+            ["exec", "-i", container, "python", "-I", "-S", "-B", "-c", script],
             timeout=timeout,
+            input_bytes=encoded,
         )
         if type(raw) is not bytes or len(raw) > maximum:
             raise ValueError()
@@ -309,7 +333,7 @@ def verify_residency(docker, api_container_id, policy, *, timeout=RESIDENCY_SECO
         docker,
         api_container_id,
         _RESIDENCY_SCRIPT,
-        [json.dumps(expected, sort_keys=True)],
+        expected,
         timeout=timeout,
         maximum=4096,
         failure="residency_failed",
@@ -358,7 +382,7 @@ def query(docker, bff_container_id, text, revision):
         docker,
         bff_container_id,
         _QUERY_SCRIPT,
-        [revision, json.dumps(text, ensure_ascii=False)],
+        {"revision": revision, "query": text},
         timeout=QUERY_SECONDS,
         maximum=1024 * 1024 + 4096,
         failure="query_failed",

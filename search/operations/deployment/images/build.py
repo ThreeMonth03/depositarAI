@@ -22,7 +22,7 @@ import time
 
 from search.operations.deployment import source_bundle
 from search.operations.shared import private_io
-from search.operations.shared.bounded_process import captured_pipes
+from search.operations.shared.bounded_process import MAX_INPUT_BYTES, captured_pipes
 
 
 DOCKER_HOST = "unix:///var/run/docker.sock"
@@ -76,12 +76,16 @@ def _record(descriptor, name):
     return value
 
 
-def _run(argv, *, timeout, environment):
+def _run(argv, *, timeout, environment, input_bytes=None):
     """Capture bounded pipes live; isolate and always terminate the child group."""
+    if input_bytes is not None and (
+        type(input_bytes) is not bytes or len(input_bytes) > MAX_INPUT_BYTES
+    ):
+        raise ImageBuildError("image_build_input_invalid")
     process = subprocess.Popen(
         argv,
         env=environment,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL if input_bytes is None else subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
@@ -93,6 +97,7 @@ def _run(argv, *, timeout, environment):
         max_bytes=MAX_OUTPUT_BYTES,
         timeout_error=lambda: ImageBuildError("image_build_command_timeout"),
         output_error=lambda: ImageBuildError("image_build_output_limit"),
+        input_bytes=input_bytes,
     ) as (remaining, stdout, stderr):
         try:
             status = process.wait(timeout=remaining)

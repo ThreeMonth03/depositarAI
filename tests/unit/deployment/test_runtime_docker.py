@@ -1,6 +1,7 @@
 """Exercise the shared runtime client without starting a Docker process."""
 
 from pathlib import Path
+import hashlib
 import json
 import subprocess
 import sys
@@ -9,12 +10,89 @@ from unittest import mock
 
 from search.operations.deployment import inference, runtime_docker
 from search.operations.deployment.images import build as image_build
+from search.operations.deployment.candidate import probe
 
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 class RuntimeDockerTests(unittest.TestCase):
+    def test_optional_input_is_forwarded_without_arguments_or_environment_changes(self):
+        payload = b"PRIVATE_STDIN_SENTINEL"
+        runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b"ok", b""))
+        client = runtime_docker.Docker("/private-client", runner)
+        environment = dict(client.environment)
+        self.assertEqual(
+            b"ok", client.call(["exec", "-i", "fixture"], input_bytes=payload)
+        )
+        arguments = runner.call_args.args[0]
+        self.assertNotIn(payload.decode(), str(arguments))
+        self.assertEqual(runner.call_args.kwargs["input_bytes"], payload)
+        self.assertEqual(runner.call_args.kwargs["environment"], environment)
+        self.assertNotIn(payload.decode(), str(environment))
+
+    def test_invalid_input_never_starts_a_process_or_consumes_the_budget(self):
+        runner = mock.Mock()
+        client = runtime_docker.Docker("/private-client", runner)
+        for payload in ("PRIVATE_STDIN_SENTINEL", bytearray(b"x"), b"x" * 4097, True):
+            with self.subTest(kind=type(payload).__name__):
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError, "^inference_input_invalid$"
+                ):
+                    client.call(["exec", "-i", "fixture"], input_bytes=payload)
+        runner.assert_not_called()
+        self.assertEqual(client.calls, 0)
+
+    def test_query_bytes_reach_a_real_child_through_the_runtime_bridge_only(self):
+        sentinel = "PRIVATE_STDIN_SENTINEL_測試"
+        revision = "b" * 40
+        program = """
+import hashlib, json, os, sys
+payload = json.loads(sys.stdin.buffer.read(4097))
+text = payload['query']
+assert text not in repr(sys.argv)
+assert text not in repr(dict(os.environ))
+print(json.dumps({'result': {'revision': payload['revision'],
+    'input_sha256': hashlib.sha256(text.encode()).hexdigest()}, 'context_used': {}}))
+"""
+        calls = []
+
+        def runner(arguments, *, timeout, environment, input_bytes):
+            self.assertEqual(
+                arguments[5:],
+                [
+                    "exec",
+                    "-i",
+                    "a" * 64,
+                    "python",
+                    "-I",
+                    "-S",
+                    "-B",
+                    "-c",
+                    probe._QUERY_SCRIPT,
+                ],
+            )
+            self.assertNotIn(sentinel, str(arguments))
+            self.assertNotIn(sentinel, str(environment))
+            result = image_build._run(
+                [sys.executable, "-I", "-S", "-B", "-c", program],
+                timeout=timeout,
+                environment=environment,
+                input_bytes=input_bytes,
+            )
+            self.assertNotIn(sentinel, str(result.args))
+            self.assertNotIn(sentinel.encode(), result.stdout + result.stderr)
+            calls.append(result)
+            return result
+
+        docker = runtime_docker.Docker("/private-client", runner)
+        result = probe.query(docker, "a" * 64, sentinel, revision)
+        self.assertEqual(
+            result["result"]["input_sha256"],
+            hashlib.sha256(sentinel.encode()).hexdigest(),
+        )
+        self.assertEqual(len(calls), 1)
+
     def test_explicit_platform_inspection_preserves_default_call_shape(self):
         runner = mock.Mock(
             return_value=subprocess.CompletedProcess([], 0, b'{"Id":"fixture"}', b"")
