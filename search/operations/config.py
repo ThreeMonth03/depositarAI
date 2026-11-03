@@ -122,6 +122,38 @@ def _directory(path: Path, uid: int, *, private: bool) -> None:
         raise ValueError("product_directory_unsafe")
 
 
+def _validated_roots(
+    value, *, repo_root: Path, home: Path, uid: int
+) -> dict[str, Path]:
+    roots = {
+        name: _root_path(value[name], repo_root=repo_root, home=home)
+        for name in (
+            "state_root",
+            "api_model_root",
+            "embedding_model_root",
+            "reranker_model_root",
+        )
+    }
+    for index, path in enumerate(roots.values()):
+        if any(
+            _overlaps(path, other) for other in list(roots.values())[:index]
+        ):
+            raise ValueError("product_roots_overlap")
+    state = roots["state_root"]
+    if state.exists():
+        _directory(state, uid, private=True)
+    else:
+        # Only the final component may be absent. No implicit broad mkdir -p.
+        _directory(state.parent, uid, private=True)
+    for name in (
+        "api_model_root",
+        "embedding_model_root",
+        "reranker_model_root",
+    ):
+        _directory(roots[name], uid, private=False)
+    return roots
+
+
 def _gpu(raw) -> str:
     if type(raw) is not str or GPU_UUID.fullmatch(raw) is None:
         raise ValueError("product_gpu_uuid_invalid")
@@ -169,32 +201,7 @@ def validate_config(
     )
     if len(set(gpus.all_uuids())) != 4:
         raise ValueError("product_gpus_overlap")
-    roots = {
-        name: _root_path(value[name], repo_root=repo_root, home=home)
-        for name in (
-            "state_root",
-            "api_model_root",
-            "embedding_model_root",
-            "reranker_model_root",
-        )
-    }
-    for index, path in enumerate(roots.values()):
-        if any(
-            _overlaps(path, other) for other in list(roots.values())[:index]
-        ):
-            raise ValueError("product_roots_overlap")
-    state = roots["state_root"]
-    if state.exists():
-        _directory(state, uid, private=True)
-    else:
-        # Only the final component may be absent. No implicit broad mkdir -p.
-        _directory(state.parent, uid, private=True)
-    for name in (
-        "api_model_root",
-        "embedding_model_root",
-        "reranker_model_root",
-    ):
-        _directory(roots[name], uid, private=False)
+    roots = _validated_roots(value, repo_root=repo_root, home=home, uid=uid)
     return ProductConfig(
         schema,
         **roots,

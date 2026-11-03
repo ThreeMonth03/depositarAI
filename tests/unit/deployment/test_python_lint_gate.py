@@ -54,6 +54,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/api/retrieval/__init__.py", "")
         self.write("search/api/conversation/calendar.py", "")
         self.write("search/operations/cli.py", "")
+        self.write("search/operations/config.py", "")
         self.write("search/api/shared/middleware.py", "")
         self.write("search/http/__init__.py", "")
         self.write("search/web/app.py", "")
