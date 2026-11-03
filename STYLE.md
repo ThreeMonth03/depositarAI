@@ -50,8 +50,13 @@ make lint
 再檢查 diff。兩個命令沿用已啟用環境中的同一個 `python3`，不需 Docker。
 CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆法檢查也須掛載 `ruff.toml`。
 
-`search/planning`、`search/api/retrieval` 與 `search/operations/cli.py` 的所有函式
-強制通過 McCabe 複雜度10。其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
+以下範圍的所有函式強制通過 McCabe 複雜度10：
+
+- `search/planning`、`search/api/retrieval`、`search/operations/cli.py`。
+- `search/http`、`search/api/shared/middleware.py`。
+- `search/web/app.py`、`search/tests/web_fixture.py`。
+
+其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
 `python-complexity-<source SHA>` artifact；報告中的既有項目不代表通過全庫守門。
 逐域重構須依責任與失敗契約拆分，完成 review 後擴大同一個 gate，不新增分數基準或
 整批忽略規則。需要在本機保留完整報告時，明確指定 repository 外的目的地：

@@ -53,6 +53,10 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/planning/__init__.py", "")
         self.write("search/api/retrieval/__init__.py", "")
         self.write("search/operations/cli.py", "")
+        self.write("search/api/shared/middleware.py", "")
+        self.write("search/http/__init__.py", "")
+        self.write("search/web/app.py", "")
+        self.write("search/tests/web_fixture.py", "")
         self.environment = {
             **os.environ,
             "PATH": str(Path(sys.executable).parent)

@@ -3,7 +3,7 @@
 import hmac
 import uuid
 
-from search.http.body import bounded_body
+from search.http.body import bounded_body, replay_body
 from search.http.responses import json_response
 from search.secrets import read_secret
 from search.serialization import strict_json
@@ -47,27 +47,73 @@ def error_details(status, request_id):
     )
 
 
+def _headers(raw):
+    headers = {}
+    duplicate = False
+    for key, value in raw:
+        name = key.decode("latin-1").lower()
+        if name in headers and name in {
+            "authorization",
+            "content-length",
+            "content-type",
+        }:
+            duplicate = True
+        headers[name] = value.decode("latin-1")
+    return headers, duplicate
+
+
+def _post_status(headers, maximum):
+    if (
+        headers.get("content-type", "").split(";", 1)[0].lower()
+        != "application/json"
+        or "content-encoding" in headers
+    ):
+        return 415
+    length = headers.get("content-length", "")
+    if not length.isascii() or not length.isdecimal() or len(length) > 8:
+        return 411
+    if int(length) > maximum:
+        return 413
+
+
+def _empty_status(headers):
+    length = headers.get("content-length")
+    if (
+        "transfer-encoding" in headers
+        or length is not None
+        and (
+            not length.isascii()
+            or not length.isdecimal()
+            or len(length) > 8
+            or int(length) != 0
+        )
+    ):
+        return 400
+
+
 class BoundaryMiddleware:
     def __init__(self, app, key_file, max_body_bytes=8192):
         self.app, self.key_file = app, key_file
         self.max_body_bytes = max_body_bytes
+
+    def _authentication_status(self, path, headers):
+        if path != "/healthz":
+            try:
+                key = read_secret(self.key_file)
+            except (OSError, ValueError, UnicodeError):
+                return 503
+            supplied = headers.get("authorization", "")
+            if not hmac.compare_digest(
+                supplied.encode(), ("Bearer " + key).encode()
+            ):
+                return 401
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         request_id = uuid.uuid4().hex
         scope.setdefault("state", {})["request_id"] = request_id
-        headers = {}
-        duplicate = False
-        for key, value in scope["headers"]:
-            name = key.decode("latin-1").lower()
-            if name in headers and name in {
-                "authorization",
-                "content-length",
-                "content-type",
-            }:
-                duplicate = True
-            headers[name] = value.decode("latin-1")
+        headers, duplicate = _headers(scope["headers"])
 
         async def reject(status):
             data, headers = error_details(status, request_id)
@@ -77,46 +123,18 @@ class BoundaryMiddleware:
 
         if duplicate or scope.get("query_string"):
             return await reject(400)
-        if scope["path"] != "/healthz":
-            try:
-                key = read_secret(self.key_file)
-            except (OSError, ValueError, UnicodeError):
-                return await reject(503)
-            supplied = headers.get("authorization", "")
-            if not hmac.compare_digest(
-                supplied.encode(), ("Bearer " + key).encode()
-            ):
-                return await reject(401)
+        status = self._authentication_status(scope["path"], headers)
+        if status is not None:
+            return await reject(status)
         post = scope["method"] == "POST"
-        if post:
-            if (
-                headers.get("content-type", "").split(";", 1)[0].lower()
-                != "application/json"
-                or "content-encoding" in headers
-            ):
-                return await reject(415)
-            length = headers.get("content-length", "")
-            if (
-                not length.isascii()
-                or not length.isdecimal()
-                or len(length) > 8
-            ):
-                return await reject(411)
-            if int(length) > self.max_body_bytes:
-                return await reject(413)
-        else:
-            length = headers.get("content-length")
-            if (
-                "transfer-encoding" in headers
-                or length is not None
-                and (
-                    not length.isascii()
-                    or not length.isdecimal()
-                    or len(length) > 8
-                    or int(length) != 0
-                )
-            ):
-                return await reject(400)
+        length = headers.get("content-length", "")
+        status = (
+            _post_status(headers, self.max_body_bytes)
+            if post
+            else _empty_status(headers)
+        )
+        if status is not None:
+            return await reject(status)
         try:
             body = await bounded_body(
                 receive, limit=self.max_body_bytes if post else 0
@@ -129,19 +147,9 @@ class BoundaryMiddleware:
             return await reject(408)
         except (ValueError, UnicodeError, RecursionError):
             return await reject(400)
-        consumed = False
+        await self._forward(scope, receive, send, body, request_id)
 
-        async def replay():
-            nonlocal consumed
-            if not consumed:
-                consumed = True
-                return {
-                    "type": "http.request",
-                    "body": body,
-                    "more_body": False,
-                }
-            return await receive()
-
+    async def _forward(self, scope, receive, send, body, request_id):
         async def send_headers(message):
             if message["type"] == "http.response.start":
                 message["headers"] = [
@@ -160,4 +168,4 @@ class BoundaryMiddleware:
                 ]
             await send(message)
 
-        await self.app(scope, replay, send_headers)
+        await self.app(scope, replay_body(body, receive), send_headers)

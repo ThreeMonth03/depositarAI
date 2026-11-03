@@ -27,7 +27,8 @@ from search.api.conversation.contract import (
 from search.api.conversation.engine import ConversationEngine
 from search.api.shared.config import Settings
 from search.tests.fixtures import ConversationFixture
-from search.web.app import create_app
+from search.web.app import WebBoundary, create_app
+from search.web.identity import EdgeIdentity
 from search.web.sessions import SessionError, Sessions
 from search.web.upstream import (
     MAX_TURN_RESPONSE_BYTES,
@@ -321,6 +322,127 @@ class WebHTTPTests(unittest.TestCase):
         self.assertFalse(self.upstream.calls)
 
 
+class RawWebBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_origin_and_identity_reject_before_body_and_session_work(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "edge-key"
+            secret.write_text("1" * 64 + "\n")
+            secret.chmod(0o600)
+            store, upstream = Sessions(), FakeUpstream()
+            app = create_app(
+                replace(SETTINGS, edge_secret_file=secret), upstream, store
+            )
+            cases = (
+                ([(b"origin", b"https://evil.example")], 403, 0),
+                ([(b"origin", ORIGIN.encode())], 401, 1),
+                ([(b"origin", ORIGIN.encode())] * 2, 400, 0),
+            )
+            for headers, status, authentication_calls in cases:
+                sent = []
+
+                async def unread():
+                    self.fail("Body read before origin/identity rejection")
+
+                async def send(message):
+                    sent.append(message)
+
+                scope = {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/api/session",
+                    "headers": headers,
+                    "query_string": b"",
+                }
+                with patch.object(
+                    app.identity,
+                    "authenticate",
+                    wraps=app.identity.authenticate,
+                ) as authenticate:
+                    await app(scope, unread, send)
+                self.assertEqual(sent[0]["status"], status)
+                self.assertEqual(authenticate.call_count, authentication_calls)
+            self.assertEqual(store.items, {})
+            self.assertEqual(upstream.calls, [])
+
+    async def test_replay_appends_headers_and_reject_keeps_its_own_envelope(
+        self,
+    ):
+        sent, received = [], []
+        incoming = iter(
+            [
+                {"type": "http.request", "body": b"{}"},
+                {"type": "http.disconnect"},
+            ]
+        )
+        original = [
+            (b"cache-control", b"public"),
+            (b"x-content-type-options", b"fixture"),
+        ]
+
+        async def receive():
+            return next(incoming)
+
+        async def send(message):
+            sent.append(message)
+
+        async def downstream(scope, replay, send):
+            received.extend([await replay(), await replay()])
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": list(original),
+                }
+            )
+
+        app = WebBoundary(downstream, ORIGIN, EdgeIdentity())
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/fixture",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", b"2"),
+            ],
+        }
+        await app(scope, receive, send)
+        self.assertEqual(
+            received,
+            [
+                {"type": "http.request", "body": b"{}", "more_body": False},
+                {"type": "http.disconnect"},
+            ],
+        )
+        headers = sent[0]["headers"]
+        self.assertEqual(headers[:2], original)
+        self.assertEqual(
+            [value for name, value in headers if name == b"cache-control"],
+            [b"public", b"no-store"],
+        )
+        self.assertEqual(
+            [
+                value
+                for name, value in headers
+                if name == b"x-content-type-options"
+            ],
+            [b"fixture", b"nosniff"],
+        )
+        sent.clear()
+        scope["headers"] = [(b"content-type", b"text/plain")]
+
+        async def unread():
+            self.fail("Body read before media-type rejection")
+
+        await app(scope, unread, send)
+        self.assertEqual(sent[0]["status"], 415)
+        self.assertNotIn(b"x-content-type-options", dict(sent[0]["headers"]))
+        self.assertEqual(
+            json.loads(sent[1]["body"]), {"error": {"code": "json_required"}}
+        )
+
+
 class WebConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_turn_releases_session_and_the_only_slot(self):
         store, upstream = Sessions(), FakeUpstream()
@@ -352,6 +474,39 @@ class WebConcurrencyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(busy.status_code, 429)
                 self.assertEqual(busy.json()["error"]["code"], "busy")
                 self.assertTrue(store.get(token).busy)
+                bad_token = await client.post(
+                    "/api/turn",
+                    json=payload,
+                    headers={**headers, "Authorization": "Bearer invalid"},
+                )
+                self.assertEqual(bad_token.json()["error"]["code"], "busy")
+                bad_timezone = await client.post(
+                    "/api/turn",
+                    json={**payload, "timezone": "invalid"},
+                    headers=headers,
+                )
+                self.assertEqual(bad_timezone.status_code, 422)
+                self.assertEqual(
+                    bad_timezone.json()["error"]["code"], "invalid_timezone"
+                )
+                other_store = Sessions()
+                other_token = other_store.create()
+                other_app = create_app(SETTINGS, FakeUpstream(), other_store)
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=other_app),
+                    base_url="http://testserver",
+                ) as other:
+                    independent = await other.post(
+                        "/api/turn",
+                        json=payload,
+                        headers={
+                            **headers,
+                            "Authorization": "Bearer " + other_token,
+                        },
+                    )
+                self.assertEqual(independent.status_code, 200)
+                self.assertEqual(other_store.get(other_token).version, 1)
+                self.assertEqual(store.get(token).version, 0)
             finally:
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError):
@@ -468,6 +623,56 @@ class WebsiteRouteTests(unittest.TestCase):
         self.assertTrue(self.store.items)
         self.client.close()
         self.assertEqual(self.store.items, {})
+
+
+class WebsiteFixtureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fixture_plans_keep_temporal_and_pending_refinements(self):
+        from search.tests.web_fixture import Backend
+
+        backend = Backend()
+        cases = (
+            ("附近的資料", "", None, {"action": "clarify", "topic": None}),
+            ("2025年農曆正月初一", "", None, {"time_op": "lunar"}),
+            ("農曆文化", "", None, {"topic": "農曆文化"}),
+            ("最近三年", "", None, {"time_op": "relative", "topic": "氣候"}),
+            ("最近三年", "氣候", None, {"action": "refine", "topic": None}),
+            ("CSV", "氣候", None, {"formats_op": "set", "formats": ["CSV"]}),
+            (
+                "2024",
+                "氣候",
+                None,
+                {"time_op": "set", "time": {"start": "2024", "end": "2024"}},
+            ),
+            ("取消時間", "氣候", None, {"time_op": "clear"}),
+            ("古蹟", "", "澎湖", {"topic": "澎湖古蹟"}),
+        )
+        for query, topic, pending, expected in cases:
+            with self.subTest(query=query, topic=topic, pending=pending):
+                result = await backend.call(
+                    "conversation_plan",
+                    {
+                        "query": query,
+                        "state": {"topic": topic},
+                        "pending": pending,
+                    },
+                    1,
+                )
+                self.assertEqual(
+                    {key: result[key] for key in expected}, expected
+                )
+        self.assertEqual(
+            await backend.call("scope", {"query": "Python"}, 1),
+            {"decision": "out_of_scope"},
+        )
+        self.assertEqual(
+            await backend.call("scope", {"query": "氣候"}, 1),
+            {"decision": "search"},
+        )
+        self.assertEqual(
+            await backend.call("ready", {}, 1),
+            {"ready": True, "documents": 5, "reranker_ready": True},
+        )
+        self.assertEqual(backend.calls, [("ready", {}, 1)])
 
 
 class ConfigurationTests(unittest.TestCase):
