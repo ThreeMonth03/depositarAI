@@ -69,6 +69,9 @@ class Application:
             return await self._lifespan(receive, send)
         if scope["type"] != "http":
             raise ValueError("Unsupported ASGI scope")
+        await self._http(scope, receive, send)
+
+    async def _http(self, scope, receive, send):
         scoped = {**scope, "depositar.application": self}
         disconnected = False
         pending_receive = None

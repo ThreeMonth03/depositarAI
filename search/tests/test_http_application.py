@@ -14,7 +14,7 @@ import httpx
 from rest_framework.response import Response
 
 from search.http.application import application
-from search.http.body import bounded_body
+from search.http.body import bounded_body, replay_body
 from search.http.responses import json_response
 from search.http.views import APIView
 
@@ -124,6 +124,50 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
         await connection.wait(timeout=2)
         self.assertTrue(cleaned.is_set())
         self.assertTrue(connection.output_queue.empty())
+
+    async def test_repeated_cancellation_waits_for_view_cleanup(self):
+        entered, cleaning, release, cleaned = (
+            asyncio.Event() for _ in range(4)
+        )
+
+        class Endpoint(APIView):
+            async def get(self, request):
+                del request
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await release.wait()
+                    cleaned.set()
+
+        app = application([path("", Endpoint.as_view())])
+        initial_tasks = asyncio.all_tasks()
+        connection = ApplicationCommunicator(app, http_scope())
+        await connection.send_input({"type": "http.request", "body": b""})
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            connection.future.cancel()
+            await asyncio.wait_for(cleaning.wait(), 2)
+            connection.future.cancel()
+            checkpoint = asyncio.Event()
+            asyncio.get_running_loop().call_soon(checkpoint.set)
+            await asyncio.wait_for(checkpoint.wait(), 2)
+            self.assertFalse(connection.future.done())
+            self.assertFalse(cleaned.is_set())
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(connection.future, 2)
+            self.assertTrue(cleaned.is_set())
+            self.assertEqual(asyncio.all_tasks() - initial_tasks, set())
+            self.assertTrue(connection.output_queue.empty())
+        finally:
+            release.set()
+            if not connection.future.done():
+                connection.future.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(connection.future, return_exceptions=True), 2
+            )
 
     async def test_server_task_cancellation_waits_for_subprocess_cleanup(self):
         entered = asyncio.Event()
@@ -255,6 +299,55 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BoundedBodyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_replay_forwards_later_event_objects_unchanged(self):
+        later = {"type": "http.request", "body": b"later", "more_body": True}
+        disconnected = {"type": "http.disconnect"}
+        events = iter([later, disconnected])
+
+        async def receive():
+            return next(events)
+
+        replay = replay_body(b"cached", receive)
+        self.assertEqual(
+            await replay(),
+            {"type": "http.request", "body": b"cached", "more_body": False},
+        )
+        self.assertIs(await replay(), later)
+        self.assertIs(await replay(), disconnected)
+
+    async def test_replay_is_request_local_and_forwards_cancellation(self):
+        entered, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def receive():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        first, second = (
+            replay_body(b"", receive),
+            replay_body(b"other", receive),
+        )
+        self.assertEqual(
+            await first(),
+            {"type": "http.request", "body": b"", "more_body": False},
+        )
+        self.assertEqual((await second())["body"], b"other")
+        task = asyncio.create_task(first())
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+            self.assertTrue(cancelled.is_set())
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(task, return_exceptions=True), 2
+            )
+
     async def test_chunks_are_capped_by_actual_total_bytes(self):
         messages = asyncio.Queue()
         await messages.put(

@@ -20,6 +20,59 @@ def key():
     return path
 
 
+def _conversation_plan(payload):
+    query = payload["query"]
+    if "附近" in query:
+        return {
+            **PLAN,
+            "action": "clarify",
+            "topic": None,
+            "reason": "location_not_supported",
+        }
+    if calendar_text(query).lunar_date:
+        return {
+            **PLAN,
+            "action": "refine" if payload["state"]["topic"] else "new_search",
+            "topic": None if payload["state"]["topic"] else "澎湖古蹟",
+            "time_op": "lunar",
+            "lunar_time": {"calendar": "lunar", "text": query},
+        }
+    if "農曆" in query:
+        return {**PLAN, "topic": query}
+    relative = relative_literals(query)
+    if len(relative) == 1:
+        mode, unit, value = literal_spec(relative[0])
+        return {
+            **PLAN,
+            "action": "refine" if payload["state"]["topic"] else "new_search",
+            "topic": None if payload["state"]["topic"] else "氣候",
+            "time_op": "relative",
+            "relative_time": {
+                "kind": "relative",
+                "mode": mode,
+                "unit": unit,
+                "value": value,
+                "text": relative[0],
+            },
+        }
+    if payload["state"]["topic"]:
+        result = {**PLAN, "action": "refine", "topic": None}
+        if "CSV" in query:
+            result.update(formats_op="set", formats=["CSV"])
+        elif "2024" in query:
+            result.update(time_op="set", time={"start": "2024", "end": "2024"})
+        elif "取消時間" in query:
+            result.update(time_op="clear")
+        return result
+    if "澎湖" in (payload.get("pending") or query):
+        return {**PLAN, "topic": "澎湖古蹟"}
+    return {
+        **PLAN,
+        "time_op": "set",
+        "time": {"start": "2025", "end": "2025"},
+    }
+
+
 class Backend(ConversationFixture):
     async def call(self, operation, payload, timeout):
         if operation == "scope":
@@ -29,62 +82,7 @@ class Backend(ConversationFixture):
                 else "search"
             }
         if operation == "conversation_plan":
-            query = payload["query"]
-            if "附近" in query:
-                return {
-                    **PLAN,
-                    "action": "clarify",
-                    "topic": None,
-                    "reason": "location_not_supported",
-                }
-            if calendar_text(query).lunar_date:
-                return {
-                    **PLAN,
-                    "action": "refine"
-                    if payload["state"]["topic"]
-                    else "new_search",
-                    "topic": None if payload["state"]["topic"] else "澎湖古蹟",
-                    "time_op": "lunar",
-                    "lunar_time": {"calendar": "lunar", "text": query},
-                }
-            if "農曆" in query:
-                return {**PLAN, "topic": query}
-            relative = relative_literals(query)
-            if len(relative) == 1:
-                mode, unit, value = literal_spec(relative[0])
-                return {
-                    **PLAN,
-                    "action": "refine"
-                    if payload["state"]["topic"]
-                    else "new_search",
-                    "topic": None if payload["state"]["topic"] else "氣候",
-                    "time_op": "relative",
-                    "relative_time": {
-                        "kind": "relative",
-                        "mode": mode,
-                        "unit": unit,
-                        "value": value,
-                        "text": relative[0],
-                    },
-                }
-            if payload["state"]["topic"]:
-                result = {**PLAN, "action": "refine", "topic": None}
-                if "CSV" in query:
-                    result.update(formats_op="set", formats=["CSV"])
-                elif "2024" in query:
-                    result.update(
-                        time_op="set", time={"start": "2024", "end": "2024"}
-                    )
-                elif "取消時間" in query:
-                    result.update(time_op="clear")
-                return result
-            if "澎湖" in (payload.get("pending") or query):
-                return {**PLAN, "topic": "澎湖古蹟"}
-            return {
-                **PLAN,
-                "time_op": "set",
-                "time": {"start": "2025", "end": "2025"},
-            }
+            return _conversation_plan(payload)
         return await super().call(operation, payload, timeout)
 
 

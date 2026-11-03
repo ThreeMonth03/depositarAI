@@ -14,6 +14,7 @@ from search.api.conversation import app as conversation_app
 from search.api.conversation.app import create_app
 from search.api.shared.config import Settings
 from search.api.shared.readiness import BackendReadiness
+from search.api.shared.middleware import BoundaryMiddleware
 from search.http.body import bounded_body
 from search.tests.fixtures import (
     ConversationFixture,
@@ -340,6 +341,64 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             {key.lower(): value for key, value in start["headers"]},
             json.loads(body),
         )
+
+    async def test_boundary_replays_once_and_replaces_response_headers(self):
+        received, sent = [], []
+        incoming = iter(
+            [
+                {"type": "http.request", "body": self.body},
+                {"type": "http.disconnect"},
+            ]
+        )
+
+        async def receive():
+            return next(incoming)
+
+        async def downstream(scope, replay, send):
+            received.extend([await replay(), await replay()])
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"X-Request-ID", b"untrusted"),
+                        (b"cache-control", b"public"),
+                        (b"X-Content-Type-Options", b"unsafe"),
+                        (b"fixture", b"retained"),
+                    ],
+                }
+            )
+
+        scope = self.scope()
+        app = BoundaryMiddleware(downstream, self.settings.key_file)
+        await app(scope, receive, self.collect(sent))
+        self.assertEqual(
+            received,
+            [
+                {
+                    "type": "http.request",
+                    "body": self.body,
+                    "more_body": False,
+                },
+                {"type": "http.disconnect"},
+            ],
+        )
+        self.assertEqual(
+            sent[0]["headers"],
+            [
+                (b"fixture", b"retained"),
+                (b"x-request-id", scope["state"]["request_id"].encode()),
+                (b"cache-control", b"no-store"),
+                (b"x-content-type-options", b"nosniff"),
+            ],
+        )
+
+    @staticmethod
+    def collect(messages):
+        async def send(message):
+            messages.append(message)
+
+        return send
 
     async def test_auth_and_duplicate_headers_reject_before_body(
         self,

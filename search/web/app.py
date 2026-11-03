@@ -11,7 +11,7 @@ from rest_framework.response import Response
 
 from search.api.shared.admission import Busy, Slots
 from search.http.application import application
-from search.http.body import bounded_body
+from search.http.body import bounded_body, replay_body
 from search.http.responses import json_response
 from search.http.views import APIView
 from search.serialization import strict_json
@@ -44,36 +44,54 @@ def problem(status, code):
     )
 
 
+def _headers(raw):
+    headers = {}
+    duplicate = False
+    for name, value in raw:
+        if name in headers and name in {
+            b"origin",
+            b"host",
+            b"authorization",
+            b"content-length",
+            b"content-type",
+        }:
+            duplicate = True
+        headers[name] = value.decode("latin-1")
+    return headers, duplicate
+
+
+def _post_status(headers):
+    length = headers.get(b"content-length", "")
+    if (
+        headers.get(b"content-type", "").split(";", 1)[0] != "application/json"
+        or b"content-encoding" in headers
+    ):
+        return 415, "json_required"
+    if not length.isascii() or not length.isdecimal() or len(length) > 5:
+        return 411, "length_required"
+    if int(length) > 4096:
+        return 413, "body_limit"
+
+
+def _empty_status(headers):
+    length = headers.get(b"content-length", "")
+    if b"content-length" in headers and (
+        not length.isascii()
+        or not length.isdecimal()
+        or len(length) > 5
+        or int(length) != 0
+    ):
+        return 400, "invalid_request"
+
+
 class WebBoundary:
     def __init__(self, app, origin, identity):
         self.app, self.origin, self.identity = app, origin, identity
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-        headers = {}
-        duplicate = False
-        for name, value in scope["headers"]:
-            if name in headers and name in {
-                b"origin",
-                b"host",
-                b"authorization",
-                b"content-length",
-                b"content-type",
-            }:
-                duplicate = True
-            headers[name] = value.decode("latin-1")
-
-        async def reject(status, code):
-            await json_response(
-                {"error": {"code": code}},
-                status=status,
-                headers={"Cache-Control": "no-store", "Retry-After": "2"},
-            )(scope, receive, send)
-
+    def _admit(self, scope, headers, duplicate):
         if scope["path"].startswith("/api/"):
             if duplicate or scope.get("query_string"):
-                return await reject(400, "invalid_request")
+                return 400, "invalid_request"
             # Same-origin browser GET requests may omit Origin. Only this
             # read-only identity check accepts its absence; no CORS wildcard.
             access_check = (
@@ -82,39 +100,37 @@ class WebBoundary:
             if headers.get(b"origin") != self.origin and not (
                 access_check and b"origin" not in headers
             ):
-                return await reject(403, "origin_denied")
+                return 403, "origin_denied"
             try:
                 access = self.identity.authenticate(scope["headers"])
             except SessionError as error:
-                return await reject(error.status, error.code)
+                return error.status, error.code
             state = scope.setdefault("state", {})
             state["access"] = access
             state["owner"] = access.principal.owner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers, duplicate = _headers(scope["headers"])
+
+        async def reject(status, code):
+            await json_response(
+                {"error": {"code": code}},
+                status=status,
+                headers={"Cache-Control": "no-store", "Retry-After": "2"},
+            )(scope, receive, send)
+
+        rejection = self._admit(scope, headers, duplicate)
+        if rejection is not None:
+            return await reject(*rejection)
         is_post = scope["method"] == "POST"
         length = headers.get(b"content-length", "")
-        if is_post:
-            if (
-                headers.get(b"content-type", "").split(";", 1)[0]
-                != "application/json"
-                or b"content-encoding" in headers
-            ):
-                return await reject(415, "json_required")
-            if (
-                not length.isascii()
-                or not length.isdecimal()
-                or len(length) > 5
-            ):
-                return await reject(411, "length_required")
-            if int(length) > 4096:
-                return await reject(413, "body_limit")
-
-        elif b"content-length" in headers and (
-            not length.isascii()
-            or not length.isdecimal()
-            or len(length) > 5
-            or int(length) != 0
-        ):
-            return await reject(400, "invalid_request")
+        rejection = (
+            _post_status(headers) if is_post else _empty_status(headers)
+        )
+        if rejection is not None:
+            return await reject(*rejection)
 
         try:
             body = await bounded_body(
@@ -126,20 +142,9 @@ class WebBoundary:
                 strict_json(body)
         except (ValueError, UnicodeError, RecursionError, TimeoutError):
             return await reject(400, "invalid_request")
-        consumed = False
-        original_receive = receive
+        await self._forward(scope, receive, send, body)
 
-        async def replay():
-            nonlocal consumed
-            if not consumed:
-                consumed = True
-                return {
-                    "type": "http.request",
-                    "body": body,
-                    "more_body": False,
-                }
-            return await original_receive()
-
+    async def _forward(self, scope, receive, send, body):
         async def secure_send(message):
             if message["type"] == "http.response.start":
                 message["headers"] += [
@@ -163,7 +168,71 @@ class WebBoundary:
                 ]
             await send(message)
 
-        await self.app(scope, replay, secure_send)
+        await self.app(scope, replay_body(body, receive), secure_send)
+
+
+class WebsiteView(APIView):
+    def handle_exception(self, error):
+        if isinstance(error, SessionError):
+            return problem(error.status, error.code)
+        if isinstance(error, ValidationError):
+            return problem(422, "invalid_request")
+        if isinstance(error, MethodNotAllowed):
+            return Response({"detail": "Method Not Allowed"}, status=405)
+        return problem(503, "unavailable")
+
+
+def _token(request):
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer ") or len(auth) != 50:
+        raise SessionError(401, "session_required")
+    return auth[7:]
+
+
+async def _turn(payload, request, upstream, sessions, slots):
+    stamp = datetime.now(timezone.utc).isoformat()
+    context = {"reference_time": stamp, "timezone": payload.timezone}
+    try:
+        normalize_context(context)
+    except ValueError:
+        return problem(422, "invalid_timezone")
+    try:
+        async with slots.claim():
+            session = sessions.begin(
+                _token(request),
+                payload.version,
+                request.scope["state"]["owner"],
+            )
+            try:
+                data = TurnRequest(
+                    query=payload.query,
+                    state=session.state,
+                    pending=session.pending,
+                    context=context,
+                    top_k=payload.top_k,
+                ).model_dump()
+                result = await upstream.turn(data)
+                if result.status == "unavailable":
+                    return problem(503, "upstream_unavailable")
+                if result.status == "ok":
+                    session.state, session.pending = result.state, None
+                elif result.status == "clarification_required":
+                    session.pending = session.pending or payload.query
+                # Rejections cannot poison state or pending clarification.
+                session.version += 1
+                return Response(
+                    {
+                        "version": session.version,
+                        "result": result.model_dump(),
+                        "context_used": normalize_context(context),
+                    }
+                )
+            finally:
+                session.busy = False
+    except Busy:
+        return problem(429, "busy")
+    except UpstreamError as error:
+        return problem(error.status, "upstream_unavailable")
 
 
 def create_app(settings=None, upstream=None, sessions=None):
@@ -186,22 +255,6 @@ def create_app(settings=None, upstream=None, sessions=None):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             sessions.items.clear()
-
-    class WebsiteView(APIView):
-        def handle_exception(self, error):
-            if isinstance(error, SessionError):
-                return problem(error.status, error.code)
-            if isinstance(error, ValidationError):
-                return problem(422, "invalid_request")
-            if isinstance(error, MethodNotAllowed):
-                return Response({"detail": "Method Not Allowed"}, status=405)
-            return problem(503, "unavailable")
-
-    def token(request):
-        auth = request.headers.get("authorization", "")
-        if not auth.startswith("Bearer ") or len(auth) != 50:
-            raise SessionError(401, "session_required")
-        return auth[7:]
 
     class HealthView(WebsiteView):
         http_method_names = ["get"]
@@ -232,59 +285,20 @@ def create_app(settings=None, upstream=None, sessions=None):
             )
 
         async def delete(self, request):
-            sessions.delete(token(request), request.scope["state"]["owner"])
+            sessions.delete(_token(request), request.scope["state"]["owner"])
             return Response({"status": "cleared"})
-
-    async def turn(payload, request):
-        stamp = datetime.now(timezone.utc).isoformat()
-        context = {"reference_time": stamp, "timezone": payload.timezone}
-        try:
-            normalize_context(context)
-        except ValueError:
-            return problem(422, "invalid_timezone")
-        try:
-            async with slots.claim():
-                session = sessions.begin(
-                    token(request),
-                    payload.version,
-                    request.scope["state"]["owner"],
-                )
-                try:
-                    data = TurnRequest(
-                        query=payload.query,
-                        state=session.state,
-                        pending=session.pending,
-                        context=context,
-                        top_k=payload.top_k,
-                    ).model_dump()
-                    result = await upstream.turn(data)
-                    if result.status == "unavailable":
-                        return problem(503, "upstream_unavailable")
-                    if result.status == "ok":
-                        session.state, session.pending = result.state, None
-                    elif result.status == "clarification_required":
-                        session.pending = session.pending or payload.query
-                    # Rejections cannot poison state or pending clarification.
-                    session.version += 1
-                    return Response(
-                        {
-                            "version": session.version,
-                            "result": result.model_dump(),
-                            "context_used": normalize_context(context),
-                        }
-                    )
-                finally:
-                    session.busy = False
-        except Busy:
-            return problem(429, "busy")
-        except UpstreamError as error:
-            return problem(error.status, "upstream_unavailable")
 
     class TurnView(WebsiteView):
         http_method_names = ["post"]
 
         async def post(self, request):
-            return await turn(UserTurn.model_validate(request.data), request)
+            return await _turn(
+                UserTurn.model_validate(request.data),
+                request,
+                upstream,
+                sessions,
+                slots,
+            )
 
     return WebBoundary(
         application(

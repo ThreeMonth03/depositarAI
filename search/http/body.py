@@ -5,6 +5,22 @@ import asyncio
 from asgiref.typing import ASGIReceiveCallable
 
 
+def replay_body(
+    body: bytes, receive: ASGIReceiveCallable
+) -> ASGIReceiveCallable:
+    """Replay validated bytes once, then forward original receive events."""
+    consumed = False
+
+    async def replay():
+        nonlocal consumed
+        if not consumed:
+            consumed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+
+    return replay
+
+
 async def bounded_body(
     receive: ASGIReceiveCallable, *, limit: int, timeout: float = 5
 ) -> bytes:

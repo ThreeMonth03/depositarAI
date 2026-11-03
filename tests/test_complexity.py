@@ -100,6 +100,10 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/planning",
                 "search/api/retrieval",
                 "search/operations/cli.py",
+                "search/api/shared/middleware.py",
+                "search/http",
+                "search/web/app.py",
+                "search/tests/web_fixture.py",
             ],
         )
 
@@ -162,30 +166,33 @@ class RealComplexityGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="complexity-real-") as name:
             root = Path(name) / "source"
             for path in (
-                "search/planning",
-                "search/api/retrieval",
-                "search/operations",
                 "scripts/ci",
                 "tests",
                 "deploy/docker",
             ):
                 (root / path).mkdir(parents=True, exist_ok=True)
+            accepted_files = (
+                "search/planning/policy.py",
+                "search/api/retrieval/policy.py",
+                "search/operations/cli.py",
+                "search/api/shared/middleware.py",
+                "search/http/policy.py",
+                "search/web/app.py",
+                "search/tests/web_fixture.py",
+            )
+            for relative in accepted_files:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
             script = root / "scripts/ci/complexity.py"
             shutil.copyfile(SCRIPT, script)
             (root / "ruff.toml").write_text(
                 "[lint.mccabe]\nmax-complexity = 10\n"
             )
-            accepted = root / "search/planning/policy.py"
-            accepted.write_text("def policy(value):\n    return value\n")
-            (root / "search/operations/cli.py").write_text(
-                "def main():\n    return 0\n"
-            )
-            legacy = root / "search/legacy.py"
             complex_source = "def policy(value):\n" + "".join(
                 f"    if value == {i}:\n        return {i}\n"
                 for i in range(11)
             )
-            legacy.write_text(complex_source)
             report = Path(name) / "report.json"
             command = [
                 sys.executable,
@@ -196,10 +203,12 @@ class RealComplexityGateTests(unittest.TestCase):
             ]
             if not importlib.util.find_spec("ruff"):
                 command += ["--ruff", shutil.which("ruff")]
-            for expected, path in ((0, legacy), (1, accepted)):
-                if path == accepted:
-                    legacy.unlink()
-                    accepted.write_text(complex_source)
+            cases = [(0, "search/legacy.py")] + [
+                (1, path) for path in accepted_files
+            ]
+            for expected, relative in cases:
+                path = root / relative
+                path.write_text(complex_source)
                 with self.subTest(path=path.relative_to(root)):
                     result = subprocess.run(
                         command,
@@ -216,6 +225,7 @@ class RealComplexityGateTests(unittest.TestCase):
                     self.assertEqual(len(findings), 1)
                     self.assertEqual(Path(findings[0]["filename"]), path)
                     self.assertEqual(findings[0]["code"], "C901")
+                path.write_text("")
 
 
 if __name__ == "__main__":
