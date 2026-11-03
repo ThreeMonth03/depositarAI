@@ -51,6 +51,34 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise MetadataSourceError("CKAN redirects are not accepted")
 
 
+def _response_body(response, deadline):
+    """Read one bounded response before its owning context closes."""
+    if (
+        response.status != 200
+        or response.headers.get_content_type() != "application/json"
+        or response.headers.get("Content-Encoding", "identity") != "identity"
+    ):
+        raise MetadataSourceError("unexpected CKAN response headers")
+    declared = response.headers.get("Content-Length")
+    if declared is not None and (
+        not declared.isdecimal() or int(declared) > MAX_PAGE_BYTES
+    ):
+        raise MetadataSourceError("CKAN page exceeds its byte limit")
+    raw = bytearray()
+    while True:
+        if time.monotonic() >= deadline:
+            raise MetadataSourceError("refresh deadline exceeded")
+        chunk = response.read1(min(65536, MAX_PAGE_BYTES + 1 - len(raw)))
+        if not chunk:
+            break
+        raw.extend(chunk)
+        if len(raw) > MAX_PAGE_BYTES:
+            raise MetadataSourceError("CKAN page exceeds its byte limit")
+    if declared is not None and int(declared) != len(raw):
+        raise MetadataSourceError("CKAN response body is truncated")
+    return raw
+
+
 def fetch_page(start, rows, deadline):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -75,30 +103,7 @@ def fetch_page(start, rows, deadline):
         urllib.request.ProxyHandler({}), NoRedirect()
     )
     with opener.open(request, timeout=min(30, remaining)) as response:
-        if (
-            response.status != 200
-            or response.headers.get_content_type() != "application/json"
-            or response.headers.get("Content-Encoding", "identity")
-            != "identity"
-        ):
-            raise MetadataSourceError("unexpected CKAN response headers")
-        declared = response.headers.get("Content-Length")
-        if declared is not None and (
-            not declared.isdecimal() or int(declared) > MAX_PAGE_BYTES
-        ):
-            raise MetadataSourceError("CKAN page exceeds its byte limit")
-        raw = bytearray()
-        while True:
-            if time.monotonic() >= deadline:
-                raise MetadataSourceError("refresh deadline exceeded")
-            chunk = response.read1(min(65536, MAX_PAGE_BYTES + 1 - len(raw)))
-            if not chunk:
-                break
-            raw.extend(chunk)
-            if len(raw) > MAX_PAGE_BYTES:
-                raise MetadataSourceError("CKAN page exceeds its byte limit")
-        if declared is not None and int(declared) != len(raw):
-            raise MetadataSourceError("CKAN response body is truncated")
+        raw = _response_body(response, deadline)
     payload = strict_json(bytes(raw))
     if not isinstance(payload, dict) or payload.get("success") is not True:
         raise MetadataSourceError("CKAN action failed")
@@ -106,6 +111,23 @@ def fetch_page(start, rows, deadline):
     if not isinstance(result, dict):
         raise MetadataSourceError("CKAN returned an invalid page")
     return result
+
+
+def _page_items(page, expected, offset, rows):
+    """Validate one page before adding its records to the scan."""
+    if not isinstance(page, dict):
+        raise MetadataSourceError("CKAN returned an invalid page")
+    count, items = page.get("count"), page.get("results")
+    if (
+        type(count) is not int
+        or not 1 <= count <= policy.MAX_ROWS
+        or not isinstance(items, list)
+        or len(items) != min(rows, count - offset)
+    ):
+        raise MetadataSourceError("incomplete or oversized CKAN page")
+    if expected is not None and count != expected:
+        raise MetadataSourceError("CKAN count changed during download")
+    return count, items
 
 
 def collect(fetch, deadline, *, rows=PAGE_ROWS):
@@ -117,19 +139,7 @@ def collect(fetch, deadline, *, rows=PAGE_ROWS):
         if time.monotonic() >= deadline:
             raise MetadataSourceError("refresh deadline exceeded")
         page = fetch(len(records), rows, deadline)
-        if not isinstance(page, dict):
-            raise MetadataSourceError("CKAN returned an invalid page")
-        count, items = page.get("count"), page.get("results")
-        if (
-            type(count) is not int
-            or not 1 <= count <= policy.MAX_ROWS
-            or not isinstance(items, list)
-            or len(items) != min(rows, count - len(records))
-        ):
-            raise MetadataSourceError("incomplete or oversized CKAN page")
-        if expected is not None and count != expected:
-            raise MetadataSourceError("CKAN count changed during download")
-        expected = count
+        expected, items = _page_items(page, expected, len(records), rows)
         for item in items:
             if not isinstance(item, dict):
                 raise MetadataSourceError("invalid CKAN record")

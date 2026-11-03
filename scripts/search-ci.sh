@@ -124,6 +124,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.operations.test_public_entry_cli \
   tests.unit.operations.test_metadata_sync \
   tests.unit.operations.test_metadata_storage \
+  tests.unit.operations.metadata.test_source \
   tests.unit.operations.documents.test_source \
   tests.unit.operations.documents.test_cache \
   tests.unit.operations.documents.test_derivation \
