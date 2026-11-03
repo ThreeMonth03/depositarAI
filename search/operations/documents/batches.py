@@ -462,6 +462,7 @@ def run(
     source_root=None,
 ):
     """Process one bounded sequential pass, persisting each result before the next."""
+    extractor.operator_ids()
     if (
         type(max_resources) is not int
         or not 1 <= max_resources <= controller.MAX_RESOURCES

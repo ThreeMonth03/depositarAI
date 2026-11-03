@@ -275,8 +275,9 @@ def process(
     container_name,
 ):
     """Publish one immutable profile through the shared acquisition/parser path."""
-    from search.operations.documents import source
+    from search.operations.documents import extractor, source
 
+    extractor.operator_ids()
     acquired = source.acquire(state_root / "acquisition", resource)
     result, hit = _extraction(
         acquired,

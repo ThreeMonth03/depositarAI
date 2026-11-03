@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from search.operations.documents import extractor
 
@@ -43,6 +44,7 @@ class FakeDocker:
         self.exists = True
         self.build_context_files = None
         self.snapshot_bytes = None
+        self.snapshot_stat = None
         self.on_run = None
         self.run_error = None
 
@@ -90,6 +92,7 @@ class FakeDocker:
             mount = arguments[arguments.index("--mount") + 1]
             snapshot = Path(mount.split("src=", 1)[1].split(",dst=", 1)[0])
             self.snapshot_bytes = snapshot.read_bytes()
+            self.snapshot_stat = snapshot.stat()
             if self.on_run:
                 self.on_run()
             value = report(self.snapshot_bytes) if self.output is None else self.output
@@ -207,6 +210,36 @@ class ReportContractTests(unittest.TestCase):
             extractor.validate_report(value, expected_format="CSV")
 
 
+class OperatorIdentityTests(unittest.TestCase):
+    def test_each_root_identity_is_rejected(self):
+        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        for zero in (*identities, "all"):
+            values = {
+                name: (lambda value=0 if zero in (name, "all") else value: value)
+                for name, value in identities.items()
+            }
+            with self.subTest(zero=zero), patch.multiple(extractor.os, **values):
+                with self.assertRaisesRegex(
+                    extractor.ExtractorError,
+                    "^document_extractor_operator_must_be_nonroot$",
+                ):
+                    extractor.operator_ids()
+
+    def test_nonroot_operator_uses_effective_ids(self):
+        for real, effective in (
+            ((1001, 1002), (1001, 1002)),
+            ((1001, 1002), (1003, 1004)),
+        ):
+            with (
+                self.subTest(real=real, effective=effective),
+                patch.object(extractor.os, "getuid", return_value=real[0]),
+                patch.object(extractor.os, "getgid", return_value=real[1]),
+                patch.object(extractor.os, "geteuid", return_value=effective[0]),
+                patch.object(extractor.os, "getegid", return_value=effective[1]),
+            ):
+                self.assertEqual(effective, extractor.operator_ids())
+
+
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -232,7 +265,7 @@ class RuntimeTests(unittest.TestCase):
             ("--cpus", "2"),
             ("--cap-drop", "ALL"),
             ("--security-opt", "no-new-privileges"),
-            ("--user", f"{os.getuid()}:{os.getgid()}"),
+            ("--user", f"{os.geteuid()}:{os.getegid()}"),
         ):
             self.assertEqual(expected, run[run.index(key) + 1])
         self.assertIn("--read-only", run)
@@ -245,6 +278,49 @@ class RuntimeTests(unittest.TestCase):
             ["CSV", "/input/resource.csv", "utf-8", "first_record"], run[-4:]
         )
         self.assertEqual(["rm", "--force", run[run.index("--name") + 1]], commands[-1])
+
+    def test_root_is_rejected_before_input_or_client_access(self):
+        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        for zero in (*identities, "all"):
+            docker = FakeDocker()
+            values = {
+                name: (lambda value=0 if zero in (name, "all") else value: value)
+                for name, value in identities.items()
+            }
+            with (
+                self.subTest(zero=zero),
+                patch.multiple(extractor.os, **values),
+                patch.object(extractor, "_input_bytes") as read,
+                patch.object(extractor, "_client") as client,
+                self.assertRaisesRegex(
+                    extractor.ExtractorError,
+                    "^document_extractor_operator_must_be_nonroot$",
+                ),
+            ):
+                extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
+            read.assert_not_called()
+            client.assert_not_called()
+            self.assertEqual([], docker.calls)
+            self.assertEqual(self.raw, self.path.read_bytes())
+
+    def test_run_uses_one_validated_effective_pair_for_private_snapshot(self):
+        effective = os.geteuid(), os.getegid()
+        docker = FakeDocker()
+        with (
+            patch.object(
+                extractor, "operator_ids", wraps=extractor.operator_ids
+            ) as identity,
+            patch.object(extractor.os, "getuid", return_value=effective[0] + 1),
+            patch.object(extractor.os, "getgid", return_value=effective[1] + 1),
+        ):
+            result = extractor.extract(self.path, "CSV", image=IMAGE, runner=docker)
+        identity.assert_called_once_with()
+        run = next(call[0] for call in docker.calls if call[0][5] == "run")
+        self.assertEqual(f"{effective[0]}:{effective[1]}", run[run.index("--user") + 1])
+        self.assertEqual(self.raw, docker.snapshot_bytes)
+        self.assertEqual(0o600, docker.snapshot_stat.st_mode & 0o777)
+        self.assertEqual(effective[0], docker.snapshot_stat.st_uid)
+        self.assertEqual(hashlib.sha256(self.raw).hexdigest(), result["input_sha256"])
 
     def test_attempt_name_is_used_for_run_and_exact_cleanup(self):
         docker = FakeDocker()

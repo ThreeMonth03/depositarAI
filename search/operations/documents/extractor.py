@@ -25,6 +25,7 @@ MAX_COLUMNS = 256
 MAX_COLUMN_CHARS = 512
 MAX_COLUMN_TOTAL_CHARS = 8192
 MAX_ROWS_OBSERVED = 10000
+ERROR_CODES = frozenset({"document_extractor_operator_must_be_nonroot"})
 FESS_IMAGE = (
     "ghcr.io/codelibs/fess:15.8.0@sha256:"
     "442a58831e87aae6ae22ef60e0536ececbda553bd5f5e8e5dc98cc022578dc75"
@@ -56,6 +57,14 @@ _REPORT_KEYS = frozenset(
 
 class ExtractorError(ValueError):
     """A fixed diagnostic without resource bytes or Docker output."""
+
+
+def operator_ids():
+    """Return non-root effective IDs matching the owner of private input."""
+    uid, gid = os.geteuid(), os.getegid()
+    if 0 in (os.getuid(), os.getgid(), uid, gid):
+        raise ExtractorError("document_extractor_operator_must_be_nonroot")
+    return uid, gid
 
 
 def _string(value, maximum):
@@ -393,6 +402,7 @@ def extract(
     runner=None,
 ):
     """Snapshot one private file, extract it offline, and verify its bound output."""
+    uid, gid = operator_ids()
     if (
         type(expected_format) is not str
         or expected_format not in {"CSV", "PDF"}
@@ -449,7 +459,7 @@ def extract(
                 "--security-opt",
                 "no-new-privileges",
                 "--user",
-                f"{os.getuid()}:{os.getgid()}",
+                f"{uid}:{gid}",
                 "--cpus",
                 "2",
                 "--memory",

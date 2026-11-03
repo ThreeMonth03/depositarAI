@@ -128,6 +128,60 @@ class BatchTests(unittest.TestCase):
         self.image.assert_not_called()
         self.assertEqual((self.state / "plan.json").stat().st_mode & 0o777, 0o600)
 
+    def test_root_identities_refuse_before_state_even_without_pending_work(self):
+        identity_names = ("getuid", "getgid", "geteuid", "getegid")
+        for progress in ("unprepared", "prepared", "completed"):
+            self.state = self.root / progress
+            self.plan_sha = "d" * 64
+            if progress != "unprepared":
+                self.prepare()
+            if progress == "completed":
+                self.assertEqual(self.run_batch()["pending_count"], 0)
+            before = {
+                path.relative_to(self.state): path.read_bytes()
+                for path in self.state.rglob("*")
+                if path.is_file()
+            }
+            self.fetch.reset_mock()
+            self.parse.reset_mock()
+            self.image.reset_mock()
+            for root_identity in (*identity_names, "all"):
+                with (
+                    self.subTest(progress=progress, root_identity=root_identity),
+                    ExitStack() as stack,
+                    patch.object(batches, "_state") as state,
+                    patch.object(batches.private_io, "write_json") as write,
+                ):
+                    for name in identity_names:
+                        stack.enter_context(
+                            patch.object(
+                                extractor.os,
+                                name,
+                                return_value=0
+                                if root_identity in (name, "all")
+                                else 1001,
+                            )
+                        )
+                    with self.assertRaisesRegex(
+                        extractor.ExtractorError,
+                        "^document_extractor_operator_must_be_nonroot$",
+                    ):
+                        self.run_batch()
+                    state.assert_not_called()
+                    write.assert_not_called()
+                    self.image.assert_not_called()
+                    self.fetch.assert_not_called()
+                    self.parse.assert_not_called()
+                self.assertEqual(self.state.exists(), progress != "unprepared")
+                self.assertEqual(
+                    before,
+                    {
+                        path.relative_to(self.state): path.read_bytes()
+                        for path in self.state.rglob("*")
+                        if path.is_file()
+                    },
+                )
+
     def test_checkpoint_then_resume_skips_completed_sources_and_exports_exact_set(self):
         self.prepare()
         first = self.run_batch(max_resources=1)
