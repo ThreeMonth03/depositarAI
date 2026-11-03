@@ -684,6 +684,28 @@ class QueueTests(unittest.TestCase):
         with self.assertRaisesRegex(pueue.JobError, "host_changed"):
             queue.load_registry(filename)
 
+    def test_registry_namespace_is_checked_before_read_or_source_commands(self):
+        public = self.directory / "public"
+        public.mkdir(mode=0o755)
+        with patch.object(queue, "read") as read:
+            with self.assertRaisesRegex(ValueError, "namespace_private_directory"):
+                queue.load_registry(public / "registry.json")
+            read.assert_not_called()
+
+        filename = self.directory / "registry.json"
+        for field in ("root", "runtime_root", "pueue"):
+            changed = {**self.registry, field: str(public)}
+            if field == "pueue":
+                changed[field] = str(public / "pueue")
+            queue.write(filename, changed, replace=filename.exists())
+            with patch.object(queue, "revision") as revision:
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(
+                        ValueError, "namespace_private_directory"
+                    ):
+                        queue.load_registry(filename)
+                    revision.assert_not_called()
+
     def test_symlink_and_public_request_are_rejected(self):
         original = self.directory / "original.json"
         queue.write(original, {"fixture": True})
@@ -697,6 +719,30 @@ class QueueTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_direct_transport_requires_each_private_directory_before_ipc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            public = root / "public"
+            public.mkdir(mode=0o755)
+            registry = {
+                "root": str(root),
+                "runtime_root": str(root),
+                "pueue": str(root / "pueue"),
+            }
+            for field in registry:
+                changed = {**registry, field: str(public)}
+                if field == "pueue":
+                    changed[field] = str(public / "pueue")
+                with (
+                    self.subTest(field=field),
+                    patch.object(pueue, "command") as command,
+                    self.assertRaisesRegex(ValueError, "namespace_private_directory"),
+                ):
+                    pueue.Pueue(changed).call("status", "--json")
+                command.assert_not_called()
+            self.assertEqual(public.stat().st_mode & 0o7777, 0o755)
+
     def test_client_uses_only_fixed_configuration_and_pinned_binary(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

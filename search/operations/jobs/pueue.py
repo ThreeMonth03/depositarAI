@@ -12,6 +12,8 @@ from search.operations.shared import private_io
 from search.operations.shared.bounded_process import captured_pipes
 from search.serialization import strict_json
 
+from . import namespace
+
 
 BINARY_SHA256 = "c1b10d7e4e62211075ddd0e1dc3e8cbfc5a43d662cb3be7402a28504e23fcb51"
 ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
@@ -119,6 +121,7 @@ class Pueue:
 
     def call(self, *arguments):
         registry = self.registry
+        namespace.check_transport(registry)
         root = Path(registry["root"])
         fd = private_io.open_directory(root)
         try:
