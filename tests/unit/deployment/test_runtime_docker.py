@@ -193,6 +193,8 @@ class RuntimeDockerTests(unittest.TestCase):
             ")\n"
             "assert runtime_docker.project_inventory(client, "
             '"private-project") == ([], set())\n'
+            "assert runtime_docker.project_inventories(client, "
+            '["private-project"]) == {"private-project": ([], set())}\n'
             "for name in (\n"
             '    "search.operations.deployment.inference",\n'
             '    "search.operations.deployment.release",\n'
@@ -298,6 +300,10 @@ class RuntimeDockerTests(unittest.TestCase):
 
 
 class ProjectInventoryTests(unittest.TestCase):
+    @staticmethod
+    def projection(values):
+        return b"\n".join(json.dumps(value).encode() for value in values)
+
     def client(self, containers, networks, *, max_commands=64):
         runner = mock.Mock(
             side_effect=[
@@ -409,4 +415,239 @@ class ProjectInventoryTests(unittest.TestCase):
         ):
             runtime_docker.project_inventory(client, "private-project")
         self.assertEqual(client.calls, 2)
+        self.assertEqual(runner.call_count, 1)
+
+    def test_bulk_inventory_projects_only_ids_and_projects_in_two_commands(
+        self,
+    ):
+        identifiers = [letter * 64 for letter in "abcdef"]
+        containers = [
+            {"Id": identifier, "Project": project}
+            for project, members in (
+                ("first", identifiers[:3]),
+                ("second", identifiers[3:]),
+                ("foreign", ["9" * 64]),
+            )
+            for identifier in members
+        ]
+        networks = [
+            {"Name": name}
+            for name in ("first_backend", "second_backend", "foreign_backend")
+        ]
+        client, runner = self.client(
+            self.projection(containers), self.projection(networks)
+        )
+        self.assertEqual(
+            runtime_docker.project_inventories(client, ["first", "second"]),
+            {
+                "first": (identifiers[:3], {"first_backend"}),
+                "second": (identifiers[3:], {"second_backend"}),
+            },
+        )
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(
+            [call.args[0][5:] for call in runner.call_args_list],
+            [
+                [
+                    "ps",
+                    "--all",
+                    "--no-trunc",
+                    "--filter",
+                    "label=com.docker.compose.project",
+                    "--format",
+                    '{"Id":{{json .ID}},"Project":{{json '
+                    '(.Label "com.docker.compose.project")}}}',
+                ],
+                [
+                    "network",
+                    "ls",
+                    "--no-trunc",
+                    "--format",
+                    '{"Name":{{json .Name}}}',
+                ],
+            ],
+        )
+
+    def test_bulk_inventory_keeps_empty_projects_and_substring_networks(self):
+        client, _ = self.client(
+            b"",
+            self.projection(
+                [{"Name": "project_backend"}, {"Name": "xproject_rogue"}]
+            ),
+        )
+        self.assertEqual(
+            runtime_docker.project_inventories(client, ("project", "empty")),
+            {
+                "project": ([], {"project_backend", "xproject_rogue"}),
+                "empty": ([], set()),
+            },
+        )
+        client, _ = self.client(b"", b"")
+        self.assertEqual(
+            runtime_docker.project_inventories(
+                client, ["p" * 128, "space name"]
+            ),
+            {"p" * 128: ([], set()), "space name": ([], set())},
+        )
+
+    def test_bulk_invalid_project_names_never_consume_a_command(self):
+        for projects in (
+            None,
+            {},
+            [],
+            (),
+            "project",
+            [""],
+            ["project", "project"],
+            ["project", True],
+            ["p" * 129],
+            ["氣候"],
+            ["line\nfeed"],
+            ["carriage\rreturn"],
+            ["tab\tname"],
+            ["nul\x00name"],
+            ["del\x7fname"],
+        ):
+            with self.subTest(projects=projects):
+                client, runner = self.client(b"", b"")
+                with self.assertRaises(runtime_docker.InferenceError):
+                    runtime_docker.project_inventories(client, projects)
+                runner.assert_not_called()
+                self.assertEqual(client.calls, 0)
+
+    def test_bulk_container_projection_is_strict_even_for_foreign_projects(
+        self,
+    ):
+        row = {"Id": "a" * 64, "Project": "project"}
+        cases = [
+            [None],
+            [[]],
+            [{}],
+            [{"Id": row["Id"]}],
+            [{"Project": "project"}],
+            [row | {"Id": 1}],
+            [row | {"Id": "short"}],
+            [row | {"Id": "A" * 64}],
+            [row | {"Project": None}],
+            [row | {"Project": ""}],
+            [row | {"Project": True}],
+            [row | {"Project": []}],
+            [row | {"Env": ["PRIVATE_SENTINEL"]}],
+            [row, row],
+            [row, row | {"Project": "foreign"}],
+            [row | {"Id": "short", "Project": "foreign"}],
+            [row | {"Id": letter * 64} for letter in "abcd"],
+        ]
+        for values in cases:
+            with self.subTest(values=values):
+                client, runner = self.client(self.projection(values), b"")
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_container_inventory_invalid$",
+                ) as caught:
+                    runtime_docker.project_inventories(client, ["project"])
+                self.assertEqual(runner.call_count, 1)
+                self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
+
+    def test_bulk_network_projection_is_strict_and_bounded(self):
+        cases = [
+            [None],
+            [[]],
+            [{}],
+            [{"Name": None}],
+            [{"Name": []}],
+            [{"Name": ""}],
+            [{"Name": "foreign", "Env": ["PRIVATE_SENTINEL"]}],
+            [{"Name": "foreign"}, {"Name": "foreign"}],
+            [{"Name": "project_" + name} for name in ("one", "two", "three")],
+        ]
+        for values in cases:
+            with self.subTest(values=values):
+                client, runner = self.client(b"", self.projection(values))
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_network_inventory_invalid$",
+                ) as caught:
+                    runtime_docker.project_inventories(client, ["project"])
+                self.assertEqual(runner.call_count, 2)
+                self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
+
+    def test_bulk_rows_use_the_shared_strict_json_parser(self):
+        for containers, networks, code in (
+            (b"\xff", b"", "inference_container_inventory_invalid"),
+            (
+                b'{"Id":"first","Id":"second","Project":"project"}',
+                b"",
+                "inference_container_inventory_invalid",
+            ),
+            (
+                b"",
+                b'{"Name":"first","Name":"second"}',
+                "inference_network_inventory_invalid",
+            ),
+            (b"", b"\xff", "inference_network_inventory_invalid"),
+        ):
+            with self.subTest(containers=containers, networks=networks):
+                client, _ = self.client(containers, networks)
+                with (
+                    mock.patch.object(
+                        image_build, "_json", wraps=image_build._json
+                    ) as parser,
+                    self.assertRaisesRegex(
+                        runtime_docker.InferenceError, "^" + code + "$"
+                    ),
+                ):
+                    runtime_docker.project_inventories(client, ["project"])
+                parser.assert_called_once_with(containers or networks)
+
+    def test_bulk_reads_charge_both_existing_command_budget_boundaries(self):
+        for limit in (64, 128):
+            with self.subTest(limit=limit):
+                client, runner = self.client(b"", b"", max_commands=limit)
+                client.calls = limit - 1
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_command_budget$",
+                ):
+                    runtime_docker.project_inventories(client, ["project"])
+                self.assertEqual(client.calls, limit + 1)
+                self.assertEqual(runner.call_count, 1)
+        self.assertEqual(runtime_docker.MAX_COMMANDS, 64)
+
+    def test_bulk_foreign_metadata_still_consumes_existing_output_limits(
+        self,
+    ):
+        containers = self.projection([{"Id": "a" * 64, "Project": "foreign"}])
+        networks = self.projection([{"Name": "foreign_backend"}])
+        for per_call, cumulative, calls in (
+            (len(containers) - 1, 1024, 1),
+            (1024, len(containers) + len(networks) - 1, 2),
+        ):
+            with (
+                self.subTest(per_call=per_call, cumulative=cumulative),
+                mock.patch.object(image_build, "MAX_OUTPUT_BYTES", per_call),
+                mock.patch.object(
+                    image_build, "MAX_TOTAL_OUTPUT_BYTES", cumulative
+                ),
+            ):
+                client, runner = self.client(containers, networks)
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError,
+                    "^inference_output_limit$",
+                ):
+                    runtime_docker.project_inventories(client, ["project"])
+                self.assertEqual(runner.call_count, calls)
+
+    def test_bulk_deadline_stops_the_second_process(self):
+        client, runner = self.client(b"", b"")
+        client.deadline = 1
+        with (
+            mock.patch.object(
+                runtime_docker.time, "monotonic", side_effect=[0, 0, 2]
+            ),
+            self.assertRaisesRegex(
+                runtime_docker.InferenceError, "^inference_command_budget$"
+            ),
+        ):
+            runtime_docker.project_inventories(client, ["project"])
         self.assertEqual(runner.call_count, 1)

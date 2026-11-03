@@ -62,6 +62,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write(
             "search/operations/deployment/candidate/batch/__init__.py", ""
         )
+        self.write("search/operations/deployment/provider/__init__.py", "")
         self.write("search/operations/documents/cache.py", "")
         self.write("search/operations/documents/controller.py", "")
         self.write("search/operations/documents/derivation.py", "")

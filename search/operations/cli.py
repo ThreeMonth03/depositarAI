@@ -18,6 +18,9 @@ PUBLIC_COMMANDS = frozenset(
         "rollback-public-entry",
     }
 )
+PROVIDER_COMMANDS = frozenset(
+    {"adopt-backend-provider", "check-backend-provider"}
+)
 
 # Only exact operator-owned exception classes and fixed literals may add a
 # diagnostic. Error owners are loaded only when their failure is encountered.
@@ -171,6 +174,10 @@ def _product_error_policy(owner):
         from search.operations import lifecycle
 
         return lifecycle.UpPrivateError, lifecycle.UP_PRIVATE_ERROR_CODES
+    elif owner == "search.operations.deployment.provider.contract":
+        from search.operations.deployment.provider import contract
+
+        return contract.ProviderError, contract.ERROR_CODES
     else:
         from search.operations.deployment.payload import (
             restore as product_restore,
@@ -245,6 +252,10 @@ _ERROR_POLICIES = {
     ),
     "search.operations.deployment.payload.restore": (
         frozenset({"restore-product"}),
+        _product_error_policy,
+    ),
+    "search.operations.deployment.provider.contract": (
+        PROVIDER_COMMANDS,
         _product_error_policy,
     ),
     "search.operations.deployment.public_entry.preflight": (
@@ -368,6 +379,24 @@ def _profile_selection(arguments):
     )
 
 
+def _provider_parsers(commands):
+    for name, help_text in (
+        (
+            "adopt-backend-provider",
+            "adopt an already verified native provider",
+        ),
+        (
+            "check-backend-provider",
+            "verify the registered provider and clients",
+        ),
+    ):
+        entry = commands.add_parser(name, help=help_text)
+        entry.add_argument("--control-config", type=Path, required=True)
+        if name == "adopt-backend-provider":
+            entry.add_argument("--bootstrap", type=Path, required=True)
+            entry.add_argument("--expected-bootstrap-sha256", required=True)
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument(
@@ -376,6 +405,7 @@ def parser():
         help="operator-owned 0600 product JSON; required for runtime commands",
     )
     commands = result.add_subparsers(dest="command", required=True)
+    _provider_parsers(commands)
     restore = commands.add_parser(
         "restore-product",
         help=(
@@ -861,7 +891,23 @@ def _public_entry_report(options):
     return action(options.entry_config, *extra, **backend)
 
 
+def _provider_report(options):
+    if options.command == "adopt-backend-provider":
+        from search.operations.deployment.provider import adoption
+
+        return adoption.adopt_running(
+            options.control_config,
+            options.bootstrap,
+            expected_bootstrap_sha256=options.expected_bootstrap_sha256,
+        )
+    from search.operations.deployment.provider import runtime
+
+    return runtime.verify_provider(options.control_config)
+
+
 def _command_report(options):
+    if options.command in PROVIDER_COMMANDS:
+        return _provider_report(options)
     if options.command == "profile-resources":
         return _profile_report(options)
     if options.command in PUBLIC_COMMANDS:
@@ -895,7 +941,12 @@ def _exit_status(options, report):
 
 
 def _validate_options(arguments, options):
-    independent = {"restore-product", "profile-resources", *PUBLIC_COMMANDS}
+    independent = {
+        "restore-product",
+        "profile-resources",
+        *PUBLIC_COMMANDS,
+        *PROVIDER_COMMANDS,
+    }
     if options.command in independent:
         if options.config is not None:
             arguments.error(f"{options.command} does not use --config")

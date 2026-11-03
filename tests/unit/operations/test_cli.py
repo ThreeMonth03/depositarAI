@@ -439,6 +439,195 @@ class CLIStartupTests(unittest.TestCase):
                     report,
                 )
 
+    def test_provider_help_and_invalid_args_load_only_cli(self):
+        control = ["--control-config", "/unused/provider-control.json"]
+        bootstrap = [
+            "--bootstrap",
+            "/unused/bootstrap.json",
+            "--expected-bootstrap-sha256",
+            "a" * 64,
+        ]
+        for arguments, expected in (
+            (["adopt-backend-provider", "--help"], 0),
+            (["check-backend-provider", "--help"], 0),
+            (["adopt-backend-provider"], 2),
+            (["check-backend-provider"], 2),
+            (["adopt-backend-provider", *control], 2),
+            (["adopt-backend-provider", *control, *bootstrap[:2]], 2),
+            (["adopt-backend-provider", *bootstrap], 2),
+            (["adopt-backend-provider", *control, *bootstrap[2:]], 2),
+            (["promote-backend-provider"], 2),
+            (["recover-backend-provider"], 2),
+            (
+                [
+                    "--config",
+                    "/unused/product.json",
+                    "adopt-backend-provider",
+                    *control,
+                    *bootstrap,
+                ],
+                2,
+            ),
+            (
+                [
+                    "--config",
+                    "/unused/product.json",
+                    "check-backend-provider",
+                    *control,
+                ],
+                2,
+            ),
+        ):
+            with self.subTest(arguments=arguments):
+                report = self.run_isolated(f"""
+                    sys.meta_path.insert(0, BlockImports((
+                        'site', 'torch', 'transformers', 'django',
+                        'search.api', 'search.planning', 'search.catalog',
+                        'search.operations.config',
+                        'search.operations.deployment.provider')))
+                    sys.argv = [launcher, *{arguments!r}]
+                    with contextlib.redirect_stdout(output), \\
+                         contextlib.redirect_stderr(errors):
+                        try:
+                            runpy.run_path(launcher, run_name='__main__')
+                        except SystemExit as error:
+                            code = error.code
+                    loaded = sorted(name for name in sys.modules
+                        if name == 'search' or name.startswith('search.'))
+                    print(json.dumps({{'code': code, 'loaded': loaded,
+                        'out': output.getvalue(), 'err': errors.getvalue()}}))
+                """)
+                self.assertEqual(report["code"], expected)
+                self.assertEqual(
+                    report["loaded"],
+                    ["search", "search.operations", "search.operations.cli"],
+                )
+                if expected == 0:
+                    self.assertIn("--control-config", report["out"])
+                    self.assertNotIn("--config", report["out"])
+                    self.assertEqual(report["err"], "")
+                else:
+                    self.assertEqual(report["out"], "")
+                    self.assertIn("usage: depositarai.py", report["err"])
+
+    def test_provider_dispatch_forwards_paths_without_product_config_or_io(
+        self,
+    ):
+        for command, status in (
+            ("adopt-backend-provider", "adopted"),
+            ("check-backend-provider", "verified"),
+        ):
+            with self.subTest(command=command):
+                report = self.run_isolated(f"""
+                    import os
+                    from unittest.mock import patch
+                    sys.meta_path.insert(0, BlockImports((
+                        'search.operations.config',
+                        'search.operations.lifecycle', 'search.api',
+                        'search.planning', 'search.catalog')))
+                    from search.operations import cli
+                    from search.operations.deployment.provider import (
+                        adoption, runtime)
+                    calls = []
+                    expected = {{'schema_version': 1, 'status': {status!r},
+                                'epoch': 1}}
+                    def adopt(config, bootstrap, *, expected_bootstrap_sha256):
+                        assert config == Path('/unused/provider-control.json')
+                        assert bootstrap == Path('/unused/bootstrap.json')
+                        assert expected_bootstrap_sha256 == 'a' * 64
+                        calls.append('adopt')
+                        return expected
+                    def check(config):
+                        assert config == Path('/unused/provider-control.json')
+                        calls.append('check')
+                        return expected
+                    adoption.adopt_running = adopt
+                    runtime.verify_provider = check
+                    arguments = [{command!r}, '--control-config',
+                                 '/unused/provider-control.json']
+                    if {command!r} == 'adopt-backend-provider':
+                        arguments += ['--bootstrap', '/unused/bootstrap.json',
+                            '--expected-bootstrap-sha256', 'a' * 64]
+                    with patch.object(cli, '_runtime_report',
+                                      side_effect=AssertionError('IO')), \\
+                         patch.object(Path, 'open',
+                                      side_effect=AssertionError('IO')), \\
+                         patch.object(os, 'open',
+                                      side_effect=AssertionError('IO')), \\
+                         contextlib.redirect_stdout(output), \\
+                         contextlib.redirect_stderr(errors):
+                        code = cli.main(arguments)
+                    print(json.dumps({{'code': code, 'calls': calls,
+                        'out': json.loads(output.getvalue()),
+                        'lines': output.getvalue().count('\\n'),
+                        'err': errors.getvalue()}}))
+                """)
+                self.assertEqual(report["code"], 0)
+                self.assertEqual(
+                    report["calls"],
+                    [
+                        "adopt"
+                        if command == "adopt-backend-provider"
+                        else "check"
+                    ],
+                )
+                self.assertEqual(
+                    report["out"],
+                    {"schema_version": 1, "status": status, "epoch": 1},
+                )
+                self.assertEqual(report["lines"], 1)
+                self.assertEqual(report["err"], "")
+
+    def test_provider_failures_report_only_closed_canonical_diagnostics(self):
+        for command in ("adopt-backend-provider", "check-backend-provider"):
+            for kind in ("allowed", "private", "subclass", "foreign"):
+                with self.subTest(command=command, kind=kind):
+                    report = self.run_isolated(f"""
+                        from search.operations import cli
+                        from search.operations.deployment.provider import (
+                            adoption, contract, runtime)
+                        class Derived(contract.ProviderError): pass
+                        Derived.__module__ = contract.__name__
+                        Foreign = type('ProviderError', (ValueError,),
+                                       {{'__module__': contract.__name__}})
+                        error_type = {{'allowed': contract.ProviderError,
+                            'private': contract.ProviderError,
+                            'subclass': Derived, 'foreign': Foreign}}[{kind!r}]
+                        detail = ('/unused/control-private-canary'
+                            if {kind!r} == 'private'
+                            else 'shared_backend_provider_busy')
+                        def fail(*args, **kwargs): raise error_type(detail)
+                        adoption.adopt_running = runtime.verify_provider = fail
+                        arguments = [{command!r}, '--control-config',
+                                     '/unused/provider-control.json']
+                        if {command!r} == 'adopt-backend-provider':
+                            arguments += ['--bootstrap', '/unused/bootstrap',
+                                '--expected-bootstrap-sha256', 'a' * 64]
+                        with contextlib.redirect_stdout(output), \\
+                             contextlib.redirect_stderr(errors):
+                            code = cli.main(arguments)
+                        print(json.dumps({{'code': code,
+                            'out': output.getvalue(),
+                            'err': json.loads(errors.getvalue())}}))
+                    """)
+                    expected = {
+                        "schema_version": 1,
+                        "status": "failed",
+                        "code": "product_operation_failed",
+                        "error_type": "Derived"
+                        if kind == "subclass"
+                        else "ProviderError",
+                        "active_changed": False,
+                    }
+                    if kind == "allowed":
+                        expected["error_code"] = "shared_backend_provider_busy"
+                    self.assertEqual(
+                        report, {"code": 1, "out": "", "err": expected}
+                    )
+                    self.assertNotIn(
+                        "control-private-canary", json.dumps(report)
+                    )
+
 
 class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
     def run_error(self, command, error):
@@ -977,6 +1166,7 @@ class OperatorErrorOwnerTests(unittest.TestCase):
             runtime_docker,
         )
         from search.operations.deployment.payload import restore
+        from search.operations.deployment.provider import contract as provider
         from search.operations.deployment.public_entry import (
             preflight,
             remote,
@@ -1024,6 +1214,16 @@ class OperatorErrorOwnerTests(unittest.TestCase):
                 restore.ProductRestoreError,
                 "product_restore_manifest_invalid",
                 "restore-product",
+            ),
+            (
+                provider.ProviderError,
+                "shared_backend_provider_not_adopted",
+                "adopt-backend-provider",
+            ),
+            (
+                provider.ProviderError,
+                "shared_backend_provider_not_adopted",
+                "check-backend-provider",
             ),
             (
                 preflight.PublicEntryPreflightError,
@@ -1105,6 +1305,38 @@ class OperatorErrorOwnerTests(unittest.TestCase):
                             forged(code), command or "doctor"
                         )
                     )
+
+    def test_provider_codes_are_limited_to_the_two_canonical_commands(self):
+        from search.operations import cli
+        from search.operations.deployment.provider import contract
+
+        for code in contract.ERROR_CODES:
+            error = contract.ProviderError(code)
+            for command in (
+                "adopt-backend-provider",
+                "check-backend-provider",
+            ):
+                self.assertEqual(
+                    cli._operator_error_code(error, command), code
+                )
+            for command in (
+                "doctor",
+                "sync",
+                "profile-resources",
+                "up-private",
+                "promote-backend-provider",
+                "recover-backend-provider",
+                "check-backend-provider-extra",
+            ):
+                self.assertIsNone(cli._operator_error_code(error, command))
+
+        for command in ("adopt-backend-provider", "check-backend-provider"):
+            self.assertIsNone(
+                cli._operator_error_code(
+                    contract.ProviderError("shared_backend_provider_forged"),
+                    command,
+                )
+            )
 
     def test_only_one_exact_public_string_argument_can_be_a_diagnostic(self):
         from search.operations import cli

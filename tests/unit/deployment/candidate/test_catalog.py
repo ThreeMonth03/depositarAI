@@ -8,6 +8,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -79,6 +80,148 @@ def two_catalogs():
         groups[project] = values["core_containers"]
         networks[network["Name"]] = network
     return bindings, groups, networks, clients
+
+
+class CatalogClientIdentityTests(unittest.TestCase):
+    def test_producer_and_consumer_relationship_is_independent_of_provider(
+        self,
+    ):
+        for index, consumer, provider in (
+            (0, REVISION, "b" * 40),
+            (1, "7" * 40, REVISION),
+            (1, REVISION, REVISION),
+        ):
+            for existing_optional in (False, True):
+                with self.subTest(
+                    index=index,
+                    consumer=consumer,
+                    provider=provider,
+                    existing_optional=existing_optional,
+                ):
+                    binding = two_catalogs()[0][index]
+                    producer = binding.context["plan"]["revision"]
+                    raw = {
+                        key: binding.authority["catalog_identity"][key]
+                        for key in client_lease.CATALOG_FIELDS
+                    }
+                    if existing_optional:
+                        raw["catalog_revision"] = producer
+                    binding.authority["catalog_identity"] = raw
+                    binding.context["source_revision"] = provider
+                    original = copy.deepcopy(
+                        (binding.context, binding.authority)
+                    )
+                    expected = {
+                        key: raw[key] for key in client_lease.CATALOG_FIELDS
+                    }
+                    if producer != consumer:
+                        expected["catalog_revision"] = producer
+                    result = catalog.client_identity(binding, consumer)
+                    self.assertEqual(result, expected)
+                    self.assertIsNot(result, raw)
+                    self.assertEqual(
+                        (binding.context, binding.authority), original
+                    )
+
+    def test_returned_nested_identity_cannot_change_authenticated_authority(
+        self,
+    ):
+        binding = two_catalogs()[0][0]
+        original = copy.deepcopy(binding.authority)
+        result = catalog.client_identity(binding, REVISION)
+        result["core_container_ids"]["fess-search"] = "f" * 64
+        self.assertEqual(binding.authority, original)
+
+    def test_missing_or_invalid_producer_revision_is_rejected(self):
+        for producer in (None, True, 1, "", "a" * 39, "a" * 41, "A" * 40):
+            with self.subTest(producer=producer):
+                binding = two_catalogs()[0][0]
+                binding.context["plan"]["revision"] = producer
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_identity_invalid$"
+                ):
+                    catalog.client_identity(binding, REVISION)
+        binding = two_catalogs()[0][0]
+        del binding.context["plan"]["revision"]
+        with self.assertRaisesRegex(
+            catalog.SharedCatalogError, "catalog_identity_invalid$"
+        ):
+            catalog.client_identity(binding, REVISION)
+
+    def test_invalid_verified_consumer_revision_is_rejected(self):
+        binding = two_catalogs()[0][0]
+        original = copy.deepcopy((binding.context, binding.authority))
+        for consumer in (None, True, 1, "", "a" * 39, "a" * 41, "g" * 40):
+            with (
+                self.subTest(consumer=consumer),
+                self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_identity_invalid$"
+                ),
+            ):
+                catalog.client_identity(binding, consumer)
+        self.assertEqual((binding.context, binding.authority), original)
+
+    def test_missing_plan_or_authority_is_not_rebuilt_from_a_lease(self):
+        for field, value in (
+            ("context", None),
+            ("context", {}),
+            ("context", {"plan": None}),
+            ("authority", None),
+            ("authority", {}),
+            ("authority", {"catalog_identity": None}),
+            ("authority", {"catalog_identity": []}),
+        ):
+            with self.subTest(field=field, value=value):
+                binding = two_catalogs()[0][0]
+                setattr(binding, field, value)
+                binding.lease = shared_evidence()[0]["lease"]
+                original = copy.deepcopy(binding.__dict__)
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_identity_invalid$"
+                ):
+                    catalog.client_identity(binding, REVISION)
+                self.assertEqual(binding.__dict__, original)
+
+    def test_identity_requires_the_closed_native_fields(self):
+        raw = two_catalogs()[0][0].authority["catalog_identity"]
+        variants = [raw | {"extra": "untrusted"}] + [
+            {key: value for key, value in raw.items() if key != missing}
+            for missing in client_lease.CATALOG_FIELDS
+        ]
+        for identity in variants:
+            with self.subTest(identity=identity):
+                binding = two_catalogs()[0][0]
+                binding.authority["catalog_identity"] = identity
+                original = copy.deepcopy(binding.authority)
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_authority_changed$"
+                ):
+                    catalog.client_identity(binding, REVISION)
+                self.assertEqual(binding.authority, original)
+
+    def test_existing_optional_revision_cannot_forge_the_producer(self):
+        for claimed in (None, True, 1, "", "b" * 40, "a" * 39, "A" * 40):
+            with self.subTest(claimed=claimed):
+                binding = two_catalogs()[0][0]
+                binding.authority["catalog_identity"]["catalog_revision"] = (
+                    claimed
+                )
+                original = copy.deepcopy(binding.authority)
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_authority_changed$"
+                ):
+                    catalog.client_identity(binding, REVISION)
+                self.assertEqual(binding.authority, original)
+
+    def test_identity_cannot_authorize_a_different_project(self):
+        for project in (None, 1, "another-project"):
+            with self.subTest(project=project):
+                binding = two_catalogs()[0][0]
+                binding.context["plan"]["project"] = project
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "catalog_authority_changed$"
+                ):
+                    catalog.client_identity(binding, REVISION)
 
 
 class CatalogSnapshotTests(unittest.TestCase):
@@ -389,29 +532,85 @@ class CatalogAuditTests(unittest.TestCase):
 
 
 class CatalogSelectionTests(unittest.TestCase):
-    def test_default_selection_reuses_exact_native_authority_without_new_state(
-        self,
-    ):
-        native = SimpleNamespace(
-            context={},
+    def test_existing_selection_reuses_exact_authority_without_new_state(self):
+        from tests.unit.deployment.test_composition import product
+
+        config = product()
+        existing = SimpleNamespace(
+            config=config,
+            context={"repo": Path("/native-source")},
             authority={"native": True},
-            catalog_images={},
-            catalog_inspections={},
+        )
+        profile = {
+            "catalog_config": Path("/native.json"),
+            "catalog_source": Path("/native-source"),
+        }
+        with (
+            ExitStack() as stack,
+            patch.object(
+                catalog.product_config, "load_config", return_value=config
+            ),
+            patch.object(catalog, "locked_state") as lock,
+        ):
+            selected = catalog.select(
+                profile, stack, config, [existing], object()
+            )
+            self.assertIs(existing, selected)
+            self.assertIs(selected.authority, existing.authority)
+            lock.assert_not_called()
+
+    def test_nested_provider_state_is_rejected_before_any_new_lock(self):
+        from tests.unit.deployment.test_composition import product
+
+        config = product()
+        profile = {
+            "catalog_config": Path("/nested.json"),
+            "catalog_source": Path("/source"),
+        }
+        for target in (config.state_root / "nested", config.state_root.parent):
+            with (
+                self.subTest(target=target),
+                ExitStack() as stack,
+                patch.object(
+                    catalog.product_config,
+                    "load_config",
+                    return_value=replace(config, state_root=target),
+                ),
+                patch.object(catalog, "locked_state") as lock,
+            ):
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "state_overlaps_provider"
+                ):
+                    catalog.select(profile, stack, config, [], object())
+                lock.assert_not_called()
+
+    def test_matching_state_with_other_source_cannot_reuse_authority(self):
+        from tests.unit.deployment.test_composition import product
+
+        config = product()
+        existing = SimpleNamespace(
+            config=config, context={"repo": Path("/native-source")}
         )
         with (
             ExitStack() as stack,
+            patch.object(
+                catalog.product_config, "load_config", return_value=config
+            ),
             patch.object(catalog, "locked_state") as lock,
         ):
-            first, selected = catalog.select(
-                {"production_config": Path("/native.json")},
-                stack,
-                object(),
-                object(),
-                native,
-                {"native_key": True},
-            )
-            self.assertIs(first, selected)
-            self.assertIs(selected.authority, native.authority)
+            with self.assertRaisesRegex(
+                catalog.SharedCatalogError, "selection_invalid"
+            ):
+                catalog.select(
+                    {
+                        "catalog_config": Path("/config.json"),
+                        "catalog_source": Path("/other-source"),
+                    },
+                    stack,
+                    config,
+                    [existing],
+                    object(),
+                )
             lock.assert_not_called()
 
     def test_product_and_catalog_locks_remain_until_session_exit(
@@ -457,16 +656,15 @@ class CatalogSelectionTests(unittest.TestCase):
             (data / "state/operations.lock").touch(mode=0o600)
             with locked_state(selected, create=True) as target:
                 target.write("index-candidate.json", {"data_root": str(data)})
-            native = SimpleNamespace(
-                context={"plan": {"project": "native"}},
-                authority={},
-                catalog_images={},
-                catalog_inspections={},
-                docker=SimpleNamespace(inspect=lambda _: {}),
+            baseline = SimpleNamespace(
+                config=config,
+                context={
+                    "plan": {"project": "native"},
+                    "repo": root / "native-source",
+                },
             )
+            docker = SimpleNamespace(inspect=lambda _: {})
             profile = {
-                "production_config": root / "native.json",
-                "production_source": root / "native-source",
                 "catalog_config": config_file,
                 "catalog_source": root / "source",
             }
@@ -499,10 +697,10 @@ class CatalogSelectionTests(unittest.TestCase):
                 ),
             ):
                 with ExitStack() as stack:
-                    original, chosen = catalog.select(
-                        profile, stack, config, None, native, {}
+                    chosen = catalog.select(
+                        profile, stack, config, [baseline], docker
                     )
-                    self.assertIsNot(original, chosen)
+                    self.assertIsNot(baseline, chosen)
                     with self.assertRaisesRegex(
                         ValueError, "product_operation_busy"
                     ):
@@ -519,43 +717,102 @@ class CatalogSelectionTests(unittest.TestCase):
 
 
 class CatalogCollectionTests(unittest.TestCase):
-    def test_five_projects_use_twelve_commands_and_keep_unknown_peers(
-        self,
-    ):
+    @staticmethod
+    def fixture(count=5):
         projects = [
-            (f"project-{n}", {f"project-{n}_network"}) for n in range(5)
+            (f"project-{n}", {f"project-{n}_network"}) for n in range(count)
         ]
-        rows = [{"Id": f"{n:064x}"} for n in range(1, 16)]
+        rows = [
+            {
+                "Id": f"{index * 3 + member + 1:064x}",
+                "Config": {"Labels": {"com.docker.compose.project": project}},
+            }
+            for index, (project, _) in enumerate(projects)
+            for member in range(3)
+        ]
         networks = [
             {
                 "Name": f"project-{n}_network",
                 "Containers": {"unknown-peer": {}},
             }
-            for n in range(5)
+            for n in range(count)
         ]
-        calls = []
+        return projects, rows, networks
 
-        def inventory(docker, project):
-            number = int(project[-1])
-            calls.extend(["containers", "networks"])
-            return [row["Id"] for row in rows[number * 3 : number * 3 + 3]], {
-                project + "_network"
+    @staticmethod
+    def inventory(rows):
+        return [
+            {
+                "Id": row["Id"],
+                "Project": row["Config"]["Labels"][
+                    "com.docker.compose.project"
+                ],
             }
+            for row in rows
+        ]
 
-        def call(arguments):
-            calls.append(arguments)
-            return json.dumps(
-                rows if arguments[0] == "inspect" else networks
-            ).encode()
+    def client(self, rows, networks, *, inventory=None, names=None):
+        inventory = self.inventory(rows) if inventory is None else inventory
+        names = [row["Name"] for row in networks] if names is None else names
 
-        with patch.object(
-            catalog.runtime_docker, "project_inventory", side_effect=inventory
-        ):
-            groups, actual = catalog.collect(
-                SimpleNamespace(call=call), projects
-            )
-        self.assertEqual(len(calls), 12)
-        self.assertEqual(sum(map(len, groups.values())), 15)
+        def run(arguments, **_):
+            args = arguments[5:]
+            if args[0] == "ps":
+                values = inventory
+            elif args[:2] == ["network", "ls"]:
+                values = [{"Name": name} for name in names]
+            else:
+                values = None
+            if values is not None:
+                raw = b"\n".join(json.dumps(v).encode() for v in values)
+            else:
+                self.assertIn(args[:1], (["inspect"], ["network"]))
+                raw = json.dumps(
+                    rows if args[0] == "inspect" else networks
+                ).encode()
+            return subprocess.CompletedProcess(arguments, 0, raw, b"")
+
+        runner = Mock(side_effect=run)
+        return (
+            catalog.runtime_docker.Docker(
+                "/private-client", runner, max_commands=128
+            ),
+            runner,
+        )
+
+    def test_five_projects_use_four_commands_and_keep_unknown_peers(self):
+        projects, rows, networks = self.fixture()
+        inventory = self.inventory(rows) + [
+            {"Id": "f" * 64, "Project": "foreign"}
+        ]
+        docker, runner = self.client(
+            rows,
+            networks,
+            inventory=inventory,
+            names=[row["Name"] for row in networks] + ["foreign_network"],
+        )
+        expected = copy.deepcopy((rows, networks))
+        groups, actual = catalog.collect(docker, projects)
+        self.assertEqual(docker.calls, 4)
+        self.assertEqual(runner.call_count, 4)
+        commands = [call.args[0][5:] for call in runner.call_args_list]
+        self.assertEqual(
+            commands[2], ["inspect", *sorted(row["Id"] for row in rows)]
+        )
+        self.assertEqual(
+            commands[3],
+            ["network", "inspect", *sorted(row["Name"] for row in networks)],
+        )
+        self.assertEqual(
+            groups,
+            {
+                project: rows[index * 3 : index * 3 + 3]
+                for index, (project, _) in enumerate(projects)
+            },
+        )
+        self.assertEqual(actual, {row["Name"]: row for row in networks})
+        self.assertEqual((rows, networks), expected)
+        self.assertNotIn("f" * 64, commands[2])
         self.assertTrue(
             all(
                 "unknown-peer" in network["Containers"]
@@ -575,8 +832,8 @@ class CatalogCollectionTests(unittest.TestCase):
                 self.subTest(networks=networks),
                 patch.object(
                     catalog.runtime_docker,
-                    "project_inventory",
-                    return_value=(identifiers, networks),
+                    "project_inventories",
+                    return_value={"project": (identifiers, networks)},
                 ),
             ):
                 docker = SimpleNamespace(call=unittest.mock.Mock())
@@ -585,3 +842,91 @@ class CatalogCollectionTests(unittest.TestCase):
                 ):
                     catalog.collect(docker, [("project", {"owned"})])
                 docker.call.assert_not_called()
+
+    def test_extra_substring_network_is_not_hidden_before_bulk_inspection(
+        self,
+    ):
+        for extra in ("project-0_rogue", "xproject-0_rogue"):
+            with self.subTest(extra=extra):
+                projects, rows, networks = self.fixture(1)
+                docker, runner = self.client(
+                    rows, networks, names=[networks[0]["Name"], extra]
+                )
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "inventory_changed"
+                ):
+                    catalog.collect(docker, projects)
+                self.assertEqual(runner.call_count, 2)
+
+    def test_missing_and_rogue_members_are_not_hidden_from_inventory(self):
+        projects, rows, networks = self.fixture(1)
+        for members, error in (
+            (rows[:2], catalog.SharedCatalogError),
+            (
+                rows + [rows[0] | {"Id": "d" * 64}],
+                catalog.runtime_docker.InferenceError,
+            ),
+        ):
+            with self.subTest(count=len(members)):
+                docker, runner = self.client(members, networks)
+                with self.assertRaises(error):
+                    catalog.collect(docker, projects)
+                self.assertTrue(
+                    all(
+                        call.args[0][5] != "inspect"
+                        for call in runner.call_args_list
+                    )
+                )
+
+    def test_inspect_drift_cannot_form_a_snapshot(self):
+        projects, rows, networks = self.fixture(1)
+        inventory = self.inventory(rows)
+        for observed_rows, observed_networks in (
+            (rows[:2], networks),
+            (rows + [rows[0] | {"Id": "f" * 64}], networks),
+            ([rows[0], rows[0], rows[2]], networks),
+            ([*rows[:2], rows[2] | {"Id": "f" * 64}], networks),
+            (rows, []),
+            (rows, [*networks, {"Name": "foreign"}]),
+            (rows, [{"Name": "renamed"}]),
+        ):
+            with self.subTest(rows=observed_rows, networks=observed_networks):
+                docker, _ = self.client(
+                    observed_rows,
+                    observed_networks,
+                    inventory=inventory,
+                    names=[networks[0]["Name"]],
+                )
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "snapshot_invalid"
+                ):
+                    catalog.collect(docker, projects)
+
+    def test_collected_unknown_peer_and_project_drift_keep_native_rejection(
+        self,
+    ):
+        for kind in ("unknown_peer", "project_label"):
+            with self.subTest(kind=kind):
+                bindings, groups, network_map, clients = two_catalogs()
+                rows = [row for group in groups.values() for row in group]
+                networks = list(network_map.values())
+                inventory = self.inventory(rows)
+                if kind == "unknown_peer":
+                    networks[0]["Containers"]["f" * 64] = {}
+                else:
+                    rows[0]["Config"]["Labels"][
+                        "com.docker.compose.project"
+                    ] = "foreign"
+                docker, _ = self.client(rows, networks, inventory=inventory)
+                projects = [
+                    (project, {project + "_search_backend"})
+                    for project in groups
+                ]
+                with (
+                    patch.object(execution, "require_storage"),
+                    patch.object(execution, "validate_storage_mounts"),
+                    self.assertRaises((ValueError, RuntimeError)),
+                ):
+                    collected, observed = catalog.collect(docker, projects)
+                    for binding in bindings:
+                        catalog.observe(binding, collected, observed, clients)

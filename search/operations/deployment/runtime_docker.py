@@ -17,6 +17,11 @@ from search.operations.deployment.images import build as image_build
 MAX_COMMANDS = 64
 TOTAL_SECONDS = 1800
 _CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
+_PROJECT_INVENTORY_FORMAT = (
+    '{"Id":{{json .ID}},'
+    '"Project":{{json (.Label "com.docker.compose.project")}}}'
+)
+_NETWORK_INVENTORY_FORMAT = '{"Name":{{json .Name}}}'
 
 
 class InferenceError(ValueError):
@@ -172,3 +177,111 @@ def project_inventory(docker, project):
     ):
         raise InferenceError("inference_network_inventory_invalid")
     return ids, set(names)
+
+
+def _inventory_rows(docker, arguments, fields, code):
+    raw = docker.call(arguments)
+    try:
+        rows = [image_build._json(line) for line in raw.splitlines()]
+    except image_build.ImageBuildError:
+        raise InferenceError(code) from None
+    if any(type(row) is not dict or set(row) != fields for row in rows):
+        raise InferenceError(code)
+    return rows
+
+
+def _inventory_projects(projects):
+    if type(projects) not in {tuple, list} or not projects:
+        raise InferenceError("inference_container_inventory_invalid")
+    for name in projects:
+        if (
+            type(name) is not str
+            or not 1 <= len(name) <= 128
+            or not name.isascii()
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        ):
+            raise InferenceError("inference_container_inventory_invalid")
+    if len(set(projects)) != len(projects):
+        raise InferenceError("inference_container_inventory_invalid")
+    return tuple(projects)
+
+
+def _inventory_container(row):
+    identifier, project = row["Id"], row["Project"]
+    if (
+        type(identifier) is not str
+        or _CONTAINER_ID.fullmatch(identifier) is None
+        or type(project) is not str
+        or not project
+    ):
+        raise InferenceError("inference_container_inventory_invalid")
+    return identifier, project
+
+
+def _inventory_container_groups(rows, projects):
+    groups = {name: [] for name in projects}
+    seen = set()
+    for row in rows:
+        identifier, project = _inventory_container(row)
+        if identifier in seen:
+            raise InferenceError("inference_container_inventory_invalid")
+        seen.add(identifier)
+        if project in groups:
+            groups[project].append(identifier)
+    if any(len(values) > 3 for values in groups.values()):
+        raise InferenceError("inference_container_inventory_invalid")
+    return groups
+
+
+def _inventory_network_groups(rows, projects):
+    names = [row["Name"] for row in rows]
+    if any(type(name) is not str or not name for name in names):
+        raise InferenceError("inference_network_inventory_invalid")
+    if len(set(names)) != len(names):
+        raise InferenceError("inference_network_inventory_invalid")
+    groups = {
+        project: {name for name in names if project + "_" in name}
+        for project in projects
+    }
+    if any(len(values) > 2 for values in groups.values()):
+        raise InferenceError("inference_network_inventory_invalid")
+    return groups
+
+
+def project_inventories(docker, projects):
+    """Discover full project membership with two minimal metadata commands.
+
+    Inspect callers receive only requested project IDs and network names.
+    Network substring matching preserves the single-project CLI policy;
+    unrelated container configuration and Env are never requested here.
+    """
+    projects = _inventory_projects(projects)
+    containers = _inventory_rows(
+        docker,
+        [
+            "ps",
+            "--all",
+            "--no-trunc",
+            "--filter",
+            "label=com.docker.compose.project",
+            "--format",
+            _PROJECT_INVENTORY_FORMAT,
+        ],
+        {"Id", "Project"},
+        "inference_container_inventory_invalid",
+    )
+    ids = _inventory_container_groups(containers, projects)
+    networks = _inventory_rows(
+        docker,
+        [
+            "network",
+            "ls",
+            "--no-trunc",
+            "--format",
+            _NETWORK_INVENTORY_FORMAT,
+        ],
+        {"Name"},
+        "inference_network_inventory_invalid",
+    )
+    names = _inventory_network_groups(networks, projects)
+    return {project: (ids[project], names[project]) for project in projects}

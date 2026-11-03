@@ -7,11 +7,15 @@ is sanitized.
 """
 
 from collections.abc import Mapping
+from contextlib import ExitStack
+from pathlib import Path
 import re
 import time
 
 from search.quality.contract import plan_digest
 from search.operations import config as product_config
+from search.operations.deployment import source_bundle
+from search.operations.deployment.provider import runtime as provider_runtime
 from .. import controller
 from . import capture
 from . import probe
@@ -43,7 +47,11 @@ def _diagnostic(error):
         return "shared_backend_interrupted"
     if isinstance(
         error,
-        (controller.SharedBackendError, controller.catalog.SharedCatalogError),
+        (
+            controller.SharedBackendError,
+            controller.catalog.SharedCatalogError,
+            controller.ProviderError,
+        ),
     ):
         code = str(error)
         if re.fullmatch(r"shared_backend_[a-z_]+", code):
@@ -140,10 +148,24 @@ def runtime_identity(session, record, resident, operator_revision):
         == session.query_authority["catalog_identity"]["manifest_sha256"],
         "batch_catalog_binding_changed",
     )
+    control, provider = session.control, session.provider
+    epoch = control.roles["epoch"]
+    controller.require(
+        type(epoch) is int and 1 <= epoch < 2**63,
+        "batch_control_invalid",
+    )
+    controller.require(
+        provider.provider_sha256 == control.provider_sha256,
+        "batch_provider_binding_changed",
+    )
     return {
         "operator_revision": operator_revision,
         "candidate_revision": record["revision"],
-        "production_revision": session.context["source_revision"],
+        "production_revision": provider.source_revision,
+        "provider_anchor_sha256": control.provider_sha256,
+        "control_roles_sha256": control.roles_sha256,
+        "control_epoch": epoch,
+        "active_backend_revision": provider.backends[0].source_revision,
         "catalog_manifest_sha256": session.query_context["plan"][
             "manifest_sha256"
         ],
@@ -153,17 +175,42 @@ def runtime_identity(session, record, resident, operator_revision):
         ),
         "bundle_id": session.query_context["bundle"].bundle_id,
         "request_policy_sha256": record["policy"]["request_policy_sha256"],
-        "model_manifest_sha256": session.inputs.identity[
-            "model_manifest_sha256"
-        ],
+        "model_manifest_sha256": provider.model_manifest_sha256,
         "resident_models": resident["models"],
         "gpu_compute_sha256": record["compute_sha256"],
         "gpu_image_ids": {
             role: image["Id"]
-            for role, image in session.native.inference_images.items()
+            for role, image in provider.inference_images.items()
         },
         "candidate_runtime": record["runtime"],
     }
+
+
+def _excluded_paths(profile, control, cases):
+    anchor = control.provider
+    provider_source = Path(anchor["source"]["root"])
+    provider_config = Path(anchor["configuration"]["path"])
+    product = provider_runtime.configuration(
+        anchor["configuration"], provider_source
+    )
+    selected = product_config.load_config(
+        profile["catalog_config"], repo_root=profile["catalog_source"]
+    )
+    return (
+        control.root,
+        control.path,
+        provider_config,
+        provider_source,
+        product.state_root,
+        product.api_model_root,
+        product.embedding_model_root,
+        product.reranker_model_root,
+        profile["catalog_source"],
+        selected.state_root,
+        profile["state_root"],
+        cases,
+        controller.ROOT,
+    )
 
 
 def run_batch(
@@ -185,198 +232,188 @@ def run_batch(
     controller.require(
         expected_identity_sha256 is None
         or type(expected_identity_sha256) is str
-        and controller.source_bundle.DIGEST.fullmatch(
-            expected_identity_sha256
-        ),
+        and source_bundle.DIGEST.fullmatch(expected_identity_sha256),
         "batch_identity_invalid",
     )
     operator_revision = controller.require_clean_revision(controller.ROOT)
     profile = controller.load_config(filename)
     specification = capture.load_cases(cases)
-    product = product_config.load_config(
-        profile["production_config"], repo_root=profile["production_source"]
-    )
-    selected_product = product_config.load_config(
-        profile.get("catalog_config", profile["production_config"]),
-        repo_root=profile.get("catalog_source", profile["production_source"]),
-    )
-    excluded = (
-        profile.get("catalog_source", profile["production_source"]),
-        selected_product.state_root,
-        cases,
-        controller.ROOT,
-        profile["state_root"],
-        profile["production_source"],
-        product.state_root,
-        product.api_model_root,
-        product.embedding_model_root,
-        product.reranker_model_root,
-    )
     started = time.monotonic()
     captured, outcomes = [], []
     identity = None
     error = None
     fully_verified = False
     audits = {"before_seconds": 0.0, "after_seconds": 0.0}
-    with controller.journal(profile["state_root"]) as store:
-        record = controller.current(store)
-        controller.require(
-            record is not None and record["phase"] == "running",
-            "candidate_not_running",
-        )
-        controller.require(
-            record["revision"] == expected_revision, "batch_candidate_changed"
-        )
-        with capture.capture_run(destination, excluded=excluded) as sink:
-            try:
-                with controller.live(profile, record) as session:
-                    session.attach_record(record)
-                    policy = record["policy"]["policy"]
-                    before = time.monotonic()
-                    resident = session.verify(policy, record["compute_sha256"])
-                    audits["before_seconds"] = time.monotonic() - before
-                    identity = runtime_identity(
-                        session, record, resident, operator_revision
-                    )
-                    endpoint = session.candidate_endpoint
-                    query_deadline = (
-                        session.docker.deadline - FINAL_AUDIT_RESERVE
-                    )
-
-                    def checkpoint():
-                        sink.verify()
-                        session.remaining(1, deadline=query_deadline)
-                        session.check_models(
-                            policy,
-                            record["compute_sha256"],
-                            deadline=query_deadline,
+    with ExitStack() as publication:
+        with controller.controlled(profile) as profile:
+            excluded = _excluded_paths(profile, profile["_control"], cases)
+            with controller.journal(profile["state_root"]) as store:
+                record = controller.current(store)
+                controller.require(
+                    record is not None and record["phase"] == "running",
+                    "candidate_not_running",
+                )
+                controller.require(
+                    record["revision"] == expected_revision,
+                    "batch_candidate_changed",
+                )
+                sink = publication.enter_context(
+                    capture.capture_run(destination, excluded=excluded)
+                )
+                try:
+                    with controller.live(profile, record) as session:
+                        session.attach_record(record)
+                        policy = record["policy"]["policy"]
+                        before = time.monotonic()
+                        resident = session.verify(
+                            policy, record["compute_sha256"]
                         )
-                        session.remaining(1, deadline=query_deadline)
-
-                    try:
-                        controller.require(
-                            expected_identity_sha256 is None
-                            or controller.digest(identity)
-                            == expected_identity_sha256,
-                            "batch_identity_changed",
+                        audits["before_seconds"] = time.monotonic() - before
+                        identity = runtime_identity(
+                            session, record, resident, operator_revision
                         )
-                        for case in specification["cases"]:
+                        endpoint = session.candidate_endpoint
+                        query_deadline = (
+                            session.docker.deadline - FINAL_AUDIT_RESERVE
+                        )
+
+                        def checkpoint():
                             sink.verify()
-                            controller.require(
-                                controller.require_clean_revision(
-                                    controller.ROOT
-                                )
-                                == operator_revision,
-                                "batch_operator_changed",
-                            )
                             session.remaining(1, deadline=query_deadline)
-                            session.observe()
-                            controller.require(
-                                session.candidate_endpoint == endpoint,
-                                "batch_endpoint_changed",
-                            )
-                            report = probe.conversation(
-                                endpoint,
-                                [turn["query"] for turn in case["turns"]],
-                                record["revision"],
-                                identity["catalog_manifest_sha256"],
-                                checkpoint=checkpoint,
+                            session.check_models(
+                                policy,
+                                record["compute_sha256"],
                                 deadline=query_deadline,
                             )
-                            observed, outcome = _observations(
-                                case, report, session.query_context["bundle"]
-                            )
-                            outcomes.append(outcome)
-                            if observed is not None:
-                                captured.append(observed)
-                            if report["status"] != "complete":
-                                error = (
-                                    report["error"]
-                                    or "shared_backend_batch_failed"
-                                )
-                                break
-                    finally:
-                        after = time.monotonic()
-                        session.verify(policy, record["compute_sha256"])
-                        audits["after_seconds"] = time.monotonic() - after
-                # The retained source/model FDs and original native records
-                # must
-                # close successfully before a capture can claim trusted
-                # identity.
-                controller.require(
-                    controller.require_clean_revision(controller.ROOT)
-                    == operator_revision,
-                    "batch_operator_changed",
-                )
-                fully_verified = True
-            except (Exception, KeyboardInterrupt) as failure:
-                error = _diagnostic(failure)
+                            session.remaining(1, deadline=query_deadline)
 
-            for case in specification["cases"][len(outcomes) :]:
-                outcomes.append(
-                    {
-                        "id": case["id"],
-                        "status": "not_run",
-                        "error": None,
-                        "session_reset": None,
-                        "turns": [
-                            {"turn": number, "status": "not_run"}
-                            for number in range(1, len(case["turns"]) + 1)
-                        ],
-                    }
+                        try:
+                            controller.require(
+                                expected_identity_sha256 is None
+                                or controller.digest(identity)
+                                == expected_identity_sha256,
+                                "batch_identity_changed",
+                            )
+                            for case in specification["cases"]:
+                                sink.verify()
+                                controller.require(
+                                    controller.require_clean_revision(
+                                        controller.ROOT
+                                    )
+                                    == operator_revision,
+                                    "batch_operator_changed",
+                                )
+                                session.remaining(1, deadline=query_deadline)
+                                session.observe()
+                                controller.require(
+                                    session.candidate_endpoint == endpoint,
+                                    "batch_endpoint_changed",
+                                )
+                                report = probe.conversation(
+                                    endpoint,
+                                    [turn["query"] for turn in case["turns"]],
+                                    record["revision"],
+                                    identity["catalog_manifest_sha256"],
+                                    checkpoint=checkpoint,
+                                    deadline=query_deadline,
+                                )
+                                observed, outcome = _observations(
+                                    case,
+                                    report,
+                                    session.query_context["bundle"],
+                                )
+                                outcomes.append(outcome)
+                                if observed is not None:
+                                    captured.append(observed)
+                                if report["status"] != "complete":
+                                    error = (
+                                        report["error"]
+                                        or "shared_backend_batch_failed"
+                                    )
+                                    break
+                        finally:
+                            after = time.monotonic()
+                            session.verify(policy, record["compute_sha256"])
+                            audits["after_seconds"] = time.monotonic() - after
+                    # The retained source/model FDs and original native records
+                    # must
+                    # close successfully before a capture can claim trusted
+                    # identity.
+                    controller.require(
+                        controller.require_clean_revision(controller.ROOT)
+                        == operator_revision,
+                        "batch_operator_changed",
+                    )
+                    fully_verified = True
+                except (Exception, KeyboardInterrupt) as failure:
+                    error = _diagnostic(failure)
+
+                for case in specification["cases"][len(outcomes) :]:
+                    outcomes.append(
+                        {
+                            "id": case["id"],
+                            "status": "not_run",
+                            "error": None,
+                            "session_reset": None,
+                            "turns": [
+                                {"turn": number, "status": "not_run"}
+                                for number in range(1, len(case["turns"]) + 1)
+                            ],
+                        }
+                    )
+                status = (
+                    "complete"
+                    if fully_verified and error is None
+                    else "failed"
+                    if fully_verified
+                    else "quarantined"
                 )
-            status = (
-                "complete"
-                if fully_verified and error is None
-                else "failed"
-                if fully_verified
-                else "quarantined"
-            )
-            completed = sum(
-                turn["status"] == "ok"
-                for case in outcomes
-                for turn in case["turns"]
-            )
-            receipt = {
-                "schema_version": 1,
-                "operator_revision": operator_revision,
-                "status": status,
-                "error": error,
-                "identity_verified": fully_verified,
-                "identity": identity,
-                "plan_sha256": plan_digest(specification),
-                "requested_cases": len(specification["cases"]),
-                "requested_turns": sum(
-                    len(c["turns"]) for c in specification["cases"]
-                ),
-                "completed_cases": sum(
-                    c["status"] == "complete" for c in outcomes
-                ),
-                "completed_turns": completed,
-                "audit_timing": audits,
-                "operator_seconds": time.monotonic() - started,
-                "quality_evaluation": "not_run",
-                "unavailable_trace": UNAVAILABLE_TRACE,
-                "models_restarted": False,
-                "public_route_changed": False,
-            }
-            # Raw observations and case IDs stay only in the explicit capture.
-            # A partial capture is not proof the requested suite completed.
-            captured_artifact = sink.write_json(
-                "capture.json",
-                {"schema_version": 1, "cases": captured},
-                max_bytes=MAX_CAPTURE_BYTES,
-            )
-            outcomes_artifact = sink.write_json(
-                "outcomes.json",
-                {"schema_version": 1, "cases": outcomes},
-                max_bytes=MAX_CAPTURE_BYTES,
-            )
-            receipt["artifacts"] = {
-                "capture": captured_artifact,
-                "outcomes": outcomes_artifact,
-            }
-            receipt["operator_seconds"] = time.monotonic() - started
-            sink.write_json("run.json", receipt, max_bytes=64 * 1024)
+                completed = sum(
+                    turn["status"] == "ok"
+                    for case in outcomes
+                    for turn in case["turns"]
+                )
+                receipt = {
+                    "schema_version": 1,
+                    "operator_revision": operator_revision,
+                    "status": status,
+                    "error": error,
+                    "identity_verified": fully_verified,
+                    "identity": identity,
+                    "plan_sha256": plan_digest(specification),
+                    "requested_cases": len(specification["cases"]),
+                    "requested_turns": sum(
+                        len(c["turns"]) for c in specification["cases"]
+                    ),
+                    "completed_cases": sum(
+                        c["status"] == "complete" for c in outcomes
+                    ),
+                    "completed_turns": completed,
+                    "audit_timing": audits,
+                    "operator_seconds": time.monotonic() - started,
+                    "quality_evaluation": "not_run",
+                    "unavailable_trace": UNAVAILABLE_TRACE,
+                    "models_restarted": False,
+                    "public_route_changed": False,
+                }
+                # Raw observations and case IDs stay only in the explicit
+                # capture.
+                # A partial capture is not proof the requested suite completed.
+                captured_artifact = sink.write_json(
+                    "capture.json",
+                    {"schema_version": 1, "cases": captured},
+                    max_bytes=MAX_CAPTURE_BYTES,
+                )
+                outcomes_artifact = sink.write_json(
+                    "outcomes.json",
+                    {"schema_version": 1, "cases": outcomes},
+                    max_bytes=MAX_CAPTURE_BYTES,
+                )
+                receipt["artifacts"] = {
+                    "capture": captured_artifact,
+                    "outcomes": outcomes_artifact,
+                }
+                receipt["operator_seconds"] = time.monotonic() - started
+                sink.write_json("run.json", receipt, max_bytes=64 * 1024)
     # capture_run performs its own final FD/path checks and publishes last.
     return {key: value for key, value in receipt.items() if key != "identity"}
