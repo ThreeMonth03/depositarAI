@@ -211,6 +211,59 @@ class ScopeAdapterTests(unittest.TestCase):
         ):
             OllamaScopeClassifier(transport=transport).classify("找資料")
 
+    def test_unhashable_decisions_use_fixed_adapter_error(self):
+        for decision in ([], {}):
+            with self.subTest(decision=decision):
+                transport = FakeTransport(
+                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
+                    chat(
+                        SCOPE_MODEL,
+                        json.dumps({"decision": decision}),
+                        thinking=UPSTREAM_SECRET,
+                    ),
+                )
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=lambda: 100.0
+                )
+                failure = None
+                try:
+                    classifier.classify("找公開水質資料")
+                except Exception as error:
+                    failure = error
+                self.assertIsInstance(failure, OllamaAdapterError)
+                self.assertEqual(failure.code, "invalid_model_output")
+                self.assertNotIn(UPSTREAM_SECRET, str(failure))
+                self.assertEqual(
+                    [row["request"].method for row in transport.requests],
+                    ["GET", "POST"],
+                )
+
+    def test_decision_admission_preserves_legal_and_scalar_results(self):
+        for decision in ("search", "out_of_scope", "unsafe"):
+            with self.subTest(decision=decision):
+                transport = FakeTransport(
+                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
+                    chat(SCOPE_MODEL, json.dumps({"decision": decision})),
+                )
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=lambda: 100.0
+                )
+                self.assertEqual(classifier.classify("找資料"), decision)
+                self.assertEqual(len(transport.requests), 2)
+        for decision in (None, True, False, 5, 0.5, "other"):
+            with self.subTest(decision=decision):
+                transport = FakeTransport(
+                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
+                    chat(SCOPE_MODEL, json.dumps({"decision": decision})),
+                )
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=lambda: 100.0
+                )
+                with self.assertRaises(OllamaAdapterError) as caught:
+                    classifier.classify("找資料")
+                self.assertEqual(caught.exception.code, "invalid_model_output")
+                self.assertEqual(len(transport.requests), 2)
+
     def test_provider_json_rejects_encoding_duplicates_and_nonfinite(
         self,
     ):
