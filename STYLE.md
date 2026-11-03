@@ -67,7 +67,8 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/operations/metadata` 下的 `source.py`、`sync.py`。
 - `search/operations/jobs/archive.py`。
 - `search/operations/deployment/frontend/policy.py`。
-- `scripts/ci` 的完整 Python 工具目錄與 `scripts/search_jobs.py`。
+- `scripts/ci` 的完整 Python 工具目錄。
+- `scripts/search_jobs.py`、`scripts/search_model_source.py`。
 
 其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
 `python-complexity-<source SHA>` artifact；報告中的既有項目不代表通過全庫守門。

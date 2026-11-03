@@ -94,6 +94,32 @@ class _PinnedRoot:
             ):
                 raise ModelSourceError("model_source_directory_changed")
 
+    def _open_relative_directory(self, parent, name, *, private, create):
+        """Retain an uncached child before checking its identity and policy."""
+        try:
+            named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            if not create:
+                raise
+            self.verify()
+            os.mkdir(name, mode=0o700, dir_fd=parent)
+            os.fsync(parent)
+            named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISDIR(named.st_mode):
+            raise ModelSourceError("model_source_directory_unsafe")
+        child = os.open(name, DIRECTORY_FLAGS, dir_fd=parent)
+        self.descriptors.append(child)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(named.st_mode) or _directory_identity(
+            named
+        ) != _directory_identity(opened):
+            raise ModelSourceError("model_source_directory_changed")
+        _source_directory_policy(opened, self.uid)
+        if private:
+            _private_directory_policy(opened, self.uid)
+        self.records.append((parent, name, child, _directory_identity(opened)))
+        return child
+
     def relative_parent(self, relative, *, private=False, create=False):
         """Retain every parent FD; private creation never repairs existing
         modes.
@@ -128,29 +154,8 @@ class _PinnedRoot:
                 if private:
                     _private_directory_policy(os.fstat(parent), self.uid)
                 continue
-            try:
-                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            except FileNotFoundError:
-                if not create:
-                    raise
-                self.verify()
-                os.mkdir(name, mode=0o700, dir_fd=parent)
-                os.fsync(parent)
-                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISDIR(named.st_mode):
-                raise ModelSourceError("model_source_directory_unsafe")
-            child = os.open(name, DIRECTORY_FLAGS, dir_fd=parent)
-            self.descriptors.append(child)
-            opened = os.fstat(child)
-            if not stat.S_ISDIR(named.st_mode) or _directory_identity(
-                named
-            ) != _directory_identity(opened):
-                raise ModelSourceError("model_source_directory_changed")
-            _source_directory_policy(opened, self.uid)
-            if private:
-                _private_directory_policy(opened, self.uid)
-            self.records.append(
-                (parent, name, child, _directory_identity(opened))
+            child = self._open_relative_directory(
+                parent, name, private=private, create=create
             )
             self.directory_fds[key] = child
             parent = child
@@ -281,6 +286,43 @@ def _destination_policy(info, uid):
         raise ModelSourceError("model_staging_file_unsafe")
 
 
+def _copy_verified_bytes(
+    source_fd,
+    destination_fd,
+    parent,
+    name,
+    opened,
+    expected_sha256,
+    expected_size,
+):
+    """Copy bounded bytes and recheck the retained source and its name."""
+    os.ftruncate(destination_fd, 0)
+    digest, size = hashlib.sha256(), 0
+    while size <= expected_size:
+        block = os.read(source_fd, min(CHUNK_BYTES, expected_size + 1 - size))
+        if not block:
+            break
+        size += len(block)
+        if size > expected_size:
+            raise ModelSourceError("model_source_file_changed")
+        digest.update(block)
+        view = memoryview(block)
+        while view:
+            written = os.write(destination_fd, view)
+            if written <= 0:
+                raise ModelSourceError("model_staging_short_write")
+            view = view[written:]
+    os.fsync(destination_fd)
+    after = os.fstat(source_fd)
+    named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if _file_identity(opened) != _file_identity(after) or _file_identity(
+        after
+    ) != _file_identity(named):
+        raise ModelSourceError("model_source_file_changed")
+    if size != expected_size or digest.hexdigest() != expected_sha256:
+        raise ModelSourceError("model_source_sha256_mismatch")
+
+
 def copy_verified_file(
     source_root, relative, destination, expected_sha256, expected_size
 ):
@@ -338,36 +380,15 @@ def copy_verified_file(
                     staged
                 ):
                     raise ModelSourceError("model_staging_file_changed")
-                os.ftruncate(destination_fd, 0)
-                digest, size = hashlib.sha256(), 0
-                while size <= expected_size:
-                    block = os.read(
-                        source_fd, min(CHUNK_BYTES, expected_size + 1 - size)
-                    )
-                    if not block:
-                        break
-                    size += len(block)
-                    if size > expected_size:
-                        raise ModelSourceError("model_source_file_changed")
-                    digest.update(block)
-                    view = memoryview(block)
-                    while view:
-                        written = os.write(destination_fd, view)
-                        if written <= 0:
-                            raise ModelSourceError("model_staging_short_write")
-                        view = view[written:]
-                os.fsync(destination_fd)
-                after = os.fstat(source_fd)
-                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                if _file_identity(opened) != _file_identity(
-                    after
-                ) or _file_identity(after) != _file_identity(named):
-                    raise ModelSourceError("model_source_file_changed")
-                if (
-                    size != expected_size
-                    or digest.hexdigest() != expected_sha256
-                ):
-                    raise ModelSourceError("model_source_sha256_mismatch")
+                _copy_verified_bytes(
+                    source_fd,
+                    destination_fd,
+                    parent,
+                    name,
+                    opened,
+                    expected_sha256,
+                    expected_size,
+                )
                 completed = os.fstat(destination_fd)
                 target_named = os.stat(
                     destination.name, dir_fd=target.fd, follow_symlinks=False
