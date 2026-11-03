@@ -16,6 +16,7 @@ GATED_PATHS = (
     "search/operations/cli.py",
     "search/operations/config.py",
     "search/operations/doctor.py",
+    "search/operations/local_status.py",
     "search/api/shared/middleware.py",
     "search/http",
     "search/web/app.py",

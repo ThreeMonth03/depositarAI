@@ -56,6 +56,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/cli.py", "")
         self.write("search/operations/config.py", "")
         self.write("search/operations/doctor.py", "")
+        self.write("search/operations/local_status.py", "")
         self.write("search/api/shared/middleware.py", "")
         self.write("search/http/__init__.py", "")
         self.write("search/web/app.py", "")
@@ -164,6 +165,7 @@ class PythonLintGateTests(unittest.TestCase):
         for relative in (
             "search/planning/branch.py",
             "search/operations/doctor.py",
+            "search/operations/local_status.py",
             "search/operations/documents/future_policy.py",
         ):
             with self.subTest(path=relative):
