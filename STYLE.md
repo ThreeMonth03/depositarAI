@@ -59,8 +59,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/quality`、`search/operations/deployment/candidate`。
 - `search/operations/deployment/provider`。
-- `search/operations/documents/` 下的 `cache.py`、`controller.py`、`derivation.py`、
-  `batches.py`、`source.py`、`enrichment.py`、`extractor.py`。
+- `search/operations/documents` 的完整目錄。
 - `search/operations/metadata/source.py`。
 - `search/operations/jobs/archive.py`。
 - `search/operations/deployment/frontend/policy.py`。

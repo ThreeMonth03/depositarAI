@@ -64,13 +64,9 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/candidate/batch/__init__.py", ""
         )
         self.write("search/operations/deployment/provider/__init__.py", "")
-        self.write("search/operations/documents/cache.py", "")
-        self.write("search/operations/documents/controller.py", "")
-        self.write("search/operations/documents/derivation.py", "")
-        self.write("search/operations/documents/batches.py", "")
-        self.write("search/operations/documents/source.py", "")
-        self.write("search/operations/documents/enrichment.py", "")
-        self.write("search/operations/documents/extractor.py", "")
+        self.write(
+            "search/operations/documents/__init__.py", '"""Fixtures."""\n'
+        )
         self.write("search/operations/jobs/archive.py", "")
         self.write("scripts/search_jobs.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
@@ -152,7 +148,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.environment["COMPLEXITY_REPORT"] = str(report)
         source = "def choose(value):\n" + "".join(
             f"    if value == {index}:\n        return {index}\n"
-            for index in range(11)
+            for index in range(10)
         )
         self.write("search/legacy.py", source + "    return -1\n")
         formatted = self.run_command("make", "format")
@@ -163,16 +159,23 @@ class PythonLintGateTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
         self.assertTrue(json.loads(report.read_text()))
 
-        shutil.move(
-            self.root / "search/legacy.py",
-            self.root / "search/planning/branch.py",
-        )
-        before = self.snapshot()
-        result = self.run_command("make", "lint")
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("C901", result.stdout)
-        self.assertEqual(before, self.snapshot())
-        self.assertTrue(json.loads(report.read_text()))
+        for relative in (
+            "search/planning/branch.py",
+            "search/operations/documents/future_policy.py",
+        ):
+            with self.subTest(path=relative):
+                path = self.root / relative
+                shutil.move(self.root / "search/legacy.py", path)
+                before = self.snapshot()
+                result = self.run_command("make", "lint")
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("C901", result.stdout)
+                self.assertEqual(before, self.snapshot())
+                findings = json.loads(report.read_text())
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(Path(findings[0]["filename"]), path)
+                self.assertEqual(findings[0]["code"], "C901")
+                shutil.move(path, self.root / "search/legacy.py")
 
     def test_wrong_or_missing_tool_version_refuses_before_checks(self):
         for tool, replacement in (("ruff", "0"), ("vulture", None)):

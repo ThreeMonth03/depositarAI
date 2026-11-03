@@ -109,13 +109,7 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/quality",
                 "search/operations/deployment/candidate",
                 "search/operations/deployment/provider",
-                "search/operations/documents/cache.py",
-                "search/operations/documents/controller.py",
-                "search/operations/documents/derivation.py",
-                "search/operations/documents/batches.py",
-                "search/operations/documents/source.py",
-                "search/operations/documents/enrichment.py",
-                "search/operations/documents/extractor.py",
+                "search/operations/documents",
                 "search/operations/jobs/archive.py",
                 "search/operations/metadata/source.py",
                 "search/operations/deployment/frontend/policy.py",
@@ -209,6 +203,10 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/operations/documents/source.py",
                 "search/operations/documents/enrichment.py",
                 "search/operations/documents/extractor.py",
+                "search/operations/documents/sets.py",
+                "search/operations/documents/__init__.py",
+                "search/operations/documents/future_policy.py",
+                "search/operations/documents/future/nested.py",
                 "search/operations/jobs/archive.py",
                 "search/operations/metadata/source.py",
                 "search/operations/deployment/frontend/policy.py",
@@ -226,7 +224,7 @@ class RealComplexityGateTests(unittest.TestCase):
             )
             complex_source = "def policy(value):\n" + "".join(
                 f"    if value == {i}:\n        return {i}\n"
-                for i in range(11)
+                for i in range(10)
             )
             report = Path(name) / "report.json"
             command = [
