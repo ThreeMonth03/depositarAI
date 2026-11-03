@@ -276,23 +276,37 @@ class PythonLintWorkflowTests(unittest.TestCase):
             "path: ${{ runner.temp }}/depositar-complexity.json", lint
         )
         self.assertIn("persist-credentials: false", lint)
-        self.assertIn("needs: [lint]", validate)
+        self.assertIn(
+            "needs: [lint, core-source, core-host, core-api]", validate
+        )
         self.assertIn("if: always()", validate)
         self.assertIn("LINT_RESULT: ${{ needs.lint.result }}", validate)
         command = 'test "$LINT_RESULT" = success'
-        self.assertIn("run: " + command, validate)
+        block = re.search(
+            r"(?m)^        run: \|\n((?:          [^\n]*\n)+)", validate
+        )
+        self.assertIsNotNone(block)
+        script = "\n".join(line[10:] for line in block.group(1).splitlines())
+        self.assertIn(command, script)
         self.assertLess(validate.index(command), validate.index("uses:"))
         for outcome in ("success", "failure", "cancelled", "skipped", ""):
             with self.subTest(outcome=outcome):
                 result = subprocess.run(
-                    ["bash", "-c", command],
-                    env={**os.environ, "LINT_RESULT": outcome},
+                    ["bash", "-c", script],
+                    env={
+                        **os.environ,
+                        "LINT_RESULT": outcome,
+                        "SOURCE_RESULT": "success",
+                        "HOST_RESULT": "success",
+                        "API_RESULT": "success",
+                    },
                     capture_output=True,
                     timeout=5,
                 )
                 self.assertEqual(outcome == "success", result.returncode == 0)
-        self.assertIn("scripts/ci/source-package.sh", validate)
-        self.assertIn("run: make search-ci", validate)
+        self.assertIn("scripts/ci/source-package.sh", jobs["core-source"])
+        self.assertIn("--phase host", jobs["core-host"])
+        self.assertIn("--phase api", jobs["core-api"])
         self.assertIn("permissions:\n  contents: read", source)
         for job in (
             "private-website-oss-policy",

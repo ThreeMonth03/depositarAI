@@ -89,7 +89,7 @@ class WorkflowSyntaxTests(unittest.TestCase):
             encoding="utf-8"
         )
         installer = "run: bash scripts/ci/install-compose.sh"
-        self.assertEqual(4, ci.count(installer))
+        self.assertEqual(5, ci.count(installer))
         self.assertEqual(2, package.count(installer))
 
     def test_new_ci_helpers_are_in_the_core_syntax_and_unit_checks(
@@ -149,9 +149,12 @@ class SourcePackageWorkflowTests(unittest.TestCase):
         ):
             with self.subTest(job=name):
                 self.assertIn("run: " + command, jobs[name])
-                if name != "private-website":
-                    self.assertIn("run: " + command, self.jobs(self.ci)[name])
         ci_jobs = self.jobs(self.ci)
+        for phase in ("host", "api"):
+            self.assertIn(
+                "run: bash scripts/search-ci.sh --phase " + phase,
+                ci_jobs["core-" + phase],
+            )
         for suite, _ in WEBSITE_SUITES:
             self.assertIn(
                 "run: bash scripts/test-search-web.sh --suite " + suite,
@@ -525,6 +528,218 @@ class WebsiteAggregateTests(unittest.TestCase):
                         else:
                             self.assertNotEqual(0, result.returncode)
                             self.assertFalse(output.exists())
+
+
+CORE_JOBS = (
+    ("core-source", "SOURCE"),
+    ("core-host", "HOST"),
+    ("core-api", "API"),
+)
+
+
+class CoreAggregateTests(unittest.TestCase):
+    def setUp(self):
+        self.jobs = SourcePackageWorkflowTests.jobs(
+            (ROOT / ".github/workflows/ci.yml").read_text()
+        )
+        blocks = literal_run_blocks(self.jobs["validate"])
+        self.results = next(
+            block for block in blocks if 'test "$LINT_RESULT"' in block
+        )
+        self.identity = next(
+            block for block in blocks if "SOURCE_SOURCE_SHA" in block
+        )
+
+    @staticmethod
+    def environment():
+        values = {
+            "GITHUB_SHA": "a" * 40,
+            "EXPECTED_SHA": "a" * 40,
+            "EXPECTED_TREE": "b" * 40,
+            "LINT_RESULT": "success",
+        }
+        for _, prefix in CORE_JOBS:
+            values.update(
+                {
+                    prefix + "_RESULT": "success",
+                    prefix + "_GATE_OUTCOME": "success",
+                    prefix + "_SOURCE_SHA": "a" * 40,
+                    prefix + "_SOURCE_TREE": "b" * 40,
+                }
+            )
+        return values
+
+    @staticmethod
+    def execute(block, values, *, missing=(), cwd=None):
+        environment = {**os.environ, **values}
+        for key in missing:
+            environment.pop(key, None)
+        return subprocess.run(
+            ["bash", "-c", block],
+            env=environment,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def test_workflow_keeps_source_order_outputs_and_parallel_dependencies(
+        self,
+    ):
+        validate = self.jobs["validate"]
+        self.assertIn(
+            "needs: [lint, core-source, core-host, core-api]", validate
+        )
+        self.assertIn("if: always()", validate)
+        self.assertIn("if: cancelled()\n        run: exit 1", validate)
+        self.assertNotIn("continue-on-error", validate)
+        self.assertLess(
+            validate.index('test "$LINT_RESULT"'), validate.index("uses:")
+        )
+        source = self.jobs["core-source"]
+        self.assertIn("needs: [lint]", source)
+        self.assertIn("fetch-depth: 0", source)
+        self.assertIn("run: bash scripts/ci/install-gitleaks.sh", source)
+        self.assertIn("bash scripts/ci/source-package.sh", source)
+        self.assertIn("id: scan\n        run:", source)
+        for name, prefix in CORE_JOBS:
+            block = self.jobs[name]
+            for field in ("source_sha", "source_tree", "gate_outcome"):
+                self.assertIn(field + ": ${{ steps.", block)
+            for variable, output in (
+                ("GATE_OUTCOME", "gate_outcome"),
+                ("SOURCE_SHA", "source_sha"),
+                ("SOURCE_TREE", "source_tree"),
+            ):
+                self.assertIn(
+                    prefix
+                    + "_"
+                    + variable
+                    + ": ${{ needs."
+                    + name
+                    + ".outputs."
+                    + output
+                    + " }}",
+                    validate,
+                )
+            self.assertIn("ref: ${{ github.sha }}", block)
+            self.assertIn("persist-credentials: false", block)
+        for phase in ("host", "api"):
+            block = self.jobs["core-" + phase]
+            self.assertIn("needs: [core-source]", block)
+            self.assertNotIn("if:", block)
+            self.assertIn("gate_outcome: ${{ steps.check.outcome }}", block)
+            self.assertIn(
+                "id: check\n        run: bash scripts/search-ci.sh --phase "
+                + phase,
+                block,
+            )
+            self.assertLess(
+                block.index("SOURCE_GATE_OUTCOME"), block.index("--phase")
+            )
+        for block in (self.results, self.identity):
+            self.assertEqual(
+                0, self.execute(block, self.environment()).returncode
+            )
+
+    def test_failure_cancelled_skipped_missing_or_unknown_results_fail(self):
+        for prefix, outcome in product(
+            ("LINT", "SOURCE", "HOST", "API"),
+            ("failure", "cancelled", "skipped", "", "unknown"),
+        ):
+            with self.subTest(prefix=prefix, outcome=outcome):
+                values = self.environment()
+                values[prefix + "_RESULT"] = outcome
+                result = self.execute(self.results, values)
+                self.assertNotEqual(0, result.returncode)
+        for prefix in ("LINT", "SOURCE", "HOST", "API"):
+            result = self.execute(
+                self.results,
+                self.environment(),
+                missing=(prefix + "_RESULT",),
+            )
+            self.assertNotEqual(0, result.returncode)
+
+    def test_successful_jobs_require_successful_check_steps(self):
+        for (_, prefix), outcome in product(
+            CORE_JOBS, ("failure", "cancelled", "skipped", "", "unknown")
+        ):
+            with self.subTest(prefix=prefix, outcome=outcome):
+                values = self.environment()
+                values[prefix + "_GATE_OUTCOME"] = outcome
+                self.assertNotEqual(
+                    0, self.execute(self.identity, values).returncode
+                )
+
+    def test_wrong_missing_and_collectively_invalid_source_ids_fail(self):
+        keys = ["GITHUB_SHA", "EXPECTED_SHA", "EXPECTED_TREE"]
+        for _, prefix in CORE_JOBS:
+            keys += [prefix + "_SOURCE_SHA", prefix + "_SOURCE_TREE"]
+        for key, value in product(keys, ("", "c" * 40, "invalid")):
+            with self.subTest(key=key, value=value):
+                values = self.environment()
+                values[key] = value
+                self.assertNotEqual(
+                    0, self.execute(self.identity, values).returncode
+                )
+        required = keys + [p + "_GATE_OUTCOME" for _, p in CORE_JOBS]
+        for key in required:
+            with self.subTest(missing=key):
+                result = self.execute(
+                    self.identity, self.environment(), missing=(key,)
+                )
+                self.assertNotEqual(0, result.returncode)
+        for suffix in ("SHA", "TREE"):
+            for malformed in ("a" * 39, "g" * 40, "A" * 40):
+                values = self.environment()
+                for key in keys:
+                    if key.endswith(suffix):
+                        values[key] = malformed
+                self.assertNotEqual(
+                    0, self.execute(self.identity, values).returncode
+                )
+
+    def test_children_bind_real_checkout_before_any_product_command(self):
+        def git(value):
+            return subprocess.check_output(
+                ["git", "rev-parse", value], cwd=ROOT, text=True
+            ).strip()
+
+        sha, tree = git("HEAD"), git("HEAD^{tree}")
+        for phase in ("host", "api"):
+            block = next(
+                b
+                for b in literal_run_blocks(self.jobs["core-" + phase])
+                if "SOURCE_GATE_OUTCOME" in b
+            )
+            with tempfile.TemporaryDirectory(prefix="core-ci-source-") as raw:
+                output = Path(raw) / "outputs"
+                values = {
+                    "GITHUB_SHA": sha,
+                    "EXPECTED_SHA": sha,
+                    "EXPECTED_TREE": tree,
+                    "SOURCE_GATE_OUTCOME": "success",
+                    "GITHUB_OUTPUT": str(output),
+                }
+                result = self.execute(block, values, cwd=ROOT)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(
+                    f"sha={sha}\ntree={tree}\n", output.read_text()
+                )
+                for key, wrong in (
+                    ("SOURCE_GATE_OUTCOME", "skipped"),
+                    ("SOURCE_GATE_OUTCOME", "failure"),
+                    ("EXPECTED_SHA", "c" * 40),
+                    ("EXPECTED_TREE", "c" * 40),
+                    ("GITHUB_SHA", "c" * 40),
+                ):
+                    with self.subTest(phase=phase, key=key, wrong=wrong):
+                        output.unlink(missing_ok=True)
+                        result = self.execute(
+                            block, {**values, key: wrong}, cwd=ROOT
+                        )
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
