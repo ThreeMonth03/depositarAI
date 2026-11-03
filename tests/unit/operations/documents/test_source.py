@@ -1,5 +1,6 @@
 """Protect complete-file acquisition and fixed public endpoint boundaries."""
 
+import hashlib
 import os
 import sys
 import unittest
@@ -260,3 +261,256 @@ class DocumentSourceTests(unittest.TestCase):
                 source.SourceError, "^document_source_tool_unavailable$"
             ):
                 source._run(["missing"])
+
+    def test_url_rejection_precedes_metadata_and_identity_hashing(self):
+        cases = (
+            (
+                resource(url="https://example.test/data.csv", id="\ud800"),
+                "document_source_url_unsupported",
+            ),
+            (
+                resource(url="https://data.depositar.io/\ud800", id=""),
+                "document_source_url_unsupported",
+            ),
+            (resource(id="\ud800"), "document_source_metadata_invalid"),
+            (
+                resource(last_modified="\ud800"),
+                "document_source_metadata_invalid",
+            ),
+        )
+        with patch.object(source.hashlib, "sha256") as digest:
+            for item, expected in cases:
+                with (
+                    self.subTest(expected=expected),
+                    self.assertRaises(source.SourceError) as caught,
+                ):
+                    source.source_identity(item)
+                self.assertIs(type(caught.exception), source.SourceError)
+                self.assertEqual(caught.exception.args, (expected,))
+                self.assertEqual(caught.exception.code, expected)
+            digest.assert_not_called()
+
+    def test_identity_preserves_original_utf8_url_and_declared_types(self):
+        url = "https://DATA.DEPOSITAR.IO:443/水質.csv"
+        expected_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        for size in (None, 1, 1.5):
+            with self.subTest(size=size):
+                item = resource(url=url, format=" pdf ", size=size)
+                identity = source.source_identity(item)
+                self.assertEqual(
+                    identity,
+                    {
+                        "resource_id": item["id"],
+                        "source_url_sha256": expected_hash,
+                        "format": "PDF",
+                        "declared_size": size,
+                        "declared_last_modified": item["last_modified"],
+                    },
+                )
+                self.assertIs(type(identity["declared_size"]), type(size))
+        self.assertNotEqual(
+            expected_hash, hashlib.sha256(url.lower().encode()).hexdigest()
+        )
+
+    def test_huge_declared_size_is_identity_data_until_fetch_admission(self):
+        item = resource(size=10**400)
+        identity = source.source_identity(item)
+        self.assertEqual(identity["declared_size"], 10**400)
+        self.assertIs(type(identity["declared_size"]), int)
+        with patch.object(source, "_run") as run:
+            with self.assertRaises(source.SourceError) as caught:
+                source.fetch(item)
+            run.assert_not_called()
+        self.assertIs(type(caught.exception), source.SourceError)
+        self.assertEqual(caught.exception.args, ("document_source_too_large",))
+
+    def test_non_success_status_precedes_header_parse_and_body_checks(self):
+        with patch.object(source.http.client, "parse_headers") as parse:
+            for status in (b"HTTP/2 302", b"HTTP/2 206"):
+                with (
+                    self.subTest(status=status),
+                    self.assertRaises(source.SourceError) as caught,
+                ):
+                    source._response(
+                        response(
+                            b"",
+                            status=status,
+                            headers=[b"Content-Length: invalid"],
+                        )
+                    )
+                self.assertIs(type(caught.exception), source.SourceError)
+                self.assertEqual(
+                    caught.exception.args, ("document_source_http_failed",)
+                )
+            parse.assert_not_called()
+
+    def test_informational_blocks_share_the_count_and_header_byte_budget(self):
+        interim = response(
+            b"", status=b"HTTP/1.1 103 Early Hints", headers=[b"X: ignored"]
+        )
+        body = b"abc"
+        final = response(body, headers=[b"Content-Length: 3"])
+        raw = interim * 4 + final
+        header_bytes = len(raw) - len(body)
+        with patch.object(source, "MAX_HEADER_BYTES", header_bytes):
+            self.assertEqual(source._response(raw)[0], body)
+        for payload, limit in (
+            (raw, header_bytes - 1),
+            (interim * 5 + final, source.MAX_HEADER_BYTES),
+        ):
+            with (
+                self.subTest(limit=limit),
+                patch.object(source, "MAX_HEADER_BYTES", limit),
+                self.assertRaises(source.SourceError) as caught,
+            ):
+                source._response(payload)
+            self.assertIs(type(caught.exception), source.SourceError)
+            self.assertEqual(
+                caught.exception.args, ("document_source_headers_invalid",)
+            )
+
+    def test_content_length_failures_precede_body_caps_and_empty_checks(self):
+        cases = (
+            (
+                b"abcd",
+                [b"Content-Length: 3"],
+                "document_source_incomplete",
+            ),
+            (b"abc", [b"Content-Length: 4"], "document_source_too_large"),
+            (b"", [b"Content-Length: 1"], "document_source_incomplete"),
+            (b"", [b"Content-Length: 0"], "document_source_empty"),
+            (b"abcd", [], "document_source_too_large"),
+            (
+                b"abc",
+                [b"Content-Length: 4", b"Content-Encoding: gzip"],
+                "document_source_headers_invalid",
+            ),
+        )
+        with patch.object(source, "MAX_FILE_BYTES", 3):
+            for body, headers, expected in cases:
+                with (
+                    self.subTest(body=body, headers=headers),
+                    self.assertRaises(source.SourceError) as caught,
+                ):
+                    source._response(response(body, headers=headers))
+                self.assertIs(type(caught.exception), source.SourceError)
+                self.assertEqual(caught.exception.args, (expected,))
+
+    def test_body_admission_precedes_metadata_header_projection(self):
+        duplicate_etag = [b"ETag: one", b"ETag: two"]
+        framing = ["Content-Length", "Content-Encoding", "Transfer-Encoding"]
+        for body, expected, names in (
+            (b"", "document_source_empty", framing),
+            (
+                b"abc",
+                "document_source_headers_invalid",
+                framing + ["Content-Type", "ETag"],
+            ),
+        ):
+            with (
+                self.subTest(body=body),
+                patch.object(
+                    source, "_header_value", wraps=source._header_value
+                ) as header,
+                self.assertRaises(source.SourceError) as caught,
+            ):
+                source._response(response(body, headers=duplicate_etag))
+            self.assertIs(type(caught.exception), source.SourceError)
+            self.assertEqual(caught.exception.args, (expected,))
+            self.assertEqual(
+                [call.args[1] for call in header.call_args_list], names
+            )
+        with patch.object(
+            source, "_header_value", wraps=source._header_value
+        ) as header:
+            observed, metadata = source._response(response(b"abc"))
+        self.assertEqual(observed, b"abc")
+        self.assertEqual(
+            metadata, {"content_type": "", "etag": None, "last_modified": None}
+        )
+        self.assertEqual(
+            [call.args[1] for call in header.call_args_list],
+            framing + ["Content-Type", "ETag", "Last-Modified"],
+        )
+
+    def test_binary_bodies_and_bounded_headers_keep_exact_values(self):
+        body = b"\xff\x00"
+        observed, metadata = source._response(
+            response(body, headers=[b"Content-Length: 2", b"ETag: \xff"])
+        )
+        self.assertEqual(observed, body)
+        self.assertIs(type(observed), bytes)
+        self.assertEqual(metadata["etag"], "ÿ")
+        for name, key, limit in (
+            ("Content-Type", "content_type", 256),
+            ("ETag", "etag", 512),
+            ("Last-Modified", "last_modified", 128),
+        ):
+            with self.subTest(header=name):
+                prefix = name.encode("ascii") + b": "
+                _, headers = source._response(
+                    response(body, headers=[prefix + b"a" * limit])
+                )
+                self.assertEqual(headers[key], "a" * limit)
+                with self.assertRaises(source.SourceError) as caught:
+                    source._response(
+                        response(body, headers=[prefix + b"a" * (limit + 1)])
+                    )
+                self.assertIs(type(caught.exception), source.SourceError)
+                self.assertEqual(
+                    caught.exception.args,
+                    ("document_source_headers_invalid",),
+                )
+
+    def test_header_parser_errors_preserve_closed_and_unknown_failures(self):
+        for error in (
+            source.http.client.HTTPException("synthetic parser failure"),
+            ValueError("synthetic parser failure"),
+        ):
+            with (
+                self.subTest(error=type(error)),
+                patch.object(
+                    source.http.client, "parse_headers", side_effect=error
+                ),
+                self.assertRaises(source.SourceError) as caught,
+            ):
+                source._response(response(b"abc"))
+            self.assertIs(type(caught.exception), source.SourceError)
+            self.assertEqual(
+                caught.exception.args, ("document_source_headers_invalid",)
+            )
+            self.assertTrue(caught.exception.__suppress_context__)
+        error = RuntimeError("synthetic parser failure")
+        with (
+            patch.object(
+                source.http.client, "parse_headers", side_effect=error
+            ),
+            self.assertRaises(RuntimeError) as caught,
+        ):
+            source._response(response(b"abc"))
+        self.assertIs(caught.exception, error)
+
+    def test_acquisition_forwards_cache_diagnostics_without_reclassification(
+        self,
+    ):
+        for code in (
+            "document_cache_io_failed",
+            "document_cache_record_invalid",
+            "document_cache_body_invalid",
+        ):
+            with (
+                self.subTest(code=code),
+                patch.object(
+                    source.cache,
+                    "locked",
+                    side_effect=source.cache.CacheError(code),
+                ),
+                patch.object(source, "fetch") as fetch,
+                self.assertRaises(source.SourceError) as caught,
+            ):
+                source.acquire("synthetic-unused-cache", resource(), now=100)
+            self.assertIs(type(caught.exception), source.SourceError)
+            self.assertEqual(caught.exception.args, (code,))
+            self.assertEqual(caught.exception.code, code)
+            self.assertTrue(caught.exception.__suppress_context__)
+            fetch.assert_not_called()
