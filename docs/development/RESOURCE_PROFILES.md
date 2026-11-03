@@ -97,9 +97,32 @@ python3 scripts/depositarai.py profile-resources status \
 若記錄中的 helper 尚存在，工具會拒絕繼續。依該筆執行記錄辨識並處理那一個 helper
 後，再執行 `run`。
 
-下載或 helper 執行失敗會保留 `failed` 記錄。要重試時，在相同 `run` 指令加上
-`--retry-failed`；待辦項目優先，每個資源累計最多三次嘗試，單次總量仍受
-`--max-resources` 限制。
+已知的單一資源拒絕會保留 `failed` 記錄並繼續下一筆，不從計畫分母刪除：
+
+| 來源錯誤碼 | 意義 |
+|---|---|
+| `document_source_http_failed` | HTTP 請求失敗 |
+| `document_source_timeout` | 下載逾時 |
+| `document_source_too_large` | 素材超過大小限制 |
+| `document_source_empty` | 下載內容為空 |
+| `document_source_incomplete` | 下載內容不完整 |
+| `document_source_headers_invalid` | 回應標頭不符合來源政策 |
+| `document_source_url_unsupported` | 單一資源連結不符合來源政策 |
+| `document_source_metadata_invalid` | 單一資源的下載 metadata 無效 |
+
+要重試這些 `failed` 項目時，在相同 `run` 指令加上 `--retry-failed`；待辦項目
+優先，每個資源累計最多三次嘗試，單次總量仍受 `--max-resources` 限制。
+
+其他來源錯誤、快取失效或解析工具例外會立即停止這次 `run`，不處理下一筆、
+不發布完成集合。資源處理已建立的 `running` 意圖及 helper 身分會保留；
+前置檢查失敗不建立新意圖。已完成項目仍保留；先確認儲存狀態、工具與該 helper，
+再依正常續跑流程重新驗證。不要把未明錯誤改成完成、刪除執行記錄或直接清除
+佇列中的 active intent。CLI 可能只回報安全的通用操作失敗訊息，
+不保證顯示每種底層錯誤碼。
+
+未分類的 `document_source_fetch_failed` 也會停止；它可能來自單一站台的 TLS／DNS
+問題，也可能來自執行工具或寫入錯誤，目前無法安全地一律當作單檔失敗。解析工具的
+例外涵蓋建置、檢查、執行與清理階段，同樣保守停止；正常的解析結果則依下表處理。
 
 下列抽取結果都有 profile，視為已處理，不由 `--retry-failed` 重新解析：
 
@@ -107,6 +130,9 @@ python3 scripts/depositarai.py profile-resources status \
 - `empty_text`：沒有可抽取文字；PDF 可能需要 OCR，也可能本來是空白文件。
 - `unsupported_format`：實際種類不符合支援的 CSV／PDF。
 - `parse_error`：抽取器已回報解析失敗；保留診斷以調整後續處理政策。
+
+`parse_error` 計入 `profile_count` 及 `failed_count`，以 profile 身分封入集合；
+它與沒有 profile 的下載 `failed` 記錄不同，兩者都保留在原計畫分母。
 
 來源素材與解析結果分開保存。需要取得素材時，24 小時內的來源快取會核對內容
 雜湊，沿用取得時間；這不表示已重新向來源確認。解析快取另綁定內容 SHA256、
@@ -124,7 +150,7 @@ metadata manifest 改變時，原 profiles 仍屬於原計畫，不能改寫 man
 選取清單及相同解析政策 `prepare` 一份新的 target state，再明確指定來源：
 
 ```sh
-timeout --signal=TERM --kill-after=30s 600s \
+timeout --signal=TERM --kill-after=30s 570s \
   python3 -I -S -B scripts/depositarai.py profile-resources derive \
   --source-bundle /absolute/private/origin/sha256-SOURCE_BUNDLE_ID \
   --source-state-root /absolute/private/origin-profiles \
@@ -145,8 +171,10 @@ origin 的 receipts、profiles 及素材不變。缺失、不合格或尚未驗�
 target 計畫分母，之後可用正常 `run` 處理；不會偷偷改走網路或解析流程。
 
 每次最多驗證 20 份、合計 320 MiB 素材；可用 `--max-resources`／`--max-bytes`
-調低。`--wall-seconds` 預設且最多 300 秒，在有界 IO 操作之間檢查；上例另以
-系統 `timeout` 限制整個主機程序。`checkpoint` 回傳 exit 2，`partial` 回傳 1，
+調低。`--wall-seconds` 預設且最多 300 秒，在有界 IO 操作之間合作式檢查；
+上例外層 `timeout` 在 570 秒送出 TERM，再給最多 30 秒的終止寬限，共配置
+600 秒的程序終止預算。這與內層的 300 秒檢查是不同界線。
+`checkpoint` 回傳 exit 2，`partial` 回傳 1，
 正常完成回傳 0。中斷後重跑相同指令會核對已發布結果，不覆寫既有證據。
 
 回報的 `derived_count` 是本次完成數；`source_candidate_count` 只代表 outcome

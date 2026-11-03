@@ -26,6 +26,18 @@ CHECKPOINT_RESERVE = 16 * 1024**2
 PROFILE_STATUSES = frozenset(
     {"ok", "empty_text", "unsupported_format", "parse_error"}
 )
+RESOURCE_FAILURE_CODES = frozenset(
+    {
+        "document_source_http_failed",
+        "document_source_timeout",
+        "document_source_too_large",
+        "document_source_empty",
+        "document_source_incomplete",
+        "document_source_headers_invalid",
+        "document_source_url_unsupported",
+        "document_source_metadata_invalid",
+    }
+)
 ERROR_CODES = frozenset(
     {
         "document_batch_selection_invalid",
@@ -490,6 +502,118 @@ def _export(descriptor, plan, rows):
     )
 
 
+def _resource_failure_code(error):
+    # Unknown runtime/cache errors must retain the running recovery intent.
+    if (
+        type(error) is source.SourceError
+        and len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in RESOURCE_FAILURE_CODES
+    ):
+        return error.args[0]
+    return None
+
+
+def _attempt_resource(
+    state_root,
+    descriptor,
+    plan,
+    plan_sha,
+    image,
+    entry,
+    prior,
+    selected,
+    children,
+):
+    """Persist one running intent and commit only a trustworthy result."""
+    extractions, profiles, outcomes = children
+    row = {
+        "schema_version": 1,
+        "plan_sha256": plan_sha,
+        "dataset_id": entry["dataset_id"],
+        "resource_id": entry["resource_id"],
+        "attempt": (
+            prior["attempt"]
+            if prior["status"] == "running"
+            else prior["attempt"] + 1
+        )
+        if prior
+        else 1,
+        "status": "running",
+        "helper_name": "depositarai-extract-" + uuid.uuid4().hex,
+    }
+    name = entry["resource_id"] + ".json"
+    private_io.write_json(
+        outcomes, name, row, replace=True, max_bytes=MAX_OUTCOME_BYTES
+    )
+    try:
+        dataset_id, resource = selected
+        row.update(
+            controller.process(
+                dataset_id,
+                resource,
+                plan["catalog_manifest_sha256"],
+                state_root,
+                image,
+                plan["policy"]["encoding"],
+                plan["policy"]["header_policy"],
+                extractions,
+                profiles,
+                container_name=row["helper_name"],
+            )
+        )
+    except (source.SourceError, extractor.ExtractorError) as error:
+        code = _resource_failure_code(error)
+        if code is None:
+            raise
+        row.update(status="failed", code=code)
+    for child, child_name in (
+        (extractions, "extractions"),
+        (profiles, "profiles"),
+        (outcomes, "outcomes"),
+    ):
+        private_io.verify_directory(child, state_root / child_name)
+    private_io.verify_directory(descriptor, state_root)
+    private_io.write_json(
+        outcomes, name, row, replace=True, max_bytes=MAX_OUTCOME_BYTES
+    )
+    return row
+
+
+def _prepare_execution(
+    state_root, descriptor, plan, work, rows, tool, source_root
+):
+    """Validate space and unfinished helpers before publishing the tool."""
+    required = (
+        len(work) * (source.MAX_FILE_BYTES + 2 * controller.MAX_RECORD_BYTES)
+        + CHECKPOINT_RESERVE
+    )
+    if (
+        shutil.disk_usage(state_root).free < required
+        or shutil.disk_usage(tempfile.gettempdir()).free
+        < source.MAX_FILE_BYTES + CHECKPOINT_RESERVE
+    ):
+        raise BatchError("document_batch_insufficient_space")
+    for index in work:
+        prior = rows[index]
+        if (
+            prior is not None
+            and prior["status"] == "running"
+            and extractor.helper_exists(prior["helper_name"])
+        ):
+            raise BatchError("document_batch_helper_active")
+    image = extractor.build_image(_source_root(source_root))
+    if (
+        tool is not None
+        and image != tool
+        or image["source_sha256"] != plan["extractor_source_sha256"]
+    ):
+        raise BatchError("document_batch_tool_changed")
+    private_io.verify_directory(descriptor, state_root)
+    controller._publish(descriptor, "tool.json", image)
+    return image
+
+
 def run(
     bundle_path,
     state_root,
@@ -559,34 +683,9 @@ def run(
         )
         work = (pending + retries)[:max_resources]
         if work:
-            required = (
-                len(work)
-                * (source.MAX_FILE_BYTES + 2 * controller.MAX_RECORD_BYTES)
-                + CHECKPOINT_RESERVE
+            image = _prepare_execution(
+                state_root, descriptor, plan, work, rows, tool, source_root
             )
-            if (
-                shutil.disk_usage(state_root).free < required
-                or shutil.disk_usage(tempfile.gettempdir()).free
-                < source.MAX_FILE_BYTES + CHECKPOINT_RESERVE
-            ):
-                raise BatchError("document_batch_insufficient_space")
-            for index in work:
-                prior = rows[index]
-                if (
-                    prior is not None
-                    and prior["status"] == "running"
-                    and extractor.helper_exists(prior["helper_name"])
-                ):
-                    raise BatchError("document_batch_helper_active")
-            image = extractor.build_image(_source_root(source_root))
-            if (
-                tool is not None
-                and image != tool
-                or image["source_sha256"] != plan["extractor_source_sha256"]
-            ):
-                raise BatchError("document_batch_tool_changed")
-            private_io.verify_directory(descriptor, state_root)
-            controller._publish(descriptor, "tool.json", image)
             extractions = private_io.open_child_directory(
                 descriptor, "extractions"
             )
@@ -594,76 +693,18 @@ def run(
             outcomes = private_io.open_child_directory(descriptor, "outcomes")
             try:
                 for index in work:
-                    entry, prior = plan["resources"][index], rows[index]
-                    row = {
-                        "schema_version": 1,
-                        "plan_sha256": expected_plan_sha256,
-                        "dataset_id": entry["dataset_id"],
-                        "resource_id": entry["resource_id"],
-                        "attempt": (
-                            prior["attempt"]
-                            if prior["status"] == "running"
-                            else prior["attempt"] + 1
-                        )
-                        if prior
-                        else 1,
-                        "status": "running",
-                        "helper_name": "depositarai-extract-"
-                        + uuid.uuid4().hex,
-                    }
-                    name = entry["resource_id"] + ".json"
-                    private_io.write_json(
-                        outcomes,
-                        name,
-                        row,
-                        replace=True,
-                        max_bytes=MAX_OUTCOME_BYTES,
+                    entry = plan["resources"][index]
+                    rows[index] = _attempt_resource(
+                        state_root,
+                        descriptor,
+                        plan,
+                        expected_plan_sha256,
+                        image,
+                        entry,
+                        rows[index],
+                        selected[entry["resource_id"]],
+                        (extractions, profiles, outcomes),
                     )
-                    try:
-                        dataset_id, resource = selected[entry["resource_id"]]
-                        result = controller.process(
-                            dataset_id,
-                            resource,
-                            plan["catalog_manifest_sha256"],
-                            state_root,
-                            image,
-                            plan["policy"]["encoding"],
-                            plan["policy"]["header_policy"],
-                            extractions,
-                            profiles,
-                            container_name=row["helper_name"],
-                        )
-                        row.update(result)
-                    except (
-                        source.SourceError,
-                        extractor.ExtractorError,
-                    ) as error:
-                        if str(error) == "document_extractor_cleanup_failed":
-                            raise
-                        code = str(error)
-                        row.update(
-                            status="failed",
-                            code=code
-                            if re.fullmatch(r"document_[a-z_]{1,80}", code)
-                            else "document_resource_failed",
-                        )
-                    for child, child_name in (
-                        (extractions, "extractions"),
-                        (profiles, "profiles"),
-                        (outcomes, "outcomes"),
-                    ):
-                        private_io.verify_directory(
-                            child, state_root / child_name
-                        )
-                    private_io.verify_directory(descriptor, state_root)
-                    private_io.write_json(
-                        outcomes,
-                        name,
-                        row,
-                        replace=True,
-                        max_bytes=MAX_OUTCOME_BYTES,
-                    )
-                    rows[index] = row
             finally:
                 for child in (outcomes, profiles, extractions):
                     os.close(child)

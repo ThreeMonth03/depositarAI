@@ -4,6 +4,7 @@ policy."""
 from contextlib import ExitStack
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -306,6 +307,209 @@ class BatchTests(unittest.TestCase):
             ],
         )
 
+    def test_known_source_failures_remain_explicitly_retryable(self):
+        codes = (
+            "document_source_http_failed",
+            "document_source_timeout",
+            "document_source_too_large",
+            "document_source_empty",
+            "document_source_incomplete",
+            "document_source_headers_invalid",
+            "document_source_url_unsupported",
+            "document_source_metadata_invalid",
+        )
+        process = controller.process
+        for code in codes:
+            with self.subTest(code=code):
+                self.state = self.root / code
+                self.prepare()
+
+                def reject_first(dataset_id, resource, *args, **kwargs):
+                    if resource["id"] == self.ids[0]:
+                        raise source.SourceError(code)
+                    return process(dataset_id, resource, *args, **kwargs)
+
+                with patch.object(
+                    controller, "process", side_effect=reject_first
+                ) as attempted:
+                    report = self.run_batch()
+                self.assertEqual(attempted.call_count, 2)
+                self.assertEqual(
+                    tuple(
+                        report[key]
+                        for key in (
+                            "status",
+                            "selected_count",
+                            "pending_count",
+                            "profile_count",
+                            "failed_count",
+                            "retryable_count",
+                        )
+                    ),
+                    ("partial", 2, 0, 1, 1, 1),
+                )
+                record, _ = sets.read(self.state / report["profile_set_file"])
+                self.assertEqual(record["failures"][0]["code"], code)
+                self.assertEqual(
+                    self.run_batch(retry_failed=True)["status"], "completed"
+                )
+                row = json.loads(
+                    (
+                        self.state / "outcomes" / (self.ids[0] + ".json")
+                    ).read_bytes()
+                )
+                self.assertEqual((row["status"], row["attempt"]), ("ok", 2))
+
+    def _assert_fatal_resource_error(self, error):
+        self.prepare()
+        opened = []
+        open_child = batches.private_io.open_child_directory
+
+        def retain_descriptor(*args, **kwargs):
+            descriptor = open_child(*args, **kwargs)
+            opened.append(descriptor)
+            return descriptor
+
+        with (
+            patch.object(
+                controller, "process", side_effect=error
+            ) as attempted,
+            patch.object(
+                batches.private_io,
+                "open_child_directory",
+                side_effect=retain_descriptor,
+            ),
+        ):
+            with self.assertRaises(type(error)) as caught:
+                self.run_batch()
+        self.assertIs(caught.exception, error)
+        self.assertEqual(attempted.call_count, 1)
+        self.assertTrue(opened)
+        for descriptor in opened:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        row = json.loads(
+            (self.state / "outcomes" / (self.ids[0] + ".json")).read_bytes()
+        )
+        self.assertEqual((row["status"], row["attempt"]), ("running", 1))
+        self.assertTrue(row["helper_name"].startswith("depositarai-extract-"))
+        self.assertFalse(
+            (self.state / "outcomes" / (self.ids[1] + ".json")).exists()
+        )
+        self.assertEqual(list((self.state / "profiles").iterdir()), [])
+        self.assertEqual(list(self.state.glob("profile-set-*.json")), [])
+        report = batches.status(self.state, self.plan_sha)
+        self.assertEqual(
+            tuple(
+                report[key]
+                for key in (
+                    "selected_count",
+                    "pending_count",
+                    "profile_count",
+                    "failed_count",
+                )
+            ),
+            (2, 2, 0, 0),
+        )
+
+    def test_cache_runtime_and_extractor_errors_keep_running_intent(self):
+        source_codes = (
+            "document_cache_body_invalid",
+            "document_cache_body_limit",
+            "document_cache_busy",
+            "document_cache_io_failed",
+            "document_cache_lock_invalid",
+            "document_cache_record_invalid",
+            "document_cache_clock_invalid",
+            "document_source_clock_invalid",
+            "document_source_fetch_failed",
+            "document_source_options_invalid",
+            "document_source_tool_unavailable",
+            "document_source_future_error",
+        )
+        extractor_codes = (
+            "document_extractor_build_failed",
+            "document_extractor_cleanup_failed",
+            "document_extractor_command_failed",
+            "document_extractor_command_timeout",
+            "document_extractor_image_invalid",
+            "document_extractor_input_changed",
+            "document_extractor_input_invalid",
+            "document_extractor_inspect_failed",
+            "document_extractor_operator_must_be_nonroot",
+            "document_extractor_output_limit",
+            "document_extractor_report_invalid",
+            "document_extractor_settings_invalid",
+            "document_extractor_source_invalid",
+            "document_extractor_future_error",
+        )
+        errors = [source.SourceError(code) for code in source_codes]
+        errors += [extractor.ExtractorError(code) for code in extractor_codes]
+        for index, error in enumerate(errors):
+            with self.subTest(code=error.args[0]):
+                self.state = self.root / ("fatal-" + str(index))
+                self._assert_fatal_resource_error(error)
+
+    def test_unknown_error_shapes_are_not_formatted_or_reclassified(self):
+        class SourceSubclass(source.SourceError):
+            def __str__(self):
+                raise AssertionError(
+                    "Unknown exceptions must not be formatted"
+                )
+
+        class CodeSubclass(str):
+            pass
+
+        errors = (
+            SourceSubclass("document_source_timeout"),
+            source.SourceError(CodeSubclass("document_source_timeout")),
+            source.SourceError("document_source_timeout", "extra"),
+            source.SourceError(),
+            source.SourceError(42),
+            source.SourceError("unclassified failure"),
+        )
+        for index, error in enumerate(errors):
+            with self.subTest(index=index):
+                self.state = self.root / ("unknown-" + str(index))
+                self._assert_fatal_resource_error(error)
+
+    def test_fatal_second_resource_preserves_prefix_and_resume_fences(self):
+        self.bundle, self.manifest, self.ids = self.build(3)
+        self.selection.write_text(json.dumps(self.ids))
+        self.prepare()
+        self.run_batch(max_resources=1)
+        first = self.state / "outcomes" / (self.ids[0] + ".json")
+        prefix = first.read_bytes()
+        error = source.SourceError("document_cache_io_failed")
+        with (
+            patch.object(controller, "process", side_effect=error) as process,
+            self.assertRaises(source.SourceError) as caught,
+        ):
+            self.run_batch()
+        self.assertIs(caught.exception, error)
+        self.assertEqual(process.call_count, 1)
+        self.assertEqual(first.read_bytes(), prefix)
+        unfinished = self.state / "outcomes" / (self.ids[1] + ".json")
+        row = json.loads(unfinished.read_bytes())
+        self.assertEqual((row["status"], row["attempt"]), ("running", 1))
+        self.assertFalse(
+            (self.state / "outcomes" / (self.ids[2] + ".json")).exists()
+        )
+        self.assertEqual(list(self.state.glob("profile-set-*.json")), [])
+        with patch.object(
+            extractor, "helper_exists", return_value=True
+        ) as helper:
+            with self.assertRaisesRegex(batches.BatchError, "helper_active"):
+                self.run_batch()
+        helper.assert_called_once_with(row["helper_name"])
+        self.assertEqual(json.loads(unfinished.read_bytes()), row)
+        with patch.object(extractor, "helper_exists", return_value=False):
+            report = self.run_batch()
+        self.assertEqual(
+            (report["status"], report["attempted_count"]), ("completed", 2)
+        )
+        self.assertEqual(first.read_bytes(), prefix)
+
     def test_parse_error_profile_is_terminal_and_explicitly_exported(self):
         self.prepare()
         self.result.update(
@@ -315,6 +519,12 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(
             (first["status"], first["profile_count"]), ("partial", 2)
         )
+        self.assertEqual(
+            (first["failed_count"], first["pending_count"]), (2, 0)
+        )
+        record, _ = sets.read(self.state / first["profile_set_file"])
+        self.assertEqual(len(record["profiles"]), 2)
+        self.assertEqual(record["failures"], [])
         self.assertEqual(
             self.run_batch(retry_failed=True)["attempted_count"], 0
         )
