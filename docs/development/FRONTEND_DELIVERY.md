@@ -36,6 +36,10 @@ gh workflow run frontend-release.yml --repo ThreeMonth03/depositarAI \
 設定檔與 canonical `frontend-check.json` 使用 `0600`、直接父目錄 `0700`；state root
 須為 Git 外已存在、由維護帳號擁有的獨立 `0700` 目錄。`gh_binary` 使用絕對路徑，
 不得經過 symlink，也不得可由其他帳號寫入。
+設定載入與實際驗簽都會檢查完整目錄鏈及已開啟的工具身分，拒絕不可信擁有者、
+非 sticky 的群組／其他帳號可寫目錄，以及不安全或不可執行的工具；不會修正權限。
+此政策依賴 Linux POSIX 權限與 sticky 語意；root、執行帳號及儲存管理員仍受信任，
+不隔離共用同一 UID 的程序。原生程式與 script 均沿用既有 runner，不另複製或下載工具。
 
 | 欄位 | 用途 |
 | --- | --- |

@@ -7,6 +7,7 @@ No credential, downloaded script, image build, or production operation is used.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import http.client
 import os
@@ -28,6 +29,7 @@ from urllib.request import (
 
 from search.operations.deployment.images import build as image_build
 from search.operations.shared.bounded_http import AbortableConnection
+from search.operations.shared.namespace import NamespaceError, check_directory
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from . import policy
@@ -459,23 +461,68 @@ def _download(url, *, maximum, destination=None, expected_bytes=None):
         connections.finish()
 
 
+@contextmanager
+def checked_verifier(path):
+    """Keep tool identity checked within a trusted Unix directory chain.
+
+    Root, the operator UID and filesystem administrators remain trusted. This
+    metadata policy supports native tools and scripts without copying their
+    bytes or changing the runner's executable contract.
+    """
+    descriptor = None
+    fields = ("st_dev", "st_ino", "st_uid", "st_mode", "st_size", "st_mtime_ns")
+    try:
+        try:
+            binary = Path(path)
+            _require(binary.is_absolute(), "verifier_invalid")
+            check_directory(binary.parent)
+            descriptor = os.open(binary, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+            info = os.fstat(descriptor)
+            _require(
+                stat.S_ISREG(info.st_mode)
+                and info.st_uid in {0, os.geteuid()}
+                and info.st_mode & 0o111
+                and not info.st_mode & 0o022
+                and os.access(binary, os.X_OK),
+                "verifier_invalid",
+            )
+            identity = tuple(getattr(info, field) for field in fields)
+        except FrontendArtifactError:
+            raise
+        except (NamespaceError, OSError, ValueError, TypeError, AttributeError):
+            raise FrontendArtifactError("frontend_artifact_verifier_invalid") from None
+
+        def unchanged():
+            try:
+                check_directory(binary.parent)
+                for current in (os.fstat(descriptor), binary.lstat()):
+                    _require(
+                        tuple(getattr(current, field) for field in fields) == identity,
+                        "verifier_changed",
+                    )
+            except FrontendArtifactError:
+                raise
+            except (NamespaceError, OSError, ValueError, TypeError, AttributeError):
+                raise FrontendArtifactError(
+                    "frontend_artifact_verifier_invalid"
+                ) from None
+
+        unchanged()
+        yield binary
+        unchanged()
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _verify_provenance(
     path, bundle, *, revision, repository, repository_id, gh_binary, runner
 ):
     _require(type(repository_id) is int and repository_id > 0, "identity_invalid")
-    binary = Path(gh_binary)
-    _require(binary.is_absolute(), "verifier_invalid")
-    info = binary.lstat()
-    _require(
-        stat.S_ISREG(info.st_mode)
-        and info.st_uid in {0, os.geteuid()}
-        and info.st_mode & 0o111
-        and not info.st_mode & 0o022,
-        "verifier_invalid",
-    )
-    with tempfile.TemporaryDirectory(
-        prefix="depositar-frontend-verifier-"
-    ) as temporary:
+    with (
+        checked_verifier(gh_binary) as binary,
+        tempfile.TemporaryDirectory(prefix="depositar-frontend-verifier-") as temporary,
+    ):
         environment = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": "C.UTF-8",

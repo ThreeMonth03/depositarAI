@@ -469,6 +469,62 @@ class FrontendDeliveryTests(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_unsafe_verifier_ancestor_is_rejected_before_fetch(self):
+        original = Path(self.settings["gh_binary"]).read_bytes()
+        for higher in (False, True):
+            with self.subTest(higher=higher):
+                tools = self.root / ("higher-tools" if higher else "direct-tools")
+                tools.mkdir(mode=0o700)
+                parent = tools / "private" if higher else tools
+                if higher:
+                    parent.mkdir(mode=0o700)
+                binary = parent / "gh"
+                binary.write_bytes(original)
+                binary.chmod(0o700)
+                tools.chmod(0o770)
+                self.config.write_text(
+                    json.dumps({**self.settings, "gh_binary": str(binary)})
+                )
+                with self.assertRaisesRegex(
+                    delivery.FrontendDeliveryError, "gh_binary_unsafe$"
+                ):
+                    self.run_delivery()
+                self.assertEqual(tools.stat().st_mode & 0o777, 0o770)
+        self.assertEqual(self.fetches, 0)
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(json.loads(self.canonical.read_text()), self.initial)
+        self.assertFalse((self.state / "intent.json").exists())
+
+    def test_verifier_symlink_loop_is_a_closed_configuration_error(self):
+        binary = Path(self.settings["gh_binary"])
+        binary.unlink()
+        binary.symlink_to(binary.name)
+        with self.assertRaisesRegex(
+            delivery.FrontendDeliveryError, "^frontend_delivery_config_invalid$"
+        ):
+            self.run_delivery()
+        self.assertEqual(self.fetches, 0)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_changed_verifier_during_config_admission_is_rejected(self):
+        original = check.load_config
+        binary = Path(self.settings["gh_binary"])
+
+        def changed(path):
+            value = original(path)
+            binary.rename(self.root / "original-gh")
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o700)
+            return value
+
+        with (
+            patch.object(check, "load_config", side_effect=changed),
+            self.assertRaisesRegex(delivery.FrontendDeliveryError, "gh_binary_unsafe$"),
+        ):
+            self.run_delivery()
+        self.assertEqual(self.fetches, 0)
+        self.assertEqual(self.runner.calls, [])
+
     def test_cli_failure_never_reflects_private_diagnostics(self):
         output = io.StringIO()
         with (
