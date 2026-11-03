@@ -1,8 +1,9 @@
 """CPU-only shared-backend ownership, locking and publication regressions."""
 
 from contextlib import ExitStack, contextmanager
-from dataclasses import replace
 import copy
+import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -140,6 +141,50 @@ class FakeDocker:
         )
 
 
+class FakeControl:
+    def __init__(self, root, source, config):
+        self.root = root
+        self.provider = {
+            "source": {"root": str(source), "revision": "b" * 40},
+            "configuration": {
+                "path": str(config),
+                "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+            },
+        }
+        self.provider_sha256 = "b" * 64
+        self.roles_sha256 = "e" * 64
+        self.roles = {"epoch": 1, "rollback_backend_sha256": None}
+        self.checked = []
+        self.protected = {
+            "container_ids": set(),
+            "network_ids": set(),
+            "owned_paths": set(),
+        }
+
+    def refresh(self):
+        pass
+
+    def require_disposable(self, resources):
+        self.checked.append(copy.deepcopy(resources))
+        for kind in ("container_ids", "network_ids"):
+            if self.protected[kind] & set(resources[kind]):
+                raise controller.ProviderError(
+                    "shared_backend_provider_backend_protected"
+                )
+        for raw in resources["owned_paths"]:
+            target = Path(raw)
+            for protected in self.protected["owned_paths"]:
+                protected = Path(protected)
+                if (
+                    target == protected
+                    or target in protected.parents
+                    or protected in target.parents
+                ):
+                    raise controller.ProviderError(
+                        "shared_backend_provider_backend_protected"
+                    )
+
+
 class SharedBackendTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="shared-backend-test-")
@@ -181,16 +226,35 @@ class SharedBackendTests(unittest.TestCase):
         )
         self.production_config = self.root / "product.json"
         self.write_json(self.production_config, self.product.to_dict())
+        self.control_root = self.root / "control-state"
+        self.control_root.mkdir(mode=0o700)
+        self.control_config = self.root / "control.json"
+        self.write_json(
+            self.control_config,
+            {
+                "schema_version": 1,
+                "state_root": str(self.control_root),
+            },
+        )
+        self.control = FakeControl(
+            self.control_root, self.production, self.production_config
+        )
         self.config = self.root / "shared.json"
         self.configuration = {
-            "schema_version": 1,
+            "schema_version": 2,
             "state_root": str(self.state),
-            "production_config": str(self.production_config),
-            "production_source": str(self.production),
-            "tls_plan": str(self.root / "tls-plan.json"),
+            "control_config": str(self.control_config),
+            "catalog_config": str(self.production_config),
+            "catalog_source": str(self.production),
         }
         self.write_json(self.config, self.configuration)
         self.profile = controller.load_config(self.config)
+        self.profile["_control"] = self.control
+        self.patch(
+            "search.operations.deployment.candidate.controller."
+            "provider_authority.open_control",
+            side_effect=self.control_context,
+        )
         self.values = release_evidence()
         compose_file = self.state / "compose.json"
         for row in self.values["containers"]:
@@ -209,7 +273,7 @@ class SharedBackendTests(unittest.TestCase):
         compose = self.values["compose"]
         website = compose["networks"]["website"]["name"]
         self.record = {
-            "schema_version": 1,
+            "schema_version": 2,
             "phase": "running",
             "revision": REVISION,
             "compose": compose,
@@ -227,10 +291,18 @@ class SharedBackendTests(unittest.TestCase):
             },
             "build_complete": False,
             "lease": copy.deepcopy(self.values["lease"]),
-            "baseline_receipt_sha256": "b" * 64,
+            "provider_authority_sha256": self.control.provider_sha256,
+            "roles_sha256": self.control.roles_sha256,
+            "roles_epoch": self.control.roles["epoch"],
             "model_file_identity_sha256": "c" * 64,
             "compute_sha256": "d" * 64,
         }
+
+    @contextmanager
+    def control_context(self, path):
+        self.assertEqual(path, self.control_config)
+        yield self.control
+        self.control.refresh()
 
     @staticmethod
     def write_json(path, value):
@@ -245,6 +317,11 @@ class SharedBackendTests(unittest.TestCase):
         for change, error in [
             ({"schema_version": True}, "config_invalid"),
             ({"extra": "untrusted"}, "config_invalid"),
+            ({"schema_version": 1}, "config_invalid"),
+            (
+                {"state_root": str(self.control_root)},
+                "state_overlaps_production",
+            ),
             (
                 {"state_root": str(self.product.state_root)},
                 "state_overlaps_production",
@@ -287,37 +364,30 @@ class SharedBackendTests(unittest.TestCase):
         ):
             controller.load_config(self.config)
 
-    def test_selected_catalog_config_requires_both_paths_and_disjoint_state(
+    def test_catalog_config_and_source_are_required_and_control_is_disjoint(
         self,
     ):
-        selected = self.root / "selected.json"
-        product = replace(
-            self.product, state_root=self.root / "selected-state"
-        )
-        self.write_json(selected, product.to_dict())
-        pair = {
-            "catalog_config": str(selected),
-            "catalog_source": str(self.production),
-        }
-        self.write_json(self.config, self.configuration | pair)
-        self.assertEqual(
-            controller.load_config(self.config)["catalog_config"], selected
-        )
-        for key in pair:
-            self.write_json(self.config, self.configuration | {key: pair[key]})
-            with self.assertRaisesRegex(
-                controller.SharedBackendError, "config_invalid"
+        for key in ("catalog_config", "catalog_source", "control_config"):
+            value = self.configuration.copy()
+            del value[key]
+            self.write_json(self.config, value)
+            with (
+                self.subTest(missing=key),
+                self.assertRaisesRegex(
+                    controller.SharedBackendError, "config_invalid"
+                ),
             ):
                 controller.load_config(self.config)
+        self.write_json(self.config, self.configuration)
         self.write_json(
-            selected,
-            replace(
-                self.product, state_root=self.product.state_root / "nested"
-            ).to_dict(),
+            self.control_config,
+            {
+                "schema_version": 1,
+                "state_root": str(self.state / "nested-control"),
+            },
         )
-        self.write_json(self.config, self.configuration | pair)
         with self.assertRaisesRegex(
-            controller.SharedBackendError, "catalog_state_overlaps_production"
+            controller.SharedBackendError, "state_overlaps_production"
         ):
             controller.load_config(self.config)
 
@@ -327,6 +397,10 @@ class SharedBackendTests(unittest.TestCase):
         profile = controller.catalog.query_profile(ROOT)
         session = object.__new__(controller.Session)
         session.profile = self.profile
+        images = mock.Mock()
+        session.provider = SimpleNamespace(
+            source_root=self.production, _verified_backend_images=images
+        )
         session.context = {"query_profile": profile}
         session.query_context = {"query_profile": profile}
         session.query_catalog = SimpleNamespace(
@@ -348,7 +422,6 @@ class SharedBackendTests(unittest.TestCase):
             mock.patch.object(
                 controller.catalog, "query_profile", return_value=profile
             ),
-            mock.patch.object(controller, "locked_state") as images,
         ):
             with self.assertRaisesRegex(
                 ValueError, "catalog_selection_changed"
@@ -372,35 +445,241 @@ class SharedBackendTests(unittest.TestCase):
                         session.candidate_inputs(record)
             images.assert_not_called()
 
-    def test_attach_keeps_new_catalog_and_original_provider_distinct(
-        self,
-    ):
+    def test_attach_keeps_selected_catalog_and_provider_distinct(self):
         session = object.__new__(controller.Session)
-        session.completed = {"native": "A"}
-        session.native = SimpleNamespace(
+        active_image_binding = object()
+        active_metadata = {
+            "record": {"canonical": "A"},
+            "config": object(),
+            "config_file": object(),
+            "key": object(),
+        }
+        active = SimpleNamespace(
             context={"catalog": "A"},
             authority={"authority": "A"},
-            inference_images={"provider": "A"},
+            backend_sha256="9" * 64,
+            namespace_sha256="8" * 64,
+            image_binding=active_image_binding,
+            **active_metadata,
+        )
+        session.profile = self.profile
+        session.control = self.control
+        session.provider = SimpleNamespace(
+            backends=[active], inference_images={"provider": "P"}
         )
         session.query_context = {"catalog": "B"}
         session.query_authority = {"authority": "B"}
         session.query_catalog = SimpleNamespace(
-            images={"core": "B"}, inspections={"core_image": "B"}
+            images={"core": "B"},
+            inspections={"core_image": "B"},
+            config=object(),
+            config_file=object(),
+            key=object(),
         )
+        session._candidate_image_binding = object()
         session.candidate_inputs = lambda _record: ({"cpu": "B"}, {}, {})
         record = {
-            "baseline_receipt_sha256": controller.digest(session.completed),
+            "revision": REVISION,
+            "provider_authority_sha256": self.control.provider_sha256,
+            "roles_sha256": self.control.roles_sha256,
+            "roles_epoch": self.control.roles["epoch"],
             "compose": {"cpu": "B"},
             "lease": {"catalog": "B"},
         }
         session.attach_record(record)
         self.assertIs(session.candidate.context, session.query_context)
         self.assertIs(session.candidate.authority, session.query_authority)
+        self.assertIs(session.candidate.catalog, session.query_catalog)
         self.assertIs(
-            session.candidate.inference_images, session.native.inference_images
+            session.candidate.image_binding, session._candidate_image_binding
         )
-        self.assertEqual(session.native.context, {"catalog": "A"})
-        self.assertEqual(session.native.authority, {"authority": "A"})
+        self.assertIsNot(session.candidate.image_binding, active.image_binding)
+        self.assertIs(active.image_binding, active_image_binding)
+        for field in ("config", "config_file", "key"):
+            self.assertIs(
+                getattr(session.candidate, field),
+                getattr(session.query_catalog, field),
+            )
+        for field, value in active_metadata.items():
+            self.assertIs(getattr(active, field), value)
+        self.assertEqual(active.context, {"catalog": "A"})
+        self.assertEqual(active.authority, {"authority": "A"})
+        self.assertIsNone(session.candidate.record)
+        self.assertIsNone(session.candidate.backend_sha256)
+        self.assertIsNone(session.candidate.namespace_sha256)
+        self.assertEqual(session.candidate.source_revision, REVISION)
+        self.assertEqual(
+            session.candidate.source_root,
+            controller.frozen_source(self.profile, REVISION),
+        )
+
+    def live_catalog_fd(self, *, final_error=None):
+        events, descriptors = [], []
+        baseline = SimpleNamespace(context={"plan": {"project": "A"}})
+        selected = SimpleNamespace(
+            context={"plan": {"project": "B"}},
+            authority={},
+            refresh=lambda: os.fstat(descriptors[0]),
+        )
+
+        def refresh():
+            os.fstat(descriptors[0])
+            events.append("provider_refresh")
+
+        provider = SimpleNamespace(
+            config=self.product,
+            backends=[SimpleNamespace(catalog=baseline)],
+            docker=object(),
+            refresh=refresh,
+        )
+
+        @contextmanager
+        def open_provider(control):
+            self.assertIs(control, self.control)
+            with ExitStack() as stack:
+                provider.stack = stack
+                try:
+                    yield provider
+                finally:
+                    refresh()
+                    events.append("provider_final_verified")
+                    if final_error is not None:
+                        raise final_error
+
+        def select(profile, stack, config, bindings, docker):
+            self.assertIs(profile, self.profile)
+            self.assertIs(config, self.product)
+            self.assertEqual(bindings, [baseline])
+            self.assertIs(docker, provider.docker)
+            descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+            descriptors.append(descriptor)
+
+            def close():
+                os.close(descriptor)
+                events.append("selected_closed")
+
+            stack.callback(close)
+            return selected
+
+        self.patch(
+            "search.operations.deployment.candidate.controller."
+            "provider_runtime.open_provider",
+            side_effect=open_provider,
+        )
+        self.patch(
+            "search.operations.deployment.candidate.controller.catalog.select",
+            side_effect=select,
+        )
+        return selected, descriptors, events
+
+    def test_live_keeps_selected_fd_until_provider_final_refresh_completes(
+        self,
+    ):
+        selected, descriptors, events = self.live_catalog_fd()
+        with controller.live(self.profile) as session:
+            self.assertIs(session.query_catalog, selected)
+            os.fstat(descriptors[0])
+        self.assertLess(
+            events.index("provider_final_verified"),
+            events.index("selected_closed"),
+        )
+        self.assertEqual(events.count("selected_closed"), 1)
+        with self.assertRaises(OSError) as caught:
+            os.fstat(descriptors[0])
+        self.assertEqual(caught.exception.errno, errno.EBADF)
+
+    def test_live_final_refresh_failure_closes_selected_fd_without_success(
+        self,
+    ):
+        error = controller.ProviderError(
+            "shared_backend_provider_authority_changed"
+        )
+        _, descriptors, events = self.live_catalog_fd(final_error=error)
+        with self.assertRaisesRegex(
+            controller.ProviderError, "authority_changed"
+        ) as caught:
+            with controller.live(self.profile):
+                os.fstat(descriptors[0])
+            events.append("returned")
+        self.assertIs(caught.exception, error)
+        self.assertNotIn("returned", events)
+        self.assertLess(
+            events.index("provider_final_verified"),
+            events.index("selected_closed"),
+        )
+        self.assertEqual(events.count("selected_closed"), 1)
+        with self.assertRaises(OSError) as closed:
+            os.fstat(descriptors[0])
+        self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def observation_session(self):
+        baseline = SimpleNamespace(context={"plan": {"project": "A"}})
+        selected = SimpleNamespace(
+            context={"plan": {"project": "B"}}, authority={}
+        )
+        snapshot = {
+            "catalog_snapshots": {
+                "A": ({}, [], {}),
+                "B": ({"B": True}, [], {}),
+            }
+        }
+        provider = SimpleNamespace(
+            config=self.product,
+            backends=[SimpleNamespace(catalog=baseline)],
+            docker=object(),
+            observe=mock.Mock(return_value=snapshot),
+            _checkpoint_authorities=mock.Mock(),
+        )
+        control = SimpleNamespace(refresh=mock.Mock())
+        calls = mock.Mock()
+        calls.attach_mock(provider.observe, "runtime")
+        calls.attach_mock(provider._checkpoint_authorities, "metadata")
+        calls.attach_mock(control.refresh, "control")
+        session = controller.Session(self.profile, provider, control, selected)
+        return session, calls, snapshot
+
+    def test_real_observe_checks_runtime_then_metadata_before_returning(self):
+        session, calls, snapshot = self.observation_session()
+        result = session.observe()
+        calls.returned()
+        self.assertEqual(
+            calls.mock_calls,
+            [
+                mock.call.runtime(
+                    session.provider.backends,
+                    [session.baseline_catalog, session.query_catalog],
+                ),
+                mock.call.metadata(),
+                mock.call.control(),
+                mock.call.returned(),
+            ],
+        )
+        self.assertIs(result, snapshot["catalog_snapshots"]["A"])
+
+    def test_real_observe_metadata_failure_never_publishes_a_snapshot(self):
+        session, calls, _ = self.observation_session()
+        session.catalog_snapshots = mock.sentinel.unpublished
+        session.provider._checkpoint_authorities.side_effect = (
+            controller.ProviderError(
+                "shared_backend_provider_authority_changed"
+            )
+        )
+        with self.assertRaisesRegex(
+            controller.ProviderError, "authority_changed"
+        ):
+            session.observe()
+            calls.returned()
+        self.assertEqual(
+            calls.mock_calls,
+            [
+                mock.call.runtime(
+                    session.provider.backends,
+                    [session.baseline_catalog, session.query_catalog],
+                ),
+                mock.call.metadata(),
+            ],
+        )
+        self.assertIs(session.catalog_snapshots, mock.sentinel.unpublished)
 
     def test_both_catalog_audits_finish_before_model_checkpoint_or_success(
         self,
@@ -420,6 +699,10 @@ class SharedBackendTests(unittest.TestCase):
         ]
         session = object.__new__(controller.Session)
         session.baseline_catalog, session.query_catalog = bindings
+        session.query_context = bindings[1].context
+        session.provider = SimpleNamespace(
+            backends=[SimpleNamespace(catalog=bindings[0])]
+        )
         session.remaining = lambda maximum: maximum
         session.catalog_snapshots = {name: ({}, [], {}) for name in ("A", "B")}
         with (
@@ -507,7 +790,9 @@ finally:os.close(fd)
         )
         self.patch(
             "search.operations.deployment.candidate.controller.require_clean_revision",
-            return_value=REVISION,
+            side_effect=lambda source: (
+                "b" * 40 if source == self.production else REVISION
+            ),
         )
         git = self.patch(
             "search.operations.deployment.candidate.controller.git",
@@ -542,6 +827,10 @@ finally:os.close(fd)
         )
         session = object.__new__(controller.Session)
         session.baseline_catalog = session.query_catalog = binding
+        session.query_context = binding.context
+        session.provider = SimpleNamespace(
+            backends=[SimpleNamespace(catalog=binding)]
+        )
         session.catalog_snapshots = {"native": ({}, [], {})}
         session.remaining = lambda maximum: maximum
         with (
@@ -702,27 +991,355 @@ finally:os.close(fd)
                     controller.operate(self.config, "query", text="test")
         live.assert_not_called()
 
-    def fake_session(self, docker, store, exit_error):
-        values = self.values
-        completed = {"revision": "b" * 40, "runtime_verified": True}
-        session = SimpleNamespace(
-            docker=docker,
-            completed=completed,
-            inputs=SimpleNamespace(model_file_identity_sha256="f" * 64),
-            compute_sha256="e" * 64,
-            native=SimpleNamespace(
-                lease=values["lease"],
-                authority={"catalog_identity": values["catalog_identity"]},
-                collect=lambda **_: (
-                    {},
-                    {
-                        name: {"Id": identifier}
-                        for name, identifier in values["lease"][
-                            "network_ids"
-                        ].items()
-                    },
+    def test_protected_resources_refuse_cleanup_before_any_mutation(self):
+        source = controller.frozen_source(self.profile, REVISION)
+        build = controller.build_root(self.profile, REVISION)
+        for path in (source, build):
+            path.mkdir(parents=True, mode=0o700)
+            (path / "keep").write_text("retained")
+        for kind, protected in (
+            (
+                "container_ids",
+                next(iter(self.record["container_ids"].values())),
+            ),
+            ("network_ids", self.record["network_id"]),
+            ("owned_paths", source),
+            ("owned_paths", build),
+        ):
+            with self.subTest(kind=kind):
+                self.control.protected[kind].add(protected)
+                docker = FakeDocker(self.values)
+                with (
+                    mock.patch.object(controller, "git") as git,
+                    mock.patch.object(controller.shutil, "rmtree") as remove,
+                ):
+                    with self.assertRaisesRegex(
+                        controller.ProviderError, "backend_protected"
+                    ):
+                        self.invoke_stop(docker, copy.deepcopy(self.record))
+                    git.assert_not_called()
+                    remove.assert_not_called()
+                self.assertEqual(docker.calls, [])
+                self.assertEqual(docker.mutations, [])
+                for path in (source, build):
+                    self.assertEqual((path / "keep").read_text(), "retained")
+                self.control.protected[kind].clear()
+
+    def test_control_lock_wraps_the_entire_candidate_journal(self):
+        events = []
+        original = controller.journal
+
+        @contextmanager
+        def canonical(path):
+            self.assertEqual(path, self.control_config)
+            events.append("control_enter")
+            try:
+                yield self.control
+            finally:
+                events.append("control_exit")
+
+        @contextmanager
+        def journal(path):
+            events.append("journal_enter")
+            try:
+                with original(path) as store:
+                    yield store
+            finally:
+                events.append("journal_exit")
+
+        with (
+            mock.patch.object(
+                controller.provider_authority,
+                "open_control",
+                side_effect=canonical,
+            ),
+            mock.patch.object(controller, "journal", side_effect=journal),
+        ):
+            self.assertEqual(
+                controller.operate(self.config, "status"), {"status": "empty"}
+            )
+        self.assertEqual(
+            events,
+            ["control_enter", "journal_enter", "journal_exit", "control_exit"],
+        )
+
+    def test_missing_anchor_never_falls_back_to_native_runtime(self):
+        with (
+            mock.patch.object(
+                controller.provider_authority,
+                "open_control",
+                side_effect=controller.ProviderError(
+                    "shared_backend_provider_not_adopted"
                 ),
             ),
+            mock.patch.object(controller, "journal") as journal,
+            mock.patch.object(controller, "live") as live,
+        ):
+            with self.assertRaisesRegex(
+                controller.ProviderError, "not_adopted"
+            ):
+                controller.operate(self.config, "status")
+            journal.assert_not_called()
+            live.assert_not_called()
+
+    def test_control_exit_failure_prevents_successful_status(self):
+        @contextmanager
+        def changed_control(_path):
+            yield self.control
+            raise controller.ProviderError(
+                "shared_backend_provider_authority_changed"
+            )
+
+        with mock.patch.object(
+            controller.provider_authority,
+            "open_control",
+            side_effect=changed_control,
+        ):
+            with self.assertRaisesRegex(
+                controller.ProviderError, "authority_changed"
+            ):
+                controller.operate(self.config, "status")
+
+    def test_provider_or_roles_drift_refuses_start_before_creation(self):
+        for key, replacement in (
+            ("provider_sha256", "7" * 64),
+            ("roles_sha256", "8" * 64),
+            ("epoch", 2),
+        ):
+            with self.subTest(key=key):
+                record = copy.deepcopy(self.record)
+                record.update(
+                    phase="prepared",
+                    container_ids={},
+                    network_id=None,
+                    policy={"policy": {}},
+                )
+                docker = FakeDocker(self.values, created=False)
+                original = (
+                    self.control.roles["epoch"]
+                    if key == "epoch"
+                    else getattr(self.control, key)
+                )
+                if key == "epoch":
+                    self.control.roles["epoch"] = replacement
+                else:
+                    setattr(self.control, key, replacement)
+                try:
+                    with controller.journal(self.state) as store:
+                        controller.save(store, record)
+                        _, context = self.fake_session(docker, store, None)
+                        with mock.patch.object(controller, "live", context):
+                            with self.assertRaisesRegex(
+                                controller.SharedBackendError,
+                                "live_binding_changed",
+                            ):
+                                controller.start(self.profile, store, record)
+                        self.assertEqual(controller.current(store), record)
+                finally:
+                    if key == "epoch":
+                        self.control.roles["epoch"] = original
+                    else:
+                        setattr(self.control, key, original)
+                self.assertEqual(docker.mutations, [])
+                self.assertFalse((self.state / "compose.json").exists())
+
+    def test_journal_epoch_has_exact_integer_and_signed_64_bit_bounds(self):
+        with controller.journal(self.state) as store:
+            for epoch in (1, 2**63 - 1):
+                with self.subTest(valid_epoch=epoch):
+                    record = self.record | {"roles_epoch": epoch}
+                    controller.save(store, record)
+                    self.assertEqual(controller.current(store), record)
+            for epoch in (0, -1, 2**63, True, 1.0):
+                with self.subTest(invalid_epoch=epoch):
+                    controller.save(
+                        store, self.record | {"roles_epoch": epoch}
+                    )
+                    with self.assertRaisesRegex(
+                        controller.SharedBackendError, "journal_invalid"
+                    ):
+                        controller.current(store)
+
+    def test_binding_epoch_refuses_coercion_and_overflow_even_when_equal(self):
+        for epoch in (1, 2**63 - 1):
+            with self.subTest(valid_epoch=epoch):
+                control = SimpleNamespace(
+                    provider_sha256=self.control.provider_sha256,
+                    roles_sha256=self.control.roles_sha256,
+                    roles={"epoch": epoch},
+                )
+                controller.require_binding(
+                    control, self.record | {"roles_epoch": epoch}
+                )
+        for epoch in (0, -1, 2**63, True, 1.0):
+            with self.subTest(invalid_equal_epoch=epoch):
+                control = SimpleNamespace(
+                    provider_sha256=self.control.provider_sha256,
+                    roles_sha256=self.control.roles_sha256,
+                    roles={"epoch": epoch},
+                )
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError, "live_binding_changed"
+                ):
+                    controller.require_binding(
+                        control, self.record | {"roles_epoch": epoch}
+                    )
+
+    def recipe_session(self):
+        from tests.unit.deployment.test_composition import catalog
+
+        projection = controller.catalog.query_profile(ROOT)
+        source = controller.frozen_source(self.profile, REVISION)
+        source.parent.mkdir(parents=True, mode=0o700)
+        shutil.copytree(self.source, source)
+        for relative in (
+            "search/catalog/embedding.py",
+            "search/planning/index_filters.py",
+        ):
+            target = source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        contract = source / "search/reranker/contract.py"
+        contract.write_text(contract.read_text() + "\n# CPU source update.\n")
+        gpu = controller.composition._inference(
+            self.product,
+            "b" * 40,
+            os.geteuid(),
+            os.getegid(),
+            inference_source_sha256="6" * 64,
+        )
+        gpu_images = {
+            role: {"Id": "sha256:" + str(index) * 64}
+            for index, role in enumerate(gpu["services"], 1)
+        }
+        for role, image in gpu_images.items():
+            gpu["services"][role]["image"] = image["Id"]
+        session = object.__new__(controller.Session)
+        session.profile, session.config = self.profile, self.product
+        session.provider = SimpleNamespace(
+            source_root=self.production,
+            inference_compose=gpu,
+            inference_images=gpu_images,
+            backends=[SimpleNamespace(compose={"name": "active-backend"})],
+        )
+        session.context = session.query_context = {
+            "query_profile": projection,
+            "plan": catalog(self.product, revision="b" * 40),
+        }
+        session.query_catalog = SimpleNamespace(config=self.product)
+        session.docker = object()
+        record = {
+            "revision": REVISION,
+            "phase": "preparing",
+            "policy": request_policy.validate_shared_request_policy(
+                self.production, source
+            ),
+        }
+        authority = {
+            "images": {
+                role: {"source_sha256": str(index) * 64}
+                for index, role in enumerate(("conversation-api", "web"), 7)
+            }
+        }
+        images = {
+            role: copy.deepcopy(self.values["images"][role])
+            for role in ("conversation-api", "web")
+        }
+        for role, image in images.items():
+            image["Config"]["Labels"].update(
+                {
+                    "org.opencontainers.image.revision": REVISION,
+                    "io.depositar.ai.source.revision": REVISION,
+                    "io.depositar.ai.source.service": role,
+                    "io.depositar.ai.source.sha256": authority["images"][role][
+                        "source_sha256"
+                    ],
+                }
+            )
+        images["filtered-embedding"] = gpu_images["scope-model"]
+        binding = SimpleNamespace(
+            images=MappingProxyType(images),
+            proof=authority["images"]["conversation-api"],
+        )
+        session.provider._verified_backend_images = mock.Mock(
+            return_value=binding
+        )
+        plan = {"services": {"reranker": {"source_sha256": "f" * 64}}}
+        return session, record, binding, plan
+
+    def test_cpu_source_uses_the_authenticated_provider_recipe(self):
+        session, record, binding, plan = self.recipe_session()
+        original = copy.deepcopy(session.provider.inference_compose)
+        original_images = copy.deepcopy(dict(binding.images))
+        with mock.patch.object(
+            controller, "require_clean_revision", return_value=REVISION
+        ):
+            result = session.candidate_inputs(record)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 3)
+        compose, images, proof = result
+        factory = session.provider._verified_backend_images
+        factory.assert_called_once_with(
+            mock.ANY,
+            controller.frozen_source(self.profile, REVISION),
+            REVISION,
+        )
+        self.assertEqual(
+            factory.call_args.args[0].state_root,
+            controller.build_root(self.profile, REVISION),
+        )
+        self.assertIs(session._candidate_image_binding, binding)
+        self.assertIs(images, binding.images)
+        self.assertEqual(dict(images), original_images)
+        self.assertEqual(session.provider.inference_compose, original)
+        self.assertEqual(compose["x-depositar-plan"]["revision"], REVISION)
+        self.assertIs(proof, binding.proof)
+        self.assertEqual(
+            original["x-depositar-plan"]["inference_source_sha256"], "6" * 64
+        )
+        self.assertNotEqual(
+            plan["services"]["reranker"]["source_sha256"],
+            original["x-depositar-plan"]["inference_source_sha256"],
+        )
+
+    def fake_session(self, docker, store, exit_error):
+        values = self.values
+        inference_name = values["compose"]["networks"]["existing-inference"][
+            "name"
+        ]
+        catalog_binding = SimpleNamespace(
+            context={
+                "plan": {
+                    "project": values["lease"]["catalog_project"],
+                    "revision": REVISION,
+                }
+            },
+            authority={"catalog_identity": values["catalog_identity"]},
+            identity=lambda: {
+                "source_revision": REVISION,
+                "plan_sha256": "1" * 64,
+                "configuration_sha256": "2" * 64,
+                "query_authority_sha256": "3" * 64,
+                "api_key_authority_sha256": "4" * 64,
+            },
+        )
+        provider = SimpleNamespace(
+            model_file_identity_sha256="f" * 64,
+            backends=[SimpleNamespace(lease=values["lease"])],
+            inference_compose={
+                "name": inference_name.removesuffix("_inference"),
+                "networks": {
+                    "inference": {"name": inference_name},
+                    "ranking": values["compose"]["networks"]["ranking"],
+                },
+            },
+        )
+        session = SimpleNamespace(
+            docker=docker,
+            control=self.control,
+            provider=provider,
+            compute_sha256="e" * 64,
+            catalogs=lambda: [catalog_binding],
             candidate_inputs=lambda _: (
                 values["compose"],
                 values["images"],
@@ -735,15 +1352,7 @@ finally:os.close(fd)
                     "network_id": values["lease"]["catalog_network_id"]
                 },
             },
-            query_catalog=SimpleNamespace(
-                identity=lambda: {
-                    "source_revision": REVISION,
-                    "plan_sha256": "1" * 64,
-                    "configuration_sha256": "2" * 64,
-                    "query_authority_sha256": "3" * 64,
-                    "api_key_authority_sha256": "4" * 64,
-                }
-            ),
+            query_catalog=catalog_binding,
         )
 
         def attach(record):
@@ -762,6 +1371,9 @@ finally:os.close(fd)
                 session.last_candidate = runtime.validate_runtime(**candidate)
 
         session.attach_record, session.verify = attach, verify
+        session.check_binding = (
+            lambda record: controller.Session.check_binding(session, record)
+        )
 
         @contextmanager
         def context(*_):
@@ -774,10 +1386,91 @@ finally:os.close(fd)
 
         return session, context
 
+    def test_prepare_rejects_provider_revision_before_policy_or_mutation(self):
+        with (
+            controller.journal(self.state) as store,
+            mock.patch.object(
+                controller,
+                "require_clean_revision",
+                side_effect=lambda source: (
+                    "c" * 40 if source == self.production else REVISION
+                ),
+            ) as revision,
+            mock.patch.object(
+                controller, "validate_shared_request_policy"
+            ) as policy,
+            mock.patch.object(controller, "save") as save,
+            mock.patch.object(controller, "git") as git,
+            mock.patch.object(controller.lifecycle, "build_images") as build,
+            mock.patch.object(controller, "live") as live,
+        ):
+            before = set(self.state.iterdir())
+            with self.assertRaisesRegex(
+                controller.SharedBackendError,
+                "shared_backend_provider_source_changed",
+            ):
+                controller.prepare(self.profile, store, self.source)
+            self.assertIsNone(controller.current(store))
+            self.assertEqual(set(self.state.iterdir()), before)
+        self.assertEqual(
+            revision.call_args_list,
+            [mock.call(self.source), mock.call(self.production)],
+        )
+        for operation in (policy, save, git, build, live):
+            operation.assert_not_called()
+
+    def test_prepare_rejects_configuration_drift_before_any_publication(self):
+        original_check = self.control.require_disposable
+        reference = copy.deepcopy(self.control.provider["configuration"])
+
+        def corrupt_after_ownership_check(resources):
+            original_check(resources)
+            self.production_config.write_bytes(
+                self.production_config.read_bytes() + b"\n"
+            )
+
+        with (
+            controller.journal(self.state) as store,
+            mock.patch.object(
+                controller,
+                "require_clean_revision",
+                side_effect=lambda source: (
+                    "b" * 40 if source == self.production else REVISION
+                ),
+            ),
+            mock.patch.object(
+                self.control,
+                "require_disposable",
+                side_effect=corrupt_after_ownership_check,
+            ),
+            mock.patch.object(controller, "save") as save,
+            mock.patch.object(controller, "git") as git,
+            mock.patch.object(controller.lifecycle, "build_images") as build,
+            mock.patch.object(controller, "live") as live,
+        ):
+            with self.assertRaisesRegex(
+                controller.ProviderError,
+                "shared_backend_provider_authority_changed",
+            ):
+                controller.prepare(self.profile, store, self.source)
+            self.assertIsNone(controller.current(store))
+        self.assertEqual(len(self.control.checked), 1)
+        self.assertEqual(self.control.provider["configuration"], reference)
+        self.assertNotEqual(
+            hashlib.sha256(self.production_config.read_bytes()).hexdigest(),
+            reference["sha256"],
+        )
+        self.assertFalse((self.state / "sources").exists())
+        self.assertFalse((self.state / "builds").exists())
+        for operation in (save, git, build, live):
+            operation.assert_not_called()
+
     def test_prepare_never_publishes_success_before_live_context_exits(self):
         self.patch(
             "search.operations.deployment.candidate.controller.require_clean_revision",
-            return_value=REVISION,
+            side_effect=lambda source: (
+                "b" * 40 if source == self.production else REVISION
+            ),
         )
         self.patch(
             "search.operations.deployment.candidate.controller.lifecycle.build_images",
@@ -864,15 +1557,35 @@ finally:os.close(fd)
                     container_ids={},
                     network_id=None,
                     policy={"policy": {}},
-                    baseline_receipt_sha256=controller.digest(
-                        {"revision": "b" * 40, "runtime_verified": True}
-                    ),
+                    provider_authority_sha256=self.control.provider_sha256,
+                    roles_sha256=self.control.roles_sha256,
+                    roles_epoch=self.control.roles["epoch"],
                     compute_sha256="e" * 64,
                 )
                 with controller.journal(state) as store:
                     controller.save(store, record)
-                    _, context = self.fake_session(docker, store, error)
-                    with mock.patch.object(controller, "live", context):
+                    session, context = self.fake_session(docker, store, error)
+                    with (
+                        mock.patch.object(controller, "live", context),
+                        mock.patch.object(
+                            controller.catalog,
+                            "collect",
+                            return_value=(
+                                {},
+                                {
+                                    name: {"Id": identifier}
+                                    for name, identifier in values["lease"][
+                                        "network_ids"
+                                    ].items()
+                                },
+                            ),
+                        ),
+                        mock.patch.object(
+                            controller.catalog,
+                            "client_identity",
+                            wraps=controller.catalog.client_identity,
+                        ) as identity,
+                    ):
                         if error is None:
                             self.assertEqual(
                                 controller.start(profile, store, record)[
@@ -886,6 +1599,13 @@ finally:os.close(fd)
                             self.assertEqual(
                                 controller.current(store)["phase"], "starting"
                             )
+                        identity.assert_called_once_with(
+                            session.query_catalog, REVISION
+                        )
+                        self.assertNotIn(
+                            "catalog_revision",
+                            controller.current(store)["lease"],
+                        )
                 docker.assert_production_unchanged(self)
 
 

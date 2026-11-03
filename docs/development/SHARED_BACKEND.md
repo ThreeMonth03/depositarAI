@@ -21,50 +21,88 @@ model networks 使用完整快照，peers 必須恰好是其服務與已註冊 A
 這適用於可信、已 review 的程式候選。網路成員與 request 相容性檢查不等於
 逐一封鎖 Ollama 模型管理操作的 L7 ACL，也不是執行任意惡意程式的 sandbox。
 
-## 設定與操作
+## 先建立 canonical provider authority
 
-使用目前完整、已驗收的 production config、凍結 production source 與現役 TLS plan。
-`production_source` 必須是乾淨的 committed checkout，其 revision 要對上現役
-release receipt；只有新版 operator checkout 仍不足以驗證舊 catalog。
-不要以舊的 demo port、未完成的候選 receipt 或另一份 mutable checkout 代替。
-設定檔必須是 operator 所有的 0600 regular file、直接父目錄 0700；`state_root`
-必須是 Git 外、operator 所有的獨立 0700 目錄，且不能與 production state、
-模型目錄或設定/source/TLS 輸入重疊。
+後端 control 與 catalog/product state 各有自己的權威紀錄。Provider anchor
+封存實際 GPU 來源、映像、模型與 instance；active／rollback BackendRecord 則綁定
+各自 API 來源、catalog、key、lease、CPU runtime 與必要素材。更新 API 不會把原 GPU
+映像重新標成 API 的來源版本，也不要求舊 API 一直運行。
 
-可複製[設定範本](../../deploy/env/shared-backend.example.json)，再替換成主機上
-已有的實際路徑：
+以 [control 設定範本](../../deploy/env/provider-control.example.json) 建立 Git 外的
+私有設定，指定新的 control state：
 
 ```json
 {
   "schema_version": 1,
-  "state_root": "/absolute/private/shared-backend-state",
-  "production_config": "/absolute/private/production/product.json",
-  "production_source": "/absolute/frozen-production-source",
-  "tls_plan": "/absolute/private/api-tls/plan.json"
+  "state_root": "/absolute/private/backend-control"
 }
 ```
 
-若要查另一份 catalog，在同一設定中成對加入：
+第一次採納必須由已審查、乾淨的 operator，明確指定已驗 native release 的 bootstrap
+與其外部 SHA256。Bootstrap 不是正常候選設定，也不是任選 container ID 的入口：
 
 ```json
 {
-  "catalog_config": "/absolute/private/catalog-workspace/product.json",
-  "catalog_source": "/absolute/frozen-catalog-source"
+  "schema_version": 1,
+  "profile": {
+    "schema_version": 1,
+    "state_root": "/absolute/private/stopped-candidate-state",
+    "production_config": "/absolute/private/product.json",
+    "production_source": "/absolute/frozen/provider-source",
+    "tls_plan": "/absolute/private/tls/endpoint/plan.json"
+  },
+  "expected_revision": "EXPECTED_40_HEX_PROVIDER_REVISION",
+  "release_receipt_sha256": "EXPECTED_64_HEX_RELEASE_RECEIPT_SHA256",
+  "inference_receipt_sha256": "EXPECTED_64_HEX_INFERENCE_RECEIPT_SHA256",
+  "tls_plan_sha256": "EXPECTED_64_HEX_TLS_PLAN_SHA256"
 }
 ```
 
-省略這兩個欄位便使用現役 catalog。指定時，catalog 必須已在獨立、長期保留的
-product state 完成正常 `prepare-secrets` 與 `prepare-query`；operator 不建立資料、
-複製秘密、認領服務或補造 inference/release 收據。`catalog_source` 必須是乾淨的
-committed checkout，能以自己的封存配方重驗 catalog。新 catalog 的模型目錄與 GPU
-設定須沿用現役 provider；候選的 embedding 名稱、manifest、維度與 index projection
-版本須符合所選 catalog，且 embedding 身分符合 provider。另選 catalog 要求目前
-明確封存的 native chunk 配方；不在這個流程遷移舊資料。
+預期來源與摘要從既有、獨立核對過的交付紀錄取得，不能從待採納資料自行讀取後當成
+信任依據。檔案使用0600、直接父目錄0700；control root 不得與原 product、模型、
+source 或 candidate state 重疊。先確認原候選已停止，沒有未完成 intent。
+支援的 `adopt-backend-provider`／`check-backend-provider` 操作見
+[部署與維護](../guide/operations.md)。
 
-操作期間同時保留原、新 product/catalog 鎖，分別核對兩份 source、core runtime、
-volume、query-only 權限及完整 peers。候選登記後不能直接改設定換 catalog；先 stop
-再重新 prepare。原 API、catalog、GPU provider 與入口不切換；stop 只清候選 CPU
-資源及其 source/build cache，保留兩份 catalog 的 state、volume 與 query 證據。
+Adopt 只在完整來源／映像／query／key／模型／TLS／namespace 驗證及退出檢查完成後，
+寫入新的 immutable reference records 與 Roles epoch1：active A、rollback null、
+pending null。它不啟動模型、切換入口或重寫原生完成收據。缺 anchor 時，正常候選
+命令會拒絕，不會重新採納舊 API 或自動修復不明 state。
+
+Roles 的 epoch 是正整數且小於 `2**63`。每次 durable Roles 寫入都遞增一次，CAS
+同時比對原 epoch 與完整 canonical record SHA256；唯讀檢查不遞增。Pending 指向
+先落盤的 immutable intent；未完成或結果不確定的操作須由所屬維護流程明確處理，
+不得刪除 pending 後重試。這個控制面目前不提供切換／回復命令。
+
+## 設定與操作
+
+正常候選僅使用一套 schema2，從
+[共享後端範本](../../deploy/env/shared-backend.example.json) 填入實際路徑：
+
+```json
+{
+  "schema_version": 2,
+  "state_root": "/absolute/private/shared-backend-state",
+  "control_config": "/absolute/private/provider-control.json",
+  "catalog_config": "/absolute/private/catalog/product.json",
+  "catalog_source": "/absolute/frozen/catalog-source"
+}
+```
+
+`catalog_config`／`catalog_source` 必填；查現役資料也要明確指定。Catalog 必須已完成
+正常 `prepare-secrets` 與 `prepare-query`，source 能以自己的封存配方重驗資料。
+Operator 不建立資料、複製秘密或補造 inference/release 收據。另選 catalog 須保持
+provider 的模型目錄／GPU 設定、embedding 與 query projection 相容，並使用明確
+封存的 native chunk 配方。這裡不遷移 catalog。
+
+設定檔須為 operator 所有的0600 regular file、直接父目錄0700；candidate state
+是 Git 外獨立0700目錄，不得與 control、product、模型或輸入重疊。
+操作順序固定為 canonical control lock、candidate journal、product/model state 與
+catalog locks。已註冊候選不能直接改 catalog 或 Roles；先處理原候選及其實際權威。
+
+Active／rollback 的 container、network、source、build 與共享依賴受到保護，不能
+透過 candidate `stop` 刪除。Active B 與 rollback A 同時存在時沒有第三 client 名額；
+回退窗口後的 A 退休屬於獨立的受控 release 操作，不是一般候選清理。
 
 候選來源必須是乾淨、已提交的 Git checkout。從包含此 operator 的已審查版本執行：
 
@@ -79,13 +117,14 @@ python3 scripts/share_search_backend.py --config /absolute/private/shared-backen
 ```
 
 `prepare` 在 `state_root/sources/<revision>` 封存候選來源，於
-`builds/<revision>` 準備映像，並核對現役基準與 request policy。
+`builds/<revision>` 準備 CPU 映像，並核對 canonical provider／Roles 與 request policy。
 `prepared` 只在完整來源、模型與最後的 file descriptor/path 檢查成功後發布。
 `start` 啟動候選 CPU 服務並驗證完整雙 client runtime；已在 running 的同版候選
 只重新驗證，不重新建立服務。
 
 running 狀態的 `status` 重新核對身分、唯讀 query authority、GPU ownership 與
-現有模型駐留；它不發送使用者的 `/api/turn`，也不暖機。其他狀態只回報 journal phase，例如 empty、
+現有模型駐留；檢查使用已驗 active API namespace，不要求最初的 API-A 存活。
+它不發送使用者的 `/api/turn`，也不暖機。其他狀態只回報 journal phase，例如 empty、
 prepared 或 failed，並不表示服務健康。`query` 要求 running，並在查詢前後驗證同一組
 基準；只有查詢與最後驗證均成功才回覆結果。
 
@@ -117,11 +156,12 @@ sealed recipe、catalog 記錄、Compose 與 query authority；不呼叫舊版 l
 
 ## Request 相容性與資源競爭
 
-`validate_shared_request_policy(production_source, candidate_source)` 純讀取六份
-來源檔，不 import 或執行候選。caller 先把兩個 source root 綁定至乾淨的 committed
+`validate_shared_request_policy(provider_source, candidate_source)` 純讀取固定來源集合，
+不 import 或執行候選。caller 先把兩個 source root 綁定至乾淨的 committed
 source maps 與已驗映像，再比較固定模型名稱/digest、scope context/predict/採樣、
-planner OPTIONS、stream/think，以及 production `keep_alive=-1` 的傳送規則。
-目前 scope 為 4096/64，planner 為 16384/2048，production planner 使用 `think="low"`。
+planner OPTIONS、stream/think、provider `keep_alive=-1`，以及固定 reranker model／
+wire limits／deadline、請求與回傳順序的傳送規則。
+目前 scope 為 4096/64，planner 為 16384/2048，provider planner 使用 `think="low"`。
 prompt、schema 與搜尋流程可以改；未知或動態改寫的 policy 結構會拒絕。
 
 重用現役 `OLLAMA_MAX_QUEUE=1`、`OLLAMA_NUM_PARALLEL=1` 與 reranker 的既有單鎖，
@@ -131,8 +171,8 @@ prompt、schema 與搜尋流程可以改；未知或動態改寫的 policy 結�
 
 ## 駐留模型的驗證紀錄
 
-第一次 `prepare` 仍完整讀取並驗證固定模型內容，可能需要較長時間。成功後私有
-journal 封存 `model_file_identity_sha256` 與 GPU compute UUID/PID 組合的
+第一次 explicit adopt 完整讀取並驗證固定模型內容，可能需要較長時間。成功後 anchor
+與候選 journal 分別綁定 `model_file_identity_sha256` 與 GPU compute UUID/PID 組合的
 `compute_sha256`；前者不是略過模型 pin 的授權，也不單獨證明模型仍駐留。
 
 同一候選後續的 start/status/query 可使用這份紀錄，省去重讀大於 32 MiB 的權重檔。
@@ -147,7 +187,7 @@ mtime/ctime、父目錄及保留的 file descriptor/path 身分；操作結束�
 
 ## 不暖機的模型檢查與單次查詢
 
-`verify_residency(docker, api_container_id, policy)` 只在已驗證的現役 API namespace
+`verify_residency(docker, api_container_id, policy)` 只在已驗證的 active API namespace
 以 GET 讀取 `scope-model:11434/api/ps`、`answer-model:11434/api/ps`。每個服務須恰有
 預期模型，其 digest、context 相符，且 `size_vram == size > 0`。回覆只含兩個角色的
 公開身分、context 與大小摘要；模型未駐留、CPU offload 或身分改變均停止操作，

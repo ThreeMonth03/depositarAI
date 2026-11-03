@@ -22,6 +22,10 @@ def fixture_identity():
         "operator_revision": "c" * 40,
         "candidate_revision": "a" * 40,
         "production_revision": "d" * 40,
+        "provider_anchor_sha256": "4" * 64,
+        "control_roles_sha256": "5" * 64,
+        "control_epoch": 1,
+        "active_backend_revision": "6" * 40,
         "catalog_manifest_sha256": "b" * 64,
         "bundle_id": "1" * 64,
         "request_policy_sha256": "e" * 64,
@@ -41,6 +45,14 @@ def fixture_identity():
         "gpu_image_ids": {"scope": "sha256:" + "4" * 64},
         "candidate_runtime": {"start_identity_sha256": "3" * 64},
     }
+
+
+CONTROL_FIELDS = {
+    "provider_anchor_sha256",
+    "control_roles_sha256",
+    "control_epoch",
+    "active_backend_revision",
+}
 
 
 def rewrite(record, *, run=None, captured=None, outcomes=None):
@@ -203,6 +215,80 @@ class BatchAggregationTests(unittest.TestCase):
             report["evidence"]["batches"][0]["run_sha256"],
         )
         self.assertEqual(before, self.records)
+
+    def test_provider_roles_and_active_backend_remain_distinct_provenance(
+        self,
+    ):
+        before = copy.deepcopy(self.records)
+        report = batches.aggregate(self.plan, self.records)
+        identity = report["evidence"]["baseline"]
+        self.assertEqual(identity["production_revision"], "d" * 40)
+        self.assertEqual(identity["active_backend_revision"], "6" * 40)
+        self.assertNotEqual(
+            identity["production_revision"],
+            identity["active_backend_revision"],
+        )
+        self.assertEqual(identity["provider_anchor_sha256"], "4" * 64)
+        self.assertEqual(identity["control_roles_sha256"], "5" * 64)
+        self.assertEqual(identity["control_epoch"], 1)
+        self.assertEqual(self.records, before)
+
+    def test_recognized_control_identity_group_cannot_be_partial(self):
+        for missing in CONTROL_FIELDS:
+            with self.subTest(missing=missing):
+                records = copy.deepcopy(self.records)
+                for record in records:
+                    run = json.loads(record["files"]["run.json"])
+                    del run["identity"][missing]
+                    rewrite(record, run=run)
+                self.rejected(records, code="identity_invalid")
+                baseline = fixture_identity()
+                del baseline[missing]
+                self.rejected(baseline=baseline, code="identity_invalid")
+
+    def test_control_identity_epoch_requires_a_positive_builtin_integer(self):
+        for epoch in (0, -1, 1.0, True, False, None, "1", 2**63):
+            with self.subTest(epoch=epoch, kind=type(epoch).__name__):
+                records = copy.deepcopy(self.records)
+                for record in records:
+                    run = json.loads(record["files"]["run.json"])
+                    run["identity"]["control_epoch"] = epoch
+                    rewrite(record, run=run)
+                self.rejected(records, code="identity_invalid")
+                baseline = fixture_identity()
+                baseline["control_epoch"] = epoch
+                self.rejected(baseline=baseline, code="identity_invalid")
+
+    def test_largest_control_epoch_remains_an_exact_integer(self):
+        records = copy.deepcopy(self.records)
+        for record in records:
+            run = json.loads(record["files"]["run.json"])
+            run["identity"]["control_epoch"] = 2**63 - 1
+            rewrite(record, run=run)
+        before = copy.deepcopy(records)
+        report = batches.aggregate(self.plan, records)
+        value = report["evidence"]["baseline"]["control_epoch"]
+        self.assertIs(type(value), int)
+        self.assertEqual(value, 2**63 - 1)
+        self.assertEqual(records, before)
+
+    def test_historical_identity_without_control_group_is_not_rewritten(self):
+        records = copy.deepcopy(self.records)
+        baseline = fixture_identity()
+        for field in CONTROL_FIELDS:
+            del baseline[field]
+        for record in records:
+            run = json.loads(record["files"]["run.json"])
+            run["identity"] = copy.deepcopy(baseline)
+            rewrite(record, run=run)
+        before = copy.deepcopy(records)
+        report = batches.aggregate(self.plan, records, baseline=baseline)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["evidence"]["baseline"], baseline)
+        self.assertTrue(
+            CONTROL_FIELDS.isdisjoint(report["evidence"]["baseline"])
+        )
+        self.assertEqual(records, before)
 
     def test_missing_batches_keep_denominator_without_model_failures(
         self,
@@ -384,6 +470,10 @@ class BatchAggregationTests(unittest.TestCase):
     ):
         for key, change in (
             ("production_revision", "6" * 40),
+            ("provider_anchor_sha256", "6" * 64),
+            ("control_roles_sha256", "6" * 64),
+            ("control_epoch", 2),
+            ("active_backend_revision", "7" * 40),
             ("bundle_id", "6" * 64),
             ("request_policy_sha256", "6" * 64),
             ("model_manifest_sha256", "6" * 64),
@@ -412,6 +502,9 @@ class BatchAggregationTests(unittest.TestCase):
             "candidate_revision",
             "catalog_manifest_sha256",
             "request_policy_sha256",
+            "provider_anchor_sha256",
+            "control_roles_sha256",
+            "active_backend_revision",
         ):
             expected = fixture_identity()
             expected[key] = "not-a-hash"

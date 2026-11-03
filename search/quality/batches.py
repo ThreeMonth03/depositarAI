@@ -76,6 +76,23 @@ def _identity_fields(value, depth=0):
         )
 
 
+def _control_identity(value):
+    fields = {
+        "provider_anchor_sha256",
+        "control_roles_sha256",
+        "control_epoch",
+        "active_backend_revision",
+    }
+    present = fields.intersection(value)
+    if present:
+        _require(present == fields, "identity_invalid")
+        _require(
+            type(value["control_epoch"]) is int
+            and 1 <= value["control_epoch"] < 2**63,
+            "identity_invalid",
+        )
+
+
 def _identity(value):
     required = {
         "operator_revision",
@@ -93,6 +110,7 @@ def _identity(value):
     _require(
         type(value) is dict and required <= value.keys(), "identity_invalid"
     )
+    _control_identity(value)
     for name in (
         "operator_revision",
         "candidate_revision",

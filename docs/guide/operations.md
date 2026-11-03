@@ -89,6 +89,31 @@ Metadata builder 或資料配方變更時，需要新 catalog、重新匯入及�
 已完成的資源摘要可在原計畫與抽取身分不變時沿用；向量匯出則另依同一 state、
 文件內容及模型配方核對，不能搬移收據來取得相容性。
 
+## 管理共用模型的後端權責
+
+後端程式更新前，先把已驗證的模型服務與現役 API 登記為獨立權責。
+以 `deploy/env/provider-control.example.json` 建立新的私有 control 設定，
+再從既有交付紀錄取得 bootstrap 與其外部摘要：
+
+```sh
+python3 -I -S -B scripts/depositarai.py adopt-backend-provider \
+  --control-config /absolute/private/provider-control.json \
+  --bootstrap /absolute/private/provider-bootstrap.json \
+  --expected-bootstrap-sha256 "$bootstrap_sha256"
+
+python3 -I -S -B scripts/depositarai.py check-backend-provider \
+  --control-config /absolute/private/provider-control.json
+```
+
+這兩個命令使用獨立的 control 設定。Adopt 核對既有來源、映像、資料權限、模型與
+TLS，完成後才建立新的 immutable records；不啟動模型或切換入口。Check 重新核對
+provider 與已登記的完整 API clients；遇到未完成操作會拒絕，不會自行清除或修復。
+
+正常 CPU 候選使用 schema2 的 `deploy/env/shared-backend.example.json`，
+明確指定 control 與 catalog。Bootstrap 結構、權責與候選操作見
+[共用後端參考](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/SHARED_BACKEND.md)。
+這個控制面不提供 API／TLS／BFF 切換、回退或重新開機復原；它們仍需各自的受控流程。
+
 ## 連線與試用
 
 `up-private` 完成後，請在主機上開啟 `http://127.0.0.1:18083`，

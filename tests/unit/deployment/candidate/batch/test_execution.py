@@ -22,6 +22,34 @@ REVISION = "a" * 40
 MANIFEST = "b" * 64
 
 
+class ControlFixture:
+    def __init__(self, root):
+        self.path = root / "control.json"
+        self.root = root / "control"
+        self.root.mkdir(mode=0o700)
+        self.roles = {
+            "schema_version": 1,
+            "epoch": 1,
+            "provider_sha256": "6" * 64,
+            "active_backend_sha256": "7" * 64,
+            "rollback_backend_sha256": None,
+            "tls_plan_ref": {"path": "/private/tls.json", "sha256": "8" * 64},
+            "pending_operation_sha256": None,
+        }
+        self.provider = {
+            "source": {"root": str(root / "provider-source")},
+            "configuration": {"path": str(root / "provider.json")},
+        }
+
+    @property
+    def provider_sha256(self):
+        return self.roles["provider_sha256"]
+
+    @property
+    def roles_sha256(self):
+        return controller.digest(self.roles)
+
+
 class BatchTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="shared-batch-")
@@ -61,9 +89,11 @@ class BatchTests(unittest.TestCase):
         self.write_spec()
         self.profile = {
             "state_root": self.state,
-            "production_config": self.root / "production.json",
-            "production_source": self.root / "native-source",
+            "control_config": self.root / "control.json",
+            "catalog_config": self.root / "catalog.json",
+            "catalog_source": self.root / "catalog-source",
         }
+        self.control = ControlFixture(self.root)
         self.product = SimpleNamespace(
             **{
                 name: self.root / name
@@ -75,6 +105,12 @@ class BatchTests(unittest.TestCase):
                 )
             }
         )
+        self.selected_product = SimpleNamespace(
+            **(
+                vars(self.product)
+                | {"state_root": self.root / "selected-state"}
+            )
+        )
         self.record = {
             "phase": "running",
             "revision": REVISION,
@@ -83,32 +119,39 @@ class BatchTests(unittest.TestCase):
             "runtime": {"start_identity_sha256": "e" * 64},
         }
         metadata = self.fixture[0]["source_metadata"]
-        self.session = SimpleNamespace(
-            context={
-                "source_revision": "f" * 40,
-                "plan": {"manifest_sha256": MANIFEST},
-                "bundle": SimpleNamespace(
-                    bundle_id="1" * 64,
-                    manifest_sha256=MANIFEST,
-                    condition_metadata=metadata,
-                ),
-            },
-            inputs=SimpleNamespace(
-                identity={"model_manifest_sha256": "2" * 64}
+        self.baseline_context = {
+            "source_revision": "f" * 40,
+            "plan": {"manifest_sha256": MANIFEST},
+            "bundle": SimpleNamespace(
+                bundle_id="1" * 64,
+                manifest_sha256=MANIFEST,
+                condition_metadata=metadata,
             ),
-            native=SimpleNamespace(
-                inference_images={"reranker": {"Id": "sha256:" + "3" * 64}}
+        }
+        self.session = SimpleNamespace(
+            control=self.control,
+            provider=SimpleNamespace(
+                source_revision="f" * 40,
+                model_manifest_sha256="2" * 64,
+                inference_images={"reranker": {"Id": "sha256:" + "3" * 64}},
+                provider_sha256=self.control.provider_sha256,
+                backends=[SimpleNamespace(source_revision="5" * 40)],
             ),
             docker=SimpleNamespace(deadline=time.monotonic() + 1800),
             candidate_endpoint="172.20.0.4",
             attach_record=lambda _record: None,
         )
-        self.session.query_context = self.session.context
+        self.session.query_context = self.baseline_context
         self.session.query_authority = {
             "catalog_identity": {"manifest_sha256": MANIFEST}
         }
         self.events = []
+        self.control_events = []
+        self.control_depth = 0
+        self.control_exit_failure = False
+        self.provider_config_failure = False
         self.audit_failure = None
+        self.audit_exception = None
         self.exit_failure = False
         self.session.verify = self.verify
         self.session.observe = lambda: self.events.append("observe")
@@ -135,6 +178,8 @@ class BatchTests(unittest.TestCase):
 
     def verify(self, *_args):
         self.events.append("audit")
+        if self.audit_exception is not None:
+            raise self.audit_exception
         if self.audit_failure == self.events.count("audit"):
             raise controller.SharedBackendError(
                 "shared_backend_baseline_query_audit_failed"
@@ -150,6 +195,35 @@ class BatchTests(unittest.TestCase):
             "batch_deadline_exceeded",
         )
         return maximum
+
+    @contextmanager
+    def controlled(self, profile):
+        self.control_depth += 1
+        self.control_events.append("enter")
+        try:
+            yield profile | {"_control": self.control}
+            if self.control_exit_failure:
+                raise controller.ProviderError(
+                    "shared_backend_provider_authority_changed"
+                )
+        finally:
+            self.control_depth -= 1
+            self.control_events.append("exit")
+
+    def load_product(self, path, *, repo_root):
+        self.assertEqual(path, self.profile["catalog_config"])
+        self.assertEqual(repo_root, self.profile["catalog_source"])
+        return self.selected_product
+
+    def load_provider_product(self, reference, source_root):
+        self.assertEqual(reference, self.control.provider["configuration"])
+        self.assertEqual(source_root, self.root / "provider-source")
+        self.assertEqual(self.control_depth, 1)
+        if self.provider_config_failure:
+            raise controller.ProviderError(
+                "shared_backend_provider_authority_changed"
+            )
+        return self.product
 
     @contextmanager
     def live(self, *_args):
@@ -206,12 +280,20 @@ class BatchTests(unittest.TestCase):
                 side_effect=self.source_revision,
             ),
             patch.object(controller, "load_config", return_value=self.profile),
+            patch.object(
+                controller, "controlled", side_effect=self.controlled
+            ),
             patch.object(controller, "current", return_value=self.record),
             patch.object(controller, "live", side_effect=self.live),
             patch.object(
                 execution.product_config,
                 "load_config",
-                return_value=self.product,
+                side_effect=self.load_product,
+            ),
+            patch.object(
+                execution.provider_runtime,
+                "configuration",
+                side_effect=self.load_provider_product,
             ),
             patch.object(
                 execution.probe, "conversation", side_effect=self.probe
@@ -236,6 +318,9 @@ class BatchTests(unittest.TestCase):
                 side_effect=self.source_revision,
             ),
             patch.object(controller, "load_config", return_value=self.profile),
+            patch.object(
+                controller, "controlled", side_effect=self.controlled
+            ),
             patch.object(controller, "current", return_value=self.record),
             patch.object(controller, "live", side_effect=self.live),
         ):
@@ -326,6 +411,182 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["summary"]["evidence_complete_turn_count"], 3)
 
+    def test_capture_identity_separates_provider_and_active_backend(self):
+        self.assertEqual(self.run_batch()["status"], "complete")
+        identity = self.read("run.json")["identity"]
+        self.assertEqual(identity["production_revision"], "f" * 40)
+        self.assertEqual(identity["active_backend_revision"], "5" * 40)
+        self.assertNotEqual(
+            identity["production_revision"],
+            identity["active_backend_revision"],
+        )
+        self.assertEqual(identity["provider_anchor_sha256"], "6" * 64)
+        self.assertEqual(identity["control_epoch"], 1)
+        self.assertEqual(
+            identity["control_roles_sha256"],
+            controller.digest(self.control.roles),
+        )
+        self.assertEqual(identity["model_manifest_sha256"], "2" * 64)
+        self.assertEqual(
+            identity["gpu_image_ids"],
+            {"reranker": "sha256:" + "3" * 64},
+        )
+
+    def test_provider_and_roles_drift_refuse_the_enqueued_identity(self):
+        expected = self.expected_identity()
+        retained = copy.deepcopy(expected)
+        expected_digest = controller.digest(expected)
+        input_bytes = self.specfile.read_bytes()
+        roles = copy.deepcopy(self.control.roles)
+        provider_digest = self.session.provider.provider_sha256
+        active_revision = self.session.provider.backends[0].source_revision
+        for field in ("provider", "epoch", "active_backend"):
+            with self.subTest(field=field):
+                self.destination = self.root / ("enqueued-" + field)
+                self.control.roles = copy.deepcopy(roles)
+                self.session.provider.provider_sha256 = provider_digest
+                self.session.provider.backends[
+                    0
+                ].source_revision = active_revision
+                if field == "provider":
+                    self.control.roles["provider_sha256"] = "8" * 64
+                    self.session.provider.provider_sha256 = "8" * 64
+                elif field == "epoch":
+                    self.control.roles["epoch"] += 1
+                else:
+                    self.control.roles["active_backend_sha256"] = "8" * 64
+                    self.session.provider.backends[0].source_revision = (
+                        "7" * 40
+                    )
+                result = self.run_batch(
+                    expected_identity_sha256=expected_digest
+                )
+                self.assertEqual(result["status"], "quarantined")
+                self.assertEqual(
+                    result["error"], "shared_backend_batch_identity_changed"
+                )
+                self.assertFalse(result["identity_verified"])
+                self.assertEqual(result["completed_turns"], 0)
+                self.assertEqual(self.probe_calls, 0)
+                self.assertEqual(self.read("capture.json")["cases"], [])
+                self.assertEqual(expected, retained)
+                self.assertEqual(self.specfile.read_bytes(), input_bytes)
+
+    def test_invalid_epoch_or_mixed_provider_context_refuses_queries(self):
+        for epoch in (0, -1, True, 1.0, 2**63):
+            with self.subTest(epoch=epoch):
+                self.control.roles["epoch"] = epoch
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError,
+                    "^shared_backend_batch_control_invalid$",
+                ):
+                    self.expected_identity()
+        self.control.roles["epoch"] = 1
+        self.session.provider.provider_sha256 = "8" * 64
+        result = self.run_batch()
+        self.assertEqual(result["status"], "quarantined")
+        self.assertEqual(
+            result["error"], "shared_backend_batch_provider_binding_changed"
+        )
+        self.assertEqual(self.probe_calls, 0)
+
+    def test_largest_control_epoch_is_preserved_without_coercion(self):
+        self.control.roles["epoch"] = 2**63 - 1
+        self.assertEqual(self.run_batch()["status"], "complete")
+        value = self.read("run.json")["identity"]["control_epoch"]
+        self.assertIs(type(value), int)
+        self.assertEqual(value, 2**63 - 1)
+
+    def test_control_wraps_journal_and_capture_is_published_last(self):
+        original_journal = controller.journal
+        original_publish = execution.capture._Capture.publish
+
+        @contextmanager
+        def journal(root):
+            self.assertEqual(self.control_depth, 1)
+            self.control_events.append("journal_enter")
+            with original_journal(root) as store:
+                yield store
+            self.control_events.append("journal_exit")
+
+        def publish(sink):
+            self.assertEqual(self.control_depth, 0)
+            self.assertEqual(self.control_events[-1], "exit")
+            self.control_events.append("publish")
+            return original_publish(sink)
+
+        with (
+            patch.object(controller, "journal", side_effect=journal),
+            patch.object(execution.capture._Capture, "publish", publish),
+        ):
+            self.assertEqual(self.run_batch()["status"], "complete")
+        self.assertEqual(
+            self.control_events,
+            ["enter", "journal_enter", "journal_exit", "exit", "publish"],
+        )
+
+    def test_late_control_failure_cannot_publish_a_complete_capture(self):
+        self.control_exit_failure = True
+        with self.assertRaisesRegex(
+            execution.capture.SharedBatchCaptureError,
+            "^shared_batch_capture_failed$",
+        ):
+            self.run_batch()
+        self.assertEqual(self.events.count("audit"), 2)
+        self.assertEqual(self.probe_calls, 1)
+        self.assertEqual(self.control_depth, 0)
+        self.assertFalse((self.destination / "run.json").exists())
+        self.assertEqual(list(self.destination.iterdir()), [])
+
+    def test_provider_failure_keeps_closed_capture_diagnostics(self):
+        self.audit_exception = controller.ProviderError(
+            "shared_backend_provider_cas_conflict"
+        )
+        result = self.run_batch()
+        self.assertEqual(result["status"], "quarantined")
+        self.assertEqual(
+            result["error"], "shared_backend_provider_cas_conflict"
+        )
+        self.assertFalse(result["identity_verified"])
+        self.assertEqual(self.probe_calls, 0)
+
+    def test_capture_cannot_overlap_control_or_provider_dependencies(self):
+        for number, protected in enumerate(
+            (
+                self.control.root / "capture",
+                self.control.path,
+                self.root / "provider.json",
+                self.root / "provider-source" / "capture",
+                self.product.state_root / "capture",
+                self.product.api_model_root / "capture",
+                self.product.embedding_model_root / "capture",
+                self.product.reranker_model_root / "capture",
+                self.selected_product.state_root / "capture",
+                self.profile["catalog_source"] / "capture",
+                self.state / "capture",
+            )
+        ):
+            with self.subTest(protected=number):
+                self.destination = protected
+                with self.assertRaisesRegex(
+                    execution.capture.SharedBatchCaptureError,
+                    "^shared_batch_capture_excluded_overlap$",
+                ):
+                    self.run_batch()
+                self.assertFalse(protected.exists())
+                self.assertEqual(self.probe_calls, 0)
+
+    def test_changed_provider_config_refuses_before_capture_creation(self):
+        self.provider_config_failure = True
+        with self.assertRaisesRegex(
+            controller.ProviderError,
+            "^shared_backend_provider_authority_changed$",
+        ):
+            self.run_batch()
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(self.probe_calls, 0)
+        self.assertEqual(self.events, [])
+
     def test_readonly_status_digest_matches_batch_receipt_without_extra_audit(
         self,
     ):
@@ -357,7 +618,7 @@ class BatchTests(unittest.TestCase):
 
     def test_readonly_status_digest_is_bound_to_the_selected_catalog(self):
         original = self.status(batch_identity=True)["batch_identity_sha256"]
-        selected = copy.deepcopy(self.session.context)
+        selected = copy.deepcopy(self.baseline_context)
         selected["source_revision"] = "7" * 40
         selected["plan"]["manifest_sha256"] = "8" * 64
         selected["bundle"].manifest_sha256 = "8" * 64
@@ -470,6 +731,10 @@ class BatchTests(unittest.TestCase):
             "production_revision",
             "operator_revision",
             "candidate_runtime",
+            "provider_anchor_sha256",
+            "control_roles_sha256",
+            "active_backend_revision",
+            "control_epoch",
         ):
             with self.subTest(field=field):
                 self.destination = self.root / field
@@ -477,6 +742,8 @@ class BatchTests(unittest.TestCase):
                 actual[field] = (
                     {"start_identity_sha256": "7" * 64}
                     if field == "candidate_runtime"
+                    else 2
+                    if field == "control_epoch"
                     else "7" * (40 if field.endswith("revision") else 64)
                 )
                 before = self.events.count("audit")
@@ -623,7 +890,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(value["source_metadata"], selected_metadata)
             self.assertNotEqual(
                 value["source_metadata"],
-                self.session.context["bundle"].condition_metadata,
+                self.baseline_context["bundle"].condition_metadata,
             )
 
     def test_foreign_bundle_or_query_authority_quarantines_before_queries(
@@ -633,7 +900,7 @@ class BatchTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.destination = self.root / kind
                 self.session.query_context = copy.deepcopy(
-                    self.session.context
+                    self.baseline_context
                 )
                 self.session.query_authority = {
                     "catalog_identity": {"manifest_sha256": MANIFEST}
@@ -760,7 +1027,7 @@ class BatchTests(unittest.TestCase):
             execution._observations(
                 self.specification["cases"][0],
                 report,
-                self.session.context["bundle"],
+                self.baseline_context["bundle"],
             )
 
 

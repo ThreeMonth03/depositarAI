@@ -7,6 +7,7 @@ it never supplies an inferred or copied inference completion receipt.
 
 from dataclasses import dataclass, replace
 import ast
+import copy
 import os
 from pathlib import Path
 import tempfile
@@ -220,6 +221,41 @@ def load_context(source, config_file, config, store):
     return context, value
 
 
+def client_identity(binding, revision):
+    """Project authenticated producer identity for one verified API source."""
+    context = getattr(binding, "context", None)
+    authority = getattr(binding, "authority", None)
+    plan = context.get("plan") if type(context) is dict else None
+    identity = (
+        authority.get("catalog_identity") if type(authority) is dict else None
+    )
+    require(type(plan) is dict and type(identity) is dict, "identity_invalid")
+    producer = plan.get("revision")
+    require(
+        all(
+            type(value) is str
+            and client_lease.REVISION.fullmatch(value) is not None
+            for value in (producer, revision)
+        ),
+        "identity_invalid",
+    )
+    require(
+        set(identity)
+        in (
+            client_lease.CATALOG_FIELDS,
+            client_lease.CATALOG_FIELDS | {"catalog_revision"},
+        )
+        and identity.get("catalog_revision", producer) == producer
+        and identity["catalog_project"] == plan.get("project"),
+        "authority_changed",
+    )
+    result = copy.deepcopy(identity)
+    result.pop("catalog_revision", None)
+    if producer != revision:
+        result["catalog_revision"] = producer
+    return result
+
+
 @dataclass
 class Catalog:
     config_file: Path
@@ -289,37 +325,30 @@ class Catalog:
         self.refresh()
 
 
-def select(profile, stack, config, store, native, key):
-    """Retain distinct product/catalog locks; never initialize selected
-    state.
-    """
-    baseline = Catalog(
-        profile["production_config"],
-        config,
-        store,
-        native.context,
-        native.authority,
-        native.catalog_images,
-        native.catalog_inspections,
-        key,
-    )
-    if "catalog_config" not in profile:
-        return baseline, baseline
+def select(profile, stack, config, existing, docker):
+    """Select an explicit catalog without adopting any data or model state."""
     source = profile["catalog_source"]
     selected = product_config.load_config(
         profile["catalog_config"], repo_root=source
     )
-    if selected.state_root == config.state_root:
-        require(
-            selected == config and source == profile["production_source"],
-            "selection_invalid",
-        )
-        return baseline, baseline
-    # Independent data state may share only the fixed existing model recipe.
     require(
         replace(selected, state_root=config.state_root) == config,
         "provider_config_changed",
     )
+    require(
+        selected.state_root == config.state_root
+        or selected.state_root not in config.state_root.parents
+        and config.state_root not in selected.state_root.parents,
+        "state_overlaps_provider",
+    )
+    for binding in existing:
+        if selected.state_root == binding.config.state_root:
+            require(
+                selected == binding.config
+                and source == binding.context["repo"],
+                "selection_invalid",
+            )
+            return binding
     target_store = stack.enter_context(locked_state(selected, create=False))
     plan = target_store.read("index-candidate.json")
     stack.enter_context(
@@ -330,12 +359,15 @@ def select(profile, stack, config, store, native, key):
     )
     validate_chunk_profile(context)
     require(
-        context["plan"]["project"] != native.context["plan"]["project"],
+        all(
+            context["plan"]["project"] != item.context["plan"]["project"]
+            for item in existing
+        ),
         "identity_collision",
     )
     images = value["images"]
     inspections = {
-        role: native.docker.inspect(proof["image_id"])
+        role: docker.inspect(proof["image_id"])
         for role, proof in images.items()
     }
     binding = Catalog(
@@ -349,7 +381,7 @@ def select(profile, stack, config, store, native, key):
         credentials.read_api_key_authority(selected, target_store),
     )
     binding.refresh()
-    return baseline, binding
+    return binding
 
 
 def observe(binding, groups, networks, clients):
@@ -379,7 +411,7 @@ def observe(binding, groups, networks, clients):
         member = members[0]
         release_controller._same(
             member["catalog_identity"],
-            binding.authority["catalog_identity"],
+            client_identity(binding, member["image_proof"]["revision"]),
             "shared_backend_catalog_authority_changed",
         )
         proof = client_lease.validate_leased_runtime(
@@ -434,9 +466,12 @@ def collect(docker, projects):
         len({name for name, _networks in projects}) == len(projects),
         "project_collision",
     )
+    discovered = runtime_docker.project_inventories(
+        docker, [name for name, _networks in projects]
+    )
     inventories, expected_networks = {}, set()
     for project, owned in projects:
-        ids, names = runtime_docker.project_inventory(docker, project)
+        ids, names = discovered[project]
         require(
             len(ids) == len(set(ids)) == 3 and names == owned,
             "inventory_changed",

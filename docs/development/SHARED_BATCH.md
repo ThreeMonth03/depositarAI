@@ -17,6 +17,10 @@
 確認候選的完整 Git revision，並將輸入與輸出放在 Git 外的私有目錄。
 原始查詢、回應與來源 metadata 可能含個人資訊，應依資料的使用範圍保存與分享。
 
+候選設定使用 canonical provider control，不接受正常 schema1 的 production-source
+設定。Provider、active／rollback ownership 與候選 journal 在同一控制鎖順序內驗證；
+pending 或不確定的變更會拒絕批次，不會自動採納／清除狀態。
+
 案例沿用 [離線正確性工具](SEARCH_QUALITY.md) 的 `id`、ordered `turns` 與
 `expected` 語意；執行前不需要填入尚未取得的 `response` 或 `source_metadata`。
 批次直接重用 `search.quality.contract.validate_cases`，不另訂一套預期條件格式。
@@ -69,7 +73,7 @@ JSON 的縮排與 key 順序不影響計畫摘要，查詢字串本身的變更�
 
 將輸入存成操作帳號所有的 `0600` 檔案，其直接父目錄使用 `0700`。
 `--capture` 指向**尚不存在**的新私有目錄；不要使用 repository、共享候選 state、
-production state、模型或來源目錄及其子目錄。
+production/control state、模型或來源目錄及其子目錄。
 
 ```bash
 python3 scripts/share_search_backend.py \
@@ -106,7 +110,10 @@ python3 scripts/share_search_backend.py \
 
 這個 digest 與私有、已核對的 `run.json.identity` 使用同一個完整身分建構函式；
 不能對整份 status JSON 求摘要。它綁定 operator／provider／catalog 來源、模型、
-policy 與實際 candidate runtime。候選重啟或 operator
+policy 與實際 candidate runtime。另包含 `provider_anchor_sha256`、
+`control_roles_sha256`、`control_epoch` 與 `active_backend_revision`：
+`production_revision` 仍表示模型 provider 的來源，不會因 API-B active 而偷換語意。
+完整四欄一起保存，epoch 必須為正整數且小於 `2**63`。候選重啟或 operator
 換版後，即使候選 commit 相同，也可能需要重新審核身分並送件；不要在等待後才
 以當下目標重算預期值。排程器保存送件時的預期摘要，不能用事後比對取代前置條件。
 
@@ -139,10 +146,22 @@ catalog、模型與 request policy 身分，再以凍結的完整計畫核對案
 
 ## 查核與失敗邊界
 
-批次前後各核對完整的原生 catalog/query authority、runtime、GPU ownership、
-模型駐留與來源。每個案例開始前重新核對完整 runtime 與 BFF 位址；每輪送出前
-檢查固定模型、駐留與 compute process 身分。HTTP 只連 host 已認證的 BFF 私有
-IPv4 與固定 port，不接受案例提供的 URL、Host、Authorization 或服務 key。
+批次入口與最後各執行一次完整查核，核對原生 catalog/query authority、查詢權限、
+映像 ID／tag、runtime、GPU ownership、模型駐留與來源。每個案例開始前重新完整
+列舉已註冊 project 的 container／network inventory，保留全部 network peers，
+核對 runtime、BFF 位址與保留的 source、control 及原生檔案權威；不重做整套查詢
+權限稽核。
+
+每輪送出前的 model checkpoint 共用同一套完整 collector，重新列舉已註冊 project
+的完整 container／network inventory，再 inspect 精確物件與全部 network
+Containers。它保留未知 peer、額外離網物件的拒絕檢查，並核對 CPU／GPU runtime、
+namespace、模型駐留與 compute process。它沿用同一 session 已驗證的 immutable
+image ID／proof，仍檢查 source、config、control 及檔案權威；不重新驗證 image
+tag。最後的完整查核仍須成功，capture 才能標為可信。這是受審來源的實驗流程，
+不是任意程式的 sandbox。
+
+HTTP 只連 host 已認證的 BFF 私有 IPv4 與固定 port，不接受案例提供的 URL、Host、
+Authorization 或服務 key。
 
 所有案例共用既有 Docker client 的 command/time budget。最後完整查核保留獨立
 時間，不會為了跑滿案例而放寬 timeout 或跳過查核。每個案例另有輪數乘以 130 秒
