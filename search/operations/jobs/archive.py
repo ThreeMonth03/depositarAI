@@ -432,6 +432,36 @@ def _summary(identifier):
     return {"job_id": identifier, "status": "archived"}
 
 
+def _remove_frozen_source(
+    registry, directory, request, intent, task_id, intent_file
+):
+    if intent["phase"] == "removing_source":
+        _checkpoint(registry, intent, absent=task_id)
+        if _exists(directory / "source"):
+            _, locked = _source(
+                registry,
+                directory,
+                request,
+                expected=intent["source"],
+                unlocked=True,
+            )
+            if locked:
+                _checkpoint(registry, intent, absent=task_id)
+                _git(registry, "worktree", "unlock", str(directory / "source"))
+            _source(
+                registry,
+                directory,
+                request,
+                expected=intent["source"],
+                unlocked=True,
+            )
+            _checkpoint(registry, intent, absent=task_id)
+            _git(registry, "worktree", "remove", str(directory / "source"))
+        _source_removed(registry, directory / "source")
+        intent["phase"] = "moving"
+        queue.write(intent_file, intent, replace=True)
+
+
 def _archive(registry, identifier, locks):
     root = Path(registry["root"])
     source, target = root / "jobs" / identifier, root / "archive" / identifier
@@ -581,31 +611,9 @@ def _archive(registry, identifier, locks):
         _checkpoint(registry, intent, absent=task_id)
         intent["phase"] = "removing_source"
         queue.write(intent_file, intent, replace=True)
-    if intent["phase"] == "removing_source":
-        _checkpoint(registry, intent, absent=task_id)
-        if _exists(directory / "source"):
-            _, locked = _source(
-                registry,
-                directory,
-                request,
-                expected=intent["source"],
-                unlocked=True,
-            )
-            if locked:
-                _checkpoint(registry, intent, absent=task_id)
-                _git(registry, "worktree", "unlock", str(directory / "source"))
-            _source(
-                registry,
-                directory,
-                request,
-                expected=intent["source"],
-                unlocked=True,
-            )
-            _checkpoint(registry, intent, absent=task_id)
-            _git(registry, "worktree", "remove", str(directory / "source"))
-        _source_removed(registry, directory / "source")
-        intent["phase"] = "moving"
-        queue.write(intent_file, intent, replace=True)
+    _remove_frozen_source(
+        registry, directory, request, intent, task_id, intent_file
+    )
     _source_removed(registry, directory / "source")
     _evidence_matches(directory, files)
     _checkpoint(registry, intent, absent=task_id)
