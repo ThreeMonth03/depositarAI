@@ -22,8 +22,14 @@ from search.api.shared.backend import (
 
 
 class WorkerIOTests(unittest.TestCase):
-    def invoke(self, raw=b'{"query":"rain"}', callback=None, *, argv=None, limit=64):
-        callback = Mock(return_value={"ready": True}) if callback is None else callback
+    def invoke(
+        self, raw=b'{"query":"rain"}', callback=None, *, argv=None, limit=64
+    ):
+        callback = (
+            Mock(return_value={"ready": True})
+            if callback is None
+            else callback
+        )
         source, output, error = io.BytesIO(raw), io.BytesIO(), io.StringIO()
         with (
             patch.object(worker_io, "MAX_WORKER_BYTES", limit),
@@ -47,7 +53,8 @@ class WorkerIOTests(unittest.TestCase):
         result, output, _ = self.invoke(callback=callback)
         self.assertEqual(0, result)
         self.assertEqual(
-            json.dumps(value, ensure_ascii=False, allow_nan=False).encode(), output
+            json.dumps(value, ensure_ascii=False, allow_nan=False).encode(),
+            output,
         )
         callback.assert_called_once_with("ready", {"query": "rain"})
 
@@ -105,7 +112,9 @@ class WorkerIOTests(unittest.TestCase):
 
     def test_operation_policy_is_owned_by_callback_not_envelope(self):
         callback = Mock(return_value={"ok": True})
-        result, _, _ = self.invoke(callback=callback, argv=["custom-operation"])
+        result, _, _ = self.invoke(
+            callback=callback, argv=["custom-operation"]
+        )
         self.assertEqual(0, result)
         callback.assert_called_once_with("custom-operation", {"query": "rain"})
 
@@ -117,33 +126,54 @@ class WorkerIOTests(unittest.TestCase):
         self.assertEqual(b"", output)
 
     def test_unserializable_or_nonfinite_output_is_silent(self):
-        for value in (object(), {"value": float("nan")}, {"value": float("inf")}):
+        for value in (
+            object(),
+            {"value": float("nan")},
+            {"value": float("inf")},
+        ):
             with self.subTest(value=type(value)):
-                result, output, _ = self.invoke(callback=Mock(return_value=value))
+                result, output, _ = self.invoke(
+                    callback=Mock(return_value=value)
+                )
                 self.assertEqual(1, result)
                 self.assertEqual(b"", output)
 
     def test_response_bound_counts_utf8_bytes_and_accepts_exact_limit(self):
         for value, expected in (("x" * 62, 0), ("x" * 63, 1), ("雨" * 21, 1)):
             with self.subTest(value=value):
-                result, output, _ = self.invoke(callback=Mock(return_value=value))
+                result, output, _ = self.invoke(
+                    callback=Mock(return_value=value)
+                )
                 self.assertEqual(expected, result)
                 if expected:
                     self.assertEqual(b"", output)
                 else:
                     self.assertEqual(64, len(output))
 
-    def test_input_read_and_output_write_errors_return_one_without_diagnostics(self):
+    def test_input_read_and_output_write_errors_return_one_without_diagnostics(
+        self,
+    ):
         for broken_input in (True, False):
             with self.subTest(input=broken_input):
-                source, output, error = io.BytesIO(b"{}"), io.BytesIO(), io.StringIO()
+                source, output, error = (
+                    io.BytesIO(b"{}"),
+                    io.BytesIO(),
+                    io.StringIO(),
+                )
                 if broken_input:
-                    source = Mock(read=Mock(side_effect=OSError("secret input")))
+                    source = Mock(
+                        read=Mock(side_effect=OSError("secret input"))
+                    )
                 else:
-                    output = Mock(write=Mock(side_effect=OSError("secret output")))
+                    output = Mock(
+                        write=Mock(side_effect=OSError("secret output"))
+                    )
                 with contextlib.redirect_stderr(error):
                     result = worker_io.run_worker(
-                        lambda *_: {}, argv=["ready"], stdin=source, stdout=output
+                        lambda *_: {},
+                        argv=["ready"],
+                        stdin=source,
+                        stdout=output,
                     )
                 self.assertEqual(1, result)
                 self.assertEqual("", error.getvalue())
@@ -159,7 +189,9 @@ class WorkerMainTests(unittest.TestCase):
     def invoke_main(self, module, operation, raw=b"{}"):
         output, error = io.BytesIO(), io.StringIO()
         with (
-            patch.object(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(raw))),
+            patch.object(
+                sys, "stdin", SimpleNamespace(buffer=io.BytesIO(raw))
+            ),
             patch.object(sys, "stdout", SimpleNamespace(buffer=output)),
             patch.object(sys, "stderr", error),
             patch.object(sys, "argv", ["worker", operation]),
@@ -176,7 +208,9 @@ class WorkerMainTests(unittest.TestCase):
                 patch.object(module, "run", return_value={"ok": True}) as run,
                 patch.object(module.Settings, "from_environment") as settings,
             ):
-                self.assertEqual((1, b""), self.invoke_main(module, "ready", b"{"))
+                self.assertEqual(
+                    (1, b""), self.invoke_main(module, "ready", b"{")
+                )
                 settings.assert_not_called()
                 run.assert_not_called()
                 self.assertEqual(
@@ -185,10 +219,14 @@ class WorkerMainTests(unittest.TestCase):
                 settings.assert_called_once_with()
                 run.assert_called_once_with("ready", {}, settings.return_value)
 
-    def test_conversation_plan_keeps_settings_and_retrieval_worker_unloaded(self):
+    def test_conversation_plan_keeps_settings_and_retrieval_worker_unloaded(
+        self,
+    ):
         module = importlib.import_module("search.api.conversation.worker")
         with (
-            patch.object(module, "plan", return_value={"action": "clarify"}) as plan,
+            patch.object(
+                module, "plan", return_value={"action": "clarify"}
+            ) as plan,
             patch.object(module, "retrieval_run") as retrieval,
             patch.object(module.Settings, "from_environment") as settings,
         ):
@@ -200,7 +238,9 @@ class WorkerMainTests(unittest.TestCase):
         retrieval.assert_not_called()
         settings.assert_not_called()
 
-    def test_conversation_delegation_preserves_allowlist_and_lazy_settings(self):
+    def test_conversation_delegation_preserves_allowlist_and_lazy_settings(
+        self,
+    ):
         module = importlib.import_module("search.api.conversation.worker")
         with (
             patch.object(module, "plan") as plan,
@@ -209,14 +249,22 @@ class WorkerMainTests(unittest.TestCase):
             ) as retrieval,
             patch.object(module.Settings, "from_environment") as settings,
         ):
-            self.assertEqual((1, b""), self.invoke_main(module, "execute-command"))
-            self.assertEqual((1, b""), self.invoke_main(module, "retrieve", b"{"))
+            self.assertEqual(
+                (1, b""), self.invoke_main(module, "execute-command")
+            )
+            self.assertEqual(
+                (1, b""), self.invoke_main(module, "retrieve", b"{")
+            )
             plan.assert_not_called()
             retrieval.assert_not_called()
             settings.assert_not_called()
-            self.assertEqual((0, b'{"ok": true}'), self.invoke_main(module, "retrieve"))
+            self.assertEqual(
+                (0, b'{"ok": true}'), self.invoke_main(module, "retrieve")
+            )
             settings.assert_called_once_with()
-            retrieval.assert_called_once_with("retrieve", {}, settings.return_value)
+            retrieval.assert_called_once_with(
+                "retrieve", {}, settings.return_value
+            )
 
 
 class BackendCancellationTests(unittest.IsolatedAsyncioTestCase):
@@ -236,7 +284,9 @@ class BackendCancellationTests(unittest.IsolatedAsyncioTestCase):
             side_effect=spawn,
         ):
             with self.assertRaises(BackendTimeout):
-                await SubprocessBackend().call("scope", {"query": "test"}, 0.05)
+                await SubprocessBackend().call(
+                    "scope", {"query": "test"}, 0.05
+                )
         self.assertIsNotNone(processes[0].returncode)
 
 

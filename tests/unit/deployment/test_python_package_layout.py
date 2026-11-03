@@ -127,25 +127,47 @@ MODULE_MOVES = {
     "search/operations/deployment/public_entry_updates.py": (
         "search/operations/deployment/public_entry/updates.py"
     ),
-    "search/operations/catalog_backend.py": "search/operations/catalog/backend.py",
-    "search/operations/catalog_execution.py": "search/operations/catalog/execution.py",
-    "search/operations/catalog_runtime.py": "search/operations/catalog/runtime.py",
+    "search/operations/catalog_backend.py": (
+        "search/operations/catalog/backend.py"
+    ),
+    "search/operations/catalog_execution.py": (
+        "search/operations/catalog/execution.py"
+    ),
+    "search/operations/catalog_runtime.py": (
+        "search/operations/catalog/runtime.py"
+    ),
     "search/operations/catalog_administration.py": (
         "search/operations/catalog/administration.py"
     ),
-    "search/operations/catalog_runtime_policy.py": "search/operations/catalog/policy.py",
-    "search/operations/catalog_results.py": "search/operations/catalog/results.py",
-    "search/operations/metadata_source.py": "search/operations/metadata/source.py",
+    "search/operations/catalog_runtime_policy.py": (
+        "search/operations/catalog/policy.py"
+    ),
+    "search/operations/catalog_results.py": (
+        "search/operations/catalog/results.py"
+    ),
+    "search/operations/metadata_source.py": (
+        "search/operations/metadata/source.py"
+    ),
     "search/operations/catalog_sync.py": "search/operations/metadata/sync.py",
-    "search/operations/private_io.py": "search/operations/shared/private_io.py",
-    "search/operations/source_identity.py": "search/operations/shared/source_identity.py",
-    "search/operations/runtime_probe.py": "search/operations/shared/runtime_probe.py",
+    "search/operations/private_io.py": (
+        "search/operations/shared/private_io.py"
+    ),
+    "search/operations/source_identity.py": (
+        "search/operations/shared/source_identity.py"
+    ),
+    "search/operations/runtime_probe.py": (
+        "search/operations/shared/runtime_probe.py"
+    ),
     "search/api/conversation_app.py": "search/api/conversation/app.py",
     "search/api/conversation_engine.py": "search/api/conversation/engine.py",
     "search/api/conversation_worker.py": "search/api/conversation/worker.py",
-    "search/api/conversation_contract.py": "search/api/conversation/contract.py",
+    "search/api/conversation_contract.py": (
+        "search/api/conversation/contract.py"
+    ),
     "search/api/conversation_time.py": "search/api/conversation/time.py",
-    "search/api/conversation_calendar.py": "search/api/conversation/calendar.py",
+    "search/api/conversation_calendar.py": (
+        "search/api/conversation/calendar.py"
+    ),
     "search/api/planned_engine.py": "search/api/retrieval/engine.py",
     "search/api/planned_schemas.py": "search/api/retrieval/schemas.py",
     "search/api/planned_worker.py": "search/api/retrieval/worker.py",
@@ -181,14 +203,18 @@ class PythonPackageLayoutTests(unittest.TestCase):
                 self.assertTrue(initializer.is_file(), str(initializer))
                 self.assertFalse(initializer.is_symlink(), str(initializer))
 
-    def test_moved_modules_exist_without_flat_duplicate_implementations(self) -> None:
+    def test_moved_modules_exist_without_flat_duplicate_implementations(
+        self,
+    ) -> None:
         for old, new in MODULE_MOVES.items():
             with self.subTest(old=old, new=new):
                 source = ROOT / new
                 self.assertTrue(source.is_file(), new)
                 self.assertFalse(source.is_symlink(), new)
                 old_source = ROOT / old
-                self.assertFalse(old_source.exists() or old_source.is_symlink(), old)
+                self.assertFalse(
+                    old_source.exists() or old_source.is_symlink(), old
+                )
 
     def test_retired_entries_have_no_forwarding_files_or_packages(self):
         for relative in RETIRED_PATHS:
@@ -213,18 +239,30 @@ class PythonPackageLayoutTests(unittest.TestCase):
         for relative in PACKAGE_PATHS:
             with self.subTest(package=relative):
                 initializer = ROOT / relative / "__init__.py"
-                tree = ast.parse(initializer.read_text(), filename=str(initializer))
+                tree = ast.parse(
+                    initializer.read_text(), filename=str(initializer)
+                )
                 self.assertIsNotNone(ast.get_docstring(tree), str(initializer))
                 self.assertEqual(1, len(tree.body), str(initializer))
 
-    def test_conversation_version_import_needs_only_standard_library(self) -> None:
-        transport_modules = {"search", "search.transport", "search.transport.version"}
+    def test_conversation_version_import_needs_only_standard_library(
+        self,
+    ) -> None:
+        transport_modules = {
+            "search",
+            "search.transport",
+            "search.transport.version",
+        }
         for module, allowed in (
             ("search.transport.version", transport_modules),
             (
                 "search.api.shared.config",
                 transport_modules
-                | {"search.api", "search.api.shared", "search.api.shared.config"},
+                | {
+                    "search.api",
+                    "search.api.shared",
+                    "search.api.shared.config",
+                },
             ),
         ):
             script = (
@@ -249,7 +287,7 @@ class PythonPackageLayoutTests(unittest.TestCase):
             with self.subTest(module=module):
                 self.assertEqual(0, completed.returncode, completed.stderr)
 
-    def test_importing_packages_does_not_load_implementations_or_heavy_dependencies(
+    def test_package_imports_keep_implementations_and_heavy_deps_unloaded(
         self,
     ) -> None:
         # -I ignores caller PYTHONPATH/site settings; -S needs no installed app
@@ -273,7 +311,8 @@ class PythonPackageLayoutTests(unittest.TestCase):
             "assert 'search.operations.config' not in sys.modules\n"
             "assert 'search.transport.http' not in sys.modules\n"
             "assert 'search.operations.shared.private_io' not in sys.modules\n"
-            "heavy = {'fastapi', 'django', 'rest_framework', 'adrf', 'requests', 'torch', 'numpy', 'transformers', "
+            "heavy = {'fastapi', 'django', 'rest_framework', 'adrf', "
+            "'requests', 'torch', 'numpy', 'transformers', "
             "'huggingface_hub', 'haystack', 'ollama', 'pydantic', 'httpx'}\n"
             "assert not any(name.partition('.')[0] in heavy "
             "for name in sys.modules), 'heavy dependency imported'\n"

@@ -55,7 +55,9 @@ def build_bundle(
     input_path: os.PathLike,
     output_root: os.PathLike,
     *,
-    resource_context: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
+    resource_context: Optional[
+        Mapping[str, Sequence[Mapping[str, Any]]]
+    ] = None,
 ) -> Dict[str, Any]:
     """Validate *input_path* and atomically publish a deterministic bundle."""
 
@@ -69,15 +71,25 @@ def build_bundle(
         try:
             common_path = os.path.commonpath((source, root))
         except ValueError as exc:
-            raise policy.BundleError("source and output root are incompatible") from exc
+            raise policy.BundleError(
+                "source and output root are incompatible"
+            ) from exc
         if common_path == root:
-            raise policy.BundleError("source must not be inside the output root")
+            raise policy.BundleError(
+                "source must not be inside the output root"
+            )
 
         lock_descriptor = storage._open_lock(root_descriptor)
         raw_records = snapshot.load_source(source)
-        if resource_context is not None and not isinstance(resource_context, Mapping):
-            raise policy.BundleError("resource context selection must be a dataset map")
-        selected_context = {} if resource_context is None else dict(resource_context)
+        if resource_context is not None and not isinstance(
+            resource_context, Mapping
+        ):
+            raise policy.BundleError(
+                "resource context selection must be a dataset map"
+            )
+        selected_context = (
+            {} if resource_context is None else dict(resource_context)
+        )
         counters: Dict[str, Any] = {}
         normalized: List[
             Tuple[
@@ -96,7 +108,9 @@ def build_bundle(
                 raw_record, counters
             )
             if dataset_id in seen_ids:
-                raise policy.BundleError("duplicate dataset UUID: %s" % dataset_id)
+                raise policy.BundleError(
+                    "duplicate dataset UUID: %s" % dataset_id
+                )
             if dataset_url in seen_urls:
                 raise policy.BundleError("duplicate normalized dataset URL")
             seen_ids.add(dataset_id)
@@ -113,10 +127,19 @@ def build_bundle(
                 "resources": enrichment,
             }
             normalized.append(
-                (dataset_id, dataset_url, raw_record, corpus, fess, context_row)
+                (
+                    dataset_id,
+                    dataset_url,
+                    raw_record,
+                    corpus,
+                    fess,
+                    context_row,
+                )
             )
         if selected_context:
-            raise policy.BundleError("resource context references an unknown dataset")
+            raise policy.BundleError(
+                "resource context references an unknown dataset"
+            )
         normalized.sort(key=lambda item: item[0])
 
         dataset_ids = [item[0] for item in normalized]
@@ -129,7 +152,9 @@ def build_bundle(
         staging_name, staging_descriptor = storage._make_staging_directory(
             root_descriptor
         )
-        artifact_rows: Sequence[Tuple[str, Sequence[Mapping[str, Any]], int]] = (
+        artifact_rows: Sequence[
+            Tuple[str, Sequence[Mapping[str, Any]], int]
+        ] = (
             (policy.ARTIFACT_NAMES[0], source_rows, 1),
             (policy.ARTIFACT_NAMES[1], corpus_rows, 2),
             (policy.ARTIFACT_NAMES[2], fess_rows, 1),
@@ -137,7 +162,9 @@ def build_bundle(
         )
         artifacts: Dict[str, Dict[str, Any]] = {}
         for name, rows, schema_version in artifact_rows:
-            expanded_bytes = storage.write_gzip_jsonl(staging_descriptor, name, rows)
+            expanded_bytes = storage.write_gzip_jsonl(
+                staging_descriptor, name, rows
+            )
             artifacts[name] = storage._artifact_description(
                 staging_descriptor,
                 name,
@@ -148,7 +175,9 @@ def build_bundle(
         manifest, manifest_bytes, bundle_digest = _make_manifest(
             artifacts, dataset_ids, resource_count, counters
         )
-        storage._write_plain(staging_descriptor, policy.MANIFEST_NAME, manifest_bytes)
+        storage._write_plain(
+            staging_descriptor, policy.MANIFEST_NAME, manifest_bytes
+        )
         storage._fsync_directory(staging_descriptor)
         os.fchmod(staging_descriptor, 0o500)
         storage._fsync_directory(staging_descriptor)

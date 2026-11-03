@@ -30,7 +30,8 @@ SECURITY_PATH = "/_plugins/_security/api/"
 
 
 class AccessError(ValueError):
-    """Fixed diagnostics, without secrets, administrator bodies or remote errors."""
+    """Fixed diagnostics, without secrets, administrator bodies or remote
+    errors."""
 
 
 def role_definition(index):
@@ -53,7 +54,8 @@ def _binding(bundle, index):
         not isinstance(bundle, CatalogBundle)
         or not 1 <= len(bundle.documents) <= MAX_DOCUMENTS
         or any(
-            type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            type(value) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", value) is None
             for value in (bundle.bundle_id, bundle.manifest_sha256)
         )
     ):
@@ -78,7 +80,9 @@ def _local(fd, root, expected, *, require_complete):
     values = {}
     for name, limit in ((SECRET_NAME, 65), (BINDING_NAME, MAX_BINDING_BYTES)):
         try:
-            values[name] = private_io.read_file(fd, name, mode=0o600, max_bytes=limit)
+            values[name] = private_io.read_file(
+                fd, name, mode=0o600, max_bytes=limit
+            )
         except FileNotFoundError:
             pass
     if not values and not require_complete:
@@ -100,7 +104,9 @@ def _local(fd, root, expected, *, require_complete):
 def _remote(client):
     result = {}
     for kind in KINDS:
-        status, body = _request(client, "GET", SECURITY_PATH + kind + "/" + USER)
+        status, body = _request(
+            client, "GET", SECURITY_PATH + kind + "/" + USER
+        )
         if status == 404:
             result[kind] = None
         elif status == 200 and type(body) is dict and set(body) == {USER}:
@@ -115,13 +121,17 @@ def _remote(client):
 
 def _flags(value):
     return all(
-        value.get(key, False) is False for key in ("reserved", "hidden", "static")
+        value.get(key, False) is False
+        for key in ("reserved", "hidden", "static")
     )
 
 
 def _verify_remote(values, index):
     role, user, mapping = (values[kind] for kind in KINDS)
-    if any(type(value) is not dict or not _flags(value) for value in values.values()):
+    if any(
+        type(value) is not dict or not _flags(value)
+        for value in values.values()
+    ):
         raise AccessError("catalog_access_permissions_changed")
     expected_role = role_definition(index)
     permissions = role.get("index_permissions")
@@ -203,7 +213,14 @@ def _probes(client, bundle, index, password):
             password,
             200,
         ),
-        ("wrong_key", "POST", "/" + index + "/_search", {"size": 0}, wrong, 401),
+        (
+            "wrong_key",
+            "POST",
+            "/" + index + "/_search",
+            {"size": 0},
+            wrong,
+            401,
+        ),
         (
             "write_denied",
             "PUT",
@@ -262,7 +279,12 @@ def _probes(client, bundle, index, password):
             ):
                 raise AccessError("catalog_access_search_incomplete")
         evidence.append(
-            {"name": name, "http": status, "expected": expected, "passed": True}
+            {
+                "name": name,
+                "http": status,
+                "expected": expected,
+                "passed": True,
+            }
         )
     return evidence
 
@@ -289,7 +311,8 @@ def _verify(client, bundle, index, root, fd, password, *, created):
         raise AccessError("catalog_access_secret_changed")
     if (
         not created
-        and _local(fd, root, _binding(bundle, index), require_complete=True) != password
+        and _local(fd, root, _binding(bundle, index), require_complete=True)
+        != password
     ):
         raise AccessError("catalog_access_secret_changed")
     _verify_remote(_remote(client), index)
@@ -297,13 +320,16 @@ def _verify(client, bundle, index, root, fd, password, *, created):
 
 
 def verify_access(client, bundle, index, private_root):
-    """Verify a completed binding and permissions without rotating or provisioning."""
+    """Verify a completed binding and permissions without rotating or
+    provisioning."""
     expected = _binding(bundle, index)
     root = Path(private_root)
     fd = private_io.open_directory(root)
     try:
         password = _local(fd, root, expected, require_complete=True)
-        return _verify(client, bundle, index, root, fd, password, created=False)
+        return _verify(
+            client, bundle, index, root, fd, password, created=False
+        )
     finally:
         os.close(fd)
 
@@ -312,7 +338,8 @@ def provision_access(client, bundle, index, private_root):
     """Create one query identity, or verify an exact completed no-op rerun.
 
     The caller holds the product/catalog lock and journal. If interrupted after
-    secret publication, the next invocation requires explicit operator recovery.
+    secret publication, the next invocation requires explicit operator
+    recovery.
     Binding publication happens only after remote readback and denial probes.
     """
     expected = _binding(bundle, index)
@@ -321,7 +348,9 @@ def provision_access(client, bundle, index, private_root):
     try:
         password = _local(fd, root, expected, require_complete=False)
         if password is not None:
-            return _verify(client, bundle, index, root, fd, password, created=False)
+            return _verify(
+                client, bundle, index, root, fd, password, created=False
+            )
         if any(value is not None for value in _remote(client).values()):
             raise AccessError("catalog_access_identity_recovery_required")
         password = secrets.token_hex(32)
@@ -337,7 +366,10 @@ def provision_access(client, bundle, index, private_root):
                 "internalusers",
                 {"password": password, "backend_roles": [], "attributes": {}},
             ),
-            ("rolesmapping", {"users": [USER], "backend_roles": [], "hosts": []}),
+            (
+                "rolesmapping",
+                {"users": [USER], "backend_roles": [], "hosts": []},
+            ),
         ):
             private_io.verify_directory(fd, root)
             status, _value = _request(
@@ -345,10 +377,15 @@ def provision_access(client, bundle, index, private_root):
             )
             if status not in {200, 201}:
                 raise AccessError("catalog_access_provision_failed")
-        proof = _verify(client, bundle, index, root, fd, password, created=True)
+        proof = _verify(
+            client, bundle, index, root, fd, password, created=True
+        )
         private_io.verify_directory(fd, root)
-        private_io.write_json(fd, BINDING_NAME, expected, max_bytes=MAX_BINDING_BYTES)
-        # Readback also checks secret inode/mode/link-count and final directory identity.
+        private_io.write_json(
+            fd, BINDING_NAME, expected, max_bytes=MAX_BINDING_BYTES
+        )
+        # Readback also checks secret inode/mode/link-count and final directory
+        # identity.
         if _local(fd, root, expected, require_complete=True) != password:
             raise AccessError("catalog_access_secret_changed")
         return proof

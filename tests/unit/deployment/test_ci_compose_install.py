@@ -14,7 +14,9 @@ SHA256 = "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
 
 class ComposeInstallerTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="compose-installer-test-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="compose-installer-test-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.bin = self.root / "bin"
@@ -39,15 +41,22 @@ class ComposeInstallerTests(unittest.TestCase):
         }
         self.stub(
             "uname",
-            'if [[ "$1" == -s ]]; then echo Linux; else echo "${TEST_ARCH:-x86_64}"; fi',
+            (
+                'if [[ "$1" == -s ]]; then echo Linux; else echo '
+                '"${TEST_ARCH:-x86_64}"; fi'
+            ),
         )
         self.stub(
             "curl",
-            'printf "download\\n" >> "$CALLS"\n'
-            'if [[ "${DOWNLOAD_FAIL:-0}" == 1 ]]; then exit 22; fi\n'
-            "while (($#)); do\n"
-            '  if [[ "$1" == --output ]]; then output="$2"; shift 2; else shift; fi\n'
-            'done\ncp "$PAYLOAD" "$output"',
+            (
+                'printf "download\\n" >> "$CALLS"\n'
+                'if [[ "${DOWNLOAD_FAIL:-0}" == 1 ]]; then exit 22; fi\n'
+                "while (($#)); do\n"
+                '  if [[ "$1" == --output ]]; then output="$2"; shift 2; '
+                "else shift; fi\n"
+                "done\n"
+                'cp "$PAYLOAD" "$output"'
+            ),
         )
         self.stub(
             "sha256sum",
@@ -58,11 +67,15 @@ class ComposeInstallerTests(unittest.TestCase):
         )
         self.stub(
             "docker",
-            '[[ "$*" == "compose version --short" ]] || exit 9\n'
-            '[[ "$DOCKER_CONFIG" == "$RUNNER_TEMP"/depositar-compose.* ]] || exit 9\n'
-            'printf "docker-selected\\n" >> "$CALLS"\n'
-            'if [[ "${WRONG_DOCKER_VERSION:-0}" == 1 ]]; then echo 2.38.2; exit 0; fi\n'
-            '"$DOCKER_CONFIG/cli-plugins/docker-compose" version --short',
+            (
+                '[[ "$*" == "compose version --short" ]] || exit 9\n'
+                '[[ "$DOCKER_CONFIG" == "$RUNNER_TEMP"/depositar-compose.*'
+                " ]] || exit 9\n"
+                'printf "docker-selected\\n" >> "$CALLS"\n'
+                'if [[ "${WRONG_DOCKER_VERSION:-0}" == 1 ]]; then echo '
+                "2.38.2; exit 0; fi\n"
+                '"$DOCKER_CONFIG/cli-plugins/docker-compose" version --short'
+            ),
         )
 
     def stub(self, name, body):
@@ -85,7 +98,13 @@ class ComposeInstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.calls.read_text().splitlines(),
-            ["download", "verified", "executed", "docker-selected", "executed"],
+            [
+                "download",
+                "verified",
+                "executed",
+                "docker-selected",
+                "executed",
+            ],
         )
         line = self.env_file.read_text().strip()
         self.assertTrue(line.startswith("DOCKER_CONFIG="), line)
@@ -101,9 +120,13 @@ class ComposeInstallerTests(unittest.TestCase):
         result = self.run_installer(BAD_HASH="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA256", result.stderr)
-        self.assertEqual(self.calls.read_text().splitlines(), ["download", "verified"])
+        self.assertEqual(
+            self.calls.read_text().splitlines(), ["download", "verified"]
+        )
         self.assertEqual(self.env_file.read_text(), "")
-        plugin = next(self.root.glob("depositar-compose.*/cli-plugins/docker-compose"))
+        plugin = next(
+            self.root.glob("depositar-compose.*/cli-plugins/docker-compose")
+        )
         self.assertEqual(plugin.stat().st_mode & 0o111, 0)
 
     def test_network_failure_never_selects_plugin(self):
@@ -125,7 +148,10 @@ class ComposeInstallerTests(unittest.TestCase):
         self.assertEqual(self.env_file.read_text(), "")
 
     def test_non_actions_and_other_architectures_fail_before_download(self):
-        for environment in ({"GITHUB_ACTIONS": "false"}, {"TEST_ARCH": "aarch64"}):
+        for environment in (
+            {"GITHUB_ACTIONS": "false"},
+            {"TEST_ARCH": "aarch64"},
+        ):
             with self.subTest(environment=environment):
                 result = self.run_installer(**environment)
                 self.assertNotEqual(result.returncode, 0)

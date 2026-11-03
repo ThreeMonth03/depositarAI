@@ -13,7 +13,11 @@ import unittest
 from unittest import mock
 
 from search.operations import state
-from search.operations.deployment import composition, credentials, first_activation
+from search.operations.deployment import (
+    composition,
+    credentials,
+    first_activation,
+)
 from tests.unit.deployment.test_composition import product
 
 
@@ -54,7 +58,8 @@ class FirstActivationTests(unittest.TestCase):
 
     def runner(self, argv, *, timeout, environment):
         self.assertEqual(
-            ["docker", "--host", "unix:///var/run/docker.sock", "--config"], argv[:4]
+            ["docker", "--host", "unix:///var/run/docker.sock", "--config"],
+            argv[:4],
         )
         client = Path(argv[4])
         self.assertEqual(0o700, stat.S_IMODE(client.stat().st_mode))
@@ -107,21 +112,29 @@ class FirstActivationTests(unittest.TestCase):
 
     def snapshot(self):
         return {
-            path.name: (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+            path.name: (
+                path.stat().st_ino,
+                path.stat().st_mtime_ns,
+                path.read_bytes(),
+            )
             for path in self.config.state_root.iterdir()
             if path.is_file() and not path.is_symlink()
         }
 
     def assert_rejected(self, code):
         before = self.snapshot()
-        with self.assertRaises(first_activation.FirstActivationError) as caught:
+        with self.assertRaises(
+            first_activation.FirstActivationError
+        ) as caught:
             self.invoke()
         self.assertEqual(code, str(caught.exception))
         self.assertIn(code, first_activation.ERROR_CODES)
         self.assertEqual(before, self.snapshot())
         self.assertTrue(all(not path.exists() for path in self.clients))
 
-    def test_empty_gateway_inventory_uses_only_two_isolated_readonly_commands(self):
+    def test_empty_gateway_inventory_uses_only_two_isolated_readonly_commands(
+        self,
+    ):
         before = self.snapshot()
         self.assertIsNone(self.invoke())
         self.assertEqual([CONTAINERS, NETWORKS], self.calls)
@@ -129,7 +142,9 @@ class FirstActivationTests(unittest.TestCase):
         self.assertFalse(self.clients[0].exists())
         self.assertEqual(before, self.snapshot())
 
-    def test_catalog_checkpoint_receipts_remain_eligible_without_new_operations(self):
+    def test_catalog_checkpoint_reuse_requires_no_new_operations(
+        self,
+    ):
         for index, operation in enumerate(
             (
                 "sync",
@@ -152,12 +167,16 @@ class FirstActivationTests(unittest.TestCase):
             self.assert_rejected("product_private_recovery_required")
         self.assertFalse(self.calls)
 
-    def test_activation_history_cannot_be_hidden_by_removing_the_active_pointer(self):
+    def test_removing_active_pointer_cannot_hide_activation_history(
+        self,
+    ):
         self.receipt(0, operation="activate-gateway")
         self.assert_rejected("product_private_existing_activation")
         self.assertFalse(self.calls)
 
-    def test_other_completed_operations_are_not_a_first_catalog_checkpoint(self):
+    def test_other_completed_operations_are_not_a_first_catalog_checkpoint(
+        self,
+    ):
         allowed = {
             "sync",
             "prepare-index",
@@ -174,7 +193,9 @@ class FirstActivationTests(unittest.TestCase):
             (self.config.state_root / f"op-{index:032x}.json").unlink()
         self.assertFalse(self.calls)
 
-    def test_activation_names_reject_every_file_type_including_broken_links(self):
+    def test_activation_names_reject_every_file_type_including_broken_links(
+        self,
+    ):
         for name in ("active.json", "gateway"):
             for kind in ("file", "directory", "broken-link", "fifo"):
                 with self.subTest(name=name, kind=kind):
@@ -226,9 +247,12 @@ class FirstActivationTests(unittest.TestCase):
 
     def test_invalid_or_replaced_state_root_rejects_before_docker(self):
         with self.assertRaisesRegex(
-            first_activation.FirstActivationError, "^product_private_recovery_required$"
+            first_activation.FirstActivationError,
+            "^product_private_recovery_required$",
         ):
-            first_activation.require_first_activation(None, docker_runner=self.runner)
+            first_activation.require_first_activation(
+                None, docker_runner=self.runner
+            )
         with state.locked_state(self.config) as store:
             self.config.state_root.rename(self.root / "retained")
             self.config.state_root.mkdir(mode=0o700)
@@ -269,17 +293,27 @@ class FirstActivationTests(unittest.TestCase):
             (b"", b'{"Name":"same"}\n{"Name":"same"}'),
         ):
             self.containers, self.networks = containers, networks
-            self.assert_rejected("product_private_gateway_inventory_unverified")
+            self.assert_rejected(
+                "product_private_gateway_inventory_unverified"
+            )
 
-    def test_nonzero_inventory_query_does_not_retry_and_cleans_private_config(self):
+    def test_nonzero_inventory_query_does_not_retry_and_cleans_private_config(
+        self,
+    ):
         for command in (CONTAINERS, NETWORKS):
             self.calls.clear()
             self.fail_command = command
-            self.assert_rejected("product_private_gateway_inventory_unverified")
-            self.assertEqual(1 if command == CONTAINERS else 2, len(self.calls))
+            self.assert_rejected(
+                "product_private_gateway_inventory_unverified"
+            )
+            self.assertEqual(
+                1 if command == CONTAINERS else 2, len(self.calls)
+            )
 
     def test_private_config_mutation_is_rejected_and_removed(self):
-        self.on_command = lambda client: (client / "config.json").write_text("{}")
+        self.on_command = lambda client: (client / "config.json").write_text(
+            "{}"
+        )
         self.assert_rejected("product_private_gateway_inventory_unverified")
         self.assertEqual(1, len(self.calls))
 
@@ -306,7 +340,9 @@ class FirstActivationTests(unittest.TestCase):
         with mock.patch.object(
             first_activation.time, "monotonic", side_effect=lambda: clock[0]
         ):
-            self.assert_rejected("product_private_gateway_inventory_unverified")
+            self.assert_rejected(
+                "product_private_gateway_inventory_unverified"
+            )
         self.assertEqual(1, len(self.calls))
 
     def test_activation_added_during_inventory_is_rejected_before_return(self):

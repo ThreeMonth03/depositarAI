@@ -29,8 +29,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             contract.passage(card),
             (
-                "Title: title\nFormats: PDF\nTags: tag\nOrganization: org\nDescription: "
-                + "n" * 20000
+                "Title: title\n"
+                "Formats: PDF\n"
+                "Tags: tag\n"
+                "Organization: org\n"
+                "Description: " + "n" * 20000
             )[:8192],
         )
 
@@ -62,20 +65,30 @@ class ContractTests(unittest.TestCase):
         }
         passage = contract.passage(card)
         self.assertEqual(len(passage), contract.MAX_PASSAGE_CHARS)
-        self.assertLess(passage.index("CSV columns:"), passage.index("Description:"))
-        self.assertLess(passage.index("PDF excerpt:"), passage.index("Description:"))
+        self.assertLess(
+            passage.index("CSV columns:"), passage.index("Description:")
+        )
+        self.assertLess(
+            passage.index("PDF excerpt:"), passage.index("Description:")
+        )
         self.assertIn("station, water temperature", passage)
         self.assertIn("Measured coastal water temperature.", passage)
         self.assertNotIn("https://", passage)
         self.assertNotIn("00000000-", passage)
 
-    def test_permutation_rejects_duplicates_missing_boolean_and_extra_output(self):
+    def test_permutation_rejects_duplicates_missing_boolean_and_extra_output(
+        self,
+    ):
         good = contract.rank_scores([1, 2, 2])
         self.assertEqual(contract.validate_order(good, 3), [1, 2, 0])
         for order in ([0, 0], [0], [0, True], [0, 2], ["0", 1]):
             with self.assertRaises(ValueError):
                 contract.validate_order(
-                    {"order": order, "model_revision": contract.MODEL_REVISION}, 2
+                    {
+                        "order": order,
+                        "model_revision": contract.MODEL_REVISION,
+                    },
+                    2,
                 )
         with self.assertRaises(ValueError):
             contract.validate_order({**good, "url": "https://evil.invalid"}, 3)
@@ -96,7 +109,9 @@ class ContractTests(unittest.TestCase):
             (True, ["a"]),
         ):
             with self.assertRaises((ValueError, UnicodeError)):
-                contract.validate_request({"query": query, "passages": passages})
+                contract.validate_request(
+                    {"query": query, "passages": passages}
+                )
 
 
 class ModelIdentityTests(unittest.TestCase):
@@ -105,7 +120,8 @@ class ModelIdentityTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         self.artifacts = {
-            name: ("reviewed fixture: " + name).encode() for name in model.MODEL_HASHES
+            name: ("reviewed fixture: " + name).encode()
+            for name in model.MODEL_HASHES
         }
         for name, content in self.artifacts.items():
             (self.directory / name).write_bytes(content)
@@ -116,7 +132,9 @@ class ModelIdentityTests(unittest.TestCase):
         pins = patch.object(model, "MODEL_HASHES", hashes)
         pins.start()
         self.addCleanup(pins.stop)
-        dependencies = patch.dict("sys.modules", {"torch": None, "transformers": None})
+        dependencies = patch.dict(
+            "sys.modules", {"torch": None, "transformers": None}
+        )
         dependencies.start()
         self.addCleanup(dependencies.stop)
 
@@ -129,7 +147,9 @@ class ModelIdentityTests(unittest.TestCase):
                 path = self.directory / name
                 path.write_bytes(content + b"tampered")
                 try:
-                    with self.assertRaisesRegex(ValueError, "model identity mismatch"):
+                    with self.assertRaisesRegex(
+                        ValueError, "model identity mismatch"
+                    ):
                         model.Ranker(self.directory)
                 finally:
                     path.write_bytes(content)
@@ -151,16 +171,23 @@ class HTTPTests(unittest.TestCase):
         self.ranker = Mock()
         self.ranker.rank.return_value = contract.rank_scores([1, 2])
         self.server = Server(("127.0.0.1", 0), self.ranker)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
         self.thread.start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
     def request(self, raw, path="/rerank", headers=None):
-        connection = http.client.HTTPConnection(*self.server.server_address, timeout=3)
+        connection = http.client.HTTPConnection(
+            *self.server.server_address, timeout=3
+        )
         try:
             connection.request(
-                "POST", path, raw, headers or {"Content-Type": "application/json"}
+                "POST",
+                path,
+                raw,
+                headers or {"Content-Type": "application/json"},
             )
             response = connection.getresponse()
             return response.status, json.loads(response.read())
@@ -169,7 +196,9 @@ class HTTPTests(unittest.TestCase):
 
     def test_model_only_returns_permutation_and_errors_are_sanitized(self):
         raw = json.dumps({"query": "find data", "passages": ["one", "two"]})
-        self.assertEqual(self.request(raw), (200, contract.rank_scores([1, 2])))
+        self.assertEqual(
+            self.request(raw), (200, contract.rank_scores([1, 2]))
+        )
         self.ranker.rank.side_effect = RuntimeError("secret detail")
         status, value = self.request(raw)
         self.assertEqual(status, 503)
@@ -181,7 +210,11 @@ class HTTPTests(unittest.TestCase):
             '{"query":"a","query":"b","passages":["x"]}',
             '{"query":NaN}',
             json.dumps(
-                {"query": "x", "passages": ["y"], "url": "https://evil.invalid"}
+                {
+                    "query": "x",
+                    "passages": ["y"],
+                    "url": "https://evil.invalid",
+                }
             ),
         ):
             self.assertEqual(self.request(raw)[0], 400)
@@ -194,7 +227,8 @@ class HTTPTests(unittest.TestCase):
     def test_busy_fails_without_queue_or_releasing_existing_slot(self):
         with self.server.inference:
             self.assertEqual(
-                self.request(json.dumps({"query": "x", "passages": ["y"]}))[0], 503
+                self.request(json.dumps({"query": "x", "passages": ["y"]}))[0],
+                503,
             )
             self.assertTrue(self.server.inference.locked())
         self.ranker.rank.assert_not_called()

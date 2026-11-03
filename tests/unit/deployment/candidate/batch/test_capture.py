@@ -1,4 +1,6 @@
-"""Real private-file and descriptor-fenced capture tests; no model or Docker."""
+"""Real private-file and descriptor-fenced capture tests; no model or
+Docker.
+"""
 
 import copy
 import hashlib
@@ -53,13 +55,17 @@ class CaptureTests(unittest.TestCase):
         self.write_cases(cases())
 
     def write_cases(self, value):
-        self.input.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        self.input.write_text(
+            json.dumps(value, ensure_ascii=False), encoding="utf-8"
+        )
         self.input.chmod(0o600)
 
     def rejected(self, function, *args, **kwargs):
         with self.assertRaises(capture.SharedBatchCaptureError) as caught:
             function(*args, **kwargs)
-        self.assertRegex(str(caught.exception), r"^shared_batch_capture_[a-z_]+$")
+        self.assertRegex(
+            str(caught.exception), r"^shared_batch_capture_[a-z_]+$"
+        )
         return caught.exception
 
     def fail_capture(self, mutation):
@@ -90,7 +96,9 @@ class CaptureTests(unittest.TestCase):
             ["CSV"],
         )
 
-    def test_optional_outcome_and_topic_change_plans_preserve_exact_semantics(self):
+    def test_optional_outcome_and_topic_change_plans_preserve_exact_semantics(
+        self,
+    ):
         for status, reason in (
             ("clarification_required", "ambiguous_time"),
             ("clarification_required", "missing_topic"),
@@ -100,7 +108,9 @@ class CaptureTests(unittest.TestCase):
             with self.subTest(status=status, reason=reason):
                 value = cases()
                 expected = value["cases"][0]["turns"][0]["expected"]
-                expected.update(status=status, reason=reason, topic_changed=False)
+                expected.update(
+                    status=status, reason=reason, topic_changed=False
+                )
                 self.write_cases(value)
                 self.assertEqual(capture.load_cases(self.input), value)
         value = cases()
@@ -207,7 +217,9 @@ class CaptureTests(unittest.TestCase):
         self.write_cases(value)
         self.rejected(capture.load_cases, self.input)
 
-    def test_case_file_is_bounded_strict_json_private_single_link_regular(self):
+    def test_case_file_is_bounded_strict_json_private_single_link_regular(
+        self,
+    ):
         for raw in (
             b"",
             b" " * (capture.MAX_CASE_BYTES + 1),
@@ -242,7 +254,9 @@ class CaptureTests(unittest.TestCase):
         alias.symlink_to(self.root, target_is_directory=True)
         self.rejected(capture.load_cases, alias / "cases.json")
 
-    def test_read_rejects_ancestor_rename_even_symlink_points_to_same_file(self):
+    def test_read_rejects_ancestor_rename_even_symlink_points_to_same_file(
+        self,
+    ):
         parent = self.root / "private"
         parent.mkdir(mode=0o700)
         self.input.rename(parent / self.input.name)
@@ -269,18 +283,24 @@ class CaptureTests(unittest.TestCase):
             return real_link(source, target, **kwargs)
 
         with mock.patch.object(capture.os, "link", side_effect=record_link):
-            with capture.capture_run(self.destination, excluded=[self.input]) as sink:
+            with capture.capture_run(
+                self.destination, excluded=[self.input]
+            ) as sink:
                 for name in ("capture.json", "outcomes.json", "run.json"):
                     metadata = sink.write_json(name, {"status": "completed"})
                     self.assertFalse((self.destination / name).exists())
-                self.assertEqual(stat.S_IMODE(self.destination.stat().st_mode), 0o700)
+                self.assertEqual(
+                    stat.S_IMODE(self.destination.stat().st_mode), 0o700
+                )
                 self.assertTrue(
                     all(
                         stat.S_IMODE(p.stat().st_mode) == 0o600
                         for p in self.destination.iterdir()
                     )
                 )
-        self.assertEqual(published, ["capture.json", "outcomes.json", "run.json"])
+        self.assertEqual(
+            published, ["capture.json", "outcomes.json", "run.json"]
+        )
         raw = (self.destination / "run.json").read_bytes()
         self.assertEqual(
             metadata,
@@ -305,12 +325,16 @@ class CaptureTests(unittest.TestCase):
                     destination.write_text("foreign")
                 else:
                     destination.symlink_to(
-                        self.root if kind == "symlink" else self.root / "missing"
+                        self.root
+                        if kind == "symlink"
+                        else self.root / "missing"
                     )
                 with self.assertRaises(capture.SharedBatchCaptureError):
                     with capture.capture_run(destination):
                         self.fail("must not enter")
-                self.assertTrue(destination.exists() or destination.is_symlink())
+                self.assertTrue(
+                    destination.exists() or destination.is_symlink()
+                )
 
     def test_output_requires_private_parent_and_canonical_path(self):
         self.root.chmod(0o755)
@@ -345,7 +369,9 @@ class CaptureTests(unittest.TestCase):
                     with capture.capture_run(repo / "run"):
                         self.fail("inside Git")
 
-    def test_excluded_paths_reject_equal_ancestor_descendant_and_relative(self):
+    def test_excluded_paths_reject_equal_ancestor_descendant_and_relative(
+        self,
+    ):
         for excluded in (
             [self.destination],
             [self.root],
@@ -355,7 +381,9 @@ class CaptureTests(unittest.TestCase):
         ):
             with self.subTest(excluded=excluded):
                 with self.assertRaises(capture.SharedBatchCaptureError):
-                    with capture.capture_run(self.destination, excluded=excluded):
+                    with capture.capture_run(
+                        self.destination, excluded=excluded
+                    ):
                         self.fail("excluded overlap")
                 self.assertFalse(self.destination.exists())
 
@@ -371,18 +399,26 @@ class CaptureTests(unittest.TestCase):
             ):
                 self.rejected(sink.write_json, name, {})
             for maximum in (0, True, capture.MAX_OUTPUT_BYTES + 1):
-                self.rejected(sink.write_json, "run.json", {}, max_bytes=maximum)
+                self.rejected(
+                    sink.write_json, "run.json", {}, max_bytes=maximum
+                )
             self.rejected(
-                sink.write_json, "run.json", {"secret-query": "x" * 100}, max_bytes=10
+                sink.write_json,
+                "run.json",
+                {"secret-query": "x" * 100},
+                max_bytes=10,
             )
             self.rejected(sink.write_json, "run.json", {"value": float("nan")})
             sink.write_json("run.json", {"first": True})
             self.rejected(sink.write_json, "run.json", {"overwrite": True})
         self.assertEqual(
-            json.loads((self.destination / "run.json").read_text()), {"first": True}
+            json.loads((self.destination / "run.json").read_text()),
+            {"first": True},
         )
 
-    def test_unexpected_body_failure_removes_own_files_and_redacts_exception(self):
+    def test_unexpected_body_failure_removes_own_files_and_redacts_exception(
+        self,
+    ):
         with self.assertRaises(capture.SharedBatchCaptureError) as caught:
             with capture.capture_run(self.destination) as sink:
                 sink.write_json("run.json", {"status": "completed"})
@@ -400,7 +436,9 @@ class CaptureTests(unittest.TestCase):
 
         self.fail_capture(rename)
         self.assertEqual(list(moved.iterdir()), [])
-        self.assertEqual((self.destination / "run.json").read_text(), "foreign")
+        self.assertEqual(
+            (self.destination / "run.json").read_text(), "foreign"
+        )
 
     def test_output_permission_tamper_fails_and_revokes(self):
         self.fail_capture(lambda sink: self.destination.chmod(0o000))
@@ -410,8 +448,12 @@ class CaptureTests(unittest.TestCase):
         self.fail_capture(
             lambda sink: (self.destination / "run.json").write_text("foreign")
         )
-        self.assertEqual([p.name for p in self.destination.iterdir()], ["run.json"])
-        self.assertEqual((self.destination / "run.json").read_text(), "foreign")
+        self.assertEqual(
+            [p.name for p in self.destination.iterdir()], ["run.json"]
+        )
+        self.assertEqual(
+            (self.destination / "run.json").read_text(), "foreign"
+        )
 
     def test_staged_file_permissions_content_and_hardlinks_are_fenced(self):
         for kind in ("mode", "content", "hardlink"):
@@ -444,7 +486,9 @@ class CaptureTests(unittest.TestCase):
                 parent.symlink_to(moved, target_is_directory=True)
             return result
 
-        with mock.patch.object(capture.os, "link", side_effect=replace_after_link):
+        with mock.patch.object(
+            capture.os, "link", side_effect=replace_after_link
+        ):
             self.fail_capture(lambda sink: None)
         self.assertEqual(list((moved / "run").iterdir()), [])
 
@@ -457,11 +501,15 @@ class CaptureTests(unittest.TestCase):
                 os.close(kwargs["dst_dir_fd"])
             return result
 
-        with mock.patch.object(capture.os, "link", side_effect=close_after_link):
+        with mock.patch.object(
+            capture.os, "link", side_effect=close_after_link
+        ):
             self.fail_capture(lambda sink: None)
         self.assertEqual(list(self.destination.iterdir()), [])
 
-    def test_late_output_content_change_cannot_be_adopted_as_new_identity(self):
+    def test_late_output_content_change_cannot_be_adopted_as_new_identity(
+        self,
+    ):
         real_read = capture.private_io.read_file
 
         def replace_after_read(fd, name, **kwargs):
@@ -496,7 +544,9 @@ class CaptureTests(unittest.TestCase):
             sink.publish()
             try:
                 with mock.patch.object(
-                    capture.private_io, "read_file", side_effect=replace_after_read
+                    capture.private_io,
+                    "read_file",
+                    side_effect=replace_after_read,
                 ):
                     self.rejected(sink.verify)
             finally:
@@ -507,7 +557,9 @@ class CaptureTests(unittest.TestCase):
             {"status": "completed"},
         )
 
-    def test_late_foreign_replacement_is_preserved_while_own_outputs_revoke(self):
+    def test_late_foreign_replacement_is_preserved_while_own_outputs_revoke(
+        self,
+    ):
         real_read = capture.private_io.read_file
         replaced = []
 
@@ -528,10 +580,16 @@ class CaptureTests(unittest.TestCase):
         ):
             self.fail_capture(lambda sink: None)
         self.assertEqual(replaced, [self.destination / "capture.json"])
-        self.assertEqual([p.name for p in self.destination.iterdir()], ["capture.json"])
-        self.assertEqual((self.destination / "capture.json").read_text(), "foreign")
+        self.assertEqual(
+            [p.name for p in self.destination.iterdir()], ["capture.json"]
+        )
+        self.assertEqual(
+            (self.destination / "capture.json").read_text(), "foreign"
+        )
 
-    def test_final_payload_digest_rejects_changes_hidden_by_timestamp_resolution(self):
+    def test_final_digest_rejects_timestamp_hidden_payload_changes(
+        self,
+    ):
         real_read = capture.private_io.read_file
         real_identity = capture.private_io.identity
 
@@ -549,28 +607,42 @@ class CaptureTests(unittest.TestCase):
                         path = self.destination / target
                         original = path.read_bytes()
                         changed = original.replace(
-                            b"private" if target == "capture.json" else b"completed",
-                            b"altered" if target == "capture.json" else b"corrupted",
+                            b"private"
+                            if target == "capture.json"
+                            else b"completed",
+                            b"altered"
+                            if target == "capture.json"
+                            else b"corrupted",
                         )
                         before = coarse_identity(path.stat())
                         path.write_bytes(changed)
                         observations.append(
-                            (before, coarse_identity(path.stat()), original, changed)
+                            (
+                                before,
+                                coarse_identity(path.stat()),
+                                original,
+                                changed,
+                            )
                         )
                     return raw
 
                 with (
                     mock.patch.object(
-                        capture.private_io, "identity", side_effect=coarse_identity
+                        capture.private_io,
+                        "identity",
+                        side_effect=coarse_identity,
                     ),
                     mock.patch.object(
-                        capture.private_io, "read_file", side_effect=replace_after_read
+                        capture.private_io,
+                        "read_file",
+                        side_effect=replace_after_read,
                     ),
                     self.assertRaises(capture.SharedBatchCaptureError),
                 ):
                     with capture.capture_run(self.destination) as sink:
                         artifact = sink.write_json(
-                            "capture.json", {"query": "x" * (2 * 65536) + "private"}
+                            "capture.json",
+                            {"query": "x" * (2 * 65536) + "private"},
                         )
                         sink.write_json(
                             "run.json",

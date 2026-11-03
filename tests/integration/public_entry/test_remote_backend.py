@@ -38,7 +38,9 @@ class RemoteBackendTests(runtime_fixture.PublicEntryRuntimeFixture):
         # Reuse the collision-aware allocator's four-network mode. No Anubis
         # service is required for this independent backend-binding scenario.
         allocator = SimpleNamespace(antibot=True, command=cls.command)
-        result = runtime_fixture.PublicEntryRuntimeFixture.networks.__func__(allocator)
+        result = runtime_fixture.PublicEntryRuntimeFixture.networks.__func__(
+            allocator
+        )
         result["backend-private"] = result.pop("antibot-gateway")
         result["outbound"]["internal"] = False
         return result
@@ -52,14 +54,21 @@ class RemoteBackendTests(runtime_fixture.PublicEntryRuntimeFixture):
 
     @classmethod
     def configure_remote(cls):
-        """Replace only this fixture's pending CPU plan before first startup."""
+        """Replace only this fixture's pending CPU plan before first
+        startup.
+        """
         root = cls.compose_file.parent
         cls.directory = root
         initial = json.loads(cls.compose_file.read_text())
         services = initial["services"]
         images = {
             role: services[role]["image"]
-            for role in ("public-entry", "public-web", "public-frontend", "quota-redis")
+            for role in (
+                "public-entry",
+                "public-web",
+                "public-frontend",
+                "quota-redis",
+            )
         }
         cls.command(
             [
@@ -152,7 +161,12 @@ class RemoteBackendTests(runtime_fixture.PublicEntryRuntimeFixture):
         # Keep the fixture's ephemeral Compose project and explicit subnets;
         # the production plan above remains sealed and unmodified.
         initial["x-depositar-plan"] = cls.profile["x-depositar-plan"]
-        for role in ("quota-redis", "public-web", "public-entry", "public-frontend"):
+        for role in (
+            "quota-redis",
+            "public-web",
+            "public-entry",
+            "public-frontend",
+        ):
             services[role]["healthcheck"].update(
                 start_period="20s", start_interval="1s"
             )
@@ -245,13 +259,22 @@ http {
         return self.backend_json("/__calls")["calls"]
 
     def host_probe_namespace(self, argv, **kwargs):
-        """Run the exact host probe in a disposable namespace with Docker DNS.
+        """Run the exact host probe in a disposable namespace with
+        Docker DNS.
 
-        The paths are mounted unchanged. The later post-start check below calls
-        the real remote verifier's docker-compose-exec path without this adapter.
+        The paths are mounted unchanged. The later post-start check
+        below calls the real remote verifier's docker-compose-exec
+        path without this adapter.
         """
         environment = kwargs.get("env", {})
-        command = ["docker", "compose", "-f", str(self.compose_file), "exec", "-T"]
+        command = [
+            "docker",
+            "compose",
+            "-f",
+            str(self.compose_file),
+            "exec",
+            "-T",
+        ]
         for key in ("WEB_UPSTREAM", "WEB_UPSTREAM_CA_FILE"):
             command.extend(["-e", key + "=" + environment[key]])
         command.extend(["probe", "python", *argv[1:]])
@@ -269,7 +292,8 @@ http {
         self.assertNotIn("existing-release", self.profile["networks"])
         self.assertFalse(
             any(
-                network.get("external") for network in self.profile["networks"].values()
+                network.get("external")
+                for network in self.profile["networks"].values()
             )
         )
         self.assertEqual(web["runtime"], "runc")
@@ -283,8 +307,10 @@ http {
                     "docker",
                     "inspect",
                     "--format",
-                    '{"runtime":{{json .HostConfig.Runtime}},"devices":{{json .HostConfig.Devices}},'
-                    '"requests":{{json .HostConfig.DeviceRequests}},"networks":{{json .NetworkSettings.Networks}}}',
+                    '{"runtime":{{json .HostConfig.Runtime}},'
+                    '"devices":{{json .HostConfig.Devices}},'
+                    '"requests":{{json .HostConfig.DeviceRequests}},'
+                    '"networks":{{json .NetworkSettings.Networks}}}',
                     container,
                 ]
             ).stdout
@@ -305,7 +331,9 @@ http {
             remote.PROOF,
         )
         self.assertEqual(
-            remote.verify_remote_backend(self.profile, compose_file=self.compose_file),
+            remote.verify_remote_backend(
+                self.profile, compose_file=self.compose_file
+            ),
             remote.PROOF,
         )
         requests = self.backend_json("/__version_calls")["requests"]
@@ -323,7 +351,9 @@ http {
             "catalog_manifest_sha256"
         ] = "e" * 64
         with self.assertRaisesRegex(ValueError, "remote_probe_failed"):
-            remote.verify_remote_backend(wrong_manifest, compose_file=self.compose_file)
+            remote.verify_remote_backend(
+                wrong_manifest, compose_file=self.compose_file
+            )
         good_ca = self.ca.read_bytes()
         self.ca.write_bytes((self.directory / "tls.crt").read_bytes())
         try:
@@ -337,7 +367,10 @@ http {
         for version in (1, 2, 3):
             wrong_wire.write_text(
                 json.dumps(
-                    {**EXPECTED_VERSION, "conversation_contract_version": version}
+                    {
+                        **EXPECTED_VERSION,
+                        "conversation_contract_version": version,
+                    }
                 )
             )
             wrong_wire.chmod(0o600)
@@ -355,23 +388,34 @@ http {
         self.assertTrue(
             all(
                 request["method"] == "GET" and request["path"] == "/v1/version"
-                for request in self.backend_json("/__version_calls")["requests"]
+                for request in self.backend_json("/__version_calls")[
+                    "requests"
+                ]
             )
         )
 
         self.assertEqual(self.probe("session", "guest")["status"], 200)
         self.assertEqual(
-            self.probe("turn", "guest", {"query": "氣候", "version": 0})["status"], 200
+            self.probe("turn", "guest", {"query": "氣候", "version": 0})[
+                "status"
+            ],
+            200,
         )
         self.assertEqual(self.calls(), 1)
         self.assertEqual(
-            self.probe("turn", "guest", {"query": "氣候", "version": 1})["status"], 429
+            self.probe("turn", "guest", {"query": "氣候", "version": 1})[
+                "status"
+            ],
+            429,
         )
         self.assertEqual(self.calls(), 1)
         self.assertEqual(self.probe("login", "alice")["status"], 200)
         self.assertEqual(self.probe("session", "alice")["status"], 200)
         self.assertEqual(
-            self.probe("turn", "alice", {"query": "氣候", "version": 0})["status"], 200
+            self.probe("turn", "alice", {"query": "氣候", "version": 0})[
+                "status"
+            ],
+            200,
         )
         self.assertEqual(self.calls(), 2)
 

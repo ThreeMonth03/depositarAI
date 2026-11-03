@@ -177,7 +177,9 @@ POLICY = {
         "excerpt_characters_max": resources.MAX_EXCERPT_CHARS,
         "index_text_characters_max": resources.MAX_INDEX_TEXT_CHARS,
     },
-    "dataset_id_digest_encoding": "lowercase UUIDs sorted, one UTF-8 ID plus LF per record",
+    "dataset_id_digest_encoding": (
+        "lowercase UUIDs sorted, one UTF-8 ID plus LF per record"
+    ),
 }
 
 

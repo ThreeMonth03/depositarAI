@@ -30,14 +30,20 @@ def record(raw):
     return {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def oci_fixture(*, architecture="amd64", corrupt_blob=False, wrong_compatibility=False):
+def oci_fixture(
+    *, architecture="amd64", corrupt_blob=False, wrong_compatibility=False
+):
     """Docker 29's observed index ID, config blob, and gzip-layer layout."""
     blobs = {}
 
     def descriptor(raw, media_type):
         digest = hashlib.sha256(raw).hexdigest()
         blobs["blobs/sha256/" + digest] = raw
-        return {"digest": "sha256:" + digest, "size": len(raw), "mediaType": media_type}
+        return {
+            "digest": "sha256:" + digest,
+            "size": len(raw),
+            "mediaType": media_type,
+        }
 
     uncompressed = b"synthetic fixed layer bytes"
     layer = descriptor(
@@ -54,7 +60,8 @@ def oci_fixture(*, architecture="amd64", corrupt_blob=False, wrong_compatibility
         },
     }
     config = descriptor(
-        private_io.canonical(config_value), "application/vnd.oci.image.config.v1+json"
+        private_io.canonical(config_value),
+        "application/vnd.oci.image.config.v1+json",
     )
     manifest = descriptor(
         private_io.canonical(
@@ -99,7 +106,11 @@ def oci_fixture(*, architecture="amd64", corrupt_blob=False, wrong_compatibility
                 "Config": "blobs/sha256/" + config["digest"][7:],
                 "Layers": [
                     "blobs/sha256/"
-                    + ("e" * 64 if wrong_compatibility else layer["digest"][7:])
+                    + (
+                        "e" * 64
+                        if wrong_compatibility
+                        else layer["digest"][7:]
+                    )
                 ],
                 "RepoTags": ["fixture:test"],
             }
@@ -126,7 +137,12 @@ def oci_fixture(*, architecture="amd64", corrupt_blob=False, wrong_compatibility
 
 class FakeDocker:
     def __init__(self, plan, images, configs, layer):
-        self.plan, self.images, self.configs, self.layer = plan, images, configs, layer
+        self.plan, self.images, self.configs, self.layer = (
+            plan,
+            images,
+            configs,
+            layer,
+        )
         self.calls = []
         self.corrupt_layer = False
         self.omit_image = False
@@ -144,12 +160,16 @@ class FakeDocker:
         arguments = argv[5:]
         if arguments[:2] == ["image", "inspect"]:
             inspected = self.images[arguments[-1]]
-            return subprocess.CompletedProcess(argv, 0, json.dumps(inspected), "")
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps(inspected), ""
+            )
         assert arguments[:2] == ["image", "save"]
         assert set(arguments[4:]) == set(self.images)
         assert not Path(arguments[3]).exists()
         if self.fail_save:
-            return subprocess.CompletedProcess(argv, 1, b"", b"private-output-sentinel")
+            return subprocess.CompletedProcess(
+                argv, 1, b"", b"private-output-sentinel"
+            )
         rows = []
         with tarfile.open(arguments[3], mode="w") as archive:
 
@@ -164,7 +184,11 @@ class FakeDocker:
                 name = identifier[7:] + ".json"
                 add(name, config)
                 rows.append(
-                    {"Config": name, "RepoTags": None, "Layers": ["layer/layer.tar"]}
+                    {
+                        "Config": name,
+                        "RepoTags": None,
+                        "Layers": ["layer/layer.tar"],
+                    }
                 )
             add(
                 "layer/layer.tar",
@@ -178,7 +202,9 @@ class FakeDocker:
 
 class ProductPackageTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-product-package-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-product-package-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.source_raw = {
@@ -190,21 +216,28 @@ class ProductPackageTests(unittest.TestCase):
             record(raw)["sha256"] + "  " + name + "\n"
             for name, raw in self.source_raw.items()
         ).encode()
-        self.source = {name: record(raw) for name, raw in self.source_raw.items()}
+        self.source = {
+            name: record(raw) for name, raw in self.source_raw.items()
+        }
         self.metadata_raw = {
             name: (name + " public metadata").encode()
             for name in (*package.ARTIFACT_NAMES, package.MANIFEST_NAME)
         }
         self.metadata = {
             "bundle_id": "b" * 64,
-            "manifest_sha256": record(self.metadata_raw[package.MANIFEST_NAME])[
-                "sha256"
-            ],
+            "manifest_sha256": record(
+                self.metadata_raw[package.MANIFEST_NAME]
+            )["sha256"],
             "document_count": 1,
-            "files": {name: record(raw) for name, raw in self.metadata_raw.items()},
+            "files": {
+                name: record(raw) for name, raw in self.metadata_raw.items()
+            },
         }
         self.catalog = {
-            "project": "depositar-ai-catalog-" + "b" * 12 + "-" + REVISION[:12],
+            "project": "depositar-ai-catalog-"
+            + "b" * 12
+            + "-"
+            + REVISION[:12],
             "revision": REVISION,
             "bundle_id": self.metadata["bundle_id"],
             "manifest_sha256": self.metadata["manifest_sha256"],
@@ -212,7 +245,9 @@ class ProductPackageTests(unittest.TestCase):
             "image_receipt_sha256": "d" * 64,
         }
         self.model_raw = {
-            role: {"weights/model.bin": (role + " pinned model bytes").encode()}
+            role: {
+                "weights/model.bin": (role + " pinned model bytes").encode()
+            }
             for role in package.MODEL_ROLES
         }
         self.models = {
@@ -235,20 +270,26 @@ class ProductPackageTests(unittest.TestCase):
                     name: hashlib.sha256(name.encode()).hexdigest()
                     for name in package.catalog_execution.service_sources(role)
                 }
-                source_digest = package.catalog_execution.digest_record(sources)
+                source_digest = package.catalog_execution.digest_record(
+                    sources
+                )
             labels = {"fixture-role": role}
             if role != "ollama":
                 labels["org.opencontainers.image.revision"] = REVISION
                 labels["io.depositar.ai.source.sha256"] = source_digest
                 labels["io.depositar.ai.catalog.source-sha256"] = source_digest
-                labels["io.depositar.ai.catalog.project"] = self.catalog["project"]
+                labels["io.depositar.ai.catalog.project"] = self.catalog[
+                    "project"
+                ]
             config = {
                 "architecture": "amd64",
                 "os": "linux",
                 "config": {"Env": ["PATH=/usr/bin"], "Labels": labels},
                 "rootfs": {
                     "type": "layers",
-                    "diff_ids": ["sha256:" + hashlib.sha256(self.layer).hexdigest()],
+                    "diff_ids": [
+                        "sha256:" + hashlib.sha256(self.layer).hexdigest()
+                    ],
                 },
             }
             raw = private_io.canonical(config)
@@ -260,7 +301,8 @@ class ProductPackageTests(unittest.TestCase):
                 "Os": "linux",
                 "Config": config["config"],
                 "RepoDigests": [
-                    "ollama/ollama@" + package.composition.OLLAMA_IMAGE.split("@", 1)[1]
+                    "ollama/ollama@"
+                    + package.composition.OLLAMA_IMAGE.split("@", 1)[1]
                 ]
                 if role == "ollama"
                 else [],
@@ -292,7 +334,9 @@ class ProductPackageTests(unittest.TestCase):
             sources = (
                 {
                     name: hashlib.sha256(name.encode()).hexdigest()
-                    for name in package.catalog_execution.service_sources(service)
+                    for name in package.catalog_execution.service_sources(
+                        service
+                    )
                 }
                 if base is not None
                 else {}
@@ -309,18 +353,22 @@ class ProductPackageTests(unittest.TestCase):
                 else {},
                 "sources": sources,
             }
-        self.catalog["image_receipt_sha256"] = package.catalog_execution.digest_record(
-            self.catalog_images
+        self.catalog["image_receipt_sha256"] = (
+            package.catalog_execution.digest_record(self.catalog_images)
         )
         self.source_files = self.write_inputs("source-input", self.source_raw)
-        self.metadata_files = self.write_inputs("metadata-input", self.metadata_raw)
+        self.metadata_files = self.write_inputs(
+            "metadata-input", self.metadata_raw
+        )
         self.model_files = {
             role: self.write_inputs("model-input-" + role, files)
             for role, files in self.model_raw.items()
         }
         self.destination = self.root / "output"
         self.plan = self.make_plan()
-        self.docker = FakeDocker(self.plan, self.inspections, self.configs, self.layer)
+        self.docker = FakeDocker(
+            self.plan, self.inspections, self.configs, self.layer
+        )
 
     def write_inputs(self, directory, files):
         result = {}
@@ -365,7 +413,9 @@ class ProductPackageTests(unittest.TestCase):
         self.assertFalse((self.destination / "package.json").exists())
 
     def use_origin_catalog(self, revision="1" * 40):
-        """Give the catalog its own real config IDs, not application aliases."""
+        """Give the catalog its own real config IDs, not application
+        aliases.
+        """
         self.catalog["revision"] = revision
         self.catalog["project"] = (
             "depositar-ai-catalog-"
@@ -373,7 +423,9 @@ class ProductPackageTests(unittest.TestCase):
             + "-"
             + revision[:12]
         )
-        self.catalog_images.update(project=self.catalog["project"], revision=revision)
+        self.catalog_images.update(
+            project=self.catalog["project"], revision=revision
+        )
         for role in package.CATALOG_ROLES:
             entry = self.images[role]
             old_id = entry["image_id"]
@@ -390,7 +442,9 @@ class ProductPackageTests(unittest.TestCase):
             entry.update(revision=revision, image_id=image_id)
         for service in ("fess-search", "opensearch-search"):
             receipt = self.catalog_images["images"][service]
-            receipt["reference"] = self.catalog["project"] + "-" + service + ":1"
+            receipt["reference"] = (
+                self.catalog["project"] + "-" + service + ":1"
+            )
             receipt["image_id"] = self.images[service]["image_id"]
             receipt["labels"] = package.catalog_execution.image_labels(
                 {"plan": self.catalog},
@@ -398,19 +452,25 @@ class ProductPackageTests(unittest.TestCase):
                 receipt["sources"],
                 receipt["labels"]["io.depositar.ai.catalog.base"],
             )
-        self.catalog["image_receipt_sha256"] = package.catalog_execution.digest_record(
-            self.catalog_images
+        self.catalog["image_receipt_sha256"] = (
+            package.catalog_execution.digest_record(self.catalog_images)
         )
         self.plan = self.make_plan()
-        self.docker = FakeDocker(self.plan, self.inspections, self.configs, self.layer)
+        self.docker = FakeDocker(
+            self.plan, self.inspections, self.configs, self.layer
+        )
 
-    def test_mixed_package_keeps_catalog_provenance_and_actual_exported_image_ids(self):
+    def test_mixed_package_preserves_catalog_and_exported_image_ids(
+        self,
+    ):
         self.use_origin_catalog()
         result = self.export(catalog_images=self.catalog_images)
         self.assertEqual(REVISION, result["revision"])
         self.assertEqual("1" * 40, result["catalog"]["revision"])
         self.assertFalse(result["install_complete"])
-        receipt = json.loads((self.destination / "catalog-images.json").read_bytes())
+        receipt = json.loads(
+            (self.destination / "catalog-images.json").read_bytes()
+        )
         self.assertEqual("1" * 40, receipt["revision"])
         self.assertEqual(self.catalog["project"], receipt["project"])
         for role in package.BUILT_ROLES:
@@ -453,7 +513,9 @@ class ProductPackageTests(unittest.TestCase):
             self.export(catalog_images=self.catalog_images)
         self.assert_incomplete()
 
-    def test_complete_payload_uses_docker_save_and_copies_only_approved_files(self):
+    def test_complete_payload_uses_docker_save_and_copies_only_approved_files(
+        self,
+    ):
         result = self.export()
         self.assertEqual("packaged", result["status"])
         self.assertTrue(result["payload_self_contained"])
@@ -469,7 +531,10 @@ class ProductPackageTests(unittest.TestCase):
         for group, files in (
             ("source", self.source_raw),
             ("metadata", self.metadata_raw),
-            *(("models/" + role, files) for role, files in self.model_raw.items()),
+            *(
+                ("models/" + role, files)
+                for role, files in self.model_raw.items()
+            ),
         ):
             for name, expected in files.items():
                 path = self.destination / group / name
@@ -483,7 +548,9 @@ class ProductPackageTests(unittest.TestCase):
             digest, name = line.split("  ", 1)
             self.assertEqual(
                 digest,
-                hashlib.sha256((self.destination / name).read_bytes()).hexdigest(),
+                hashlib.sha256(
+                    (self.destination / name).read_bytes()
+                ).hexdigest(),
             )
         self.assertEqual(19, len(self.docker.calls))
         self.assertTrue(
@@ -509,14 +576,17 @@ class ProductPackageTests(unittest.TestCase):
             result["catalog_image_receipt"],
         )
         self.assertEqual(
-            0o600, (self.destination / "catalog-images.json").stat().st_mode & 0o777
+            0o600,
+            (self.destination / "catalog-images.json").stat().st_mode & 0o777,
         )
         self.assertIn(
             hashlib.sha256(raw).hexdigest() + "  catalog-images.json\n",
             (self.destination / "SHA256SUMS").read_text(),
         )
 
-    def test_catalog_receipt_rejects_source_secret_id_and_identity_changes(self):
+    def test_catalog_receipt_rejects_source_secret_id_and_identity_changes(
+        self,
+    ):
         def change_source(value):
             sources = value["images"]["fess-search"]["sources"]
             sources[next(iter(sources))] = "f" * 64
@@ -566,7 +636,9 @@ class ProductPackageTests(unittest.TestCase):
         self.assertFalse(result["payload_self_contained"])
         self.assertFalse((self.destination / "models").exists())
 
-    def test_missing_image_role_mixed_source_and_unreviewed_registry_rejected(self):
+    def test_missing_image_role_mixed_source_and_unreviewed_registry_rejected(
+        self,
+    ):
         for mutation in (
             lambda: self.images.pop("catalog-admin"),
             lambda: self.images["web"].update(revision="f" * 40),
@@ -605,19 +677,31 @@ class ProductPackageTests(unittest.TestCase):
             with self.assertRaises(package.ProductPackageError):
                 self.make_plan()
 
-    def test_pinned_reranker_inventory_accepts_reviewed_tokenizer_metadata(self):
+    def test_pinned_reranker_inventory_accepts_reviewed_tokenizer_metadata(
+        self,
+    ):
         self.models["reranker"] = {
             name: {"bytes": 1, "sha256": digest}
             for name, digest in MODEL_HASHES.items()
         }
         plan = self.make_plan()
-        self.assertEqual(self.models["reranker"], plan["models"]["files"]["reranker"])
-        self.assertIn("special_tokens_map.json", plan["models"]["files"]["reranker"])
+        self.assertEqual(
+            self.models["reranker"], plan["models"]["files"]["reranker"]
+        )
+        self.assertIn(
+            "special_tokens_map.json", plan["models"]["files"]["reranker"]
+        )
 
-    def test_reviewed_model_name_exception_requires_exact_role_path_and_digest(self):
+    def test_reviewed_model_name_exception_requires_exact_role_path_and_digest(
+        self,
+    ):
         original = copy.deepcopy(self.models)
         for role, name, digest in (
-            ("api", "special_tokens_map.json", MODEL_HASHES["special_tokens_map.json"]),
+            (
+                "api",
+                "special_tokens_map.json",
+                MODEL_HASHES["special_tokens_map.json"],
+            ),
             ("reranker", "special_tokens_map.json", "f" * 64),
             (
                 "reranker",
@@ -633,10 +717,14 @@ class ProductPackageTests(unittest.TestCase):
                 ):
                     self.make_plan()
         # Archive/source paths retain the general secret-name policy.
-        with self.assertRaisesRegex(package.ProductPackageError, "asset_name_invalid"):
+        with self.assertRaisesRegex(
+            package.ProductPackageError, "asset_name_invalid"
+        ):
             package._relative("special_tokens_map.json")
 
-    def test_credential_token_filenames_still_rejected_in_every_model_role(self):
+    def test_credential_token_filenames_still_rejected_in_every_model_role(
+        self,
+    ):
         original = copy.deepcopy(self.models)
         for role in package.MODEL_ROLES:
             for name in (
@@ -659,7 +747,9 @@ class ProductPackageTests(unittest.TestCase):
 
     def test_tampered_plan_cannot_assert_runtime_install_success(self):
         self.plan["runtime_install_verified"] = True
-        with self.assertRaisesRegex(package.ProductPackageError, "plan_changed"):
+        with self.assertRaisesRegex(
+            package.ProductPackageError, "plan_changed"
+        ):
             self.export()
         self.assertFalse(self.destination.exists())
         self.assertEqual([], self.docker.calls)
@@ -696,13 +786,17 @@ class ProductPackageTests(unittest.TestCase):
         self.assert_incomplete()
 
     def test_model_corruption_is_not_a_successful_package(self):
-        next(iter(self.model_files["api"].values())).write_bytes(b"wrong pinned model")
+        next(iter(self.model_files["api"].values())).write_bytes(
+            b"wrong pinned model"
+        )
         with self.assertRaises(package.ProductPackageError):
             self.export()
         self.assert_incomplete()
         self.assertEqual([], self.docker.calls)
 
-    def test_sealed_metadata_under_allocated_ancestor_keeps_modes_and_bytes(self):
+    def test_sealed_metadata_under_allocated_ancestor_keeps_modes_and_bytes(
+        self,
+    ):
         source = self.root / "snapshot.jsonl"
         source.write_text(json.dumps(dataset()) + "\n")
         parent = self.root / "bundles"
@@ -742,8 +836,12 @@ class ProductPackageTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(raw, inputs[name].read_bytes())
                 self.assertEqual(raw, (target / name).read_bytes())
-                self.assertEqual(0o400, stat.S_IMODE(inputs[name].stat().st_mode))
-                self.assertEqual(0o600, stat.S_IMODE((target / name).stat().st_mode))
+                self.assertEqual(
+                    0o400, stat.S_IMODE(inputs[name].stat().st_mode)
+                )
+                self.assertEqual(
+                    0o600, stat.S_IMODE((target / name).stat().st_mode)
+                )
 
     def test_sealed_metadata_anchor_requires_operator_private_parent(self):
         parent = self.root / "nonprivate-bundles"
@@ -751,9 +849,13 @@ class ProductPackageTests(unittest.TestCase):
         parent.chmod(0o750)
         sealed = parent / "sealed"
         sealed.mkdir(mode=0o700)
-        inputs = self.write_inputs("nonprivate-bundles/sealed", self.metadata_raw)
+        inputs = self.write_inputs(
+            "nonprivate-bundles/sealed", self.metadata_raw
+        )
         sealed.chmod(0o500)
-        parent.chmod(0o750)  # write_inputs intentionally creates private parents.
+        parent.chmod(
+            0o750
+        )  # write_inputs intentionally creates private parents.
         target = self.root / "metadata-copy"
         target.mkdir(mode=0o700)
         with self.assertRaises(package.search_model_source.ModelSourceError):
@@ -766,9 +868,13 @@ class ProductPackageTests(unittest.TestCase):
         self.assertEqual(0o500, stat.S_IMODE(sealed.stat().st_mode))
         self.assertEqual(0o750, stat.S_IMODE(parent.stat().st_mode))
 
-    def test_export_refuses_secret_image_configuration_without_echoing_it(self):
+    def test_export_refuses_secret_image_configuration_without_echoing_it(
+        self,
+    ):
         identifier = self.images["web"]["image_id"]
-        self.inspections[identifier]["Config"]["Env"].append("API_KEY=private-sentinel")
+        self.inspections[identifier]["Config"]["Env"].append(
+            "API_KEY=private-sentinel"
+        )
         with self.assertRaisesRegex(
             package.ProductPackageError, "image_secret_configuration"
         ) as error:
@@ -776,7 +882,9 @@ class ProductPackageTests(unittest.TestCase):
         self.assertNotIn("private-sentinel", str(error.exception))
         self.assert_incomplete()
 
-    def test_save_failure_retains_partial_output_without_complete_manifest(self):
+    def test_save_failure_retains_partial_output_without_complete_manifest(
+        self,
+    ):
         self.docker.fail_save = True
         with self.assertRaises(package.ProductPackageError) as error:
             self.export()
@@ -800,9 +908,9 @@ class ProductPackageTests(unittest.TestCase):
 
     def test_post_save_image_and_copied_asset_rechecks(self):
         identifier = self.images["web"]["image_id"]
-        self.docker.after_save = lambda: self.inspections[identifier]["Config"][
-            "Labels"
-        ].update({"org.opencontainers.image.revision": "f" * 40})
+        self.docker.after_save = lambda: self.inspections[identifier][
+            "Config"
+        ]["Labels"].update({"org.opencontainers.image.revision": "f" * 40})
         with self.assertRaisesRegex(
             package.ProductPackageError, "image_source_mismatch"
         ):
@@ -835,7 +943,9 @@ class ProductPackageTests(unittest.TestCase):
             self.assertFalse((self.destination / "SHA256SUMS").exists())
             self.assert_incomplete()
 
-        self.assertEqual("packaged", self.export(before_publish=verify)["status"])
+        self.assertEqual(
+            "packaged", self.export(before_publish=verify)["status"]
+        )
 
     def test_publication_authority_failure_does_not_publish_success(self):
         def failed_authority():
@@ -857,7 +967,10 @@ class ProductPackageTests(unittest.TestCase):
             archive.symlink_to(real)
 
         def hardlink_output():
-            os.link(self.destination / "images.tar", self.destination / "hardlink.tar")
+            os.link(
+                self.destination / "images.tar",
+                self.destination / "hardlink.tar",
+            )
 
         for index, mutation in enumerate(
             (
@@ -880,7 +993,9 @@ class ProductPackageTests(unittest.TestCase):
             with (self.destination / "images.tar").open("ab") as stream:
                 stream.write(b"after-verification-change")
 
-        with self.assertRaisesRegex(package.ProductPackageError, "archive_changed"):
+        with self.assertRaisesRegex(
+            package.ProductPackageError, "archive_changed"
+        ):
             self.export(before_publish=changed_payload)
         self.assert_incomplete()
 
@@ -895,9 +1010,13 @@ class ProductPackageTests(unittest.TestCase):
             os.close(descriptor)
 
     def test_containerd_index_id_and_gzip_layers_differ_from_config_id(self):
-        self.assertEqual("docker-save-oci-linux-amd64", self.check_oci_fixture())
+        self.assertEqual(
+            "docker-save-oci-linux-amd64", self.check_oci_fixture()
+        )
 
-    def test_oci_blob_corruption_missing_platform_and_wrong_compatibility(self):
+    def test_oci_blob_corruption_missing_platform_and_wrong_compatibility(
+        self,
+    ):
         for options, error in (
             ({"corrupt_blob": True}, "archive_blob_digest_mismatch"),
             ({"architecture": "arm64"}, "archive_platform_incomplete"),

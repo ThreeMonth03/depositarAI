@@ -54,7 +54,9 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
             result["condition_counts"],
             {"match": 2, "unknown": 1, "outside": 0, "not_checked": 0},
         )
-        self.assertEqual([c["dataset_id"] for c in result["cards"]], [IDS[2], IDS[1]])
+        self.assertEqual(
+            [c["dataset_id"] for c in result["cards"]], [IDS[2], IDS[1]]
+        )
         self.assertEqual(
             [c["condition_status"] for c in result["cards"]],
             ["match", "match"],
@@ -79,7 +81,9 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
                 self.backend.retrieval = retrieval
                 result = await self.search()
                 self.assertTrue(
-                    {"answer", "planning_status", "clarification"}.isdisjoint(result)
+                    {"answer", "planning_status", "clarification"}.isdisjoint(
+                        result
+                    )
                 )
 
     async def test_server_owned_candidate_count_and_top_k(self):
@@ -87,9 +91,13 @@ class RetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.backend.calls[0][1]["top_k"], 10)
         self.assertEqual(self.backend.calls[0][1]["conditions"], {})
         self.assertEqual(result["filter_scope"], "none")
-        self.assertEqual([c["dataset_id"] for c in result["cards"]], [IDS[4], IDS[3]])
+        self.assertEqual(
+            [c["dataset_id"] for c in result["cards"]], [IDS[4], IDS[3]]
+        )
         self.assertEqual([c["rank"] for c in result["cards"]], [1, 2])
-        self.assertEqual(result["cards"][0]["url"], report("氣候")["results"][4]["url"])
+        self.assertEqual(
+            result["cards"][0]["url"], report("氣候")["results"][4]["url"]
+        )
         payload = self.backend.calls[1][1]
         self.assertEqual(set(payload), {"query", "passages"})
         self.assertNotIn(IDS[0], str(payload))

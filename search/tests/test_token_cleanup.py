@@ -73,7 +73,8 @@ class FaultTransport(FakeTransport):
 
     def count(self, key):
         return sum(
-            (r.method, urllib.parse.urlsplit(r.url).path) == key for r in self.requests
+            (r.method, urllib.parse.urlsplit(r.url).path) == key
+            for r in self.requests
         )
 
 
@@ -97,13 +98,17 @@ class TokenCleanupTests(unittest.TestCase):
         )
 
     def run_import(self, **kwargs):
-        return self.client.import_bundle("admin", PASSWORD, nonce=NONCE, **kwargs)
+        return self.client.import_bundle(
+            "admin", PASSWORD, nonce=NONCE, **kwargs
+        )
 
     def assert_safe_error(self, error):
         for secret in (PASSWORD, TOKEN, REMOTE_SECRET):
             self.assertNotIn(secret, str(error))
 
-    def test_revoke_429_waits_full_retry_after_and_preserves_bulk_single_dispatch(self):
+    def test_revoke_429_waits_without_redispatching_bulk(
+        self,
+    ):
         self.transport.faults[DELETE] = [busy()]
         self.assertEqual(self.run_import().status, "imported")
         self.assertEqual(self.clock.value, 60)
@@ -195,7 +200,9 @@ class TokenCleanupTests(unittest.TestCase):
             with self.subTest(headers=headers):
                 transport = FaultTransport()
                 transport.faults[PROBE] = [{**busy(), "headers": headers}]
-                session = AdminSession("http://127.0.0.1:8080", transport=transport)
+                session = AdminSession(
+                    "http://127.0.0.1:8080", transport=transport
+                )
                 with self.assertRaises(ProtocolError) as caught:
                     session.system_info(TOKEN, Deadline.after(10))
                 self.assertNotIsInstance(caught.exception, FessBusy)
@@ -204,7 +211,9 @@ class TokenCleanupTests(unittest.TestCase):
     def test_logout_429_retains_cookie_only_for_retry_then_clears_it(self):
         self.transport.faults[LOGOUT] = [busy()]
         session = self.client.access._session()
-        with patch.object(self.client.access, "_session", return_value=session):
+        with patch.object(
+            self.client.access, "_session", return_value=session
+        ):
             self.assertEqual(self.run_import().status, "imported")
         self.assertEqual(self.transport.count(LOGOUT), 2)
         self.assertEqual(self.clock.value, 60)
@@ -241,7 +250,10 @@ class TokenCleanupTests(unittest.TestCase):
         self.assertFalse(self.transport.token_active)
 
     def test_explicit_authentication_failure_envelope_is_accepted(self):
-        self.transport.faults[PROBE] = [None, {"status": 403, "value": {"status": 3}}]
+        self.transport.faults[PROBE] = [
+            None,
+            {"status": 403, "value": {"status": 3}},
+        ]
         self.assertEqual(self.run_import().status, "imported")
 
     def test_retry_refuses_a_changed_token_identity(self):
@@ -256,7 +268,9 @@ class TokenCleanupTests(unittest.TestCase):
         self.assertEqual(self.transport.count(DELETE), 1)
         self.assertTrue(self.transport.token_active)
 
-    def test_late_vector_cleanup_cannot_borrow_past_existing_expiry_margin(self):
+    def test_late_vector_cleanup_cannot_borrow_past_existing_expiry_margin(
+        self,
+    ):
         self.transport.faults[DELETE] = [busy()]
         with self.assertRaises(TokenCleanupError):
             with self.client.access.token(
@@ -269,9 +283,13 @@ class TokenCleanupTests(unittest.TestCase):
                 self.clock.value = MAX_VECTOR_TOKEN_API_SECONDS
         self.assertEqual(self.clock.value, 2040)
         self.assertEqual(self.transport.count(DELETE), 1)
-        self.assertEqual(self.transport.created_token_expiries, ["2026-09-09T12:35:00"])
+        self.assertEqual(
+            self.transport.created_token_expiries, ["2026-09-09T12:35:00"]
+        )
 
-    def test_import_can_use_spare_cleanup_time_without_extending_token_lifetime(self):
+    def test_import_uses_cleanup_reserve_with_fixed_token_expiry(
+        self,
+    ):
         self.transport.faults[DELETE] = [busy(), busy()]
         with self.client.access.token(
             "admin",
@@ -281,7 +299,9 @@ class TokenCleanupTests(unittest.TestCase):
         ):
             self.clock.value = 600
         self.assertEqual(self.clock.value, 720)
-        self.assertEqual(self.transport.created_token_expiries, ["2026-09-09T12:15:00"])
+        self.assertEqual(
+            self.transport.created_token_expiries, ["2026-09-09T12:15:00"]
+        )
         self.assertFalse(self.transport.token_active)
 
     def test_busy_token_creation_is_never_replayed(self):

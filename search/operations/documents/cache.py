@@ -1,4 +1,6 @@
-"""Keep verified resource bodies and acquisition receipts in private storage."""
+"""Keep verified resource bodies and acquisition receipts in private
+storage.
+"""
 
 from contextlib import contextmanager
 import fcntl
@@ -104,7 +106,8 @@ def _record(descriptor, key, identity):
             or type(record["schema_version"]) is not int
             or record["schema_version"] != 1
             or record["cache_key"] != key
-            or private_io.canonical(record["source"]) != private_io.canonical(identity)
+            or private_io.canonical(record["source"])
+            != private_io.canonical(identity)
             or type(record["bytes"]) is not int
             or not 1 <= record["bytes"] <= MAX_FILE_BYTES
             or type(record["acquired_at"]) is not int
@@ -124,7 +127,8 @@ def _record(descriptor, key, identity):
                 type(value) is not str
                 or len(value) > limit
                 or any(
-                    ord(character) < 32 or ord(character) == 127 for character in value
+                    ord(character) < 32 or ord(character) == 127
+                    for character in value
                 )
             ):
                 raise ValueError
@@ -169,7 +173,9 @@ def store(descriptor, key, identity, body, response, acquired_at):
                 descriptor, name, mode=0o600, max_bytes=MAX_FILE_BYTES
             )
         except FileNotFoundError:
-            private_io.write_file(descriptor, name, body, max_bytes=MAX_FILE_BYTES)
+            private_io.write_file(
+                descriptor, name, body, max_bytes=MAX_FILE_BYTES
+            )
         else:
             if existing != body:
                 raise CacheError("document_cache_body_invalid")

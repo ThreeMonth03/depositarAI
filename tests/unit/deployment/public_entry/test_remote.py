@@ -1,4 +1,6 @@
-"""Private remote binding and version-only admission, without model services."""
+"""Private remote binding and version-only admission, without model
+services.
+"""
 
 import copy
 from dataclasses import FrozenInstanceError
@@ -25,7 +27,9 @@ API_KEY = "c" * 64
 class RemoteFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.certificates = tempfile.TemporaryDirectory(prefix="remote-backend-tls-")
+        cls.certificates = tempfile.TemporaryDirectory(
+            prefix="remote-backend-tls-"
+        )
         cls.cert_root = Path(cls.certificates.name)
         subprocess.run(
             [
@@ -78,7 +82,9 @@ class RemoteFixture(unittest.TestCase):
         self.write_config()
 
     def write_config(self, value=None):
-        self.config_path.write_text(json.dumps(self.value if value is None else value))
+        self.config_path.write_text(
+            json.dumps(self.value if value is None else value)
+        )
         self.config_path.chmod(0o600)
 
     def load(self):
@@ -95,7 +101,10 @@ class RemoteFixture(unittest.TestCase):
             "services": {
                 "public-web": {
                     "runtime": "runc",
-                    "networks": {"website": {"aliases": ["web"]}, "outbound": {}},
+                    "networks": {
+                        "website": {"aliases": ["web"]},
+                        "outbound": {},
+                    },
                     "environment": {
                         "WEB_UPSTREAM": backend.origin,
                         "WEB_UPSTREAM_CA_FILE": remote.CA_TARGET,
@@ -119,7 +128,9 @@ class RemoteFixture(unittest.TestCase):
 
 
 class RemoteConfigurationTests(RemoteFixture):
-    def test_private_configuration_is_frozen_and_plan_contains_no_file_or_secret(self):
+    def test_private_config_frozen_and_plan_omits_files_and_secrets(
+        self,
+    ):
         backend = self.load()
         self.assertEqual(backend.api_key_file, self.key)
         self.assertEqual(backend.ca_file, self.ca)
@@ -159,7 +170,9 @@ class RemoteConfigurationTests(RemoteFixture):
         self.config_path.write_text(
             json.dumps(original)[:-1] + ',"origin":"https://duplicate.test"}'
         )
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             self.load()
 
     def test_only_a_canonical_https_origin_is_allowed(self):
@@ -185,7 +198,9 @@ class RemoteConfigurationTests(RemoteFixture):
                 ):
                     self.load()
 
-    def test_private_inputs_reject_world_readable_parent_and_linked_files(self):
+    def test_private_inputs_reject_world_readable_parent_and_linked_files(
+        self,
+    ):
         for path in (self.config_path, self.key, self.ca):
             with self.subTest(path=path):
                 path.chmod(0o644)
@@ -195,32 +210,50 @@ class RemoteConfigurationTests(RemoteFixture):
                     self.load()
                 path.chmod(0o600)
         self.root.chmod(0o755)
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             self.load()
         self.root.chmod(0o700)
         linked = self.root / "linked"
         linked.symlink_to(self.key)
         self.value["api_key_file"] = str(linked)
         self.write_config()
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             self.load()
         linked.unlink()
         os.link(self.key, linked)
         self.value["api_key_file"] = str(self.key)
         self.write_config()
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             self.load()
 
     def test_repository_paths_and_shared_credential_paths_are_rejected(self):
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             remote.load_remote_backend(self.config_path, repo_root=self.root)
         self.value["ca_file"] = str(self.key)
         self.write_config()
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "config_invalid$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "config_invalid$"
+        ):
             self.load()
 
-    def test_bad_key_and_non_certificate_ca_are_rejected_with_closed_errors(self):
-        for key in ("", "PRIVATE_CREDENTIAL", "a" * 63, "a" * 64 + "\n\n", "A" * 64):
+    def test_bad_key_and_non_certificate_ca_are_rejected_with_closed_errors(
+        self,
+    ):
+        for key in (
+            "",
+            "PRIVATE_CREDENTIAL",
+            "a" * 63,
+            "a" * 64 + "\n\n",
+            "A" * 64,
+        ):
             with self.subTest(key_length=len(key)):
                 self.key.write_text(key)
                 with self.assertRaisesRegex(
@@ -254,14 +287,17 @@ class RemoteAdmissionTests(RemoteFixture):
         self.calls.append((argv, options))
         return self.result
 
-    def test_host_probe_is_version_only_and_environment_does_not_inherit_secrets(self):
+    def test_host_probe_only_gets_version_without_inherited_secrets(
+        self,
+    ):
         profile = self.profile()
         before = copy.deepcopy(profile)
         with patch.dict(
             os.environ, {"HTTPS_PROXY": "http://attacker", "SECRET": API_KEY}
         ):
             self.assertEqual(
-                remote.verify_remote_backend(profile, runner=self.runner), remote.PROOF
+                remote.verify_remote_backend(profile, runner=self.runner),
+                remote.PROOF,
             )
         self.assertEqual(profile, before)
         self.assertEqual(len(self.calls), 1)
@@ -294,7 +330,11 @@ class RemoteAdmissionTests(RemoteFixture):
         }
         with patch.dict(
             os.environ,
-            {**daemon_environment, "HTTPS_PROXY": "http://attacker", "SECRET": API_KEY},
+            {
+                **daemon_environment,
+                "HTTPS_PROXY": "http://attacker",
+                "SECRET": API_KEY,
+            },
             clear=True,
         ):
             with patch.object(
@@ -357,7 +397,9 @@ class RemoteAdmissionTests(RemoteFixture):
                     remote.verify_remote_backend(value, runner=self.runner)
         self.assertEqual(self.calls, [])
 
-    def test_mutated_environment_or_network_cannot_probe_an_unsealed_backend(self):
+    def test_mutated_environment_or_network_cannot_probe_an_unsealed_backend(
+        self,
+    ):
         mutations = (
             lambda p: p["services"]["public-web"]["environment"].update(
                 WEB_UPSTREAM="https://attacker.test"
@@ -373,17 +415,23 @@ class RemoteAdmissionTests(RemoteFixture):
             lambda p: p["services"]["public-web"]["networks"].update(
                 {"gpu-private": {}}
             ),
-            lambda p: p["networks"].update({"existing-release": {"external": True}}),
+            lambda p: p["networks"].update(
+                {"existing-release": {"external": True}}
+            ),
             lambda p: p["networks"]["website"].update(internal=False),
         )
         for mutate in mutations:
             profile = self.profile()
             mutate(profile)
-            with self.assertRaisesRegex(remote.PublicEntryRemoteError, "plan_invalid$"):
+            with self.assertRaisesRegex(
+                remote.PublicEntryRemoteError, "plan_invalid$"
+            ):
                 remote.verify_remote_backend(profile, runner=self.runner)
         self.assertEqual(self.calls, [])
 
-    def test_missing_duplicate_mutable_or_symlink_credential_mount_is_rejected(self):
+    def test_missing_duplicate_mutable_or_symlink_credential_mount_is_rejected(
+        self,
+    ):
         for target in (remote.API_KEY_TARGET, remote.CA_TARGET):
             for mutation in (
                 "missing",
@@ -414,7 +462,9 @@ class RemoteAdmissionTests(RemoteFixture):
                     with self.assertRaisesRegex(
                         remote.PublicEntryRemoteError, "plan_invalid$"
                     ):
-                        remote.verify_remote_backend(profile, runner=self.runner)
+                        remote.verify_remote_backend(
+                            profile, runner=self.runner
+                        )
                 (self.root / "linked").unlink(missing_ok=True)
         self.assertEqual(self.calls, [])
 
@@ -424,17 +474,23 @@ class RemoteAdmissionTests(RemoteFixture):
             b"not json",
             b"{}",
             json.dumps({**remote.PROOF, "extra": True}).encode(),
-            json.dumps({**remote.PROOF, "backend_identity_verified": 1}).encode(),
+            json.dumps(
+                {**remote.PROOF, "backend_identity_verified": 1}
+            ).encode(),
             json.dumps(
                 {**remote.PROOF, "authenticated_version_status": 200.0}
             ).encode(),
         ]
         for value in values:
             self.result.stdout = value
-            with self.assertRaisesRegex(remote.PublicEntryRemoteError, "probe_failed$"):
+            with self.assertRaisesRegex(
+                remote.PublicEntryRemoteError, "probe_failed$"
+            ):
                 remote.verify_remote_backend(profile, runner=self.runner)
         self.result.stdout = b"SENSITIVE" * remote.MAX_OUTPUT_BYTES
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "output_limit$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "output_limit$"
+        ):
             remote.verify_remote_backend(profile, runner=self.runner)
 
     def test_runner_failures_use_fixed_diagnostics(self):
@@ -452,14 +508,20 @@ class RemoteAdmissionTests(RemoteFixture):
                 self.assertNotIn("PRIVATE_CREDENTIAL", str(caught.exception))
         self.result.returncode = 1
         self.result.stderr = b"PRIVATE_CREDENTIAL"
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "probe_failed$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "probe_failed$"
+        ):
             remote.verify_remote_backend(profile, runner=self.runner)
 
     def test_real_process_uses_existing_live_bounded_capture(self):
-        with patch.object(remote.image_build, "_run", return_value=self.result) as run:
+        with patch.object(
+            remote.image_build, "_run", return_value=self.result
+        ) as run:
             remote.verify_remote_backend(self.profile())
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.kwargs["timeout"], remote.COMMAND_TIMEOUT)
+        self.assertEqual(
+            run.call_args.kwargs["timeout"], remote.COMMAND_TIMEOUT
+        )
 
 
 class RemoteTLSProbeTests(RemoteFixture):
@@ -471,7 +533,9 @@ class RemoteTLSProbeTests(RemoteFixture):
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                authenticated = self.headers.get("Authorization") == "Bearer " + API_KEY
+                authenticated = (
+                    self.headers.get("Authorization") == "Bearer " + API_KEY
+                )
                 case.requests.append((self.command, self.path, authenticated))
                 if case.mode == "redirect":
                     status, raw = 302, b"PRIVATE_RESPONSE"
@@ -482,7 +546,9 @@ class RemoteTLSProbeTests(RemoteFixture):
                 else:
                     status = 200
                     value = {
-                        "revision": REVISION if case.mode != "revision" else "f" * 40,
+                        "revision": REVISION
+                        if case.mode != "revision"
+                        else "f" * 40,
                         "catalog_manifest_sha256": MANIFEST
                         if case.mode != "manifest"
                         else "f" * 64,
@@ -515,17 +581,27 @@ class RemoteTLSProbeTests(RemoteFixture):
         context.load_cert_chain(
             str(self.cert_root / "ca.pem"), str(self.cert_root / "server.key")
         )
-        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server.socket = context.wrap_socket(
+            self.server.socket, server_side=True
+        )
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
         self.thread.start()
         self.addCleanup(self.thread.join, 2)
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
-        self.value["origin"] = "https://localhost:" + str(self.server.server_port)
+        self.value["origin"] = "https://localhost:" + str(
+            self.server.server_port
+        )
         self.write_config()
 
-    def test_real_tls_authentication_and_identity_probe_never_submits_a_turn(self):
-        self.assertEqual(remote.verify_remote_backend(self.profile()), remote.PROOF)
+    def test_real_tls_authentication_and_identity_probe_never_submits_a_turn(
+        self,
+    ):
+        self.assertEqual(
+            remote.verify_remote_backend(self.profile()), remote.PROOF
+        )
         self.assertEqual(
             self.requests,
             [
@@ -534,7 +610,7 @@ class RemoteTLSProbeTests(RemoteFixture):
             ],
         )
 
-    def test_real_tls_probe_rejects_redirect_anonymous_access_and_identity_changes(
+    def test_real_tls_rejects_redirect_anonymous_access_and_identity_drift(
         self,
     ):
         profile = self.profile()
@@ -570,12 +646,18 @@ class RemoteTLSProbeTests(RemoteFixture):
         profile = self.profile()
         origin = self.value["origin"].replace("localhost", "127.0.0.1")
         profile["x-depositar-plan"]["private_backend"]["origin"] = origin
-        profile["services"]["public-web"]["environment"]["WEB_UPSTREAM"] = origin
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "probe_failed$"):
+        profile["services"]["public-web"]["environment"]["WEB_UPSTREAM"] = (
+            origin
+        )
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "probe_failed$"
+        ):
             remote.verify_remote_backend(profile)
         self.assertEqual(self.requests, [])
 
-    def test_untrusted_certificate_fails_before_credentials_reach_the_server(self):
+    def test_untrusted_certificate_fails_before_credentials_reach_the_server(
+        self,
+    ):
         subprocess.run(
             [
                 "openssl",
@@ -598,7 +680,9 @@ class RemoteTLSProbeTests(RemoteFixture):
             timeout=15,
             umask=0o077,
         )
-        with self.assertRaisesRegex(remote.PublicEntryRemoteError, "probe_failed$"):
+        with self.assertRaisesRegex(
+            remote.PublicEntryRemoteError, "probe_failed$"
+        ):
             remote.verify_remote_backend(self.profile())
         self.assertEqual(self.requests, [])
 

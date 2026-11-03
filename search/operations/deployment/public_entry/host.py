@@ -1,8 +1,9 @@
 """Bind a separate authenticated CPU website to an existing private release.
 
-Preparation never changes the catalog, models, native gateway or active release.
-Docker inspection verifies the opt-in website image contract; actual OIDC and
-upstream HTTPS readiness still require operator configuration and acceptance.
+Preparation never changes the catalog, models, native gateway or active
+release. Docker inspection verifies the opt-in website image contract; actual
+OIDC and upstream HTTPS readiness still require operator configuration and
+acceptance.
 """
 
 from __future__ import annotations
@@ -35,7 +36,9 @@ def _read(path, limit=2 * 1024**2):
     path = Path(path)
     descriptor = private_io.open_directory(path.parent)
     try:
-        return private_io.read_file(descriptor, path.name, mode=0o600, max_bytes=limit)
+        return private_io.read_file(
+            descriptor, path.name, mode=0o600, max_bytes=limit
+        )
     finally:
         os.close(descriptor)
 
@@ -80,7 +83,8 @@ def _web_revision(image, image_proof, frontend_image, frontend_proof):
         or image_proof.get("Id") != image
         or type(labels) is not dict
         or labels.get(CAPABILITY) != "2"
-        or labels.get(CONVERSATION_CAPABILITY) != str(CONVERSATION_CONTRACT_VERSION)
+        or labels.get(CONVERSATION_CAPABILITY)
+        != str(CONVERSATION_CONTRACT_VERSION)
         or type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
@@ -100,10 +104,18 @@ def _web_revision(image, image_proof, frontend_image, frontend_proof):
 
 
 def bind_public_web(
-    config, rendered, release, image, image_proof, frontend_image, frontend_proof
+    config,
+    rendered,
+    release,
+    image,
+    image_proof,
+    frontend_image,
+    frontend_proof,
 ):
     """Read-only same-host binding; never change the private release."""
-    revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
+    revision = _web_revision(
+        image, image_proof, frontend_image, frontend_proof
+    )
     if (
         type(release) is not dict
         or type(release.get("name")) is not str
@@ -140,9 +152,14 @@ def bind_public_web(
     raw_key = _read(key_path, 65)
     if re.fullmatch(rb"[0-9a-f]{64}\n?", raw_key) is None:
         raise ValueError("public_entry_api_key_invalid")
-    result = _bind_website(config, rendered, image, frontend_image, revision, key_path)
+    result = _bind_website(
+        config, rendered, image, frontend_image, revision, key_path
+    )
     compose = result["compose"]
-    compose["networks"]["existing-release"] = {"external": True, "name": network}
+    compose["networks"]["existing-release"] = {
+        "external": True,
+        "name": network,
+    }
     compose["services"]["public-web"]["networks"]["existing-release"] = {}
     compose["x-depositar-plan"]["private_backend"] = {
         "schema_version": 1,
@@ -157,10 +174,15 @@ def _bind_website(config, rendered, image, frontend_image, revision, key_path):
     uid, gid = os.geteuid(), os.getegid()
     result = copy.deepcopy(rendered)
     compose = result["compose"]
-    if "public-web" in compose["services"] or "existing-release" in compose["networks"]:
+    if (
+        "public-web" in compose["services"]
+        or "existing-release" in compose["networks"]
+    ):
         raise ValueError("public_entry_binding_exists")
     compose["services"]["public-web"] = {
-        **composition._runtime(uid, gid, cpus=1, memory=512 * 1024**2, pids=64),
+        **composition._runtime(
+            uid, gid, cpus=1, memory=512 * 1024**2, pids=64
+        ),
         "image": image,
         "networks": {"website": {"aliases": ["web"]}},
         "environment": {
@@ -171,12 +193,16 @@ def _bind_website(config, rendered, image, frontend_image, revision, key_path):
         },
         "volumes": [
             composition._mount(key_path, "/run/secrets/api_key"),
-            composition._mount(config.edge_secret_file, "/run/secrets/public_edge_key"),
+            composition._mount(
+                config.edge_secret_file, "/run/secrets/public_edge_key"
+            ),
         ],
         "healthcheck": composition._http_health(8000),
     }
     compose["services"]["public-frontend"] = {
-        **composition._runtime(uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32),
+        **composition._runtime(
+            uid, gid, cpus=0.5, memory=64 * 1024**2, pids=32
+        ),
         "image": frontend_image,
         "networks": ["website"],
         "environment": {"NVIDIA_VISIBLE_DEVICES": "void"},
@@ -184,7 +210,11 @@ def _bind_website(config, rendered, image, frontend_image, revision, key_path):
         "healthcheck": {
             "test": [
                 "CMD-SHELL",
-                "wget -q -O /dev/null http://127.0.0.1:8080/healthz && wget -q -O - http://127.0.0.1:8080/ | grep -Fq '<div id=\"root\"></div>'",
+                (
+                    "wget -q -O /dev/null http://127.0.0.1:8080/"
+                    "healthz && wget -q -O - http://127.0.0.1:8080/ | "
+                    "grep -Fq '<div id=\"root\"></div>'"
+                ),
             ],
             "interval": "5s",
             "timeout": "3s",
@@ -202,10 +232,18 @@ def _bind_website(config, rendered, image, frontend_image, revision, key_path):
 
 
 def bind_remote_web(
-    config, rendered, backend, image, image_proof, frontend_image, frontend_proof
+    config,
+    rendered,
+    backend,
+    image,
+    image_proof,
+    frontend_image,
+    frontend_proof,
 ):
     """Bind only the CPU BFF to a fixed authenticated HTTPS origin."""
-    revision = _web_revision(image, image_proof, frontend_image, frontend_proof)
+    revision = _web_revision(
+        image, image_proof, frontend_image, frontend_proof
+    )
     result = _bind_website(
         config, rendered, image, frontend_image, revision, backend.api_key_file
     )
@@ -262,7 +300,9 @@ def bind_configured_web(
 
 
 def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
-    """Publish a complete preparation; failed staging never replaces live state."""
+    """
+    Publish a complete preparation; failed staging never replaces live state.
+    """
     parent = private_io.open_directory(root)
     lock = descriptor = None
     try:
@@ -285,24 +325,35 @@ def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
             os.stat("public-entry", dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
             name = ".public-entry-staging-" + uuid.uuid4().hex
-            descriptor = private_io.open_child_directory(parent, name, create=True)
+            descriptor = private_io.open_child_directory(
+                parent, name, create=True
+            )
             for directory in state_directories:
                 data = private_io.open_child_directory(
                     descriptor, directory, create=True
                 )
                 os.close(data)
             for filename, raw in assets.items():
-                private_io.write_file(descriptor, filename, raw, max_bytes=2 * 1024**2)
-            private_io.write_json(descriptor, "prepared.json", report, max_bytes=65536)
+                private_io.write_file(
+                    descriptor, filename, raw, max_bytes=2 * 1024**2
+                )
+            private_io.write_json(
+                descriptor, "prepared.json", report, max_bytes=65536
+            )
             private_io.verify_directory(parent, root)
-            # Other preparers hold this same lock. Refuse even an empty directory
+            # Other preparers hold this same lock. Refuse even an empty
+            # directory
             # created by a separate operator during staging.
             if os.path.lexists(root / "public-entry"):
                 raise ValueError("public_entry_destination_exists")
-            os.rename(name, "public-entry", src_dir_fd=parent, dst_dir_fd=parent)
+            os.rename(
+                name, "public-entry", src_dir_fd=parent, dst_dir_fd=parent
+            )
             os.fsync(parent)
         else:
-            descriptor = private_io.open_child_directory(parent, "public-entry")
+            descriptor = private_io.open_child_directory(
+                parent, "public-entry"
+            )
             saved = strict_json(
                 private_io.read_file(
                     descriptor, "prepared.json", mode=0o600, max_bytes=65536
@@ -346,7 +397,10 @@ def prepare_public_entry(
         image_inspector(web_nginx_image),
         backend_config=backend_config,
     )
-    assets = {name: value.encode("utf-8") for name, value in rendered["assets"].items()}
+    assets = {
+        name: value.encode("utf-8")
+        for name, value in rendered["assets"].items()
+    }
     assets["compose.json"] = private_io.canonical(rendered["compose"])
     report = {
         "schema_version": 1,
@@ -356,13 +410,16 @@ def prepare_public_entry(
         "web_nginx_image": web_nginx_image,
         "revision": rendered["compose"]["x-depositar-plan"]["revision"],
         "files": {
-            name: hashlib.sha256(raw).hexdigest() for name, raw in assets.items()
+            name: hashlib.sha256(raw).hexdigest()
+            for name, raw in assets.items()
         },
         "deployment_performed": False,
         "public_readiness_verified": False,
         "active_changed": False,
     }
-    _publish_prepared(config.state_root, assets, report, rendered["state_directories"])
+    _publish_prepared(
+        config.state_root, assets, report, rendered["state_directories"]
+    )
     return report
 
 

@@ -54,7 +54,16 @@ def changed_jobs(environment: dict[str, str], *, cwd: Path) -> frozenset[str]:
         if current.stdout.strip().decode("ascii") != head:
             return JOBS
         diff = subprocess.run(
-            ["git", "diff", "--no-renames", "--name-only", "-z", base, head, "--"],
+            [
+                "git",
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                base,
+                head,
+                "--",
+            ],
             cwd=cwd,
             capture_output=True,
             check=True,
@@ -74,7 +83,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("job", choices=sorted(JOBS))
     options = parser.parse_args()
-    jobs = changed_jobs(dict(os.environ), cwd=Path(__file__).resolve().parents[2])
+    jobs = changed_jobs(
+        dict(os.environ), cwd=Path(__file__).resolve().parents[2]
+    )
     print("run=" + ("true" if options.job in jobs else "false"))
 
 

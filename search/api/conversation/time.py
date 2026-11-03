@@ -43,7 +43,10 @@ class RelativeTime(StrictModel):
 
 _N = r"(?:[0-9]{1,4}|[零〇一二三四五六七八九十百千兩两]{1,7})"
 _EN_NUMBERS = dict(
-    zip("one two three four five six seven eight nine ten".split(), range(1, 11))
+    zip(
+        "one two three four five six seven eight nine ten".split(),
+        range(1, 11),
+    )
 )
 _E = r"(?:[0-9]{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)"
 _ROLLING = re.compile(
@@ -87,7 +90,10 @@ _NAMED_RE = re.compile(
     re.IGNORECASE,
 )
 _TO_DATE = re.compile(
-    r"(?:今年|本月|本週|本周)(?:截至今天|至今)|(?<![A-Za-z0-9_])(?:year|month|week)[ -]to[ -]date(?![A-Za-z0-9_])",
+    (
+        "(?:今年|本月|本週|本周)(?:截至今天|至今)|(?<![A-Za-z0-9_])(?:year|mon"
+        "th|week)[ -]to[ -]date(?![A-Za-z0-9_])"
+    ),
     re.IGNORECASE,
 )
 _UNITS = {
@@ -129,13 +135,17 @@ def literal_spec(text):
 
 
 def relative_literals(query):
-    """Detect supported temporal cues, never infer a search topic or interval."""
-    # Longest spans own their substrings: 今年截至今天 is not independent 今年 + 今天.
+    """Detect supported temporal cues, never
+    infer a search topic or interval.
+    """
+    # Longest spans own their substrings: 今年截至今天 is not independent
+    # 今年 + 今天.
     spans = []
     for pattern in (_TO_DATE, _ROLLING, _NAMED_RE):
         for match in pattern.finditer(query):
             if not any(
-                start < match.end() and match.start() < end for start, end, _ in spans
+                start < match.end() and match.start() < end
+                for start, end, _ in spans
             ):
                 spans.append((match.start(), match.end(), match[0]))
     return [text for _, _, text in sorted(spans)]
@@ -145,7 +155,9 @@ def month_shift(value, offset):
     month_index = value.year * 12 + value.month - 1 + offset
     year, month = divmod(month_index, 12)
     month += 1
-    return date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
+    return date(
+        year, month, min(value.day, calendar.monthrange(year, month)[1])
+    )
 
 
 def period(value, unit):
@@ -162,7 +174,9 @@ def period(value, unit):
 
 
 def resolve_relative(spec, context, query):
-    """Anchor exclusively to the validated caller clock; never wall-clock fallback."""
+    """Anchor exclusively to the validated
+    caller clock; never wall-clock fallback.
+    """
     if spec.text not in query or literal_spec(spec.text) != (
         spec.mode,
         spec.unit,
@@ -175,7 +189,8 @@ def resolve_relative(spec, context, query):
         raise ValueError("relative selection incomplete or ambiguous")
     tail = query[query.index(spec.text) + len(spec.text) :]
     if re.match(
-        r"\s*(?:半|多|左右|以前|以後|以后|之前|之後|之后|以上|以下|起|至|到)", tail
+        r"\s*(?:半|多|左右|以前|以後|以后|之前|之後|之后|以上|以下|起|至|到)",
+        tail,
     ):
         raise ValueError("relative duration has an unsupported qualifier")
     clock = normalize_context(context)
@@ -187,7 +202,9 @@ def resolve_relative(spec, context, query):
         if unit in {"year", "month"}:
             start = month_shift(today, -value * (12 if unit == "year" else 1))
         else:
-            start = today - timedelta(days=value * (7 if unit == "week" else 1) - 1)
+            start = today - timedelta(
+                days=value * (7 if unit == "week" else 1) - 1
+            )
         end = today
     elif spec.mode == "calendar":
         anchor = (
@@ -202,25 +219,43 @@ def resolve_relative(spec, context, query):
     return {"start": start.isoformat(), "end": end.isoformat()}
 
 
-RELATIVE_POLICY = """
-RELATIVE DATES: Never calculate or output absolute start/end dates for them.
-Select a literal phrase from the LATEST query and output this typed object:
-{"kind":"relative","mode":"rolling|calendar|to_date","unit":"year|month|week|day",
-"value":integer,"text":"exact complete relative phrase"}.
-The SERVER computes dates using only the verified reference clock, not user claims.
-rolling: 最近N年/過去N年/past N years -> unit=year,value=N, likewise months/weeks/days.
-NEVER subtract 1 from the duration. 最近三年 -> value=3, NOT 2. Preserve its unit.
-calendar: 去年/last year -> unit=year,value=-1; 今年/this year -> value=0.
-前年 -> year,-2. 上個月/last month -> month,-1; 本月 -> month,0.
-上週/last week -> week,-1; 本週 -> week,0. 今天/today -> day,0; 昨天 -> day,-1.
-to_date: 今年截至今天/今年至今/year-to-date -> unit=year,value=0;
-本月至今/month-to-date -> unit=month,value=0; 本週至今/week-to-date -> week,0.
-For calendar periods return the FULL period, not a rolling duration. Weeks start Monday.
-Rolling years/months end on local today; the server clamps invalid month-end days.
-Rolling N days/weeks include today: N days or 7*N days total. Both endpoints inclusive.
-Without reference clock, vague recency, future dates, compound relative constraints,
-or wording not supported above: clarify/ambiguous_time; do not guess dates.
-This DSL applies to Gregorian relative time, never convert explicit lunar periods.
-An ordinary follow-up (e.g. CSV) uses time=keep; do not recalculate old relative dates.
-Only absolute civil dates use {start,end}. Never fabricate a relative phrase not supplied.
-"""
+RELATIVE_POLICY = (
+    "\n"
+    "RELATIVE DATES: Never calculate or output absolute start/end dates for "
+    "them.\n"
+    "Select a literal phrase from the LATEST query and output this typed "
+    "object:\n"
+    '{"kind":"relative","mode":"rolling|calendar|to_date",'
+    '"unit":"year|month|week|day",\n'
+    '"value":integer,"text":"exact complete relative phrase"}.\n'
+    "The SERVER computes dates using only the verified reference clock, not "
+    "user claims.\n"
+    "rolling: 最近N年/過去N年/past N years -> unit=year,value=N, likewise "
+    "months/weeks/days.\n"
+    "NEVER subtract 1 from the duration. 最近三年 -> value=3, NOT 2. Preserve "
+    "its unit.\n"
+    "calendar: 去年/last year -> unit=year,value=-1; 今年/this year -> "
+    "value=0.\n"
+    "前年 -> year,-2. 上個月/last month -> month,-1; 本月 -> month,0.\n"
+    "上週/last week -> week,-1; 本週 -> week,0. 今天/today -> day,0; 昨天 -> "
+    "day,-1.\n"
+    "to_date: 今年截至今天/今年至今/year-to-date -> unit=year,value=0;\n"
+    "本月至今/month-to-date -> unit=month,value=0; 本週至今/week-to-date -> "
+    "week,0.\n"
+    "For calendar periods return the FULL period, not a rolling duration. "
+    "Weeks start Monday.\n"
+    "Rolling years/months end on local today; the server clamps invalid "
+    "month-end days.\n"
+    "Rolling N days/weeks include today: N days or 7*N days total. Both "
+    "endpoints inclusive.\n"
+    "Without reference clock, vague recency, future dates, compound relative "
+    "constraints,\n"
+    "or wording not supported above: clarify/ambiguous_time; do not guess "
+    "dates.\n"
+    "This DSL applies to Gregorian relative time, never convert explicit "
+    "lunar periods.\n"
+    "An ordinary follow-up (e.g. CSV) uses time=keep; do not recalculate old "
+    "relative dates.\n"
+    "Only absolute civil dates use {start,end}. Never fabricate a relative "
+    "phrase not supplied.\n"
+)

@@ -1,4 +1,6 @@
-"""Pure runtime-policy tests; no Docker, GPU, model loading or network access."""
+"""Pure runtime-policy tests; no Docker, GPU, model loading or network
+access.
+"""
 
 from __future__ import annotations
 
@@ -16,9 +18,12 @@ from tests.unit.deployment.test_composition import REVISION, product
 def snapshot(compose, images):
     containers, networks = [], []
     network_ids = {
-        key: str(index) * 64 for index, key in enumerate(compose["networks"], 7)
+        key: str(index) * 64
+        for index, key in enumerate(compose["networks"], 7)
     }
-    for index, (name, expected) in enumerate(sorted(compose["services"].items()), 1):
+    for index, (name, expected) in enumerate(
+        sorted(compose["services"].items()), 1
+    ):
         network_key = expected["networks"][0]
         network_name = compose["networks"][network_key]["name"]
         environment = inference_runtime._environment(
@@ -35,8 +40,12 @@ def snapshot(compose, images):
                 "Tty": False,
                 "OpenStdin": False,
                 "StdinOnce": False,
-                "Env": [key + "=" + value for key, value in environment.items()],
-                "Cmd": expected.get("command", images[name]["Config"].get("Cmd")),
+                "Env": [
+                    key + "=" + value for key, value in environment.items()
+                ],
+                "Cmd": expected.get(
+                    "command", images[name]["Config"].get("Cmd")
+                ),
                 "Entrypoint": images[name]["Config"].get("Entrypoint"),
                 "WorkingDir": images[name]["Config"].get("WorkingDir", ""),
                 "StopSignal": images[name]["Config"].get("StopSignal", ""),
@@ -82,7 +91,10 @@ def snapshot(compose, images):
                 "Memory": expected["mem_limit"],
                 "MemorySwap": expected["memswap_limit"],
                 "PidsLimit": expected["pids_limit"],
-                "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+                "RestartPolicy": {
+                    "Name": "unless-stopped",
+                    "MaximumRetryCount": 0,
+                },
                 "LogConfig": {
                     "Type": expected["logging"]["driver"],
                     "Config": expected["logging"]["options"],
@@ -97,9 +109,9 @@ def snapshot(compose, images):
                     {
                         "Driver": "nvidia",
                         "Count": 0,
-                        "DeviceIDs": expected["deploy"]["resources"]["reservations"][
-                            "devices"
-                        ][0]["device_ids"],
+                        "DeviceIDs": expected["deploy"]["resources"][
+                            "reservations"
+                        ]["devices"][0]["device_ids"],
                         "Capabilities": [["gpu"]],
                         "Options": None,
                     }
@@ -118,7 +130,9 @@ def snapshot(compose, images):
             },
             "NetworkSettings": {
                 "Ports": {"11434/tcp": None},
-                "Networks": {network_name: {"NetworkID": network_ids[network_key]}},
+                "Networks": {
+                    network_name: {"NetworkID": network_ids[network_key]}
+                },
             },
             "Mounts": [
                 {
@@ -177,7 +191,11 @@ def images():
             "Entrypoint": None,
         },
     }
-    return {"scope-model": ollama, "answer-model": ollama, "reranker": reranker}
+    return {
+        "scope-model": ollama,
+        "answer-model": ollama,
+        "reranker": reranker,
+    }
 
 
 class InferenceRuntimeTests(unittest.TestCase):
@@ -195,18 +213,26 @@ class InferenceRuntimeTests(unittest.TestCase):
             self.compose, self.images, self.containers, self.networks
         )
 
-    def test_exact_three_private_gpu_roles_are_proved_without_returning_env(self):
+    def test_exact_three_private_gpu_roles_are_proved_without_returning_env(
+        self,
+    ):
         result = self.invoke()
-        self.assertEqual(inference_runtime.SERVICES, set(result["container_ids"]))
+        self.assertEqual(
+            inference_runtime.SERVICES, set(result["container_ids"])
+        )
         self.assertEqual({"inference", "ranking"}, set(result["network_ids"]))
         self.assertEqual(64, len(result["start_identity_sha256"]))
         self.assertNotIn("never-save-this-value", str(result))
-        proofs = inference_runtime.ownership_proofs(self.compose, result, self.images)
+        proofs = inference_runtime.ownership_proofs(
+            self.compose, result, self.images
+        )
         self.assertEqual(
             {"scope", "planner", "reranker"}, {proof.role for proof in proofs}
         )
         self.assertEqual([2, 1, 1], [len(proof.gpu_uuids) for proof in proofs])
-        self.assertEqual(4, len({uuid for proof in proofs for uuid in proof.gpu_uuids}))
+        self.assertEqual(
+            4, len({uuid for proof in proofs for uuid in proof.gpu_uuids})
+        )
 
     def test_service_inventory_identity_and_extra_container_are_rejected(self):
         for mutation in (
@@ -223,7 +249,9 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.setUp()
                 mutation()
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
     def test_gpu_requests_require_exact_full_uuid_role_and_no_options(self):
@@ -238,8 +266,12 @@ class InferenceRuntimeTests(unittest.TestCase):
         ):
             with self.subTest(key=key, value=value):
                 self.setUp()
-                self.containers[0]["HostConfig"]["DeviceRequests"][0][key] = value
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                self.containers[0]["HostConfig"]["DeviceRequests"][0][key] = (
+                    value
+                )
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
     def test_resource_boundaries_and_host_namespaces_fail_closed(self):
@@ -266,7 +298,9 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.setUp()
                 self.containers[0]["HostConfig"][key] = value
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
     def test_not_running_restart_oom_and_nonhealthy_are_rejected(self):
@@ -283,19 +317,25 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.setUp()
                 self.containers[0]["State"][key] = value
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
         self.setUp()
         self.containers[0]["RestartCount"] = 1
         with self.assertRaises(inference_runtime.InferenceRuntimeError):
             self.invoke()
 
-    def test_ports_commands_extra_environment_and_healthcheck_are_rejected(self):
+    def test_ports_commands_extra_environment_and_healthcheck_are_rejected(
+        self,
+    ):
         for mutation in (
             lambda: self.containers[0]["HostConfig"].update(
                 {
                     "PortBindings": {
-                        "11434/tcp": [{"HostIp": "0.0.0.0", "HostPort": "11434"}]
+                        "11434/tcp": [
+                            {"HostIp": "0.0.0.0", "HostPort": "11434"}
+                        ]
                     }
                 }
             ),
@@ -303,8 +343,12 @@ class InferenceRuntimeTests(unittest.TestCase):
                 {"11434/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18000"}]}
             ),
             lambda: self.containers[0]["Config"].update({"Cmd": ["shell"]}),
-            lambda: self.containers[0]["Config"].update({"Entrypoint": ["shell"]}),
-            lambda: self.containers[0]["Config"]["Env"].append("OLLAMA_NUM_PARALLEL=9"),
+            lambda: self.containers[0]["Config"].update(
+                {"Entrypoint": ["shell"]}
+            ),
+            lambda: self.containers[0]["Config"]["Env"].append(
+                "OLLAMA_NUM_PARALLEL=9"
+            ),
             lambda: self.containers[0]["Config"]["Env"].append("EXTRA=value"),
             lambda: self.containers[0]["Config"]["Healthcheck"].update(
                 {"Retries": True}
@@ -313,16 +357,29 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.setUp()
                 mutation()
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
-    def test_exact_readonly_model_mount_and_private_network_peers_required(self):
+    def test_exact_readonly_model_mount_and_private_network_peers_required(
+        self,
+    ):
         for mutation in (
             lambda: self.containers[0]["Mounts"][0].update({"RW": True}),
-            lambda: self.containers[0]["Mounts"][0].update({"Source": "/srv/old"}),
-            lambda: self.containers[0]["Mounts"][0].update({"Propagation": "rshared"}),
+            lambda: self.containers[0]["Mounts"][0].update(
+                {"Source": "/srv/old"}
+            ),
+            lambda: self.containers[0]["Mounts"][0].update(
+                {"Propagation": "rshared"}
+            ),
             lambda: self.containers[0]["Mounts"].append(
-                {"Type": "bind", "Source": "/", "Destination": "/host", "RW": False}
+                {
+                    "Type": "bind",
+                    "Source": "/",
+                    "Destination": "/host",
+                    "RW": False,
+                }
             ),
             lambda: self.containers[0]["NetworkSettings"]["Networks"].update(
                 {"extra": {}}
@@ -334,15 +391,19 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.setUp()
                 mutation()
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
-    def test_network_identity_and_service_namespace_must_match_same_snapshot(self):
+    def test_network_identity_and_service_namespace_must_match_same_snapshot(
+        self,
+    ):
         self.networks[0]["Id"] = "f" * 64
         with self.assertRaises(inference_runtime.InferenceRuntimeError):
             self.invoke()
 
-    def test_noninteractive_input_closed_dns_and_immutable_config_image_are_required(
+    def test_input_dns_and_config_image_policies_are_required(
         self,
     ):
         for section, key, value in (
@@ -360,10 +421,14 @@ class InferenceRuntimeTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.setUp()
                 self.containers[0][section][key] = value
-                with self.assertRaises(inference_runtime.InferenceRuntimeError):
+                with self.assertRaises(
+                    inference_runtime.InferenceRuntimeError
+                ):
                     self.invoke()
 
-    def test_inherited_source_labels_cannot_be_overridden_at_container_creation(self):
+    def test_container_creation_cannot_override_inherited_source_labels(
+        self,
+    ):
         self.images["reranker"]["Config"]["Labels"] = {
             "io.depositar.ai.source.revision": REVISION,
             "io.depositar.ai.source.sha256": "6" * 64,
@@ -373,9 +438,12 @@ class InferenceRuntimeTests(unittest.TestCase):
         reranker = next(
             row
             for row in self.containers
-            if row["Config"]["Labels"]["com.docker.compose.service"] == "reranker"
+            if row["Config"]["Labels"]["com.docker.compose.service"]
+            == "reranker"
         )
-        reranker["Config"]["Labels"]["io.depositar.ai.source.revision"] = "f" * 40
+        reranker["Config"]["Labels"]["io.depositar.ai.source.revision"] = (
+            "f" * 40
+        )
         with self.assertRaises(inference_runtime.InferenceRuntimeError):
             self.invoke()
         self.setUp()
@@ -410,12 +478,15 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
         self.containers, self.networks = snapshot(self.compose, self.images)
         # Docker IDs are daemon-wide; use different IDs from API/catalog cores.
         replacements = {
-            row["Id"]: "abc"[index] * 64 for index, row in enumerate(self.containers)
+            row["Id"]: "abc"[index] * 64
+            for index, row in enumerate(self.containers)
         }
         for row in self.containers:
             row["Id"] = replacements[row["Id"]]
             for name, attachment in row["NetworkSettings"]["Networks"].items():
-                attachment["NetworkID"] = self.client["lease"]["network_ids"][name]
+                attachment["NetworkID"] = self.client["lease"]["network_ids"][
+                    name
+                ]
         for row in self.networks:
             row["Id"] = self.client["lease"]["network_ids"][row["Name"]]
             row["Containers"] = {
@@ -434,15 +505,25 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
         )
 
     def reject(self, code=None):
-        with self.assertRaises(inference_runtime.InferenceRuntimeError) as caught:
+        with self.assertRaises(
+            inference_runtime.InferenceRuntimeError
+        ) as caught:
             self.invoke()
         self.assertRegex(str(caught.exception), r"^inference_[a-z_]+$")
         if code is not None:
             self.assertEqual(code, str(caught.exception))
 
-    def test_exact_gpu_roles_and_sealed_api_are_proved_without_returning_inputs(self):
+    def test_exact_gpu_roles_and_sealed_api_do_not_return_inputs(
+        self,
+    ):
         before = copy.deepcopy(
-            (self.compose, self.images, self.containers, self.networks, self.client)
+            (
+                self.compose,
+                self.images,
+                self.containers,
+                self.networks,
+                self.client,
+            )
         )
         result = self.invoke()
         self.assertEqual(
@@ -456,27 +537,42 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
             },
             set(result),
         )
-        self.assertEqual(inference_runtime.SERVICES, set(result["container_ids"]))
+        self.assertEqual(
+            inference_runtime.SERVICES, set(result["container_ids"])
+        )
         self.assertEqual(
             client_lease.lease_digest(self.client["lease"]),
             result["client_lease_sha256"],
         )
         self.assertEqual(
-            self.client["lease"]["api_container_id"], result["api_container_id"]
+            self.client["lease"]["api_container_id"],
+            result["api_container_id"],
         )
-        self.assertEqual(self.client["lease"]["api_image_id"], result["api_image_id"])
+        self.assertEqual(
+            self.client["lease"]["api_image_id"], result["api_image_id"]
+        )
         self.assertEqual(result, self.invoke())
         self.assertEqual(
             before,
-            (self.compose, self.images, self.containers, self.networks, self.client),
+            (
+                self.compose,
+                self.images,
+                self.containers,
+                self.networks,
+                self.client,
+            ),
         )
         self.assertNotIn("never-save-this-value", str(result))
         self.assertNotIn("/srv/", str(result))
-        proofs = inference_runtime.ownership_proofs(self.compose, result, self.images)
+        proofs = inference_runtime.ownership_proofs(
+            self.compose, result, self.images
+        )
         self.assertEqual(3, len(proofs))
-        self.assertEqual({"scope", "planner", "reranker"}, {p.role for p in proofs})
+        self.assertEqual(
+            {"scope", "planner", "reranker"}, {p.role for p in proofs}
+        )
 
-    def test_baseline_keeps_exact_peers_and_leased_checker_uses_original_snapshots(
+    def test_baseline_peers_and_leased_snapshots_remain_exact(
         self,
     ):
         with self.assertRaisesRegex(
@@ -511,7 +607,9 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
             lease_check.call_args.kwargs["api_container"],
         )
 
-    def test_both_inference_networks_require_exact_gpu_peers_and_the_same_api(self):
+    def test_both_inference_networks_require_exact_gpu_peers_and_the_same_api(
+        self,
+    ):
         for index in range(2):
             for mutation in ("extra", "missing_api", "missing_gpu", "list"):
                 with self.subTest(network=index, mutation=mutation):
@@ -528,7 +626,9 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
                         row["Containers"] = list(row["Containers"])
                     self.reject("inference_runtime_network_peers_changed")
 
-    def test_network_ids_must_match_lease_even_with_consistent_gpu_attachments(self):
+    def test_network_ids_must_match_lease_even_with_consistent_gpu_attachments(
+        self,
+    ):
         for index in range(2):
             with self.subTest(network=index):
                 self.setUp()
@@ -542,7 +642,9 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
 
     def test_recipe_and_network_names_bind_inference_to_release(self):
         for mutation in (
-            lambda: self.compose.update({"name": "depositar-ai-inference-" + "f" * 12}),
+            lambda: self.compose.update(
+                {"name": "depositar-ai-inference-" + "f" * 12}
+            ),
             lambda: self.compose["networks"]["ranking"].update(
                 {"name": "depositar-ai-inference-" + "f" * 12 + "_ranking"}
             ),
@@ -552,11 +654,15 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
                 mutation()
                 self.reject("inference_client_source_or_network_changed")
 
-    def test_source_fingerprint_cannot_be_changed_without_the_sealed_image(self):
+    def test_source_fingerprint_cannot_be_changed_without_the_sealed_image(
+        self,
+    ):
         self.compose["x-depositar-plan"]["inference_source_sha256"] = "f" * 64
         self.reject("inference_runtime_source_changed")
 
-    def test_original_gpu_image_revision_can_differ_from_application_revision(self):
+    def test_original_gpu_image_revision_can_differ_from_application_revision(
+        self,
+    ):
         origin = "b" * 40
         self.images["reranker"]["Config"]["Labels"].update(
             {
@@ -567,16 +673,22 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
         reranker = next(
             row
             for row in self.containers
-            if row["Config"]["Labels"]["com.docker.compose.service"] == "reranker"
+            if row["Config"]["Labels"]["com.docker.compose.service"]
+            == "reranker"
         )
-        reranker["Config"]["Labels"].update(self.images["reranker"]["Config"]["Labels"])
+        reranker["Config"]["Labels"].update(
+            self.images["reranker"]["Config"]["Labels"]
+        )
         self.assertNotEqual(origin, self.client["lease"]["revision"])
         result = self.invoke()
         self.assertEqual(
-            self.client["lease"]["api_container_id"], result["api_container_id"]
+            self.client["lease"]["api_container_id"],
+            result["api_container_id"],
         )
 
-    def test_api_image_source_capabilities_mounts_and_attachments_are_reverified(self):
+    def test_api_image_source_capabilities_and_mounts_are_reverified(
+        self,
+    ):
         for mutation in (
             lambda row: row.update({"Image": "sha256:" + "f" * 64}),
             lambda row: row["Config"].update({"Image": "mutable:tag"}),
@@ -587,33 +699,43 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
             lambda row: row["Config"]["Env"].append("EXTRA=PRIVATE_SENTINEL"),
             lambda row: row["HostConfig"].update({"Privileged": True}),
             lambda row: row["HostConfig"].update({"Runtime": "nvidia"}),
-            lambda row: row["HostConfig"].update({"DeviceRequests": [{"Count": -1}]}),
+            lambda row: row["HostConfig"].update(
+                {"DeviceRequests": [{"Count": -1}]}
+            ),
             lambda row: row["HostConfig"].update({"MemorySwap": -1}),
             lambda row: row["HostConfig"].update(
                 {"PortBindings": {"8000/tcp": [{"HostPort": "8000"}]}}
             ),
             lambda row: row["Mounts"][0].update({"RW": True}),
-            lambda row: row["NetworkSettings"]["Networks"].update({"extra": {}}),
-            lambda row: next(iter(row["NetworkSettings"]["Networks"].values())).update(
-                {"NetworkID": "f" * 64}
+            lambda row: row["NetworkSettings"]["Networks"].update(
+                {"extra": {}}
             ),
+            lambda row: next(
+                iter(row["NetworkSettings"]["Networks"].values())
+            ).update({"NetworkID": "f" * 64}),
         ):
             with self.subTest(mutation=mutation):
                 self.setUp()
                 mutation(self.client["api_container"])
                 self.reject("inference_client_lease_invalid")
 
-    def test_unsealed_image_or_catalog_receipts_and_extra_catalog_peer_are_rejected(
+    def test_unsealed_receipts_and_extra_catalog_peers_are_rejected(
         self,
     ):
         for mutation in (
-            lambda: self.client["lease"].update({"unknown": "PRIVATE_SENTINEL"}),
-            lambda: self.client["image_proof"].update({"source_sha256": "f" * 64}),
+            lambda: self.client["lease"].update(
+                {"unknown": "PRIVATE_SENTINEL"}
+            ),
+            lambda: self.client["image_proof"].update(
+                {"source_sha256": "f" * 64}
+            ),
             lambda: self.client["image_environment"].append("EXTRA=value"),
             lambda: self.client["catalog_identity"].update(
                 {"projection_sha256": "f" * 64}
             ),
-            lambda: self.client["catalog_network"]["Containers"].update({"f" * 64: {}}),
+            lambda: self.client["catalog_network"]["Containers"].update(
+                {"f" * 64: {}}
+            ),
         ):
             with self.subTest(mutation=mutation):
                 self.setUp()
@@ -622,7 +744,9 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
 
     def test_leased_profile_keeps_gpu_resource_and_command_policy(self):
         for mutation in (
-            lambda row: row["HostConfig"]["DeviceRequests"][0].update({"Count": -1}),
+            lambda row: row["HostConfig"]["DeviceRequests"][0].update(
+                {"Count": -1}
+            ),
             lambda row: row["HostConfig"].update({"Privileged": True}),
             lambda row: row["Config"]["Env"].append("EXTRA=value"),
             lambda row: row["Config"].update({"Cmd": ["shell"]}),
@@ -655,7 +779,9 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
             lambda: self.networks.append(self.client["catalog_network"]),
             lambda: self.networks.append(copy.deepcopy(self.networks[0])),
             lambda: self.client.update({"api_container": "PRIVATE_SENTINEL"}),
-            lambda: self.client.update({"lease": {"revision": "PRIVATE_SENTINEL"}}),
+            lambda: self.client.update(
+                {"lease": {"revision": "PRIVATE_SENTINEL"}}
+            ),
             lambda: self.compose.update({"networks": None}),
         ):
             with self.subTest(mutation=mutation):
@@ -682,32 +808,43 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
             self.compose["services"][name]["image"] = image["Id"]
         self.containers, self.networks = snapshot(self.compose, self.images)
         replacements = {
-            row["Id"]: "456"[index] * 64 for index, row in enumerate(self.containers)
+            row["Id"]: "456"[index] * 64
+            for index, row in enumerate(self.containers)
         }
         for row in self.containers:
             row["Id"] = replacements[row["Id"]]
             for name, attachment in row["NetworkSettings"]["Networks"].items():
-                attachment["NetworkID"] = self.clients[0]["lease"]["network_ids"][name]
+                attachment["NetworkID"] = self.clients[0]["lease"][
+                    "network_ids"
+                ][name]
         for row in self.networks:
             row["Id"] = self.clients[0]["lease"]["network_ids"][row["Name"]]
             row["Containers"] = {
                 replacements[identifier]: value
                 for identifier, value in row["Containers"].items()
-            } | {item["lease"]["api_container_id"]: {} for item in self.clients}
+            } | {
+                item["lease"]["api_container_id"]: {} for item in self.clients
+            }
 
     def invoke(self):
         return inference_runtime.validate_shared_runtime(
-            self.compose, self.images, self.containers, self.networks, self.clients
+            self.compose,
+            self.images,
+            self.containers,
+            self.networks,
+            self.clients,
         )
 
     def reject(self, code=None):
-        with self.assertRaises(inference_runtime.InferenceRuntimeError) as caught:
+        with self.assertRaises(
+            inference_runtime.InferenceRuntimeError
+        ) as caught:
             self.invoke()
         self.assertRegex(str(caught.exception), r"^inference_[a-z_]+$")
         if code is not None:
             self.assertEqual(str(caught.exception), code)
 
-    def test_two_sealed_apis_share_exact_gpu_roles_with_same_or_different_catalogs(
+    def test_two_sealed_apis_share_gpu_roles_across_catalogs(
         self,
     ):
         for separate in (False, True):
@@ -728,7 +865,10 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     proof["api_container_ids"],
-                    sorted(item["lease"]["api_container_id"] for item in self.clients),
+                    sorted(
+                        item["lease"]["api_container_id"]
+                        for item in self.clients
+                    ),
                 )
                 self.assertEqual(
                     proof["client_lease_sha256s"],
@@ -741,7 +881,8 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
                     self.compose, proof, self.images
                 )
                 self.assertEqual(
-                    {item.role for item in ownership}, {"scope", "planner", "reranker"}
+                    {item.role for item in ownership},
+                    {"scope", "planner", "reranker"},
                 )
                 self.assertEqual(len(ownership), 3)
                 self.assertNotIn("/srv/", str(proof))
@@ -766,17 +907,23 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
         self.clients[0]["catalog_network"]["Containers"].pop(second_id)
         proof = self.invoke()
         old = inference_runtime.validate_leased_runtime(
-            self.compose, self.images, self.containers, self.networks, **self.clients[0]
+            self.compose,
+            self.images,
+            self.containers,
+            self.networks,
+            **self.clients[0],
         )
         for key in ("container_ids", "network_ids", "start_identity_sha256"):
             self.assertEqual(proof[key], old[key])
 
-    def test_full_snapshots_reach_shared_client_and_gpu_validators_without_filtering(
+    def test_shared_client_and_gpu_validators_receive_full_snapshots(
         self,
     ):
         with (
             mock.patch.object(
-                client_lease, "validate_clients", wraps=client_lease.validate_clients
+                client_lease,
+                "validate_clients",
+                wraps=client_lease.validate_clients,
             ) as lease_check,
             mock.patch.object(
                 inference_runtime,
@@ -789,7 +936,7 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
         self.assertIs(gpu_check.call_args.args[3], self.networks)
         self.assertEqual(len(gpu_check.call_args.kwargs["clients"]), 2)
 
-    def test_model_network_peers_must_include_all_and_only_registered_apis_and_gpus(
+    def test_model_network_peers_match_registered_apis_and_gpus(
         self,
     ):
         for index in range(2):
@@ -809,7 +956,7 @@ class SharedInferenceRuntimeTests(unittest.TestCase):
                         row["Containers"] = list(row["Containers"])
                     self.reject("inference_runtime_network_peers_changed")
 
-    def test_shared_clients_are_reverified_and_bare_proofs_do_not_authorize_access(
+    def test_shared_clients_are_reverified_and_bare_proofs_rejected(
         self,
     ):
         self.clients[1]["api_container"]["HostConfig"]["Privileged"] = True

@@ -1,8 +1,9 @@
 """Small Compose release workflow for one frontend/BFF image pair.
 
 Updates briefly close admission, preserve Redis and private inference/catalog,
-and retain the last release for explicit operator rollback. Compose owns runtime
-reconciliation; no automatic recovery controller or container adoption exists.
+and retain the last release for explicit operator rollback. Compose owns
+runtime reconciliation; no automatic recovery controller or container adoption
+exists.
 """
 
 from contextlib import contextmanager
@@ -19,11 +20,16 @@ from urllib.parse import urlsplit
 
 from search.serialization import strict_json
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
-from search.operations.deployment.public_entry import host, profile as public_entry
+from search.operations.deployment.public_entry import (
+    host,
+    profile as public_entry,
+)
 from search.operations.deployment.public_entry import preflight
 from search.operations.shared import private_io
 
-SERVICES = frozenset({"public-entry", "quota-redis", "public-web", "public-frontend"})
+SERVICES = frozenset(
+    {"public-entry", "quota-redis", "public-web", "public-frontend"}
+)
 ANTIBOT_SERVICES = frozenset({"public-edge", "antibot"})
 
 
@@ -53,7 +59,9 @@ ERROR_CODES = frozenset(
 
 
 class PublicEntryUpdateError(ValueError):
-    """Closed diagnostics; Compose output and secrets never enter API reports."""
+    """Closed diagnostics; Compose output and secrets never enter API
+    reports.
+    """
 
 
 def _require(condition, code):
@@ -108,7 +116,9 @@ def _lock(state_root):
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise PublicEntryUpdateError("public_entry_operation_locked") from None
+            raise PublicEntryUpdateError(
+                "public_entry_operation_locked"
+            ) from None
         yield state_root / "public-entry"
     finally:
         if descriptor is not None:
@@ -188,10 +198,13 @@ def _material(config, profile):
         if path is not None:
             paths.append(path)
     paths.extend(
-        Path(mount["source"]) for mount in profile["services"]["public-web"]["volumes"]
+        Path(mount["source"])
+        for mount in profile["services"]["public-web"]["volumes"]
     )
     for path in paths:
-        raw = public_entry._read_private(path, uid=os.geteuid(), maximum=256 * 1024)
+        raw = public_entry._read_private(
+            path, uid=os.geteuid(), maximum=256 * 1024
+        )
         values["files"][str(path)] = hashlib.sha256(raw).hexdigest()
     return hashlib.sha256(private_io.canonical(values)).hexdigest()
 
@@ -223,10 +236,15 @@ def _save_snapshot(root, snapshot):
             _require(existing == snapshot, "snapshot_invalid")
             return
         temporary = ".staging-" + uuid.uuid4().hex
-        directory = private_io.open_child_directory(versions, temporary, create=True)
+        directory = private_io.open_child_directory(
+            versions, temporary, create=True
+        )
         try:
             private_io.write_json(
-                directory, "compose.json", snapshot["compose"], max_bytes=2 * 1024**2
+                directory,
+                "compose.json",
+                snapshot["compose"],
+                max_bytes=2 * 1024**2,
             )
             private_io.write_json(
                 directory, "snapshot.json", snapshot, max_bytes=2 * 1024**2
@@ -235,9 +253,12 @@ def _save_snapshot(root, snapshot):
             os.close(directory)
         private_io.verify_directory(versions, root / "versions")
         _require(
-            not os.path.lexists(root / "versions" / generation), "snapshot_invalid"
+            not os.path.lexists(root / "versions" / generation),
+            "snapshot_invalid",
         )
-        os.rename(temporary, generation, src_dir_fd=versions, dst_dir_fd=versions)
+        os.rename(
+            temporary, generation, src_dir_fd=versions, dst_dir_fd=versions
+        )
         os.fsync(versions)
     finally:
         os.close(versions)
@@ -276,14 +297,19 @@ def _same_profile_except_images(profile, base):
     comparison = copy.deepcopy(profile)
     for role in ("public-web", "public-frontend"):
         comparison["services"][role]["image"] = base["services"][role]["image"]
-    comparison["x-depositar-plan"]["revision"] = base["x-depositar-plan"]["revision"]
+    comparison["x-depositar-plan"]["revision"] = base["x-depositar-plan"][
+        "revision"
+    ]
     return comparison == base
 
 
 def _verify(config, root, snapshot, inspector):
     base, files = _base(root)
     _require(snapshot["asset_sha256"] == files, "preparation_changed")
-    _require(snapshot["material_sha256"] == _material(config, base), "material_changed")
+    _require(
+        snapshot["material_sha256"] == _material(config, base),
+        "material_changed",
+    )
     profile = snapshot["compose"]
     _require(_same_profile_except_images(profile, base), "profile_changed")
     for field, role, capability in (
@@ -303,7 +329,8 @@ def _verify(config, root, snapshot, inspector):
             and labels.get(capability)
             == ("2" if capability == host.CAPABILITY else "1")
             and labels.get(host.CAPABILITY) == "2"
-            and labels.get("org.opencontainers.image.revision") == snapshot["revision"],
+            and labels.get("org.opencontainers.image.revision")
+            == snapshot["revision"],
             "profile_changed",
         )
         if role == "public-web":
@@ -356,7 +383,9 @@ def _smoke(config):
         paths = ["/healthz", "/"]
         for path in paths:
             connection.request(
-                "GET", path, headers={"Host": urlsplit(config.public_origin).netloc}
+                "GET",
+                path,
+                headers={"Host": urlsplit(config.public_origin).netloc},
             )
             response = connection.getresponse()
             body = response.read(256 * 1024 + 1)
@@ -372,7 +401,9 @@ def _smoke(config):
                     if path.endswith(".css")
                     else {"text/javascript", "application/javascript"}
                 )
-                content_type = response.getheader("Content-Type", "").split(";", 1)[0]
+                content_type = response.getheader("Content-Type", "").split(
+                    ";", 1
+                )[0]
                 if not body or content_type not in expected:
                     raise ValueError("public_entry_http_acceptance_failed")
             if path == "/":
@@ -384,9 +415,9 @@ def _smoke(config):
                         )
                     )
                 )
-                if not any(asset.endswith(b".js") for asset in assets) or not any(
-                    asset.endswith(b".css") for asset in assets
-                ):
+                if not any(
+                    asset.endswith(b".js") for asset in assets
+                ) or not any(asset.endswith(b".css") for asset in assets):
                     raise ValueError("public_entry_http_acceptance_failed")
                 paths.extend(asset.decode("ascii") for asset in assets)
     finally:
@@ -427,8 +458,12 @@ def _active(root):
     return state, snapshot
 
 
-def _deploy(config, root, target, old, runner, inspector, smoke, *, bootstrap=False):
-    """A short maintenance window; failed candidates require explicit rollback."""
+def _deploy(
+    config, root, target, old, runner, inspector, smoke, *, bootstrap=False
+):
+    """A short maintenance window; failed candidates require explicit
+    rollback.
+    """
     _verify(config, root, target, inspector)
     preflight.verify_bound_backend(target["compose"], runner=runner)
     _save_snapshot(root, target)
@@ -479,7 +514,9 @@ def _deploy(config, root, target, old, runner, inspector, smoke, *, bootstrap=Fa
             timeout=180,
         )
         preflight.verify_bound_backend(
-            target["compose"], runner=runner, compose_file=target["compose_file"]
+            target["compose"],
+            runner=runner,
+            compose_file=target["compose_file"],
         )
         if "public-edge" in target["compose"]["services"]:
             _compose(
@@ -526,7 +563,9 @@ def _deploy(config, root, target, old, runner, inspector, smoke, *, bootstrap=Fa
                 "compose_file",
             )
         }
-        state["previous_generation"] = None if old is None else old["generation"]
+        state["previous_generation"] = (
+            None if old is None else old["generation"]
+        )
         _write(root, "active.json", state)
         _remove(root, "pending.json")
         return _report(
@@ -625,7 +664,9 @@ def bootstrap_public_entry(
                     bootstrap=True,
                 )
             preflight.verify_bound_backend(
-                current["compose"], runner=runner, compose_file=current["compose_file"]
+                current["compose"],
+                runner=runner,
+                compose_file=current["compose_file"],
             )
             smoke_probe(config)
             return _report("public_entry_unchanged", state)
@@ -688,7 +729,9 @@ def update_public_entry(
             image_inspector,
             backend_config=backend_config,
         )
-        _require(_same_profile_except_images(candidate, profile), "profile_changed")
+        _require(
+            _same_profile_except_images(candidate, profile), "profile_changed"
+        )
         target = _snapshot(root, candidate, files, _material(config, profile))
         if target["generation"] == old["generation"]:
             preflight.verify_bound_backend(
@@ -696,7 +739,9 @@ def update_public_entry(
             )
             smoke_probe(config)
             return _report("public_entry_unchanged", state)
-        return _deploy(config, root, target, old, runner, image_inspector, smoke_probe)
+        return _deploy(
+            config, root, target, old, runner, image_inspector, smoke_probe
+        )
 
 
 def rollback_public_entry(

@@ -37,7 +37,10 @@ TERMINAL = frozenset({"completed", "partial", "checkpoint", "cancelled"})
 
 def registry_path():
     """Use the same account-level registry from every branch and worktree."""
-    return Path(pwd.getpwuid(os.geteuid()).pw_dir) / ".config/depositarai/jobs.json"
+    return (
+        Path(pwd.getpwuid(os.geteuid()).pw_dir)
+        / ".config/depositarai/jobs.json"
+    )
 
 
 def host_identity():
@@ -50,7 +53,9 @@ def digest(value):
 
 def queue_identity(registry):
     """Seal the shared execution plane; each request seals its own profile."""
-    return digest({key: value for key, value in registry.items() if key != "profiles"})
+    return digest(
+        {key: value for key, value in registry.items() if key != "profiles"}
+    )
 
 
 def no_archive_intent(root):
@@ -69,7 +74,9 @@ def path(value):
         "path_invalid",
     )
     result = Path(value)
-    require(result.is_absolute() and result.resolve() == result, "path_invalid")
+    require(
+        result.is_absolute() and result.resolve() == result, "path_invalid"
+    )
     return result
 
 
@@ -77,7 +84,9 @@ def read(filename, *, raw=False, maximum=MAX_RECORD):
     filename = path(str(filename))
     fd = private_io.open_directory(filename.parent)
     try:
-        encoded = private_io.read_file(fd, filename.name, mode=0o600, max_bytes=maximum)
+        encoded = private_io.read_file(
+            fd, filename.name, mode=0o600, max_bytes=maximum
+        )
         private_io.verify_directory(fd, filename.parent)
         return encoded if raw else strict_json(encoded)
     finally:
@@ -100,7 +109,9 @@ def write(filename, value, *, replace=False):
 def revision(source):
     prefix = ["git", "-c", "core.hooksPath=/dev/null", "-C", path(str(source))]
     head = command([*prefix, "rev-parse", "HEAD"])
-    clean = command([*prefix, "status", "--porcelain", "--untracked-files=all"])
+    clean = command(
+        [*prefix, "status", "--porcelain", "--untracked-files=all"]
+    )
     require(
         head.returncode == clean.returncode == 0
         and REVISION.fullmatch(head.stdout.decode("ascii").strip())
@@ -169,7 +180,8 @@ def load_registry(filename=None):
     require(revision(source) == value["operator_revision"], "operator_changed")
     definitions = value["profiles"]
     require(
-        type(definitions) is dict and 1 <= len(definitions) <= 16, "profiles_invalid"
+        type(definitions) is dict and 1 <= len(definitions) <= 16,
+        "profiles_invalid",
     )
     for name, profile in definitions.items():
         require(
@@ -182,11 +194,15 @@ def load_registry(filename=None):
 
 @contextmanager
 def locked(root, name):
-    """Retain a nofollow global lock; durable active intent handles process death."""
+    """Retain a nofollow global lock; durable active intent handles process
+    death.
+    """
     parent = private_io.open_directory(root)
     fd = None
     try:
-        fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        fd = os.open(
+            name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=parent
+        )
         before = os.fstat(fd)
         require(
             stat.S_ISREG(before.st_mode)
@@ -201,7 +217,9 @@ def locked(root, name):
             raise JobError("job_busy") from None
         require(
             private_io.identity(before)
-            == private_io.identity(os.stat(name, dir_fd=parent, follow_symlinks=False)),
+            == private_io.identity(
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            ),
             "lock_changed",
         )
         private_io.verify_directory(parent, root)
@@ -214,7 +232,9 @@ def locked(root, name):
 
 
 def job_root(registry, identifier):
-    require(type(identifier) is str and JOB_ID.fullmatch(identifier), "id_invalid")
+    require(
+        type(identifier) is str and JOB_ID.fullmatch(identifier), "id_invalid"
+    )
     locations = []
     for name in ("jobs", "archive"):
         parent = Path(registry["root"]) / name
@@ -310,7 +330,8 @@ def submit(registry, specification):
     source = path(specification["source"])
     require(revision(source) == specification["revision"], "source_changed")
     require(
-        common_directory(source) == common_directory(registry["operator_source"]),
+        common_directory(source)
+        == common_directory(registry["operator_source"]),
         "source_repository_changed",
     )
     profile = registry["profiles"][specification["profile"]]
@@ -318,7 +339,9 @@ def submit(registry, specification):
     frozen_inputs = profiles.load_inputs(profile)
     root = Path(registry["root"])
     require(
-        root != source and root not in source.parents and source not in root.parents,
+        root != source
+        and root not in source.parents
+        and source not in root.parents,
         "source_overlaps_queue",
     )
     transport = Pueue(registry)
@@ -351,7 +374,8 @@ def submit(registry, specification):
             timeout=60,
         )
         require(
-            result.returncode == 0 and revision(frozen) == specification["revision"],
+            result.returncode == 0
+            and revision(frozen) == specification["revision"],
             "source_freeze_failed",
         )
         tree = command(
@@ -369,14 +393,18 @@ def submit(registry, specification):
         )
         require(tree.returncode == 0, "source_tree_invalid")
         restore_modes(frozen, tree.stdout)
-        require(revision(frozen) == specification["revision"], "source_changed")
+        require(
+            revision(frozen) == specification["revision"], "source_changed"
+        )
         profiles.freeze(destination, profile, frozen_inputs)
         request = {
             **specification,
             "job_id": identifier,
             "created_at_ns": time.time_ns(),
             "queue_identity_sha256": queue_identity(registry),
-            "profile_definition": registry["profiles"][specification["profile"]],
+            "profile_definition": registry["profiles"][
+                specification["profile"]
+            ],
         }
         write(destination / "request.json", request)
         encoded = transport.call(
@@ -512,7 +540,8 @@ def status(registry, identifier, *, state=None):
     if result["status"] in {"completed", "partial", "checkpoint"}:
         value = read(root / "operation.json")
         require(
-            result.get("operation_sha256") == digest(value), "operation_result_changed"
+            result.get("operation_sha256") == digest(value),
+            "operation_result_changed",
         )
         projected["operation_sha256"] = digest(value)
         try:
@@ -534,7 +563,8 @@ def result(registry, identifier):
     artifacts = receipt.get("artifacts")
     if artifacts is not None:
         require(
-            type(artifacts) is dict and set(artifacts) == {"stdout.bin", "stderr.bin"},
+            type(artifacts) is dict
+            and set(artifacts) == {"stdout.bin", "stderr.bin"},
             "artifacts_invalid",
         )
         for name, metadata in artifacts.items():
@@ -581,7 +611,8 @@ def result(registry, identifier):
         )
     if receipt["status"] == "cancelled":
         require(
-            set(receipt) == {"job_id", "status", "request_sha256"}, "result_invalid"
+            set(receipt) == {"job_id", "status", "request_sha256"},
+            "result_invalid",
         )
         for name in ("operation.json", "stdout.bin", "stderr.bin", "capture"):
             _artifact(root, name, 0)
@@ -589,12 +620,17 @@ def result(registry, identifier):
 
 
 def verified_evidence(registry, identifier):
-    """Return the bounded metadata inventory of a fully verified terminal job."""
+    """Return the bounded metadata inventory of a fully verified terminal
+    job.
+    """
     outcome = result(registry, identifier)
     require(outcome["status"] in TERMINAL, "result_unverified")
     root, request, _ = inputs(registry, identifier)
     receipt = read(root / "result.json")
-    names = {name: MAX_RECORD for name in ("request.json", "queue.json", "result.json")}
+    names = {
+        name: MAX_RECORD
+        for name in ("request.json", "queue.json", "result.json")
+    }
     names.update(profiles.frozen_names(request["profile_definition"]))
     if receipt["status"] != "cancelled":
         names["operation.json"] = MAX_RECORD
@@ -611,7 +647,10 @@ def verified_evidence(registry, identifier):
         raw = read(root / name, raw=True, maximum=maximum)
         total += len(raw)
         require(total <= execution.MAX_EVIDENCE_BYTES, "evidence_too_large")
-        inventory[name] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+        inventory[name] = {
+            "bytes": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
     return inventory
 
 
@@ -634,13 +673,15 @@ def statuses(registry):
     os.close(private_io.open_directory(directory))
     identifiers = sorted(item.name for item in directory.iterdir())
     require(
-        len(identifiers) <= 128 and all(JOB_ID.fullmatch(item) for item in identifiers),
+        len(identifiers) <= 128
+        and all(JOB_ID.fullmatch(item) for item in identifiers),
         "jobs_invalid",
     )
     state = queue_state(registry)
     return {
         "jobs": [
-            status(registry, identifier, state=state) for identifier in identifiers
+            status(registry, identifier, state=state)
+            for identifier in identifiers
         ]
     }
 
@@ -651,7 +692,9 @@ def cancel(registry, identifier):
         require(not (root / "result.json").exists(), "not_queued")
         transport = Pueue(registry)
         require(
-            task(registry, identifier, queue_state(registry), queued["task_id"])
+            task(
+                registry, identifier, queue_state(registry), queued["task_id"]
+            )
             in {"Queued", "Stashed"},
             "not_queued",
         )
@@ -704,9 +747,16 @@ def execute(registry, identifier):
     try:
         with locked(queue_root, "execution.lock"):
             no_archive_intent(queue_root)
-            require(ROOT == Path(registry["operator_source"]), "operator_changed")
             require(
-                task(registry, identifier, queue_state(registry), queued["task_id"])
+                ROOT == Path(registry["operator_source"]), "operator_changed"
+            )
+            require(
+                task(
+                    registry,
+                    identifier,
+                    queue_state(registry),
+                    queued["task_id"],
+                )
                 == "Running",
                 "not_running",
             )
@@ -723,7 +773,10 @@ def execute(registry, identifier):
                     and previous["status"] == "clean",
                     "recovery_required",
                 )
-            require(revision(root / "source") == request["revision"], "source_changed")
+            require(
+                revision(root / "source") == request["revision"],
+                "source_changed",
+            )
             require(
                 common_directory(root / "source")
                 == common_directory(registry["operator_source"]),
@@ -748,15 +801,22 @@ def execute(registry, identifier):
             result["log_status"] = "complete"
             value = strict_json(completed.stdout)
             write(root / "operation.json", value)
-            normalized = execution.verify(value, completed.returncode, root, request)
-            require(revision(root / "source") == request["revision"], "source_changed")
+            normalized = execution.verify(
+                value, completed.returncode, root, request
+            )
+            require(
+                revision(root / "source") == request["revision"],
+                "source_changed",
+            )
             result.update(
                 status=normalized,
                 operation_sha256=digest(value),
                 source_revision=request["revision"],
             )
             write(root / "result.json", result)
-            write(active, {"job_id": identifier, "status": "clean"}, replace=True)
+            write(
+                active, {"job_id": identifier, "status": "clean"}, replace=True
+            )
             return result
     except (Exception, KeyboardInterrupt) as error:
         result["status"] = "recovery_required" if started else "blocked"
@@ -775,4 +835,6 @@ def execute(registry, identifier):
             and str(error) == "job_archive_recovery_required"
         ):
             raise error from None
-        raise JobError("job_recovery_required" if started else "job_blocked") from None
+        raise JobError(
+            "job_recovery_required" if started else "job_blocked"
+        ) from None

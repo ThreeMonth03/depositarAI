@@ -10,7 +10,9 @@ from search.operations.shared.namespace import NamespaceError
 
 class TransportNamespaceTests(unittest.TestCase):
     def test_transport_requires_all_three_private_directories(self):
-        with tempfile.TemporaryDirectory(prefix="queue-namespace-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="queue-namespace-"
+        ) as temporary:
             root = Path(temporary)
             paths = [root / name for name in ("state", "runtime", "client")]
             for path in paths:
@@ -26,7 +28,8 @@ class TransportNamespaceTests(unittest.TestCase):
                     path.chmod(0o755)
                     try:
                         with self.assertRaisesRegex(
-                            NamespaceError, "^namespace_private_directory_unsafe$"
+                            NamespaceError,
+                            "^namespace_private_directory_unsafe$",
                         ):
                             namespace.check_transport(registry)
                     finally:

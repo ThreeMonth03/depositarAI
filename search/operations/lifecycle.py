@@ -1,4 +1,6 @@
-"""Private candidate lifecycle; metadata/index steps never promote live service."""
+"""Private candidate lifecycle; metadata/index steps never promote live
+service.
+"""
 
 from __future__ import annotations
 
@@ -83,7 +85,9 @@ def _candidate(store):
         or type(value["document_count"]) is not int
     ):
         raise ValueError("product_candidate_invalid")
-    expected_path = store.root / "cache/bundles" / ("sha256-" + value["bundle_id"])
+    expected_path = (
+        store.root / "cache/bundles" / ("sha256-" + value["bundle_id"])
+    )
     if value["bundle_path"] != str(expected_path):
         raise ValueError("product_candidate_path_invalid")
     bundle = CatalogBundle.load(
@@ -110,8 +114,9 @@ def sync_metadata(
 ):
     """Download two matching public scans or use one bounded offline snapshot.
 
-    A previous *staged* bundle is only a diff baseline, not an active deployment.
-    Every invocation returns the real bundle/manifest and source commit.
+    A previous *staged* bundle is only a diff baseline, not an active
+    deployment. Every invocation returns the real bundle/manifest and source
+    commit.
     """
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
@@ -142,7 +147,9 @@ def _sync_locked(
     profile_files=(),
     profile_set=None,
 ):
-    """The public command and one-click staging share one sync implementation."""
+    """The public command and one-click staging share one sync
+    implementation.
+    """
     _require_revision(source_revision, repo_root)
     with operation(store, "sync", source_revision) as outcome:
         cache = config.state_root / "cache"
@@ -192,7 +199,9 @@ def _sync_locked(
 
 
 def status(config: ProductConfig):
-    """Report local receipt identities; do not pretend they are runtime health."""
+    """Report local receipt identities; do not pretend they are runtime
+    health.
+    """
     from search.operations.local_status import classify_local_state
 
     try:
@@ -207,7 +216,9 @@ def status(config: ProductConfig):
         }
     with locked_state(config) as store:
         candidate = (
-            _candidate(store) if "candidate.json" in os.listdir(store.fd) else None
+            _candidate(store)
+            if "candidate.json" in os.listdir(store.fd)
+            else None
         )
         operations = operation_receipts(store)
         return {
@@ -220,7 +231,9 @@ def status(config: ProductConfig):
 
 
 def prepare_secrets(config: ProductConfig, *, repo_root=ROOT, runner=None):
-    """Create/reverify the private product API key; no ports or service starts."""
+    """Create/reverify the private product API key; no ports or service
+    starts.
+    """
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
         return _prepare_secrets_locked(
@@ -311,7 +324,9 @@ def start_release(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    """Start/reverify one private CPU release; no gateway or live activation."""
+    """Start/reverify one private CPU release; no gateway or live
+    activation.
+    """
     source_revision = revision(repo_root)
     with locked_state(config) as store:
         return _start_release_locked(
@@ -337,7 +352,9 @@ def _start_release_locked(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    from search.operations.deployment.release.controller import start_private_release
+    from search.operations.deployment.release.controller import (
+        start_private_release,
+    )
 
     _require_revision(source_revision, repo_root)
     with operation(store, "start-release", source_revision) as outcome:
@@ -377,7 +394,9 @@ def prepare_gateway(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    """Reverify completed CPU3 and stage a gateway candidate; no live routing."""
+    """Reverify completed CPU3 and stage a gateway candidate; no live
+    routing.
+    """
     source_revision = revision(repo_root)
     with locked_state(config) as store:
         return _prepare_gateway_locked(
@@ -516,9 +535,15 @@ def _activate_gateway_locked(
 
 
 def prepare_index(
-    config: ProductConfig, *, repo_root=ROOT, runner=None, catalog_revision=None
+    config: ProductConfig,
+    *,
+    repo_root=ROOT,
+    runner=None,
+    catalog_revision=None,
 ):
-    """Prepare an isolated catalog from the last verified metadata candidate."""
+    """Prepare an isolated catalog from the last verified metadata
+    candidate.
+    """
     source_revision = revision(repo_root)
     with locked_state(config) as store:
         return _prepare_locked(
@@ -558,7 +583,9 @@ def _prepare_locked(
         return result
 
 
-def _index_plan(store, candidate, source_revision, *, repo_root=ROOT, runner=None):
+def _index_plan(
+    store, candidate, source_revision, *, repo_root=ROOT, runner=None
+):
     """Bind staged metadata to its original catalog and compatible app source.
 
     The execution layer revalidates the complete sealed plan, source bytes and
@@ -584,7 +611,10 @@ def _index_plan(store, candidate, source_revision, *, repo_root=ROOT, runner=Non
 
         try:
             validate_compatibility(
-                plan, repo_root=repo_root, revision=source_revision, runner=runner
+                plan,
+                repo_root=repo_root,
+                revision=source_revision,
+                runner=runner,
             )
         except ValueError:
             raise ValueError(
@@ -608,7 +638,14 @@ def _index_operation(config, name, *, repo_root, runner, prebuilt_images=None):
 
 
 def _index_locked(
-    config, store, source_revision, name, *, repo_root, runner, prebuilt_images=None
+    config,
+    store,
+    source_revision,
+    name,
+    *,
+    repo_root,
+    runner,
+    prebuilt_images=None,
 ):
     from search.operations.catalog import runtime as catalog_runtime
 
@@ -616,11 +653,17 @@ def _index_locked(
     with operation(store, name, source_revision) as outcome:
         candidate = _candidate(store)
         plan = _index_plan(
-            store, candidate, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
         if name == "start-index":
             options = (
-                {} if prebuilt_images is None else {"prebuilt_images": prebuilt_images}
+                {}
+                if prebuilt_images is None
+                else {"prebuilt_images": prebuilt_images}
             )
             result = catalog_runtime.start(
                 config, plan, repo_root=repo_root, runner=runner, **options
@@ -648,7 +691,9 @@ def _index_locked(
 def start_index(
     config: ProductConfig, *, repo_root=ROOT, runner=None, prebuilt_images=None
 ):
-    """Start only the prepared private CPU catalog; no active release change."""
+    """Start only the prepared private CPU catalog; no active release
+    change.
+    """
     return _index_operation(
         config,
         "start-index",
@@ -658,8 +703,12 @@ def start_index(
     )
 
 
-def build_catalog_images(config: ProductConfig, *, repo_root=ROOT, runner=None):
-    """Build/reverify catalog and admin images without starting catalog services."""
+def build_catalog_images(
+    config: ProductConfig, *, repo_root=ROOT, runner=None
+):
+    """Build/reverify catalog and admin images without starting catalog
+    services.
+    """
     return _index_operation(
         config, "build-catalog-images", repo_root=repo_root, runner=runner
     )
@@ -676,7 +725,9 @@ def package_product(
     docker_runner=None,
     catalog_runner=None,
 ):
-    """Scan/roundtrip source and package completed same-source product assets."""
+    """Scan/roundtrip source and package completed same-source product
+    assets.
+    """
     from search.operations.deployment.payload import collect
 
     source_revision = revision(repo_root)
@@ -710,21 +761,33 @@ def package_product(
 
 
 def import_index(config: ProductConfig, *, repo_root=ROOT, runner=None):
-    """Import metadata into the isolated catalog, without vectors or promotion."""
-    return _index_operation(config, "import-index", repo_root=repo_root, runner=runner)
+    """Import metadata into the isolated catalog, without vectors or
+    promotion.
+    """
+    return _index_operation(
+        config, "import-index", repo_root=repo_root, runner=runner
+    )
 
 
 def reconcile_index(config: ProductConfig, *, repo_root=ROOT, runner=None):
-    """Explicitly verify complete inventory after an uncertain import; no retry."""
+    """Explicitly verify complete inventory after an uncertain import; no
+    retry.
+    """
     return _index_operation(
         config, "reconcile-index", repo_root=repo_root, runner=runner
     )
 
 
 def build_images(
-    config: ProductConfig, *, repo_root=ROOT, source_runner=None, docker_runner=None
+    config: ProductConfig,
+    *,
+    repo_root=ROOT,
+    source_runner=None,
+    docker_runner=None,
 ):
-    """Build/reverify committed private product images; never start services."""
+    """Build/reverify committed private product images; never start
+    services.
+    """
     source_revision = revision(repo_root)
     with locked_state(config, create=True) as store:
         return _build_images_locked(
@@ -746,7 +809,9 @@ def _build_images_locked(
     source_runner=None,
     docker_runner=None,
 ):
-    from search.operations.deployment.images.staging import stage_product_images
+    from search.operations.deployment.images.staging import (
+        stage_product_images,
+    )
 
     _require_revision(source_revision, repo_root)
     with operation(store, "build-images", source_revision):
@@ -790,9 +855,15 @@ def _prepare_query_locked(
     with operation(store, "prepare-query", source_revision) as outcome:
         candidate = _candidate(store)
         plan = _index_plan(
-            store, candidate, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
-        result = query.provision(config, plan, repo_root=repo_root, runner=runner)
+        result = query.provision(
+            config, plan, repo_root=repo_root, runner=runner
+        )
         _require_revision(source_revision, repo_root)
         if (
             type(result) is not dict
@@ -814,9 +885,15 @@ def vector_inputs(config: ProductConfig, *, repo_root=ROOT, runner=None):
         _require_revision(source_revision, repo_root)
         candidate = _candidate(store)
         plan = _index_plan(
-            store, candidate, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
-        report = vectors.inputs(config, plan, repo_root=repo_root, runner=runner)
+        report = vectors.inputs(
+            config, plan, repo_root=repo_root, runner=runner
+        )
         _require_revision(source_revision, repo_root)
         return report
 
@@ -830,7 +907,9 @@ def build_vectors(
     wall_seconds=7200,
     expected_inputs_sha256=None,
 ):
-    """Build/resume only proven clean isolated vectors; never activate a site."""
+    """Build/resume only proven clean isolated vectors; never activate a
+    site.
+    """
     source_revision = revision(repo_root)
     with locked_state(config) as store:
         return _vectors_locked(
@@ -862,7 +941,11 @@ def _vectors_locked(
     with operation(store, "build-vectors", source_revision) as outcome:
         candidate = _candidate(store)
         plan = _index_plan(
-            store, candidate, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
         result = vectors.build(
             config,
@@ -892,7 +975,10 @@ def _validate_vector_outcome(result, candidate, source_revision):
         or type(result.get("host_cleanup_verified")) is not bool
         or type(result.get("document_count")) is not int
         or result["document_count"] != candidate["document_count"]
-        or any(result.get(key) != value for key, value in _outcome(candidate).items())
+        or any(
+            result.get(key) != value
+            for key, value in _outcome(candidate).items()
+        )
     ):
         raise ValueError("product_stage_vector_outcome_invalid")
     if result["status"] == "vectors-complete" and (
@@ -905,13 +991,20 @@ def _validate_vector_outcome(result, candidate, source_revision):
         raise ValueError("product_stage_vector_outcome_unverified")
 
 
-def _inventory_staged(store, candidate, source_revision, *, catalog_revision=None):
-    """A local skip hint, never a substitute for actual vector/runtime proofs."""
+def _inventory_staged(
+    store, candidate, source_revision, *, catalog_revision=None
+):
+    """A local skip hint, never a substitute for actual vector/runtime
+    proofs.
+    """
     return any(
         receipt["operation"] in {"import-index", "reconcile-index"}
         and receipt["status"] == "staged"
         and receipt["source_revision"] in {source_revision, catalog_revision}
-        and all(receipt.get(key) == value for key, value in _outcome(candidate).items())
+        and all(
+            receipt.get(key) == value
+            for key, value in _outcome(candidate).items()
+        )
         for receipt in operation_receipts(store)
     )
 
@@ -942,7 +1035,8 @@ def stage_catalog(
     wall_seconds=7200,
     catalog_revision=None,
 ):
-    """One locked staging invocation, not install/update, reconcile or activation.
+    """One locked staging invocation, not install/update, reconcile or
+    activation.
 
     Every step retains its existing granular operation receipt. No outer
     started receipt is nested around them. Failed/uncertain catalog operations
@@ -1077,7 +1171,8 @@ def _stage_catalog_locked(
         "operation": "stage-catalog",
         "source_revision": source_revision,
         "catalog_revision": plan["revision"],
-        "catalog_reused": complete and result.get("passes_this_invocation") == 0,
+        "catalog_reused": complete
+        and result.get("passes_this_invocation") == 0,
         "bundle_id": candidate["bundle_id"],
         "manifest_sha256": candidate["manifest_sha256"],
         "document_count": candidate["document_count"],
@@ -1093,7 +1188,9 @@ def _stage_catalog_locked(
                 ("prepare-index", "staged"),
                 (
                     "build-catalog-images",
-                    "skipped_existing_runtime" if image_staging_skipped else "staged",
+                    "skipped_existing_runtime"
+                    if image_staging_skipped
+                    else "staged",
                 ),
                 ("start-index", "staged"),
                 ("import-index", "skipped" if import_skipped else "staged"),
@@ -1158,7 +1255,11 @@ def up_private(
             raise UpPrivateError("product_private_catalog_unverified")
         candidate = _candidate(store)
         plan = _index_plan(
-            store, candidate, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
         complete = catalog.get("status") == "vectors-complete"
         if (
@@ -1188,7 +1289,11 @@ def up_private(
         }
         for name, action, options in (
             ("build-images", _build_images_locked, source_options),
-            ("prepare-secrets", _prepare_secrets_locked, {"runner": source_runner}),
+            (
+                "prepare-secrets",
+                _prepare_secrets_locked,
+                {"runner": source_runner},
+            ),
             (
                 "start-inference",
                 _start_inference_locked,
@@ -1214,7 +1319,12 @@ def up_private(
             )
             steps.append({"operation": name, "status": report["status"]})
         _require_private_candidate(
-            store, candidate, plan, source_revision, repo_root=repo_root, runner=runner
+            store,
+            candidate,
+            plan,
+            source_revision,
+            repo_root=repo_root,
+            runner=runner,
         )
         report = _activate_gateway_locked(
             config,

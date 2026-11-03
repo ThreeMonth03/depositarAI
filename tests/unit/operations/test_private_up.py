@@ -31,7 +31,11 @@ from search.operations.deployment.images import staging as image_staging
 from search.operations.deployment.gateway import activation, preparation
 from search.operations.deployment.release import controller as release
 from search.operations.metadata import sync as metadata_sync
-from search.operations.state import StateStore, locked_state, operation_receipts
+from search.operations.state import (
+    StateStore,
+    locked_state,
+    operation_receipts,
+)
 
 
 REVISION = "a" * 40
@@ -71,7 +75,9 @@ def dataset(title="Public metadata"):
 
 class PrivateUpTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-private-up-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-private-up-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.patches = ExitStack()
@@ -79,7 +85,9 @@ class PrivateUpTests(unittest.TestCase):
         self.case_number = 0
         self.new_case()
         self.patches.enter_context(
-            patch.object(lifecycle, "revision", side_effect=lambda *_: self.source)
+            patch.object(
+                lifecycle, "revision", side_effect=lambda *_: self.source
+            )
         )
         owners = (
             (first_activation, "require_first_activation", self.barrier),
@@ -142,7 +150,9 @@ class PrivateUpTests(unittest.TestCase):
             for row in operation_receipts(self.store)
             if row["status"] == "started"
         ]
-        self.assertEqual(started, [name], "only the current granular step may be open")
+        self.assertEqual(
+            started, [name], "only the current granular step may be open"
+        )
         if self.fail_step == name:
             raise ValueError(PRIVATE)
         if self.drift_step == name:
@@ -403,7 +413,8 @@ class PrivateUpTests(unittest.TestCase):
             },
         )
         if self.terminal_source_drift:
-            # Simulate a checkout change after native acceptance and publication.
+            # Simulate a checkout change after native acceptance and
+            # publication.
             self.source = CHANGED_REVISION
         return report
 
@@ -413,7 +424,9 @@ class PrivateUpTests(unittest.TestCase):
             force=True,
             fetch=lambda start, rows, deadline: {
                 "count": 1,
-                "results": [dataset("Different sealed metadata")][start : start + rows],
+                "results": [dataset("Different sealed metadata")][
+                    start : start + rows
+                ],
             },
         )
         value = {
@@ -438,7 +451,8 @@ class PrivateUpTests(unittest.TestCase):
 
     def up(self, **options):
         fetch = options.pop(
-            "fetch", None if options.get("snapshot") is not None else self.fetch
+            "fetch",
+            None if options.get("snapshot") is not None else self.fetch,
         )
         return lifecycle.up_private(self.config, fetch=fetch, **options)
 
@@ -447,7 +461,9 @@ class PrivateUpTests(unittest.TestCase):
             return operation_receipts(store)
 
     def test_all_steps_share_one_lock_config_revision_and_sealed_bundle(self):
-        with patch.object(lifecycle, "locked_state", wraps=locked_state) as lock:
+        with patch.object(
+            lifecycle, "locked_state", wraps=locked_state
+        ) as lock:
             result = self.up(max_passes=2, wall_seconds=4800)
         lock.assert_called_once_with(self.config, create=True)
         self.assertEqual(self.events, ["barrier", *ALL_STEPS])
@@ -457,23 +473,30 @@ class PrivateUpTests(unittest.TestCase):
         self.assertEqual(result["status"], "gateway_active")
         self.assertIs(result["active_changed"], True)
         self.assertIs(result["confers_runtime_authority"], True)
-        self.assertEqual(result["bundle_id"], self.bound_candidate["bundle_id"])
+        self.assertEqual(
+            result["bundle_id"], self.bound_candidate["bundle_id"]
+        )
         self.assertEqual(
             result["manifest_sha256"], self.bound_candidate["manifest_sha256"]
         )
         self.assertEqual(self.options_seen["vectors"], (2, 4800))
         receipts = self.receipts()
         self.assertEqual(len(receipts), len(ALL_STEPS))
-        self.assertEqual({row["operation"] for row in receipts}, set(ALL_STEPS))
+        self.assertEqual(
+            {row["operation"] for row in receipts}, set(ALL_STEPS)
+        )
         for receipt in receipts:
             self.assertEqual(receipt["status"], "staged")
             self.assertEqual(receipt["source_revision"], REVISION)
             self.assertIs(
-                receipt["active_changed"], receipt["operation"] == "activate-gateway"
+                receipt["active_changed"],
+                receipt["operation"] == "activate-gateway",
             )
         self.assertNotIn(PRIVATE, json.dumps(receipts))
 
-    def test_checkpoint_returns_before_any_app_image_gpu_query_or_gateway_step(self):
+    def test_checkpoint_returns_before_any_app_image_gpu_query_or_gateway_step(
+        self,
+    ):
         self.vector_status = "checkpoint"
         result = self.up()
         self.assertEqual(result["status"], "checkpoint")
@@ -485,9 +508,13 @@ class PrivateUpTests(unittest.TestCase):
         )
 
     def test_runners_and_native_http_probe_reach_their_existing_owners(self):
-        source_runner, docker_runner, gpu_runner, catalog_runner, http_probe = (
-            object() for _ in range(5)
-        )
+        (
+            source_runner,
+            docker_runner,
+            gpu_runner,
+            catalog_runner,
+            http_probe,
+        ) = (object() for _ in range(5))
         self.up(
             runner=catalog_runner,
             source_runner=source_runner,
@@ -496,13 +523,21 @@ class PrivateUpTests(unittest.TestCase):
             http_probe=http_probe,
         )
         self.assertIs(self.options_seen["barrier"], docker_runner)
-        self.assertIs(self.options_seen["images"]["source_runner"], source_runner)
-        self.assertIs(self.options_seen["images"]["docker_runner"], docker_runner)
+        self.assertIs(
+            self.options_seen["images"]["source_runner"], source_runner
+        )
+        self.assertIs(
+            self.options_seen["images"]["docker_runner"], docker_runner
+        )
         self.assertIs(self.options_seen["secrets"]["runner"], source_runner)
         self.assertIs(self.options_seen["inference"]["gpu_runner"], gpu_runner)
         self.assertIs(self.options_seen["query"]["runner"], catalog_runner)
-        self.assertIs(self.options_seen["activation"]["catalog_runner"], catalog_runner)
-        self.assertIs(self.options_seen["activation"]["http_probe"], http_probe)
+        self.assertIs(
+            self.options_seen["activation"]["catalog_runner"], catalog_runner
+        )
+        self.assertIs(
+            self.options_seen["activation"]["http_probe"], http_probe
+        )
 
     def test_offline_snapshot_uses_real_metadata_without_fetching(self):
         snapshot = self.root / "datasets.jsonl"
@@ -525,9 +560,13 @@ class PrivateUpTests(unittest.TestCase):
         self.assertEqual(self.events, ["barrier", "sync"])
         self.assertFalse((self.config.state_root / "candidate.json").exists())
         self.assertFalse((self.config.state_root / "active.json").exists())
-        self.assertEqual([row["status"] for row in self.receipts()], ["failed"])
+        self.assertEqual(
+            [row["status"] for row in self.receipts()], ["failed"]
+        )
 
-    def test_closed_early_barrier_errors_stop_before_metadata_or_other_steps(self):
+    def test_closed_early_barrier_errors_stop_before_metadata_or_other_steps(
+        self,
+    ):
         for code in first_activation.ERROR_CODES:
             with self.subTest(code=code):
                 self.new_case()
@@ -543,7 +582,9 @@ class PrivateUpTests(unittest.TestCase):
                 self.assertEqual(self.events, ["barrier"])
                 self.assertEqual(self.fetch_calls, 0)
                 self.assertEqual(self.receipts(), [])
-                self.assertFalse((self.config.state_root / "active.json").exists())
+                self.assertFalse(
+                    (self.config.state_root / "active.json").exists()
+                )
 
     def test_each_domain_failure_stops_without_retry_or_later_receipts(self):
         for index, step in enumerate(ALL_STEPS):
@@ -552,15 +593,25 @@ class PrivateUpTests(unittest.TestCase):
                 self.fail_step = step
                 with self.assertRaisesRegex(ValueError, PRIVATE):
                     self.up()
-                self.assertEqual(self.events, ["barrier", *ALL_STEPS[: index + 1]])
+                self.assertEqual(
+                    self.events, ["barrier", *ALL_STEPS[: index + 1]]
+                )
                 receipts = self.receipts()
                 self.assertEqual(len(receipts), index + 1)
                 self.assertEqual(
-                    [row["operation"] for row in receipts if row["status"] == "failed"],
+                    [
+                        row["operation"]
+                        for row in receipts
+                        if row["status"] == "failed"
+                    ],
                     [step],
                 )
-                self.assertFalse(any(row["status"] == "started" for row in receipts))
-                self.assertFalse((self.config.state_root / "active.json").exists())
+                self.assertFalse(
+                    any(row["status"] == "started" for row in receipts)
+                )
+                self.assertFalse(
+                    (self.config.state_root / "active.json").exists()
+                )
                 self.assertNotIn(PRIVATE, json.dumps(receipts))
 
     def test_nonterminal_source_drift_stops_before_the_next_domain(self):
@@ -568,9 +619,13 @@ class PrivateUpTests(unittest.TestCase):
             with self.subTest(step=step):
                 self.new_case()
                 self.drift_step = step
-                with self.assertRaisesRegex(ValueError, "invocation_source_changed"):
+                with self.assertRaisesRegex(
+                    ValueError, "invocation_source_changed"
+                ):
                     self.up()
-                self.assertEqual(self.events, ["barrier", *ALL_STEPS[: index + 1]])
+                self.assertEqual(
+                    self.events, ["barrier", *ALL_STEPS[: index + 1]]
+                )
                 self.assertEqual(
                     [
                         row["operation"]
@@ -579,13 +634,17 @@ class PrivateUpTests(unittest.TestCase):
                     ],
                     [step],
                 )
-                self.assertFalse((self.config.state_root / "active.json").exists())
+                self.assertFalse(
+                    (self.config.state_root / "active.json").exists()
+                )
 
     def test_valid_but_different_metadata_cannot_continue_into_startup(self):
         self.data_drift_step = "build-images"
         with self.assertRaisesRegex(ValueError, "catalog_unverified"):
             self.up()
-        self.assertEqual(self.events, ["barrier", *STAGE_STEPS, "build-images"])
+        self.assertEqual(
+            self.events, ["barrier", *STAGE_STEPS, "build-images"]
+        )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
     def test_invalid_step_reports_fail_inside_their_granular_operation(self):
@@ -606,7 +665,9 @@ class PrivateUpTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "^" + code + "$"):
                         self.up()
                     index = ALL_STEPS.index(step)
-                    self.assertEqual(self.events, ["barrier", *ALL_STEPS[: index + 1]])
+                    self.assertEqual(
+                        self.events, ["barrier", *ALL_STEPS[: index + 1]]
+                    )
                     self.assertEqual(
                         [
                             row["operation"]
@@ -615,7 +676,9 @@ class PrivateUpTests(unittest.TestCase):
                         ],
                         [step],
                     )
-                    self.assertFalse((self.config.state_root / "active.json").exists())
+                    self.assertFalse(
+                        (self.config.state_root / "active.json").exists()
+                    )
 
     def test_unverified_catalog_summary_cannot_enter_startup(self):
         stage = lifecycle._stage_catalog_locked
@@ -623,7 +686,9 @@ class PrivateUpTests(unittest.TestCase):
         def unverified(*args, **options):
             return {**stage(*args, **options), "runtime_verified": 1}
 
-        with patch.object(lifecycle, "_stage_catalog_locked", side_effect=unverified):
+        with patch.object(
+            lifecycle, "_stage_catalog_locked", side_effect=unverified
+        ):
             with self.assertRaisesRegex(ValueError, "catalog_unverified"):
                 self.up()
         self.assertEqual(self.events, ["barrier", *STAGE_STEPS])
@@ -639,16 +704,22 @@ class PrivateUpTests(unittest.TestCase):
         with locked_state(self.config) as store:
             self.assertEqual(store.read("active.json")["revision"], REVISION)
         activation_receipt = next(
-            row for row in self.receipts() if row["operation"] == "activate-gateway"
+            row
+            for row in self.receipts()
+            if row["operation"] == "activate-gateway"
         )
         self.assertEqual(activation_receipt["status"], "staged")
         self.assertIs(activation_receipt["active_changed"], True)
 
-    def test_final_receipt_failure_preserves_activation_without_repeating_steps(self):
+    def test_final_receipt_failure_keeps_activation_without_repeating(
+        self,
+    ):
         original = StateStore.write
         for error_number in (errno.ENOSPC, errno.EROFS):
             for committed in (False, True):
-                with self.subTest(error_number=error_number, committed=committed):
+                with self.subTest(
+                    error_number=error_number, committed=committed
+                ):
                     self.new_case()
                     writes = []
 
@@ -660,8 +731,12 @@ class PrivateUpTests(unittest.TestCase):
                             writes.append(value["status"])
                             if value["status"] == "staged":
                                 if committed:
-                                    original(store, name, value, replace=replace)
-                                raise OSError(error_number, PRIVATE, str(self.root))
+                                    original(
+                                        store, name, value, replace=replace
+                                    )
+                                raise OSError(
+                                    error_number, PRIVATE, str(self.root)
+                                )
                         return original(store, name, value, replace=replace)
 
                     output, errors = io.StringIO(), io.StringIO()
@@ -671,12 +746,18 @@ class PrivateUpTests(unittest.TestCase):
                             "search.operations.config.load_config",
                             return_value=self.config,
                         ),
-                        patch.object(metadata_sync.source, "fetch_page", self.fetch),
+                        patch.object(
+                            metadata_sync.source, "fetch_page", self.fetch
+                        ),
                         redirect_stdout(output),
                         redirect_stderr(errors),
                     ):
                         code = cli.main(
-                            ["--config", str(self.root / "private.json"), "up-private"]
+                            [
+                                "--config",
+                                str(self.root / "private.json"),
+                                "up-private",
+                            ]
                         )
                     self.assertEqual(code, 1)
                     self.assertEqual(output.getvalue(), "")
@@ -686,9 +767,12 @@ class PrivateUpTests(unittest.TestCase):
                     self.assertNotIn("Traceback", raw)
                     report = json.loads(raw)
                     self.assertEqual(report["status"], "recovery_required")
-                    self.assertEqual(report["code"], "product_operation_failed")
                     self.assertEqual(
-                        report["error_code"], "product_activation_outcome_unconfirmed"
+                        report["code"], "product_operation_failed"
+                    )
+                    self.assertEqual(
+                        report["error_code"],
+                        "product_activation_outcome_unconfirmed",
                     )
                     self.assertIs(report["active_changed"], True)
                     self.assertIs(report["activation_performed"], True)
@@ -706,9 +790,13 @@ class PrivateUpTests(unittest.TestCase):
                         terminal = row["operation"] == "activate-gateway"
                         self.assertEqual(
                             row["status"],
-                            "started" if terminal and not committed else "staged",
+                            "started"
+                            if terminal and not committed
+                            else "staged",
                         )
-                        self.assertIs(row["active_changed"], terminal and committed)
+                        self.assertIs(
+                            row["active_changed"], terminal and committed
+                        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
-"""Verify typed evidence survives archival through the actual queue interfaces."""
+"""Verify typed evidence survives archival through the actual queue
+interfaces.
+"""
 
 import hashlib
 import json
@@ -61,8 +63,12 @@ class ArchiveIntegrationTests(unittest.TestCase):
                 expected_identity_sha256=queue.digest(run["identity"]),
             )
             frozen["quality-cases.json"] = cases
-            native = {"capture/" + name: raw for name, raw in record["files"].items()}
-            operation = {key: value for key, value in run.items() if key != "identity"}
+            native = {
+                "capture/" + name: raw for name, raw in record["files"].items()
+            }
+            operation = {
+                key: value for key, value in run.items() if key != "identity"
+            }
             status = "completed"
         else:
             profile.update(
@@ -106,7 +112,9 @@ class ArchiveIntegrationTests(unittest.TestCase):
             queue.write(root / "operation.json", operation, replace=True)
             raw = private_io.canonical(operation)
             (root / "stdout.bin").write_bytes(raw)
-            result.update(status=status, operation_sha256=queue.digest(operation))
+            result.update(
+                status=status, operation_sha256=queue.digest(operation)
+            )
             result["artifacts"]["stdout.bin"] = {
                 "bytes": len(raw),
                 "sha256": hashlib.sha256(raw).hexdigest(),
@@ -120,20 +128,27 @@ class ArchiveIntegrationTests(unittest.TestCase):
         inventory = queue.verified_evidence(registry, identifier)
         before = {name: (original / name).read_bytes() for name in inventory}
         outcome = queue.result(registry, identifier)
-        self.assertEqual(archive.archive(registry, identifier)["status"], "archived")
+        self.assertEqual(
+            archive.archive(registry, identifier)["status"], "archived"
+        )
         saved = queue.job_root(registry, identifier)
         self.assertEqual(saved, self.fixture.root / "archive" / identifier)
         self.assertFalse(original.exists())
         self.assertEqual(queue.result(registry, identifier), outcome)
-        self.assertEqual(queue.verified_evidence(registry, identifier), inventory)
         self.assertEqual(
-            archive.verify_archived(registry, identifier, saved)["files"], inventory
+            queue.verified_evidence(registry, identifier), inventory
+        )
+        self.assertEqual(
+            archive.verify_archived(registry, identifier, saved)["files"],
+            inventory,
         )
         for name, raw in before.items():
             self.assertEqual((saved / name).read_bytes(), raw)
         return saved
 
-    def test_resource_and_typed_native_evidence_remains_readable_by_job_id(self):
+    def test_resource_and_typed_native_evidence_remains_readable_by_job_id(
+        self,
+    ):
         for kind in ("resource-pass", "quality-batch", "vector-pass"):
             with self.subTest(kind=kind):
                 identifier, _ = (
@@ -161,14 +176,20 @@ class ArchiveIntegrationTests(unittest.TestCase):
                     {"job_id": identifier, "status": "clean"},
                 )
                 with patch.object(
-                    queue, "Pueue", side_effect=AssertionError("unexpected daemon")
+                    queue,
+                    "Pueue",
+                    side_effect=AssertionError("unexpected daemon"),
                 ):
                     self.assertIn(
-                        queue.result(self.fixture.registry, identifier)["status"],
+                        queue.result(self.fixture.registry, identifier)[
+                            "status"
+                        ],
                         {"completed", "checkpoint"},
                     )
 
-    def test_typed_cancellation_retains_inputs_and_archived_active_reference(self):
+    def test_typed_cancellation_retains_inputs_and_archived_active_reference(
+        self,
+    ):
         previous, _ = self.fixture.job()
         self.archive_and_read(previous)
         active = queue.read(self.fixture.root / "active.json")
@@ -181,11 +202,15 @@ class ArchiveIntegrationTests(unittest.TestCase):
                 )
                 saved = self.archive_and_read(identifier)
                 self.assertFalse((saved / "capture").exists())
-                self.assertEqual(queue.read(self.fixture.root / "active.json"), active)
+                self.assertEqual(
+                    queue.read(self.fixture.root / "active.json"), active
+                )
         next_job, _ = self.fixture.job()
         self.archive_and_read(next_job)
 
-    def test_native_job_recovers_after_rename_with_actual_archived_locator(self):
+    def test_native_job_recovers_after_rename_with_actual_archived_locator(
+        self,
+    ):
         identifier, original = self.typed_job("quality-batch")
         before = queue.verified_evidence(self.fixture.registry, identifier)
         rename = archive.os.rename
@@ -199,7 +224,8 @@ class ArchiveIntegrationTests(unittest.TestCase):
                 archive.archive(self.fixture.registry, identifier)
         self.assertFalse(original.exists())
         self.assertEqual(
-            queue.read(self.fixture.root / "archive-intent.json")["phase"], "moving"
+            queue.read(self.fixture.root / "archive-intent.json")["phase"],
+            "moving",
         )
         self.assertEqual(
             queue.verified_evidence(self.fixture.registry, identifier), before
@@ -210,7 +236,9 @@ class ArchiveIntegrationTests(unittest.TestCase):
             queue.verified_evidence(self.fixture.registry, identifier), before
         )
 
-    def test_result_lookup_rejects_duplicate_tampered_and_symlink_archives(self):
+    def test_result_lookup_rejects_duplicate_tampered_and_symlink_archives(
+        self,
+    ):
         identifier, original = self.typed_job("quality-batch")
         saved = self.archive_and_read(identifier)
         original.mkdir(mode=0o700)
@@ -250,7 +278,8 @@ class ArchiveIntegrationTests(unittest.TestCase):
                 Path(args[2]).rmdir()
             return b""
 
-        # Capacity uses synthetic source proof; the single-job tests use real Git.
+        # Capacity uses synthetic source proof; the single-job tests use real
+        # Git.
         with (
             patch.object(archive, "_source", return_value=(proof, True)),
             patch.object(archive, "_git", side_effect=git),
@@ -259,22 +288,29 @@ class ArchiveIntegrationTests(unittest.TestCase):
         ):
             retained = []
             for number in range(129):
-                kind = ("resource-pass", "quality-batch", "vector-pass")[number % 3]
+                kind = ("resource-pass", "quality-batch", "vector-pass")[
+                    number % 3
+                ]
                 identifier, _ = (
                     fixture.job(source=False)
                     if kind == "resource-pass"
                     else self.typed_job(kind, source=False)
                 )
-                inventory = queue.verified_evidence(fixture.registry, identifier)
+                inventory = queue.verified_evidence(
+                    fixture.registry, identifier
+                )
                 archive.archive(fixture.registry, identifier)
                 self.assertEqual(list((fixture.root / "jobs").iterdir()), [])
                 self.assertEqual(fixture.transport.tasks, {})
                 if number in {0, 64, 128}:
                     retained.append((identifier, inventory))
-            self.assertEqual(len(list((fixture.root / "archive").iterdir())), 129)
+            self.assertEqual(
+                len(list((fixture.root / "archive").iterdir())), 129
+            )
             for identifier, inventory in retained:
                 self.assertEqual(
-                    queue.verified_evidence(fixture.registry, identifier), inventory
+                    queue.verified_evidence(fixture.registry, identifier),
+                    inventory,
                 )
 
 

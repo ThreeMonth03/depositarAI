@@ -2,9 +2,10 @@
 
 Use the real Docker budget with a pure fake command runner. The conservative
 74-command fixed allowance covers authenticated factory/attach/final refresh
-and the two complete audits. Case observations cost twelve commands and model
-checkpoints one parent Docker command; their other tools have separate deadlines.
-This tests coordinator scheduling, not a measured live execution receipt.
+and the two complete audits. Case observations cost twelve commands and
+model checkpoints one parent Docker command; their other tools have separate
+deadlines. This tests coordinator scheduling, not a measured live execution
+receipt.
 """
 
 from contextlib import contextmanager
@@ -39,7 +40,9 @@ class SharedBatchBudgetTests(unittest.TestCase):
             self.commands.append(argv)
             return subprocess.CompletedProcess(argv, 0, b"{}", b"")
 
-        self.docker = Docker(fixture.root / "fake-client", runner, max_commands=128)
+        self.docker = Docker(
+            fixture.root / "fake-client", runner, max_commands=128
+        )
         fixture.session.docker = self.docker
 
         def consume(count):
@@ -78,7 +81,9 @@ class SharedBatchBudgetTests(unittest.TestCase):
         fixture.session.check_models = checkpoint
         fixture.live = live
 
-    def test_three_cases_eight_turns_fit_without_repeating_complete_audits(self):
+    def test_three_cases_eight_turns_fit_without_repeating_complete_audits(
+        self,
+    ):
         result = self.fixture.run_batch()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["requested_cases"], 3)
@@ -90,25 +95,33 @@ class SharedBatchBudgetTests(unittest.TestCase):
         self.assertEqual(len(self.commands), 118)
         self.assertEqual(self.fixture.read("run.json")["status"], "complete")
 
-    def test_selected_catalog_image_inspections_fit_the_same_fixed_budget(self):
+    def test_selected_catalog_image_inspections_fit_the_same_fixed_budget(
+        self,
+    ):
         # A second catalog authenticates its three core images independently.
-        # Bulk snapshot collection still costs twelve commands for five projects.
+        # Bulk snapshot collection still costs twelve commands for five
+        # projects.
         self.consume(3)
         result = self.fixture.run_batch()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["completed_turns"], 8)
         self.assertEqual(self.docker.calls, 121)
 
-    def test_unexpected_command_pressure_cannot_publish_a_trusted_completion(self):
+    def test_unexpected_command_pressure_cannot_publish_a_trusted_completion(
+        self,
+    ):
         # A caller's reduced capacity or future extra audit must fail closed.
-        # Never replenish the counter, retry queries or raise the daemon budget.
+        # Never replenish the counter, retry queries or raise the daemon
+        # budget.
         self.consume(20)
         result = self.fixture.run_batch()
         self.assertEqual(result["status"], "quarantined")
         self.assertFalse(result["identity_verified"])
         self.assertEqual(len(self.commands), 128)
         self.assertLessEqual(self.fixture.probe_calls, 3)
-        self.assertEqual(self.fixture.read("run.json")["status"], "quarantined")
+        self.assertEqual(
+            self.fixture.read("run.json")["status"], "quarantined"
+        )
         self.assertNotIn("inspect-budget-fixture", str(result))
 
 

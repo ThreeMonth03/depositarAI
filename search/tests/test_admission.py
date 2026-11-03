@@ -8,7 +8,9 @@ from search.api.shared.admission import Busy, Slots
 
 
 class AdmissionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_capacity_rejects_excess_claims_without_consuming_a_slot(self):
+    async def test_capacity_rejects_excess_claims_without_consuming_a_slot(
+        self,
+    ):
         slots = Slots(2)
         async with slots.claim():
             self.assertEqual(1, slots.used)
@@ -17,7 +19,9 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
 
                 async def excess_claim():
                     async with slots.claim():
-                        self.fail("an excess request entered the protected work")
+                        self.fail(
+                            "an excess request entered the protected work"
+                        )
 
                 with self.assertRaisesRegex(Busy, "^service busy$"):
                     await asyncio.wait_for(excess_claim(), timeout=1)

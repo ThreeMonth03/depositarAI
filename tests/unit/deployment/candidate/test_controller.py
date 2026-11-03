@@ -18,7 +18,9 @@ from search.operations.config import GPUConfig, ProductConfig
 from search.operations.deployment.candidate import controller
 from search.operations.deployment.candidate import policy as request_policy
 from search.operations.deployment.release import runtime
-from tests.unit.deployment.release.test_runtime import evidence as release_evidence
+from tests.unit.deployment.release.test_runtime import (
+    evidence as release_evidence,
+)
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -26,7 +28,9 @@ REVISION = "a" * 40
 
 
 class FakeDocker:
-    """Inspect genuine fixtures; mutations affect only these in-memory objects."""
+    """Inspect genuine fixtures; mutations affect only these in-memory
+    objects.
+    """
 
     def __init__(self, values, *, created=True):
         self.seed_rows = copy.deepcopy(values["containers"])
@@ -38,7 +42,9 @@ class FakeDocker:
         self.production_row["Config"]["Labels"].update(
             {
                 "com.docker.compose.project": "production",
-                "com.docker.compose.project.config_files": "/production/compose.json",
+                "com.docker.compose.project.config_files": (
+                    "/production/compose.json"
+                ),
                 "com.docker.compose.project.working_dir": "/production",
             }
         )
@@ -67,9 +73,12 @@ class FakeDocker:
             identifiers = [
                 r["Id"]
                 for r in self.rows
-                if r["Config"]["Labels"]["com.docker.compose.project"] == project
+                if r["Config"]["Labels"]["com.docker.compose.project"]
+                == project
             ]
-            return ("\n".join(identifiers) + ("\n" if identifiers else "")).encode()
+            return (
+                "\n".join(identifiers) + ("\n" if identifiers else "")
+            ).encode()
         if args[:2] == ["network", "ls"]:
             prefix = args[-1].removeprefix("name=")
             return b"\n".join(
@@ -79,16 +88,24 @@ class FakeDocker:
             )
         if args[0] == "inspect":
             rows = [
-                r for identifier in args[1:] for r in self.rows if r["Id"] == identifier
+                r
+                for identifier in args[1:]
+                for r in self.rows
+                if r["Id"] == identifier
             ]
             if len(rows) != len(args) - 1:
                 raise ValueError("missing fake container")
             return self.encoded(rows)
         if args[:2] == ["network", "inspect"]:
-            rows = [n for n in self.networks if args[2] in {n["Id"], n["Name"]}]
+            rows = [
+                n for n in self.networks if args[2] in {n["Id"], n["Name"]}
+            ]
             if len(rows) != 1:
                 raise ValueError("missing fake network")
-            if self.wrong_network_recheck and args[2] == self.seed_network["Id"]:
+            if (
+                self.wrong_network_recheck
+                and args[2] == self.seed_network["Id"]
+            ):
                 changed = copy.deepcopy(rows)
                 changed[0]["Id"] = "e" * 64
                 return self.encoded(changed)
@@ -118,7 +135,9 @@ class FakeDocker:
     def assert_production_unchanged(self, test):
         test.assertIn(self.production_row, self.rows)
         test.assertIn(self.production_network, self.networks)
-        test.assertFalse(any("9" * 64 in c or "8" * 64 in c for c in self.mutations))
+        test.assertFalse(
+            any("9" * 64 in c or "8" * 64 in c for c in self.mutations)
+        )
 
 
 class SharedBackendTests(unittest.TestCase):
@@ -177,7 +196,9 @@ class SharedBackendTests(unittest.TestCase):
         for row in self.values["containers"]:
             row["Config"]["Labels"].update(
                 {
-                    "com.docker.compose.project.config_files": str(compose_file),
+                    "com.docker.compose.project.config_files": str(
+                        compose_file
+                    ),
                     "com.docker.compose.project.working_dir": str(self.state),
                 }
             )
@@ -199,7 +220,9 @@ class SharedBackendTests(unittest.TestCase):
             "network_id": self.values["networks"][0]["Id"],
             "external_network_ids": {
                 name: identifier
-                for name, identifier in self.values["lease"]["network_ids"].items()
+                for name, identifier in self.values["lease"][
+                    "network_ids"
+                ].items()
                 if name != website
             },
             "build_complete": False,
@@ -222,7 +245,10 @@ class SharedBackendTests(unittest.TestCase):
         for change, error in [
             ({"schema_version": True}, "config_invalid"),
             ({"extra": "untrusted"}, "config_invalid"),
-            ({"state_root": str(self.product.state_root)}, "state_overlaps_production"),
+            (
+                {"state_root": str(self.product.state_root)},
+                "state_overlaps_production",
+            ),
             (
                 {"state_root": str(self.product.api_model_root / "candidate")},
                 "state_overlaps_production",
@@ -231,7 +257,9 @@ class SharedBackendTests(unittest.TestCase):
         ]:
             with self.subTest(change=change):
                 self.write_json(self.config, self.configuration | change)
-                with self.assertRaisesRegex(controller.SharedBackendError, error):
+                with self.assertRaisesRegex(
+                    controller.SharedBackendError, error
+                ):
                     controller.load_config(self.config)
         self.write_json(self.config, self.configuration)
         self.config.chmod(0o644)
@@ -241,22 +269,36 @@ class SharedBackendTests(unittest.TestCase):
     def test_config_rejects_symlink_and_git_contained_journal(self):
         alias = self.root / "state-alias"
         alias.symlink_to(self.state, target_is_directory=True)
-        self.write_json(self.config, self.configuration | {"state_root": str(alias)})
-        with self.assertRaisesRegex(controller.SharedBackendError, "path_invalid"):
+        self.write_json(
+            self.config, self.configuration | {"state_root": str(alias)}
+        )
+        with self.assertRaisesRegex(
+            controller.SharedBackendError, "path_invalid"
+        ):
             controller.load_config(self.config)
         (self.source / ".git").mkdir()
         self.write_json(
             self.config,
-            self.configuration | {"state_root": str(self.source / "private-state")},
+            self.configuration
+            | {"state_root": str(self.source / "private-state")},
         )
-        with self.assertRaisesRegex(controller.SharedBackendError, "state_inside_git"):
+        with self.assertRaisesRegex(
+            controller.SharedBackendError, "state_inside_git"
+        ):
             controller.load_config(self.config)
 
-    def test_selected_catalog_config_requires_both_paths_and_disjoint_state(self):
+    def test_selected_catalog_config_requires_both_paths_and_disjoint_state(
+        self,
+    ):
         selected = self.root / "selected.json"
-        product = replace(self.product, state_root=self.root / "selected-state")
+        product = replace(
+            self.product, state_root=self.root / "selected-state"
+        )
         self.write_json(selected, product.to_dict())
-        pair = {"catalog_config": str(selected), "catalog_source": str(self.production)}
+        pair = {
+            "catalog_config": str(selected),
+            "catalog_source": str(self.production),
+        }
         self.write_json(self.config, self.configuration | pair)
         self.assertEqual(
             controller.load_config(self.config)["catalog_config"], selected
@@ -279,7 +321,7 @@ class SharedBackendTests(unittest.TestCase):
         ):
             controller.load_config(self.config)
 
-    def test_changed_catalog_or_embedding_is_rejected_before_candidate_image_access(
+    def test_catalog_or_embedding_drift_rejects_before_image_access(
         self,
     ):
         profile = controller.catalog.query_profile(ROOT)
@@ -287,7 +329,9 @@ class SharedBackendTests(unittest.TestCase):
         session.profile = self.profile
         session.context = {"query_profile": profile}
         session.query_context = {"query_profile": profile}
-        session.query_catalog = SimpleNamespace(identity=lambda: {"selected": "B"})
+        session.query_catalog = SimpleNamespace(
+            identity=lambda: {"selected": "B"}
+        )
         record = {
             "revision": REVISION,
             "phase": "prepared",
@@ -306,7 +350,9 @@ class SharedBackendTests(unittest.TestCase):
             ),
             mock.patch.object(controller, "locked_state") as images,
         ):
-            with self.assertRaisesRegex(ValueError, "catalog_selection_changed"):
+            with self.assertRaisesRegex(
+                ValueError, "catalog_selection_changed"
+            ):
                 session.candidate_inputs(record)
             record["catalog_binding"] = {"selected": "B"}
             for field in (
@@ -320,11 +366,13 @@ class SharedBackendTests(unittest.TestCase):
                     session.query_context = {
                         "query_profile": profile | {field: "different"}
                     }
-                    with self.assertRaisesRegex(ValueError, "query_profile_changed"):
+                    with self.assertRaisesRegex(
+                        ValueError, "query_profile_changed"
+                    ):
                         session.candidate_inputs(record)
             images.assert_not_called()
 
-    def test_attached_candidate_keeps_new_catalog_and_original_provider_authority_distinct(
+    def test_attach_keeps_new_catalog_and_original_provider_distinct(
         self,
     ):
         session = object.__new__(controller.Session)
@@ -354,14 +402,18 @@ class SharedBackendTests(unittest.TestCase):
         self.assertEqual(session.native.context, {"catalog": "A"})
         self.assertEqual(session.native.authority, {"authority": "A"})
 
-    def test_both_catalog_audits_finish_before_model_checkpoint_or_success(self):
+    def test_both_catalog_audits_finish_before_model_checkpoint_or_success(
+        self,
+    ):
         events = []
         bindings = [
             SimpleNamespace(
                 context={"plan": {"project": name}},
                 authority={"runtime": {}},
                 audit=mock.Mock(
-                    side_effect=lambda *_args, name=name, **_kwargs: events.append(name)
+                    side_effect=lambda *_args,
+                    name=name,
+                    **_kwargs: events.append(name)
                 ),
             )
             for name in ("A", "B")
@@ -372,7 +424,9 @@ class SharedBackendTests(unittest.TestCase):
         session.catalog_snapshots = {name: ({}, [], {}) for name in ("A", "B")}
         with (
             mock.patch.object(
-                session, "observe", side_effect=lambda: events.append("observe")
+                session,
+                "observe",
+                side_effect=lambda: events.append("observe"),
             ),
             mock.patch.object(
                 session,
@@ -381,11 +435,14 @@ class SharedBackendTests(unittest.TestCase):
                 side_effect=lambda *_args: events.append("models"),
             ),
             mock.patch(
-                "search.operations.catalog.connection.snapshot_peers", return_value={}
+                "search.operations.catalog.connection.snapshot_peers",
+                return_value={},
             ),
         ):
             session.verify({})
-            self.assertEqual(events, ["observe", "A", "B", "observe", "models"])
+            self.assertEqual(
+                events, ["observe", "A", "B", "observe", "models"]
+            )
             events.clear()
             bindings[1].audit.side_effect = ValueError("B_changed")
             with self.assertRaisesRegex(ValueError, "B_changed"):
@@ -439,7 +496,9 @@ finally:os.close(fd)
                 self.assertEqual(target.read_text(), "unchanged")
                 lock.unlink()
 
-    def test_incompatible_policy_fails_before_worktree_build_or_live_access(self):
+    def test_incompatible_policy_fails_before_worktree_build_or_live_access(
+        self,
+    ):
         model_policy = self.source / "search/model_policy.py"
         model_policy.write_text(
             model_policy.read_text().replace(
@@ -470,7 +529,9 @@ finally:os.close(fd)
         build.assert_not_called()
         live.assert_not_called()
 
-    def test_changed_clean_production_head_is_rejected_before_catalog_audit(self):
+    def test_changed_clean_production_head_is_rejected_before_catalog_audit(
+        self,
+    ):
         binding = SimpleNamespace(
             context={"plan": {"project": "native"}},
             audit=mock.Mock(
@@ -494,7 +555,9 @@ finally:os.close(fd)
         observe.assert_called_once_with()
         run.assert_not_called()
 
-    def test_candidate_rows_use_real_capability_checks_and_sealed_launcher(self):
+    def test_candidate_rows_use_real_capability_checks_and_sealed_launcher(
+        self,
+    ):
         docker = FakeDocker(self.values)
         rows, names = controller.candidate_rows(
             docker, self.record, self.state / "compose.json"
@@ -519,10 +582,14 @@ finally:os.close(fd)
                 elif drift == "id":
                     row["Id"] = "f" * 64
                 elif drift == "gpu":
-                    row["HostConfig"]["DeviceRequests"] = [{"Driver": "nvidia"}]
+                    row["HostConfig"]["DeviceRequests"] = [
+                        {"Driver": "nvidia"}
+                    ]
                 else:
                     website = self.values["networks"][0]["Name"]
-                    row["NetworkSettings"]["Networks"][website]["NetworkID"] = "f" * 64
+                    row["NetworkSettings"]["Networks"][website][
+                        "NetworkID"
+                    ] = "f" * 64
                 with self.assertRaises(ValueError):
                     controller.candidate_rows(
                         changed, self.record, self.state / "compose.json"
@@ -545,7 +612,9 @@ finally:os.close(fd)
         docker = FakeDocker(self.values)
         result = self.invoke_stop(docker)
         self.assertEqual(result["status"], "stopped")
-        removed = {c[2] for c in docker.mutations if c[:2] == ["rm", "--force"]}
+        removed = {
+            c[2] for c in docker.mutations if c[:2] == ["rm", "--force"]
+        }
         self.assertEqual(removed, set(self.record["container_ids"].values()))
         self.assertEqual(
             [c for c in docker.mutations if c[:2] == ["network", "rm"]],
@@ -553,7 +622,9 @@ finally:os.close(fd)
         )
         docker.assert_production_unchanged(self)
 
-    def test_foreign_same_sha_or_unknown_peer_and_network_id_block_all_deletion(self):
+    def test_foreign_same_sha_unknown_peer_or_network_blocks_deletion(
+        self,
+    ):
         for drift in ("same_sha", "foreign_peer", "network_id"):
             with self.subTest(drift=drift):
                 docker = FakeDocker(self.values)
@@ -570,7 +641,9 @@ finally:os.close(fd)
                 self.assertEqual(docker.mutations, [])
                 docker.assert_production_unchanged(self)
 
-    def test_partial_cleanup_can_retry_without_adopting_missing_containers(self):
+    def test_partial_cleanup_can_retry_without_adopting_missing_containers(
+        self,
+    ):
         docker = FakeDocker(self.values)
         identifiers = sorted(self.record["container_ids"].values())
         docker.fail_removal = identifiers[1]
@@ -579,7 +652,9 @@ finally:os.close(fd)
         self.assertEqual([c[2] for c in docker.mutations], [identifiers[0]])
         docker.fail_removal = None
         self.assertEqual(self.invoke_stop(docker)["status"], "stopped")
-        removed = [c[2] for c in docker.mutations if c[:2] == ["rm", "--force"]]
+        removed = [
+            c[2] for c in docker.mutations if c[:2] == ["rm", "--force"]
+        ]
         self.assertEqual(sorted(removed), identifiers)
         docker.assert_production_unchanged(self)
 
@@ -594,7 +669,9 @@ finally:os.close(fd)
             {c[2] for c in docker.mutations if c[:2] == ["rm", "--force"]},
             set(self.record["container_ids"].values()),
         )
-        self.assertFalse(any(c[:2] == ["network", "rm"] for c in docker.mutations))
+        self.assertFalse(
+            any(c[:2] == ["network", "rm"] for c in docker.mutations)
+        )
         docker.assert_production_unchanged(self)
 
     def test_status_reports_incomplete_phases_but_query_requires_running(self):
@@ -602,7 +679,9 @@ finally:os.close(fd)
             "search.operations.deployment.candidate.controller.live",
             side_effect=AssertionError("not running"),
         )
-        self.assertEqual(controller.operate(self.config, "status"), {"status": "empty"})
+        self.assertEqual(
+            controller.operate(self.config, "status"), {"status": "empty"}
+        )
         for phase in (
             "preparing",
             "prepared",
@@ -638,7 +717,9 @@ finally:os.close(fd)
                     {},
                     {
                         name: {"Id": identifier}
-                        for name, identifier in values["lease"]["network_ids"].items()
+                        for name, identifier in values["lease"][
+                            "network_ids"
+                        ].items()
                     },
                 ),
             ),
@@ -650,7 +731,9 @@ finally:os.close(fd)
             record=None,
             query_authority={
                 "catalog_identity": values["catalog_identity"],
-                "runtime": {"network_id": values["lease"]["catalog_network_id"]},
+                "runtime": {
+                    "network_id": values["lease"]["catalog_network_id"]
+                },
             },
             query_catalog=SimpleNamespace(
                 identity=lambda: {
@@ -730,9 +813,9 @@ finally:os.close(fd)
                     with mock.patch.object(controller, "live", context):
                         if error is None:
                             self.assertEqual(
-                                controller.prepare(profile, store, self.source)[
-                                    "status"
-                                ],
+                                controller.prepare(
+                                    profile, store, self.source
+                                )["status"],
                                 "prepared",
                             )
                         else:
@@ -742,7 +825,9 @@ finally:os.close(fd)
                                 controller.current(store)["phase"], "preparing"
                             )
 
-    def test_start_never_publishes_running_before_source_and_fd_exit_checks(self):
+    def test_start_never_publishes_running_before_source_and_fd_exit_checks(
+        self,
+    ):
         self.patch(
             "search.operations.deployment.candidate.controller.release_probe.verify_private_release",
             return_value={"readiness_verified": True},
@@ -767,7 +852,9 @@ finally:os.close(fd)
                             "com.docker.compose.project.config_files": str(
                                 state / "compose.json"
                             ),
-                            "com.docker.compose.project.working_dir": str(state),
+                            "com.docker.compose.project.working_dir": str(
+                                state
+                            ),
                         }
                     )
                 docker = FakeDocker(values, created=False)
@@ -788,7 +875,9 @@ finally:os.close(fd)
                     with mock.patch.object(controller, "live", context):
                         if error is None:
                             self.assertEqual(
-                                controller.start(profile, store, record)["status"],
+                                controller.start(profile, store, record)[
+                                    "status"
+                                ],
                                 "running",
                             )
                         else:

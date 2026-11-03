@@ -1,4 +1,6 @@
-"""Preserve private job source snapshots and independently restorable Git artifacts."""
+"""Preserve private job source snapshots and independently restorable Git
+artifacts.
+"""
 
 import hashlib
 import os
@@ -20,7 +22,9 @@ def restore_modes(directory, tree):
     checkout. Only the freshly owned job snapshot is normalized; caller files,
     links and untracked entries are never changed.
     """
-    require(type(tree) is bytes and tree.endswith(b"\0"), "source_tree_invalid")
+    require(
+        type(tree) is bytes and tree.endswith(b"\0"), "source_tree_invalid"
+    )
     rows = tree[:-1].split(b"\0")
     require(1 <= len(rows) <= 4096, "source_tree_limit")
     entries = {}
@@ -46,7 +50,9 @@ def restore_modes(directory, tree):
     root = None
     try:
         root = os.open(
-            directory.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+            directory.name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent,
         )
         require(os.fstat(root).st_uid == os.geteuid(), "source_owner_changed")
         os.fchmod(root, 0o700)
@@ -63,7 +69,8 @@ def restore_modes(directory, tree):
                     os.close(current)
                     current = child
                     require(
-                        os.fstat(current).st_uid == os.geteuid(), "source_owner_changed"
+                        os.fstat(current).st_uid == os.geteuid(),
+                        "source_owner_changed",
                     )
                 fd = os.open(
                     parts[-1],
@@ -81,7 +88,9 @@ def restore_modes(directory, tree):
                     os.fchmod(fd, mode)
                     os.fsync(fd)
                 after = os.fstat(fd)
-                named = os.stat(parts[-1], dir_fd=current, follow_symlinks=False)
+                named = os.stat(
+                    parts[-1], dir_fd=current, follow_symlinks=False
+                )
                 require(
                     private_io.identity(after) == private_io.identity(named)
                     and stat.S_IMODE(after.st_mode) == mode
@@ -91,7 +100,12 @@ def restore_modes(directory, tree):
                         before.st_size,
                         before.st_mtime_ns,
                     )
-                    == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns),
+                    == (
+                        after.st_dev,
+                        after.st_ino,
+                        after.st_size,
+                        after.st_mtime_ns,
+                    ),
                     "source_file_changed",
                 )
             finally:
@@ -114,7 +128,9 @@ _BUNDLE_FILES = {"source.bundle", "source.json"}
 def _artifact_path(value):
     path = Path(value)
     require(
-        path.is_absolute() and ".." not in path.parts and path.resolve() == path,
+        path.is_absolute()
+        and ".." not in path.parts
+        and path.resolve() == path,
         "source_artifact_path_invalid",
     )
     return path
@@ -142,7 +158,11 @@ def _clean_source(source, revision):
     require(
         _git(source, "rev-parse", "HEAD").strip() == revision.encode("ascii")
         and not _git(
-            source, "status", "--porcelain", "--untracked-files=all", "--ignored"
+            source,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored",
         ),
         "source_artifact_source_changed",
     )
@@ -193,7 +213,15 @@ def _restore_proof(repository, directory, revision, raw):
         )
         _git(repository, "bundle", "verify", bundle)
         restored = temporary / "repository.git"
-        _git(repository, "clone", "--bare", "--no-hardlinks", "--", bundle, restored)
+        _git(
+            repository,
+            "clone",
+            "--bare",
+            "--no-hardlinks",
+            "--",
+            bundle,
+            restored,
+        )
         require(
             _git(restored, "rev-parse", revision + "^{commit}").strip()
             == revision.encode("ascii")
@@ -237,7 +265,8 @@ def verify_bundle(repository, artifact_directory, revision):
 
 
 def preserve_bundle(source, artifact_directory, revision):
-    """Preserve one exact clean source revision, reusing only verified artifacts.
+    """Preserve one exact clean source revision, reusing only verified
+    artifacts.
 
     The caller holds the queue's submission and execution locks. Existing or
     partially written artifacts are never replaced; uncertain evidence requires
@@ -249,7 +278,10 @@ def preserve_bundle(source, artifact_directory, revision):
             type(revision) is str and _REVISION.fullmatch(revision),
             "source_artifact_revision_invalid",
         )
-        source, directory = _artifact_path(source), _artifact_path(artifact_directory)
+        source, directory = (
+            _artifact_path(source),
+            _artifact_path(artifact_directory),
+        )
         require(
             source != directory
             and source not in directory.parents
@@ -260,7 +292,9 @@ def preserve_bundle(source, artifact_directory, revision):
         parent = private_io.open_directory(directory.parent)
         _clean_source(source, revision)
         try:
-            fd = private_io.open_child_directory(parent, directory.name, create=True)
+            fd = private_io.open_child_directory(
+                parent, directory.name, create=True
+            )
         except FileExistsError:
             record = verify_bundle(source, directory, revision)
             _clean_source(source, revision)
@@ -269,7 +303,9 @@ def preserve_bundle(source, artifact_directory, revision):
         bundle = directory / "source.bundle"
         _git(source, "bundle", "create", bundle, "HEAD")
         bundle_fd = os.open(
-            "source.bundle", os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd
+            "source.bundle",
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+            dir_fd=fd,
         )
         try:
             info = os.fstat(bundle_fd)

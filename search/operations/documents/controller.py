@@ -1,4 +1,6 @@
-"""Profile explicitly selected public resources using bounded Fess extraction."""
+"""Profile explicitly selected public resources using bounded Fess
+extraction.
+"""
 
 from __future__ import annotations
 
@@ -85,17 +87,25 @@ def _selected_resources(
     ):
         raise ProfileError("document_selection_invalid")
     bundle_path = Path(bundle_path)
-    bundle = CatalogBundle.load(bundle_path, expected_manifest_sha256=manifest_sha256)
-    if metadata_only and any(row["resource_context"] for row in bundle.documents):
+    bundle = CatalogBundle.load(
+        bundle_path, expected_manifest_sha256=manifest_sha256
+    )
+    if metadata_only and any(
+        row["resource_context"] for row in bundle.documents
+    ):
         raise ProfileError("document_selection_invalid")
-    expanded = _catalog_artifact(bundle_path, manifest_sha256, "corpus.v2.jsonl.gz")
+    expanded = _catalog_artifact(
+        bundle_path, manifest_sha256, "corpus.v2.jsonl.gz"
+    )
     requested = set(resource_ids)
     matches = {identifier: [] for identifier in resource_ids}
     for line in expanded.splitlines():
         dataset = json.loads(line)
         for resource in dataset["resources"]:
             if resource["id"] in requested:
-                matches[resource["id"]].append((dataset["dataset_id"], resource))
+                matches[resource["id"]].append(
+                    (dataset["dataset_id"], resource)
+                )
     if any(len(found) != 1 for found in matches.values()):
         raise ProfileError("document_resource_missing_or_ambiguous")
     selected = [matches[identifier][0] for identifier in resource_ids]
@@ -108,7 +118,9 @@ def _selected_resources(
 
 
 def _catalog_artifact(bundle_path, manifest_sha256, name):
-    """Read an artifact of an already validated bundle with its manifest binding."""
+    """Read an artifact of an already validated bundle with its manifest
+    binding.
+    """
     descriptor = private_io.open_directory(bundle_path, mode=0o500)
     try:
         manifest_bytes = private_io.read_file(
@@ -145,7 +157,11 @@ def _state(path, *, create=True, read_only=False):
     try:
         lock = os.open(
             ".profiles.lock",
-            (os.O_RDONLY if read_only else os.O_RDWR | (os.O_CREAT if create else 0))
+            (
+                os.O_RDONLY
+                if read_only
+                else os.O_RDWR | (os.O_CREAT if create else 0)
+            )
             | os.O_NOFOLLOW
             | os.O_NONBLOCK,
             0o600,
@@ -160,7 +176,8 @@ def _state(path, *, create=True, read_only=False):
         ):
             raise ProfileError("document_state_lock_invalid")
         fcntl.flock(
-            lock, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB
+            lock,
+            (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB,
         )
         private_io.verify_directory(descriptor, path)
         try:
@@ -193,11 +210,13 @@ def _read_record(descriptor, name):
 
 def _publish(descriptor, name, value):
     try:
-        private_io.write_json(descriptor, name, value, max_bytes=MAX_RECORD_BYTES)
+        private_io.write_json(
+            descriptor, name, value, max_bytes=MAX_RECORD_BYTES
+        )
     except FileExistsError:
-        if private_io.canonical(_read_record(descriptor, name)) != private_io.canonical(
-            value
-        ):
+        if private_io.canonical(
+            _read_record(descriptor, name)
+        ) != private_io.canonical(value):
             raise ProfileError("document_profile_record_conflict") from None
 
 
@@ -274,7 +293,9 @@ def process(
     *,
     container_name,
 ):
-    """Publish one immutable profile through the shared acquisition/parser path."""
+    """Publish one immutable profile through the shared acquisition/parser
+    path.
+    """
     from search.operations.documents import extractor, source
 
     extractor.operator_ids()

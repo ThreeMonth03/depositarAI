@@ -1,4 +1,5 @@
-"""Prepare an isolated public edge; never activate it or change the private trial.
+"""
+Prepare an isolated public edge; never activate it or change the private trial.
 
 APISIX owns browser OIDC and synchronous Redis admission counters. The small
 rewrite adapter transfers verified issuer/subject identity to the website while
@@ -144,7 +145,8 @@ def _path(raw, repo_root):
         "path_in_repository",
     )
     _require(
-        all(not item.is_symlink() for item in (path, *path.parents)), "path_symlink"
+        all(not item.is_symlink() for item in (path, *path.parents)),
+        "path_symlink",
     )
     return path
 
@@ -173,7 +175,8 @@ def _read_private(path, *, uid, maximum):
         _require(
             len(encoded) == before.st_size
             and private_io.identity(before) == private_io.identity(after)
-            and private_io.identity(after) == private_io.identity(path.lstat()),
+            and private_io.identity(after)
+            == private_io.identity(path.lstat()),
             "file_changed",
         )
         return encoded
@@ -213,7 +216,8 @@ def _url(raw, *, origin=False):
             "url_host_invalid",
         )
     _require(
-        raw == value.geturl() and value.netloc == value.netloc.lower(), "url_invalid"
+        raw == value.geturl() and value.netloc == value.netloc.lower(),
+        "url_invalid",
     )
     if origin:
         _require(value.path == "" and value.port != 443, "origin_invalid")
@@ -221,7 +225,9 @@ def _url(raw, *, origin=False):
 
 
 def validate_public_entry_config(value, *, repo_root=None, uid=None):
-    """Validate existing private inputs, including bounded secret-file formats."""
+    """Validate existing private inputs, including bounded secret-file
+    formats.
+    """
     repo_root = ROOT if repo_root is None else Path(repo_root).resolve()
     uid = os.geteuid() if uid is None else uid
     try:
@@ -232,7 +238,8 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
             "fields",
         )
         _require(
-            type(value["schema_version"]) is int and value["schema_version"] == 1,
+            type(value["schema_version"]) is int
+            and value["schema_version"] == 1,
             "schema",
         )
         parsed = dict(value)
@@ -250,15 +257,21 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
             type(value["oidc_client_id"]) is str
             and 1 <= len(value["oidc_client_id"]) <= 255
             and value["oidc_client_id"].isascii()
-            and not any(ord(c) < 33 or ord(c) > 126 for c in value["oidc_client_id"]),
+            and not any(
+                ord(c) < 33 or ord(c) > 126 for c in value["oidc_client_id"]
+            ),
             "client_id_invalid",
         )
         access_mode = value.get("access_mode", "login_required")
         _require(
-            type(access_mode) is str and access_mode in ("mixed", "login_required"),
+            type(access_mode) is str
+            and access_mode in ("mixed", "login_required"),
             "access_mode_invalid",
         )
-        _require(type(value.get("antibot_enabled", False)) is bool, "antibot_invalid")
+        _require(
+            type(value.get("antibot_enabled", False)) is bool,
+            "antibot_invalid",
+        )
         _require(
             access_mode != "mixed" or "guest_session_secret_file" in value,
             "guest_secret_required",
@@ -276,7 +289,10 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
         ]
         secret_fields.extend(
             field
-            for field in ("guest_session_secret_file", "antibot_signing_key_file")
+            for field in (
+                "guest_session_secret_file",
+                "antibot_signing_key_file",
+            )
             if field in value
         )
         for field in secret_fields:
@@ -286,15 +302,18 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
                 encoded = encoded[:-1]
             if field == "oidc_client_secret_file":
                 _require(
-                    1 <= len(encoded) <= 4096 and all(33 <= c <= 126 for c in encoded),
+                    1 <= len(encoded) <= 4096
+                    and all(33 <= c <= 126 for c in encoded),
                     "client_secret_invalid",
                 )
             else:
                 _require(
-                    HEX.fullmatch(encoded.decode("ascii")) is not None, "secret_invalid"
+                    HEX.fullmatch(encoded.decode("ascii")) is not None,
+                    "secret_invalid",
                 )
         _require(
-            len({parsed[field] for field in secret_fields}) == len(secret_fields),
+            len({parsed[field] for field in secret_fields})
+            == len(secret_fields),
             "secret_paths_overlap",
         )
         bounds = {
@@ -314,9 +333,12 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
                     type(value[name]) is int and low <= value[name] <= high,
                     "limits_invalid",
                 )
-        _require(value.get("loopback_port", 18084) != 18083, "private_port_reserved")
         _require(
-            value.get("quota_per_account", 10) <= value.get("quota_global", 100),
+            value.get("loopback_port", 18084) != 18083, "private_port_reserved"
+        )
+        _require(
+            value.get("quota_per_account", 10)
+            <= value.get("quota_global", 100),
             "limits_invalid",
         )
         if access_mode == "mixed":
@@ -332,7 +354,9 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
                 "pool_limits_invalid",
             )
         cidrs = value.get("trusted_proxy_cidrs", [])
-        _require(type(cidrs) is list and len(cidrs) <= 16, "trusted_proxy_invalid")
+        _require(
+            type(cidrs) is list and len(cidrs) <= 16, "trusted_proxy_invalid"
+        )
         normalized = []
         for cidr in cidrs:
             _require(type(cidr) is str, "trusted_proxy_invalid")
@@ -342,7 +366,9 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
                 "trusted_proxy_invalid",
             )
             normalized.append(str(network))
-        _require(len(set(normalized)) == len(normalized), "trusted_proxy_invalid")
+        _require(
+            len(set(normalized)) == len(normalized), "trusted_proxy_invalid"
+        )
         parsed["trusted_proxy_cidrs"] = tuple(normalized)
         if "network_subnets" in value:
             subnets = value["network_subnets"]
@@ -371,11 +397,16 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
                 _require(
                     network.version == 4
                     and 24 <= network.prefixlen <= 28
-                    and any(network.subnet_of(private) for private in private_ranges),
+                    and any(
+                        network.subnet_of(private)
+                        for private in private_ranges
+                    ),
                     "network_subnets_invalid",
                 )
                 _require(
-                    all(not network.overlaps(previous) for previous in networks),
+                    all(
+                        not network.overlaps(previous) for previous in networks
+                    ),
                     "network_subnets_overlap",
                 )
                 networks.append(network)
@@ -414,7 +445,9 @@ def load_public_entry_config(path, *, repo_root=None, uid=None):
             if error.args == ("duplicate JSON key",):
                 raise PublicEntryError("public_entry_duplicate_key") from None
             raise
-        return validate_public_entry_config(value, repo_root=repo_root, uid=uid)
+        return validate_public_entry_config(
+            value, repo_root=repo_root, uid=uid
+        )
     except PublicEntryError:
         raise
     except (OSError, ValueError, TypeError, UnicodeError, OverflowError):
@@ -423,7 +456,9 @@ def load_public_entry_config(path, *, repo_root=None, uid=None):
 
 def _json(value):
     return (
-        json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2, allow_nan=False)
+        json.dumps(
+            value, ensure_ascii=True, sort_keys=True, indent=2, allow_nan=False
+        )
         + "\n"
     )
 
@@ -431,12 +466,15 @@ def _json(value):
 def _sanitize(config, *, api=False, mutating=False, cookie_auth=False):
     """Runs before OIDC: reject bad boundary inputs and stash the BFF token."""
     authority = urlsplit(config.public_origin).netloc
-    return """return function(conf, ctx)
+    return (
+        """return function(conf, ctx)
  local core = require('apisix.core')
  local h, err = ngx.req.get_headers(64)
  if err then return 400, {error={code='invalid_request'}} end
- for _, name in ipairs({'host','origin','authorization','content-length','content-type'}) do
-  if type(h[name]) == 'table' then return 400, {error={code='invalid_request'}} end
+ for _, name in ipairs({'host','origin','authorization',"""
+        """'content-length','content-type'}) do
+  if type(h[name]) == 'table' then return 400, """
+        """{error={code='invalid_request'}} end
  end
  if type(h.host) ~= 'string' or string.lower(h.host) ~= %s then
   return 421, {error={code='host_denied'}}
@@ -446,15 +484,22 @@ def _sanitize(config, *, api=False, mutating=False, cookie_auth=False):
  ctx.depositar_had_login_cookie = false
  if type(h.cookie) == 'string' then
   for name in string.gmatch(h.cookie, '([^;= ]+)=') do
-   if name == '__Host-depositar-login' then ctx.depositar_had_login_cookie = true end
+   if name == '__Host-depositar-login' then """
+        """ctx.depositar_had_login_cookie = true end
   end
- elseif h.cookie ~= nil then return 400, {error={code='invalid_request'}} end
+ elseif h.cookie ~= nil then return 400, """
+        """{error={code='invalid_request'}} end
  ctx.depositar_authorization = h.authorization
- for _, name in ipairs({'Authorization','X-Depositar-Subject','X-Depositar-Edge-Key',
-  'X-Depositar-Principal-Kind','X-Depositar-Access-Mode','X-Depositar-Turn-Limit',
-  'X-Depositar-Window-Seconds','X-Depositar-Quota-Pool-Limit','X-Depositar-Quota-Period',
-  'X-Depositar-Quota-TTL','X-Depositar-Session-Period','X-Depositar-Session-TTL',
-  'X-Depositar-Quota-Bucket','X-ID-Token','X-Raw-ID-Token','X-Userinfo','X-Access-Token',
+ for _, name in ipairs({'Authorization','X-Depositar-Subject',"""
+        """'X-Depositar-Edge-Key',
+  'X-Depositar-Principal-Kind','X-Depositar-Access-Mode',"""
+        """'X-Depositar-Turn-Limit',
+  'X-Depositar-Window-Seconds','X-Depositar-Quota-Pool-Limit',"""
+        """'X-Depositar-Quota-Period',
+  'X-Depositar-Quota-TTL','X-Depositar-Session-Period',"""
+        """'X-Depositar-Session-TTL',
+  'X-Depositar-Quota-Bucket','X-ID-Token','X-Raw-ID-Token',"""
+        """'X-Userinfo','X-Access-Token',
   'X-Refresh-Token','Forwarded','X-Forwarded-Host','X-Forwarded-Proto',
   'X-Forwarded-Port','X-Forwarded-For','X-Real-IP'}) do
   core.request.set_header(ctx, name, nil)
@@ -463,7 +508,8 @@ def _sanitize(config, *, api=False, mutating=False, cookie_auth=False):
  core.request.set_header(ctx, 'X-Forwarded-Host', %s)
  core.request.set_header(ctx, 'X-Forwarded-Port', %s)
  %s
-end""" % (
+end"""
+    ) % (
         json.dumps(authority),
         "if ngx.var.args then return 400, {error={code='invalid_request'}} end"
         if api
@@ -546,13 +592,22 @@ def _oidc(config, *, login=False):
                     "type": "object",
                     "required": ["iss", "sub"],
                     "properties": {
-                        "iss": {"type": "string", "enum": [config.oidc_issuer]},
-                        "sub": {"type": "string", "minLength": 1, "maxLength": 255},
+                        "iss": {
+                            "type": "string",
+                            "enum": [config.oidc_issuer],
+                        },
+                        "sub": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 255,
+                        },
                     },
                 }
             },
         },
-        "_meta": {"error_response": {"error": {"code": "authentication_required"}}},
+        "_meta": {
+            "error_response": {"error": {"code": "authentication_required"}}
+        },
     }
 
 
@@ -560,14 +615,16 @@ def _counter(config, *, session=False):
     return render_counter(config, session=session)
 
 
-APISIX_START = """#!/bin/sh
+APISIX_START = (
+    """#!/bin/sh
 set -eu
 umask 077
 DEPOSITAR_OIDC_CLIENT_SECRET=$(cat /run/secrets/oidc-client-secret)
 DEPOSITAR_OIDC_SESSION_SECRET=$(cat /run/secrets/oidc-session-secret)
 DEPOSITAR_EDGE_KEY=$(cat /run/secrets/edge-key)
 DEPOSITAR_REDIS_PASSWORD=$(cat /run/secrets/redis-password)
-for secret in "$DEPOSITAR_OIDC_SESSION_SECRET" "$DEPOSITAR_EDGE_KEY" "$DEPOSITAR_REDIS_PASSWORD"; do
+for secret in "$DEPOSITAR_OIDC_SESSION_SECRET" "$DEPOSITAR_EDGE_KEY" """
+    """"$DEPOSITAR_REDIS_PASSWORD"; do
  case "$secret" in *[!0-9a-f]*|'') exit 1;; esac
  test "${#secret}" -eq 64
 done
@@ -579,13 +636,17 @@ if test -f /run/secrets/guest-session-secret; then
 fi
 test -n "$DEPOSITAR_OIDC_CLIENT_SECRET"
 test "${#DEPOSITAR_OIDC_CLIENT_SECRET}" -le 4096
-export DEPOSITAR_OIDC_CLIENT_SECRET DEPOSITAR_OIDC_SESSION_SECRET DEPOSITAR_EDGE_KEY DEPOSITAR_REDIS_PASSWORD
+export DEPOSITAR_OIDC_CLIENT_SECRET DEPOSITAR_OIDC_SESSION_SECRET """
+    """DEPOSITAR_EDGE_KEY DEPOSITAR_REDIS_PASSWORD
 export APISIX_STAND_ALONE=true
-cp /usr/local/openresty/nginx/conf/mime.types /usr/local/apisix/conf/mime.types
+cp /usr/local/openresty/nginx/conf/mime.types /usr/local/apisix/conf/"""
+    """mime.types
 exec /docker-entrypoint.sh docker-start
 """
+)
 
-REDIS_START = """#!/bin/sh
+REDIS_START = (
+    """#!/bin/sh
 set -eu
 umask 077
 password=$(cat /run/secrets/redis-password)
@@ -593,10 +654,14 @@ case "$password" in *[!0-9a-f]*|'') exit 1;; esac
 test "${#password}" -eq 64
 digest=$(printf '%s' "$password" | sha256sum)
 digest=${digest%% *}
-printf 'user default off\\nuser gateway on #%s ~plugin-limit-count:v1:/routes/turn:* ~plugin-limit-count:v1:/routes/session-create:* -@all +auth +ping +eval +evalsha +pttl +set +incrby\\n' "$digest" > /tmp/users.acl
+printf 'user default off\\nuser gateway on #%s ~plugin-limit-count:"""
+    """v1:/routes/turn:* ~plugin-limit-count:v1:/routes/session-create:* """
+    """-@all +auth +ping +eval +evalsha +pttl +set +incrby\\n' "$digest" > /"""
+    """tmp/users.acl
 unset password digest
 exec redis-server /etc/redis/redis.conf
 """
+)
 
 REDIS_CONFIG = """bind 0.0.0.0
 port 6379
@@ -683,7 +748,9 @@ def render_public_entry(config, *, uid=None, gid=None):
                 "nodelay": True,
                 "allow_degradation": False,
                 "rejected_code": 429,
-                "_meta": {"error_response": {"error": {"code": "rate_limited"}}},
+                "_meta": {
+                    "error_response": {"error": {"code": "rate_limited"}}
+                },
             },
             "response-rewrite": {
                 "headers": {
@@ -730,10 +797,20 @@ def render_public_entry(config, *, uid=None, gid=None):
         authenticated=True,
         session=True,
     )
-    route("session-delete", "/api/session", ["DELETE"], api=True, authenticated=True)
-    route("turn", "/api/turn", ["POST"], api=True, authenticated=True, turn=True)
+    route(
+        "session-delete",
+        "/api/session",
+        ["DELETE"],
+        api=True,
+        authenticated=True,
+    )
+    route(
+        "turn", "/api/turn", ["POST"], api=True, authenticated=True, turn=True
+    )
     route("login", "/auth/login", ["GET"], authenticated=True, login=True)
-    route("callback", "/auth/callback", ["GET"], authenticated=True, login=True)
+    route(
+        "callback", "/auth/callback", ["GET"], authenticated=True, login=True
+    )
     route("logout", "/auth/logout", ["GET"], authenticated=True, login=True)
     apisix_config = {
         "apisix": {
@@ -760,7 +837,13 @@ def render_public_entry(config, *, uid=None, gid=None):
             "worker_processes": 1,
             "error_log": "/dev/stderr",
             "error_log_level": "crit",
-            "http_configuration_snippet": "client_body_temp_path /tmp/client_body;\nproxy_temp_path /tmp/proxy;\nfastcgi_temp_path /tmp/fastcgi;\nuwsgi_temp_path /tmp/uwsgi;\nscgi_temp_path /tmp/scgi;",
+            ("http_configuration_snippet"): (
+                "client_body_temp_path /tmp/client_body;\n"
+                "proxy_temp_path /tmp/proxy;\n"
+                "fastcgi_temp_path /tmp/fastcgi;\n"
+                "uwsgi_temp_path /tmp/uwsgi;\n"
+                "scgi_temp_path /tmp/scgi;"
+            ),
             "envs": [
                 "DEPOSITAR_OIDC_CLIENT_SECRET",
                 "DEPOSITAR_OIDC_SESSION_SECRET",
@@ -826,15 +909,24 @@ def render_public_entry(config, *, uid=None, gid=None):
                     }
                 ],
                 "networks": ["website", "quota", "outbound"],
-                "depends_on": {"quota-redis": {"condition": "service_healthy"}},
+                "depends_on": {
+                    "quota-redis": {"condition": "service_healthy"}
+                },
                 "healthcheck": {
                     "test": [
                         "CMD",
                         "/bin/bash",
                         "-c",
-                        "exec 3<>/dev/tcp/127.0.0.1/9080; printf 'GET /healthz HTTP/1.1\\r\\nHost: "
+                        (
+                            "exec 3<>/dev/tcp/127.0.0.1/9080; printf "
+                            "'GET /healthz HTTP/1.1\\r\\nHost: "
+                        )
                         + urlsplit(config.public_origin).netloc
-                        + "\\r\\nConnection: close\\r\\n\\r\\n' >&3; IFS=' ' read -r protocol status message <&3; test \"$$status\" = 200",
+                        + (
+                            "\\r\\nConnection: close\\r\\n\\r\\n' >&3;"
+                            " IFS=' ' read -r protocol status message "
+                            '<&3; test "$$status" = 200'
+                        ),
                     ],
                     "interval": "5s",
                     "timeout": "3s",
@@ -846,16 +938,30 @@ def render_public_entry(config, *, uid=None, gid=None):
                     f"/usr/local/apisix/logs:rw,noexec,nosuid,size=16m,uid={uid},gid={gid}",
                 ],
                 "volumes": [
-                    _mount(root / "config.yaml", "/usr/local/apisix/conf/config.yaml"),
-                    _mount(root / "apisix.yaml", "/usr/local/apisix/conf/apisix.yaml"),
-                    _mount(root / "apisix-start.sh", "/run/entry/apisix-start.sh"),
+                    _mount(
+                        root / "config.yaml",
+                        "/usr/local/apisix/conf/config.yaml",
+                    ),
+                    _mount(
+                        root / "apisix.yaml",
+                        "/usr/local/apisix/conf/apisix.yaml",
+                    ),
+                    _mount(
+                        root / "apisix-start.sh", "/run/entry/apisix-start.sh"
+                    ),
                     _mount(
                         root / "depositar_identity.lua",
-                        "/usr/local/apisix/deps/share/lua/5.1/depositar_identity.lua",
+                        (
+                            "/usr/local/apisix/deps/share/lua/5.1/"
+                            "depositar_identity.lua"
+                        ),
                     ),
                     _mount(
                         root / "depositar-quota-response.lua",
-                        "/usr/local/apisix/apisix/plugins/depositar-quota-response.lua",
+                        (
+                            "/usr/local/apisix/apisix/plugins/"
+                            "depositar-quota-response.lua"
+                        ),
                     ),
                     _mount(
                         config.oidc_client_secret_file,
@@ -866,7 +972,10 @@ def render_public_entry(config, *, uid=None, gid=None):
                         "/run/secrets/oidc-session-secret",
                     ),
                     _mount(config.edge_secret_file, "/run/secrets/edge-key"),
-                    _mount(config.redis_password_file, "/run/secrets/redis-password"),
+                    _mount(
+                        config.redis_password_file,
+                        "/run/secrets/redis-password",
+                    ),
                 ],
             },
             "quota-redis": {
@@ -877,17 +986,29 @@ def render_public_entry(config, *, uid=None, gid=None):
                 "mem_limit": "128m",
                 "pids_limit": 32,
                 "networks": ["quota"],
-                "tmpfs": [f"/tmp:rw,noexec,nosuid,size=4m,uid={uid},gid={gid}"],
+                "tmpfs": [
+                    f"/tmp:rw,noexec,nosuid,size=4m,uid={uid},gid={gid}"
+                ],
                 "volumes": [
-                    _mount(root / "redis-start.sh", "/run/entry/redis-start.sh"),
+                    _mount(
+                        root / "redis-start.sh", "/run/entry/redis-start.sh"
+                    ),
                     _mount(root / "redis.conf", "/etc/redis/redis.conf"),
-                    _mount(config.redis_password_file, "/run/secrets/redis-password"),
+                    _mount(
+                        config.redis_password_file,
+                        "/run/secrets/redis-password",
+                    ),
                     _mount(root / "redis-data", "/data", read_only=False),
                 ],
                 "healthcheck": {
                     "test": [
                         "CMD-SHELL",
-                        'REDISCLI_AUTH="$(cat /run/secrets/redis-password)" redis-cli --no-auth-warning --user gateway ping | grep -qx PONG',
+                        (
+                            'REDISCLI_AUTH="$(cat /run/secrets/'
+                            'redis-password)" redis-cli '
+                            "--no-auth-warning --user gateway ping | "
+                            "grep -qx PONG"
+                        ),
                     ],
                     "interval": "5s",
                     "timeout": "3s",
@@ -916,7 +1037,8 @@ def render_public_entry(config, *, uid=None, gid=None):
     if config.guest_session_secret_file is not None:
         compose["services"]["public-entry"]["volumes"].append(
             _mount(
-                config.guest_session_secret_file, "/run/secrets/guest-session-secret"
+                config.guest_session_secret_file,
+                "/run/secrets/guest-session-secret",
             )
         )
     if config.oidc_ca_file is not None:
@@ -943,7 +1065,9 @@ def render_public_entry(config, *, uid=None, gid=None):
         assets["config.yaml"] = _json(apisix_config)
     if config.network_subnets is not None:
         for name, subnet in config.network_subnets.items():
-            compose["networks"][name]["ipam"] = {"config": [{"subnet": subnet}]}
+            compose["networks"][name]["ipam"] = {
+                "config": [{"subnet": subnet}]
+            }
     return {
         "state_directories": state_directories,
         "compose": compose,
@@ -961,7 +1085,9 @@ def write_public_entry(config, *, uid=None, gid=None):
     fd = private_io.open_directory(config.state_root)
     output = None
     try:
-        output = private_io.open_child_directory(fd, "public-entry", create=True)
+        output = private_io.open_child_directory(
+            fd, "public-entry", create=True
+        )
         for name, content in plan["assets"].items():
             private_io.write_file(
                 output, name, content.encode("utf-8"), max_bytes=256 * 1024

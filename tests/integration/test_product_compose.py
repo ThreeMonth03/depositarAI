@@ -15,7 +15,9 @@ from search.operations.catalog.policy import _memory_bytes
 from tests.unit.deployment.test_composition import REVISION, catalog, product
 
 
-@unittest.skipUnless(shutil.which("docker"), "Docker Compose CLI is not installed")
+@unittest.skipUnless(
+    shutil.which("docker"), "Docker Compose CLI is not installed"
+)
 class ProductComposeIntegrationTests(unittest.TestCase):
     def render(self, plane):
         config = product()
@@ -47,10 +49,14 @@ class ProductComposeIntegrationTests(unittest.TestCase):
             timeout=30,
             check=False,
         )
-        self.assertEqual(0, result.returncode, f"Compose rejected {plane} plan")
+        self.assertEqual(
+            0, result.returncode, f"Compose rejected {plane} plan"
+        )
         normalized = json.loads(result.stdout)
         self.assertEqual(composition["name"], normalized["name"])
-        self.assertEqual(set(composition["services"]), set(normalized["services"]))
+        self.assertEqual(
+            set(composition["services"]), set(normalized["services"])
+        )
         for name, expected in composition["services"].items():
             actual = normalized["services"][name]
             for key in (
@@ -63,7 +69,9 @@ class ProductComposeIntegrationTests(unittest.TestCase):
                 "environment",
                 "pids_limit",
             ):
-                self.assertEqual(expected[key], actual[key], (plane, name, key))
+                self.assertEqual(
+                    expected[key], actual[key], (plane, name, key)
+                )
             for key in ("mem_limit", "memswap_limit"):
                 self.assertEqual(
                     _memory_bytes(expected[key]), _memory_bytes(actual[key])
@@ -75,11 +83,14 @@ class ProductComposeIntegrationTests(unittest.TestCase):
         services = self.render("inference")["services"]
         uuids = []
         for service in services.values():
-            requests = service["deploy"]["resources"]["reservations"]["devices"]
+            requests = service["deploy"]["resources"]["reservations"][
+                "devices"
+            ]
             self.assertEqual(1, len(requests))
             identifiers = requests[0]["device_ids"]
             self.assertEqual(
-                ",".join(identifiers), service["environment"]["NVIDIA_VISIBLE_DEVICES"]
+                ",".join(identifiers),
+                service["environment"]["NVIDIA_VISIBLE_DEVICES"],
             )
             self.assertEqual("nvidia", service["runtime"])
             self.assertNotIn("ports", service)
@@ -91,7 +102,9 @@ class ProductComposeIntegrationTests(unittest.TestCase):
         services = self.render("release")["services"]
         for service in services.values():
             self.assertEqual("runc", service["runtime"])
-            self.assertEqual("void", service["environment"]["NVIDIA_VISIBLE_DEVICES"])
+            self.assertEqual(
+                "void", service["environment"]["NVIDIA_VISIBLE_DEVICES"]
+            )
             self.assertNotIn("ports", service)
             self.assertNotIn("deploy", service)
 

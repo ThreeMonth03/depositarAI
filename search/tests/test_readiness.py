@@ -36,7 +36,9 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tick = 0
         self.backend = Backend()
-        self.readiness = BackendReadiness(self.backend, clock=lambda: self.tick)
+        self.readiness = BackendReadiness(
+            self.backend, clock=lambda: self.tick
+        )
 
     async def test_positive_cache_expires_and_does_not_mutate(self):
         first = await self.readiness.check()
@@ -135,7 +137,11 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
 class WorkerReadinessTests(unittest.TestCase):
     def setUp(self):
         self.settings = Settings(
-            "a" * 40, "b" * 64, Path("/catalog"), Path("/key"), rerank_enabled=True
+            "a" * 40,
+            "b" * 64,
+            Path("/catalog"),
+            Path("/key"),
+            rerank_enabled=True,
         )
         self.bundle = self.patch("search.api.worker.CatalogBundle.load")
         self.bundle.return_value = SimpleNamespace(documents=[{}] * 5)
@@ -151,9 +157,14 @@ class WorkerReadinessTests(unittest.TestCase):
                     "models": [
                         {
                             "name": worker.OllamaScopeClassifier.model,
-                            "digest": worker.OllamaScopeClassifier.model_digest,
+                            "digest": (
+                                worker.OllamaScopeClassifier.model_digest
+                            ),
                         },
-                        {"name": PLANNER_MODEL, "digest": PLANNER_MODEL_DIGEST},
+                        {
+                            "name": PLANNER_MODEL,
+                            "digest": PLANNER_MODEL_DIGEST,
+                        },
                     ]
                 }
             ).encode(),
@@ -164,7 +175,9 @@ class WorkerReadinessTests(unittest.TestCase):
         self.health.return_value.send.return_value = SimpleNamespace(
             status=200,
             url="http://172.18.0.4:8001/healthz",
-            body=json.dumps({"ready": True, "model_revision": MODEL_REVISION}).encode(),
+            body=json.dumps(
+                {"ready": True, "model_revision": MODEL_REVISION}
+            ).encode(),
         )
 
     def patch(self, target):
@@ -173,19 +186,23 @@ class WorkerReadinessTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return value
 
-    def test_retrieve_delegates_empty_and_conditioned_requests_to_one_index_adapter(
+    def test_retrieve_uses_one_adapter_for_all_condition_shapes(
         self,
     ):
         for conditions in ({}, {"formats": ["CSV"]}):
             payload = {"query": "水質", "top_k": 5, "conditions": conditions}
             value = worker.run("retrieve", payload, self.settings)
-            self.assertEqual(value, report("水質", count=1, conditions=conditions))
+            self.assertEqual(
+                value, report("水質", count=1, conditions=conditions)
+            )
             self.query.assert_called_with(payload, self.settings)
         self.bundle.assert_not_called()
         self.models.assert_not_called()
         self.peer.assert_not_called()
 
-    def test_ready_checks_both_index_condition_shapes_and_pinned_model_identities(self):
+    def test_ready_checks_condition_shapes_and_pinned_models(
+        self,
+    ):
         self.assertEqual(
             worker.run("ready", {}, self.settings),
             {"ready": True, "documents": 5, "reranker_ready": True},
@@ -193,12 +210,17 @@ class WorkerReadinessTests(unittest.TestCase):
         self.assertEqual(
             self.query.call_args_list,
             [
-                call({"query": "氣候", "top_k": 1, "conditions": {}}, self.settings),
+                call(
+                    {"query": "氣候", "top_k": 1, "conditions": {}},
+                    self.settings,
+                ),
                 call(
                     {
                         "query": "氣候",
                         "top_k": 1,
-                        "conditions": {"time": {"start": "2025", "end": "2025"}},
+                        "conditions": {
+                            "time": {"start": "2025", "end": "2025"}
+                        },
                     },
                     self.settings,
                 ),
@@ -208,7 +230,9 @@ class WorkerReadinessTests(unittest.TestCase):
             self.settings.bundle_path,
             expected_manifest_sha256=self.settings.manifest_sha256,
         )
-        self.assertEqual(self.models.call_args_list, [call("scope"), call("answer")])
+        self.assertEqual(
+            self.models.call_args_list, [call("scope"), call("answer")]
+        )
         self.peer.assert_called_once_with("reranker", 8001)
 
     def test_either_index_probe_failure_stops_before_models_and_health(self):

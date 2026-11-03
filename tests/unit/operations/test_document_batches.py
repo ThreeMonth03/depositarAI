@@ -1,4 +1,5 @@
-"""Protect durable, manifest-bound resource progress and explicit retry policy."""
+"""Protect durable, manifest-bound resource progress and explicit retry
+policy."""
 
 from contextlib import ExitStack
 import hashlib
@@ -10,7 +11,13 @@ import unittest
 from unittest.mock import patch
 
 from search.catalog.build.builder import build_bundle
-from search.operations.documents import batches, controller, extractor, sets, source
+from search.operations.documents import (
+    batches,
+    controller,
+    extractor,
+    sets,
+    source,
+)
 
 
 IMAGE = {
@@ -51,7 +58,9 @@ class BatchTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(
             patch.object(
-                extractor, "source_identity", return_value=IMAGE["source_sha256"]
+                extractor,
+                "source_identity",
+                return_value=IMAGE["source_sha256"],
             )
         )
         self.image = self.stack.enter_context(
@@ -62,20 +71,25 @@ class BatchTests(unittest.TestCase):
         )
         self.parse = self.stack.enter_context(
             patch.object(
-                extractor, "extract", side_effect=lambda *a, **kw: dict(self.result)
+                extractor,
+                "extract",
+                side_effect=lambda *a, **kw: dict(self.result),
             )
         )
 
     def build(self, count, *, same_dataset=False, title="Water"):
         rows = []
         identifiers = [
-            f"{index + 1:08x}-1111-4111-8111-111111111111" for index in range(count)
+            f"{index + 1:08x}-1111-4111-8111-111111111111"
+            for index in range(count)
         ]
         for index, identifier in enumerate(identifiers):
             if not rows or not same_dataset and index % 3 == 0:
                 rows.append(
                     {
-                        "id": f"{len(rows) + 1:08x}-0000-4000-8000-000000000000",
+                        "id": (
+                            f"{len(rows) + 1:08x}-0000-4000-8000-000000000000"
+                        ),
                         "name": "water-" + str(len(rows)),
                         "title": title,
                         "notes": "Water",
@@ -94,12 +108,18 @@ class BatchTests(unittest.TestCase):
                 }
             )
         snapshot = self.root / "snapshot.jsonl"
-        snapshot.write_bytes(b"".join(json.dumps(row).encode() + b"\n" for row in rows))
+        snapshot.write_bytes(
+            b"".join(json.dumps(row).encode() + b"\n" for row in rows)
+        )
         snapshot.chmod(0o600)
         output = self.root / "bundles"
         output.mkdir(mode=0o700, exist_ok=True)
         result = build_bundle(snapshot, output)
-        return Path(result["bundle_path"]), result["manifest_sha256"], identifiers
+        return (
+            Path(result["bundle_path"]),
+            result["manifest_sha256"],
+            identifiers,
+        )
 
     def acquired(self, _root, resource):
         return {
@@ -108,11 +128,15 @@ class BatchTests(unittest.TestCase):
             "bytes": len(self.raw),
             "acquired_at": 100,
             "cache_hit": True,
-            "source_url_sha256": hashlib.sha256(resource["url"].encode()).hexdigest(),
+            "source_url_sha256": hashlib.sha256(
+                resource["url"].encode()
+            ).hexdigest(),
         }
 
     def prepare(self):
-        result = batches.prepare(self.bundle, self.manifest, self.state, self.selection)
+        result = batches.prepare(
+            self.bundle, self.manifest, self.state, self.selection
+        )
         self.plan_sha = result["plan_sha256"]
         return result
 
@@ -126,9 +150,13 @@ class BatchTests(unittest.TestCase):
         self.fetch.assert_not_called()
         self.parse.assert_not_called()
         self.image.assert_not_called()
-        self.assertEqual((self.state / "plan.json").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(
+            (self.state / "plan.json").stat().st_mode & 0o777, 0o600
+        )
 
-    def test_root_identities_refuse_before_state_even_without_pending_work(self):
+    def test_root_identities_refuse_before_state_even_without_pending_work(
+        self,
+    ):
         identity_names = ("getuid", "getgid", "geteuid", "getegid")
         for progress in ("unprepared", "prepared", "completed"):
             self.state = self.root / progress
@@ -147,7 +175,9 @@ class BatchTests(unittest.TestCase):
             self.image.reset_mock()
             for root_identity in (*identity_names, "all"):
                 with (
-                    self.subTest(progress=progress, root_identity=root_identity),
+                    self.subTest(
+                        progress=progress, root_identity=root_identity
+                    ),
                     ExitStack() as stack,
                     patch.object(batches, "_state") as state,
                     patch.object(batches.private_io, "write_json") as write,
@@ -182,21 +212,27 @@ class BatchTests(unittest.TestCase):
                     },
                 )
 
-    def test_checkpoint_then_resume_skips_completed_sources_and_exports_exact_set(self):
+    def test_checkpoint_resume_skips_complete_sources_and_exports_set(
+        self,
+    ):
         self.prepare()
         first = self.run_batch(max_resources=1)
         self.assertEqual(
             (first["status"], first["profile_count"], first["pending_count"]),
             ("checkpoint", 1, 1),
         )
-        with patch("time.time", return_value=100 + 3 * source.CACHE_TTL_SECONDS):
+        with patch(
+            "time.time", return_value=100 + 3 * source.CACHE_TTL_SECONDS
+        ):
             final = self.run_batch()
         self.assertEqual(final["status"], "completed")
         self.assertEqual(self.fetch.call_count, 2)
         self.assertEqual(self.parse.call_count, 1)
         record, digest = sets.read(self.state / final["profile_set_file"])
         self.assertEqual(digest, final["profile_set_sha256"])
-        self.assertEqual([row["resource_id"] for row in record["profiles"]], self.ids)
+        self.assertEqual(
+            [row["resource_id"] for row in record["profiles"]], self.ids
+        )
         self.assertEqual(record["failures"], [])
         self.assertNotIn("https://", json.dumps(final))
         self.assertNotIn("7.2", json.dumps(final))
@@ -220,8 +256,12 @@ class BatchTests(unittest.TestCase):
         ):
             self.run_batch()
         first = batches.status(self.state, self.plan_sha)
-        self.assertEqual((first["profile_count"], first["pending_count"]), (1, 1))
-        with patch.object(extractor, "helper_exists", return_value=True) as active:
+        self.assertEqual(
+            (first["profile_count"], first["pending_count"]), (1, 1)
+        )
+        with patch.object(
+            extractor, "helper_exists", return_value=True
+        ) as active:
             with self.assertRaisesRegex(batches.BatchError, "helper_active"):
                 self.run_batch()
         active.assert_called_once_with(calls[-1])
@@ -230,20 +270,30 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(self.run_batch()["status"], "completed")
         self.assertEqual(self.fetch.call_count, 2)
 
-    def test_failures_do_not_starve_pending_and_require_explicit_bounded_retry(self):
+    def test_failures_do_not_starve_pending_and_require_explicit_bounded_retry(
+        self,
+    ):
         self.prepare()
         self.fetch.side_effect = source.SourceError("document_source_timeout")
         first = self.run_batch(max_resources=1)
         self.assertEqual(first["status"], "checkpoint")
         self.fetch.side_effect = self.acquired
         second = self.run_batch(max_resources=1, retry_failed=True)
-        self.assertEqual((second["profile_count"], second["failed_count"]), (1, 1))
+        self.assertEqual(
+            (second["profile_count"], second["failed_count"]), (1, 1)
+        )
         self.assertEqual(self.run_batch()["attempted_count"], 0)
         self.fetch.side_effect = source.SourceError("document_source_timeout")
-        self.assertEqual(self.run_batch(retry_failed=True)["retryable_count"], 1)
+        self.assertEqual(
+            self.run_batch(retry_failed=True)["retryable_count"], 1
+        )
         final = self.run_batch(retry_failed=True)
-        self.assertEqual((final["status"], final["retryable_count"]), ("partial", 0))
-        self.assertEqual(self.run_batch(retry_failed=True)["attempted_count"], 0)
+        self.assertEqual(
+            (final["status"], final["retryable_count"]), ("partial", 0)
+        )
+        self.assertEqual(
+            self.run_batch(retry_failed=True)["attempted_count"], 0
+        )
         record, _ = sets.read(self.state / final["profile_set_file"])
         self.assertEqual(
             record["failures"],
@@ -262,8 +312,12 @@ class BatchTests(unittest.TestCase):
             status="parse_error", columns=[], text="", rows_observed=None
         )
         first = self.run_batch()
-        self.assertEqual((first["status"], first["profile_count"]), ("partial", 2))
-        self.assertEqual(self.run_batch(retry_failed=True)["attempted_count"], 0)
+        self.assertEqual(
+            (first["status"], first["profile_count"]), ("partial", 2)
+        )
+        self.assertEqual(
+            self.run_batch(retry_failed=True)["attempted_count"], 0
+        )
         self.assertEqual(self.fetch.call_count, 2)
         self.assertEqual(self.parse.call_count, 1)
 
@@ -273,7 +327,9 @@ class BatchTests(unittest.TestCase):
         with self.assertRaisesRegex(batches.BatchError, "plan_invalid"):
             self.prepare()
         self.assertFalse(self.state.exists())
-        self.selection.write_text(json.dumps([self.ids[0]] * (sets.MAX_SELECTED + 1)))
+        self.selection.write_text(
+            json.dumps([self.ids[0]] * (sets.MAX_SELECTED + 1))
+        )
         with self.assertRaisesRegex(batches.BatchError, "selection_invalid"):
             self.prepare()
         self.fetch.assert_not_called()
@@ -284,11 +340,17 @@ class BatchTests(unittest.TestCase):
         self.prepare()
         first = self.run_batch()
         self.assertEqual(
-            (first["attempted_count"], first["profile_count"], first["pending_count"]),
+            (
+                first["attempted_count"],
+                first["profile_count"],
+                first["pending_count"],
+            ),
             (20, 20, 3),
         )
         final = self.run_batch()
-        self.assertEqual((final["status"], final["attempted_count"]), ("completed", 3))
+        self.assertEqual(
+            (final["status"], final["attempted_count"]), ("completed", 3)
+        )
         self.assertEqual(self.fetch.call_count, 23)
         with self.assertRaisesRegex(batches.BatchError, "options_invalid"):
             self.run_batch(max_resources=21)
@@ -302,7 +364,9 @@ class BatchTests(unittest.TestCase):
                     status=status,
                     columns=[],
                     text="",
-                    rows_observed=None if status == "unsupported_format" else 0,
+                    rows_observed=None
+                    if status == "unsupported_format"
+                    else 0,
                 )
                 final = self.run_batch()
                 self.assertEqual(
@@ -324,13 +388,19 @@ class BatchTests(unittest.TestCase):
             return write(parent, name, value, **kwargs)
 
         with (
-            patch.object(batches.private_io, "write_json", side_effect=fail_outcome),
+            patch.object(
+                batches.private_io, "write_json", side_effect=fail_outcome
+            ),
             self.assertRaisesRegex(batches.BatchError, "state_invalid"),
         ):
             self.run_batch()
         report = batches.status(self.state, self.plan_sha)
-        self.assertEqual((report["profile_count"], report["pending_count"]), (0, 2))
-        self.assertEqual(len(list((self.state / "profiles").glob("*.json"))), 1)
+        self.assertEqual(
+            (report["profile_count"], report["pending_count"]), (0, 2)
+        )
+        self.assertEqual(
+            len(list((self.state / "profiles").glob("*.json"))), 1
+        )
         with patch.object(extractor, "helper_exists", return_value=False):
             self.assertEqual(self.run_batch()["status"], "completed")
         self.assertEqual(self.parse.call_count, 1)
@@ -365,7 +435,11 @@ class BatchTests(unittest.TestCase):
         self.run_batch(max_resources=1)
         report = self.prepare()
         self.assertEqual(
-            (report["status"], report["profile_count"], report["pending_count"]),
+            (
+                report["status"],
+                report["profile_count"],
+                report["pending_count"],
+            ),
             ("checkpoint", 1, 1),
         )
         self.assertEqual(self.fetch.call_count, 1)
@@ -396,7 +470,9 @@ class BatchTests(unittest.TestCase):
         with patch.object(
             batches.shutil, "disk_usage", return_value=SimpleNamespace(free=1)
         ):
-            with self.assertRaisesRegex(batches.BatchError, "insufficient_space"):
+            with self.assertRaisesRegex(
+                batches.BatchError, "insufficient_space"
+            ):
                 self.run_batch()
         self.image.assert_not_called()
         self.fetch.assert_not_called()
@@ -415,16 +491,21 @@ class BatchTests(unittest.TestCase):
     def test_status_does_not_write_or_repair_and_final_export_can_resume(self):
         self.prepare()
         self.run_batch()
-        before = {path: path.stat().st_mtime_ns for path in self.state.rglob("*")}
+        before = {
+            path: path.stat().st_mtime_ns for path in self.state.rglob("*")
+        }
         self.assertEqual(
             batches.status(self.state, self.plan_sha)["status"], "completed"
         )
         self.assertEqual(
-            before, {path: path.stat().st_mtime_ns for path in self.state.rglob("*")}
+            before,
+            {path: path.stat().st_mtime_ns for path in self.state.rglob("*")},
         )
         for path in self.state.glob("profile-set-*.json"):
             path.unlink()
-        self.assertTrue(batches.status(self.state, self.plan_sha)["export_pending"])
+        self.assertTrue(
+            batches.status(self.state, self.plan_sha)["export_pending"]
+        )
         self.assertEqual(self.run_batch()["status"], "completed")
         self.assertEqual(self.fetch.call_count, 2)
 
@@ -453,7 +534,9 @@ class BatchTests(unittest.TestCase):
         with self.assertRaisesRegex(batches.BatchError, "state_invalid"):
             self.run_batch()
         self.assertEqual(list((self.state / "profiles").iterdir()), [])
-        self.assertEqual(batches.status(self.state, self.plan_sha)["profile_count"], 0)
+        self.assertEqual(
+            batches.status(self.state, self.plan_sha)["profile_count"], 0
+        )
 
     def test_replaced_profile_directory_during_status_is_rejected(self):
         self.prepare()
@@ -464,7 +547,9 @@ class BatchTests(unittest.TestCase):
         def replace(*args):
             verify(*args)
             if not changed:
-                (self.state / "profiles").rename(self.state / "retained-profiles")
+                (self.state / "profiles").rename(
+                    self.state / "retained-profiles"
+                )
                 (self.state / "profiles").mkdir(mode=0o700)
                 changed.append(True)
 
@@ -483,7 +568,8 @@ class BatchTests(unittest.TestCase):
                 batches.status(self.state, self.plan_sha)
         with batches._state(self.state, create=False, read_only=True):
             self.assertEqual(
-                batches.status(self.state, self.plan_sha)["status"], "checkpoint"
+                batches.status(self.state, self.plan_sha)["status"],
+                "checkpoint",
             )
             with self.assertRaisesRegex(controller.ProfileError, "state_busy"):
                 self.run_batch()
@@ -498,10 +584,14 @@ class BatchTests(unittest.TestCase):
         self.parse.side_effect = extractor.ExtractorError(
             "document_extractor_cleanup_failed"
         )
-        with self.assertRaisesRegex(extractor.ExtractorError, "cleanup_failed"):
+        with self.assertRaisesRegex(
+            extractor.ExtractorError, "cleanup_failed"
+        ):
             self.run_batch()
         self.assertEqual(self.fetch.call_count, 1)
-        self.assertEqual(batches.status(self.state, self.plan_sha)["pending_count"], 2)
+        self.assertEqual(
+            batches.status(self.state, self.plan_sha)["pending_count"], 2
+        )
 
 
 if __name__ == "__main__":

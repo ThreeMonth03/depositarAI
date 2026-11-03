@@ -16,7 +16,9 @@ OPTIONS = {"num_ctx": 16384, "num_predict": 2048, "temperature": 0, "seed": 11}
 
 
 class LocalPlanner:
-    """Generate with a pinned local model and the caller's prompt and schema."""
+    """Generate with a pinned local model
+    and the caller's prompt and schema.
+    """
 
     def __init__(self, transport):
         self.transport = transport
@@ -26,13 +28,16 @@ class LocalPlanner:
             max_bytes=65536,
         )
         if response.status != 200 or not any(
-            m.get("name") == PLANNER_MODEL and m.get("digest") == PLANNER_MODEL_DIGEST
+            m.get("name") == PLANNER_MODEL
+            and m.get("digest") == PLANNER_MODEL_DIGEST
             for m in json.loads(response.body).get("models", [])
         ):
             raise ValueError("model digest mismatch")
 
     def generate(self, prompt, query, schema, *, think="medium"):
-        """Use the same pinned model, bounded transport and completion checks."""
+        """Use the same pinned model, bounded
+        transport and completion checks.
+        """
         body = {
             "model": PLANNER_MODEL,
             "messages": [
@@ -64,7 +69,9 @@ class LocalPlanner:
         return {
             "status": "ok" if complete else "incomplete",
             "visible_output": visible[:8192],
-            "thinking_characters": len(raw.get("message", {}).get("thinking", "")),
+            "thinking_characters": len(
+                raw.get("message", {}).get("thinking", "")
+            ),
             "model_http_ms": (time.perf_counter() - tick) * 1000,
             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
             "options": OPTIONS,

@@ -15,7 +15,9 @@ from search.serialization import strict_json
 from . import namespace
 
 
-BINARY_SHA256 = "c1b10d7e4e62211075ddd0e1dc3e8cbfc5a43d662cb3be7402a28504e23fcb51"
+BINARY_SHA256 = (
+    "c1b10d7e4e62211075ddd0e1dc3e8cbfc5a43d662cb3be7402a28504e23fcb51"
+)
 ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
 MAX_OUTPUT = 2 * 1024**2
 
@@ -60,10 +62,14 @@ def command(argv, *, timeout=30, cwd=None, pass_fds=()):
 
 @contextmanager
 def _sealed_input(encoded, mode):
-    """Keep immutable verified bytes available until the child has completed."""
+    """Keep immutable verified bytes available until the child has
+    completed.
+    """
     fd = None
     try:
-        fd = os.memfd_create("depositarai-pueue", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+        fd = os.memfd_create(
+            "depositarai-pueue", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+        )
         os.fchmod(fd, mode)
         pending = memoryview(encoded)
         while pending:
@@ -79,7 +85,8 @@ def _sealed_input(encoded, mode):
         )
         fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
         require(
-            fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals == seals, "sealed_input_failed"
+            fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals == seals,
+            "sealed_input_failed",
         )
         yield fd
     except (AttributeError, OSError):
@@ -125,10 +132,14 @@ class Pueue:
         root = Path(registry["root"])
         fd = private_io.open_directory(root)
         try:
-            config = private_io.read_file(fd, "pueue.yml", mode=0o600, max_bytes=16384)
+            config = private_io.read_file(
+                fd, "pueue.yml", mode=0o600, max_bytes=16384
+            )
             require(config == configuration(registry), "daemon_config_changed")
             require(
-                private_io.read_file(fd, "aliases.yml", mode=0o600, max_bytes=64)
+                private_io.read_file(
+                    fd, "aliases.yml", mode=0o600, max_bytes=64
+                )
                 == b"{}\n",
                 "aliases_changed",
             )
@@ -141,7 +152,8 @@ class Pueue:
                 parent, binary.name, mode=0o700, max_bytes=4 * 1024**2
             )
             require(
-                hashlib.sha256(encoded).hexdigest() == BINARY_SHA256, "binary_changed"
+                hashlib.sha256(encoded).hexdigest() == BINARY_SHA256,
+                "binary_changed",
             )
         finally:
             os.close(parent)
@@ -204,7 +216,10 @@ class Pueue:
         require(
             type(environment) is dict
             and len(environment) <= 128
-            and all(environment.get(key) == value for key, value in ENVIRONMENT.items())
+            and all(
+                environment.get(key) == value
+                for key, value in ENVIRONMENT.items()
+            )
             and all(
                 type(key) is str and 1 <= len(key) <= 128 and "\x00" not in key
                 for key in environment
@@ -212,7 +227,8 @@ class Pueue:
             "task_environment_changed",
         )
         # Pueue captures the client process environment; remove even runtime-
-        # supplied extras rather than assuming Popen's input is its final state.
+        # supplied extras rather than assuming Popen's input is its final
+        # state.
         for key in sorted(environment.keys() - ENVIRONMENT.keys()):
             self.call("env", "unset", str(task_id), "--", key)
         require(

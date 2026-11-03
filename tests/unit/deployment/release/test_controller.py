@@ -44,7 +44,9 @@ class Docker:
         self.fixture.assertFalse((slot / "complete.json").exists())
         if "up" in arguments:
             self.fixture.assertIn("--no-build", arguments)
-            self.fixture.assertEqual("never", arguments[arguments.index("--pull") + 1])
+            self.fixture.assertEqual(
+                "never", arguments[arguments.index("--pull") + 1]
+            )
             self.fixture.assertEqual(
                 set(arguments[-3:]), release.release_runtime.SERVICES
             )
@@ -54,13 +56,18 @@ class Docker:
         return b""
 
     def inspect(self, identifier):
-        return {"Id": identifier, "Config": {"Cmd": ["fixture"], "Entrypoint": None}}
+        return {
+            "Id": identifier,
+            "Config": {"Cmd": ["fixture"], "Entrypoint": None},
+        }
 
 
 @unittest.skipIf(os.geteuid() == 0, "release operator requires non-root")
 class PrivateReleaseTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-private-release-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-private-release-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         config = product()
@@ -75,16 +82,23 @@ class PrivateReleaseTests(unittest.TestCase):
             "project": self.values["catalog_identity"]["catalog_project"],
             "manifest_sha256": self.values["lease"]["manifest_sha256"],
             "work_root": str(self.config.state_root / "catalogs" / "fixture"),
-            "data_root": str(self.config.state_root / "catalogs" / "fixture" / "data"),
+            "data_root": str(
+                self.config.state_root / "catalogs" / "fixture" / "data"
+            ),
         }
         self.context = {
             "plan": self.plan,
-            "bundle": SimpleNamespace(bundle_id=self.values["lease"]["bundle_id"]),
+            "bundle": SimpleNamespace(
+                bundle_id=self.values["lease"]["bundle_id"]
+            ),
         }
         self.images = self.values["images"]
         self.authority = {
             "catalog_identity": self.values["catalog_identity"],
-            "runtime": {"container_ids": {"fixture": "1" * 64}, "network_id": "2" * 64},
+            "runtime": {
+                "container_ids": {"fixture": "1" * 64},
+                "network_id": "2" * 64,
+            },
         }
         self.image_authority = {
             "revision": self.revision,
@@ -100,12 +114,16 @@ class PrivateReleaseTests(unittest.TestCase):
         }
         self.proof = {
             "container_ids": {
-                row["Config"]["Labels"]["com.docker.compose.service"]: row["Id"]
+                row["Config"]["Labels"]["com.docker.compose.service"]: row[
+                    "Id"
+                ]
                 for row in self.values["containers"]
             },
             "network_ids": self.values["lease"]["network_ids"],
             "start_identity_sha256": "4" * 64,
-            "lease_sha256": release.client_lease.lease_digest(self.values["lease"]),
+            "lease_sha256": release.client_lease.lease_digest(
+                self.values["lease"]
+            ),
         }
         self.gpu_compose = {
             "name": "depositar-ai-inference-" + "5" * 12,
@@ -144,7 +162,11 @@ class PrivateReleaseTests(unittest.TestCase):
                     "services": {"reranker": {"source_sha256": "6" * 64}},
                 },
             ),
-            (release.image_evidence, "read_completed_images", self.image_authority),
+            (
+                release.image_evidence,
+                "read_completed_images",
+                self.image_authority,
+            ),
             (release.inference, "_authority", self.image_authority),
             (release.inference, "_refresh_authority", self.image_authority),
             (release.composition, "_inference", self.gpu_compose),
@@ -153,7 +175,10 @@ class PrivateReleaseTests(unittest.TestCase):
             (
                 release,
                 "_images",
-                {role: self.images[role] for role in ("web", "conversation-api")},
+                {
+                    role: self.images[role]
+                    for role in ("web", "conversation-api")
+                },
             ),
             (
                 release.execution,
@@ -165,7 +190,11 @@ class PrivateReleaseTests(unittest.TestCase):
                 "render_composition",
                 {"inference": self.gpu_compose, "release": self.compose},
             ),
-            (release.inference, "_runtime_identity", {"fixture": "inference-identity"}),
+            (
+                release.inference,
+                "_runtime_identity",
+                {"fixture": "inference-identity"},
+            ),
             (release, "_sealed_inference", lambda proof: None),
             (release.inference, "_gpu", None),
             (release.inference_runtime, "ownership_proofs", []),
@@ -202,7 +231,9 @@ class PrivateReleaseTests(unittest.TestCase):
             release.inference, "_verified_models", side_effect=self.models
         ).start()
         mock.patch.object(
-            release.runtime_docker, "project_inventory", side_effect=self.inventory
+            release.runtime_docker,
+            "project_inventory",
+            side_effect=self.inventory,
         ).start()
         mock.patch.object(
             release.query, "verify_authority", side_effect=self.query
@@ -237,7 +268,10 @@ class PrivateReleaseTests(unittest.TestCase):
             self.model_checks += 1
 
         yield (
-            {role: {"fixture": True} for role in ("api", "embedding", "reranker")},
+            {
+                role: {"fixture": True}
+                for role in ("api", "embedding", "reranker")
+            },
             verify,
         )
         if self.close_failure:
@@ -246,7 +280,9 @@ class PrivateReleaseTests(unittest.TestCase):
     def key(self, *args):
         return {
             "credential_sha256": (
-                "b" if self.key_drift_after_start and self.docker.started else "a"
+                "b"
+                if self.key_drift_after_start and self.docker.started
+                else "a"
             )
             * 64
         }
@@ -270,13 +306,21 @@ class PrivateReleaseTests(unittest.TestCase):
     def invoke(self):
         with locked_state(self.config) as store:
             return release.start_private_release(
-                self.config, store, self.revision, self.plan, repo_root=self.root
+                self.config,
+                store,
+                self.revision,
+                self.plan,
+                repo_root=self.root,
             )
 
     def verify_completed(self):
         with locked_state(self.config) as store:
             return release.verify_completed_private_release(
-                self.config, store, self.revision, self.plan, repo_root=self.root
+                self.config,
+                store,
+                self.revision,
+                self.plan,
+                repo_root=self.root,
             )
 
     def receipts(self):
@@ -297,7 +341,9 @@ class PrivateReleaseTests(unittest.TestCase):
             / self.project.removeprefix("depositar-ai-")
         )
 
-    def test_fresh_start_seals_private_receipts_only_after_required_probe(self):
+    def test_fresh_start_seals_private_receipts_only_after_required_probe(
+        self,
+    ):
         result = self.invoke()
         self.assertEqual("private_release_running", result["status"])
         self.assertFalse(result["runtime_reused"])
@@ -326,8 +372,16 @@ class PrivateReleaseTests(unittest.TestCase):
         second = self.invoke()
         self.assertTrue(second["runtime_reused"])
         self.assertEqual(
-            {key: value for key, value in first.items() if key != "runtime_reused"},
-            {key: value for key, value in second.items() if key != "runtime_reused"},
+            {
+                key: value
+                for key, value in first.items()
+                if key != "runtime_reused"
+            },
+            {
+                key: value
+                for key, value in second.items()
+                if key != "runtime_reused"
+            },
         )
         self.assertEqual(2, self.probe.call_count)
         self.assertEqual(4, self.queries)
@@ -336,17 +390,23 @@ class PrivateReleaseTests(unittest.TestCase):
             [call for call in self.docker.calls if call[0] == "compose"],
         )
 
-    def test_verification_requires_completion_without_creating_release_state(self):
+    def test_verification_requires_completion_without_creating_release_state(
+        self,
+    ):
         before = self.receipts()
         with self.assertRaises(release.ReleaseError):
             self.verify_completed()
         self.assertEqual(before, self.receipts())
         self.assertFalse((self.config.state_root / "releases").exists())
         self.assertFalse(self.docker.started)
-        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertFalse(
+            any(call[0] == "compose" for call in self.docker.calls)
+        )
         self.probe.assert_not_called()
 
-    def test_completed_verification_is_readonly_without_repeating_acceptance(self):
+    def test_completed_verification_is_readonly_without_repeating_acceptance(
+        self,
+    ):
         started = self.invoke()
         before = self.receipts()
         self.docker.calls.clear()
@@ -355,12 +415,22 @@ class PrivateReleaseTests(unittest.TestCase):
         model_checks = self.model_checks
         result = self.verify_completed()
         self.assertEqual(
-            {key: value for key, value in started.items() if key != "runtime_reused"},
-            {key: value for key, value in result.items() if key != "runtime_reused"},
+            {
+                key: value
+                for key, value in started.items()
+                if key != "runtime_reused"
+            },
+            {
+                key: value
+                for key, value in result.items()
+                if key != "runtime_reused"
+            },
         )
         self.assertTrue(result["runtime_reused"])
         self.assertEqual(before, self.receipts())
-        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertFalse(
+            any(call[0] == "compose" for call in self.docker.calls)
+        )
         self.assertEqual(1, self.probe.call_count)
         self.assertGreater(self.queries, queries)
         self.assertGreater(self.runtime_calls, observed)
@@ -386,7 +456,9 @@ class PrivateReleaseTests(unittest.TestCase):
                 path.write_bytes(contents)
                 path.chmod(0o600)
 
-    def test_completed_verification_rejects_missing_pointer_without_repair(self):
+    def test_completed_verification_rejects_missing_pointer_without_repair(
+        self,
+    ):
         self.invoke()
         pointer = self.config.state_root / "release-candidate.json"
         pointer.unlink()
@@ -396,10 +468,14 @@ class PrivateReleaseTests(unittest.TestCase):
             self.verify_completed()
         self.assertEqual(before, self.receipts())
         self.assertFalse(pointer.exists())
-        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertFalse(
+            any(call[0] == "compose" for call in self.docker.calls)
+        )
         self.assertEqual(1, self.probe.call_count)
 
-    def test_completed_verification_rejects_authority_drift_without_acceptance(self):
+    def test_completed_verification_rejects_authority_drift_without_acceptance(
+        self,
+    ):
         self.invoke()
         before = self.receipts()
         for authority in ("source", "query", "credential", "image"):
@@ -427,7 +503,9 @@ class PrivateReleaseTests(unittest.TestCase):
                     self.authority = query_authority
                     self.images = images
 
-    def test_completed_verification_rejects_replaced_and_restarted_runtime(self):
+    def test_completed_verification_rejects_replaced_and_restarted_runtime(
+        self,
+    ):
         self.invoke()
         before = self.receipts()
         original = copy.deepcopy(self.proof)
@@ -463,7 +541,9 @@ class PrivateReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             self.verify_completed()
         self.assertEqual(before, self.receipts())
-        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertFalse(
+            any(call[0] == "compose" for call in self.docker.calls)
+        )
         self.assertEqual(1, self.probe.call_count)
 
     def test_completed_verification_handle_exit_failure_is_not_success(self):
@@ -474,7 +554,9 @@ class PrivateReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             self.verify_completed()
         self.assertEqual(before, self.receipts())
-        self.assertFalse(any(call[0] == "compose" for call in self.docker.calls))
+        self.assertFalse(
+            any(call[0] == "compose" for call in self.docker.calls)
+        )
         self.assertEqual(1, self.probe.call_count)
 
     def test_successful_model_handle_exit_cannot_hide_receipt_drift(self):
@@ -500,7 +582,9 @@ class PrivateReleaseTests(unittest.TestCase):
                 try:
                     with (
                         mock.patch.object(
-                            release.inference, "_verified_models", mutate_on_close
+                            release.inference,
+                            "_verified_models",
+                            mutate_on_close,
                         ),
                         self.assertRaises(release.ReleaseError),
                     ):
@@ -517,8 +601,12 @@ class PrivateReleaseTests(unittest.TestCase):
         self.docker.fail_up = True
         with self.assertRaises(release.ReleaseError):
             self.invoke()
-        self.assertEqual({"started.json", "compose.json"}, set(os.listdir(self.slot())))
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertEqual(
+            {"started.json", "compose.json"}, set(os.listdir(self.slot()))
+        )
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
         self.docker.fail_up = False
         with self.assertRaisesRegex(release.ReleaseError, "partial_state"):
             self.invoke()
@@ -542,13 +630,19 @@ class PrivateReleaseTests(unittest.TestCase):
                 self.docker.started = False
                 self.acceptance = dict(accepted)
                 self.acceptance[field] = False
-                with self.assertRaisesRegex(release.ReleaseError, "acceptance_blocked"):
+                with self.assertRaisesRegex(
+                    release.ReleaseError, "acceptance_blocked"
+                ):
                     self.invoke()
                 self.assertFalse((self.slot() / "complete.json").exists())
 
-    def test_probe_execution_error_has_fixed_diagnostic_and_no_completion(self):
+    def test_probe_execution_error_has_fixed_diagnostic_and_no_completion(
+        self,
+    ):
         private = "PRIVATE_SENTINEL-http-body-or-subprocess-output"
-        self.probe.side_effect = release.release_probe.ReleaseProbeError(private)
+        self.probe.side_effect = release.release_probe.ReleaseProbeError(
+            private
+        )
         with self.assertRaisesRegex(
             release.ReleaseError, "^release_acceptance_probe_failed$"
         ) as raised:
@@ -557,13 +651,17 @@ class PrivateReleaseTests(unittest.TestCase):
         self.assertEqual(
             release.FILES - {"complete.json"}, set(os.listdir(self.slot()))
         )
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
         for path in self.slot().iterdir():
             self.assertNotIn(private, path.read_text())
 
     def test_probe_cannot_claim_gateway(self):
         self.acceptance["gateway_verified"] = True
-        with self.assertRaisesRegex(release.ReleaseError, "acceptance_invalid"):
+        with self.assertRaisesRegex(
+            release.ReleaseError, "acceptance_invalid"
+        ):
             self.invoke()
         self.assertEqual(
             release.FILES - {"complete.json"}, set(os.listdir(self.slot()))
@@ -575,7 +673,9 @@ class PrivateReleaseTests(unittest.TestCase):
             self.invoke()
         self.assertTrue(self.docker.started)
         self.assertFalse((self.slot() / "complete.json").exists())
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
 
     def test_post_start_key_authority_drift_keeps_no_completion(self):
         self.key_drift_after_start = True
@@ -591,7 +691,9 @@ class PrivateReleaseTests(unittest.TestCase):
         self.assertTrue(self.docker.started)
         self.assertFalse((self.slot() / "complete.json").exists())
 
-    def test_final_runtime_observation_query_authority_drift_blocks_publication(self):
+    def test_final_observation_query_authority_drift_blocks_publication(
+        self,
+    ):
         def drift(count):
             if count == 5:
                 self.authority["fixture_changed"] = True
@@ -601,7 +703,9 @@ class PrivateReleaseTests(unittest.TestCase):
             self.invoke()
         self.assertTrue(self.docker.started)
         self.assertFalse((self.slot() / "complete.json").exists())
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
 
     def test_final_runtime_observation_source_drift_blocks_publication(self):
         def drift(count):
@@ -613,7 +717,9 @@ class PrivateReleaseTests(unittest.TestCase):
             self.invoke()
         self.assertTrue(self.docker.started)
         self.assertFalse((self.slot() / "complete.json").exists())
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
 
     def test_final_runtime_observation_key_drift_blocks_publication(self):
         def drift(count):
@@ -625,7 +731,9 @@ class PrivateReleaseTests(unittest.TestCase):
             self.invoke()
         self.assertTrue(self.docker.started)
         self.assertFalse((self.slot() / "complete.json").exists())
-        self.assertFalse((self.config.state_root / "release-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "release-candidate.json").exists()
+        )
 
     def test_unowned_existing_runtime_is_not_adopted(self):
         self.existing = True
@@ -640,7 +748,9 @@ class PrivateReleaseTests(unittest.TestCase):
     def test_completed_start_identity_drift_is_rejected_before_probe(self):
         self.invoke()
         self.proof["start_identity_sha256"] = "c" * 64
-        with self.assertRaisesRegex(release.ReleaseError, "completed_runtime_changed"):
+        with self.assertRaisesRegex(
+            release.ReleaseError, "completed_runtime_changed"
+        ):
             self.invoke()
         self.assertEqual(1, self.probe.call_count)
 
@@ -662,7 +772,9 @@ class PrivateReleaseTests(unittest.TestCase):
 
     def test_unsupported_daemon_does_not_create_release_slot(self):
         self.docker.ostype = "windows"
-        with self.assertRaisesRegex(release.ReleaseError, "daemon_unsupported"):
+        with self.assertRaisesRegex(
+            release.ReleaseError, "daemon_unsupported"
+        ):
             self.invoke()
         self.assertFalse((self.config.state_root / "releases").exists())
 

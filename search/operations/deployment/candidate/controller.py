@@ -1,9 +1,9 @@
 """One reviewed CPU candidate sharing a sealed live inference/catalog plane.
 
 The operator owns a separate journal and frozen source worktree. It never
-starts, warms, repairs or stops GPU/catalog services, nor changes the live route.
-Old single-client entry points stay strict; this explicit phase verifies both
-complete clients against the actual unfiltered networks.
+starts, warms, repairs or stops GPU/catalog services, nor changes the live
+route. Old single-client entry points stay strict; this explicit phase verifies
+both complete clients against the actual unfiltered networks.
 """
 
 from contextlib import ExitStack, contextmanager
@@ -35,7 +35,9 @@ from search.operations.deployment import (
 )
 from search.operations.deployment.images import authority as image_authority
 from search.operations.deployment.images import build as image_build
-from search.operations.deployment.release import controller as release_controller
+from search.operations.deployment.release import (
+    controller as release_controller,
+)
 from search.operations.deployment.release import probe as release_probe
 from search.operations.deployment.release import runtime
 from search.operations.shared import private_io
@@ -87,7 +89,9 @@ def digest(value):
 
 def path(value):
     require(
-        type(value) is str and value.isascii() and not any(ord(c) < 32 for c in value),
+        type(value) is str
+        and value.isascii()
+        and not any(ord(c) < 32 for c in value),
         "path_invalid",
     )
     p = Path(value)
@@ -100,13 +104,16 @@ def load_config(filename):
     fd = private_io.open_directory(filename.parent)
     try:
         value = strict_json(
-            private_io.read_file(fd, filename.name, mode=0o600, max_bytes=16384)
+            private_io.read_file(
+                fd, filename.name, mode=0o600, max_bytes=16384
+            )
         )
     finally:
         os.close(fd)
     require(
         type(value) is dict
-        and set(value) in (FIELDS, FIELDS | {"catalog_config", "catalog_source"})
+        and set(value)
+        in (FIELDS, FIELDS | {"catalog_config", "catalog_source"})
         and type(value["schema_version"]) is int
         and value["schema_version"] == 1,
         "config_invalid",
@@ -161,7 +168,10 @@ def journal(root):
     lock = None
     try:
         lock = os.open(
-            "operations.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=fd
+            "operations.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=fd,
         )
         row = os.fstat(lock)
         require(
@@ -177,7 +187,8 @@ def journal(root):
             raise SharedBackendError("shared_backend_busy") from None
         named = os.stat("operations.lock", dir_fd=fd, follow_symlinks=False)
         require(
-            (row.st_dev, row.st_ino) == (named.st_dev, named.st_ino), "lock_changed"
+            (row.st_dev, row.st_ino) == (named.st_dev, named.st_ino),
+            "lock_changed",
         )
         store = StateStore(root, fd)
         yield store
@@ -211,7 +222,8 @@ def current(store):
         "journal_invalid",
     )
     require(
-        type(value.get("revision")) is str and HEX40.fullmatch(value["revision"]),
+        type(value.get("revision")) is str
+        and HEX40.fullmatch(value["revision"]),
         "journal_invalid",
     )
     require(
@@ -226,7 +238,8 @@ def current(store):
     if value["phase"] in {"prepared", "created", "starting", "running"}:
         require(
             all(
-                type(value.get(k)) is str and re.fullmatch(r"[0-9a-f]{64}", value[k])
+                type(value.get(k)) is str
+                and re.fullmatch(r"[0-9a-f]{64}", value[k])
                 for k in (
                     "baseline_receipt_sha256",
                     "model_file_identity_sha256",
@@ -246,7 +259,14 @@ def save(store, value, phase=None):
 
 def git(source, *arguments):
     result = image_build._run(
-        ["git", "-c", "core.hooksPath=/dev/null", "-C", str(source), *arguments],
+        [
+            "git",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-C",
+            str(source),
+            *arguments,
+        ],
         timeout=60,
         environment={
             "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -268,29 +288,42 @@ def summary(record):
 
 
 def frozen_source(profile, revision):
-    require(type(revision) is str and HEX40.fullmatch(revision), "revision_invalid")
+    require(
+        type(revision) is str and HEX40.fullmatch(revision), "revision_invalid"
+    )
     return profile["state_root"] / "sources" / revision
 
 
 def build_root(profile, revision):
-    require(type(revision) is str and HEX40.fullmatch(revision), "revision_invalid")
+    require(
+        type(revision) is str and HEX40.fullmatch(revision), "revision_invalid"
+    )
     return profile["state_root"] / "builds" / revision
 
 
 def baseline_context(profile, config, store, revision):
     context, _value = catalog.load_context(
-        profile["production_source"], profile["production_config"], config, store
+        profile["production_source"],
+        profile["production_config"],
+        config,
+        store,
     )
-    require(context["source_revision"] == revision, "production_source_changed")
+    require(
+        context["source_revision"] == revision, "production_source_changed"
+    )
     return context
 
 
 @contextmanager
 def live(profile, record=None):
-    """Retain original source/model/query authority and product/catalog locks."""
+    """Retain original source/model/query authority and product/catalog
+    locks.
+    """
     repo = profile["production_source"]
     revision = require_clean_revision(repo)
-    config = product_config.load_config(profile["production_config"], repo_root=repo)
+    config = product_config.load_config(
+        profile["production_config"], repo_root=repo
+    )
     with locked_state(config, create=False) as store:
         require(
             store.read("release-candidate.json").get("revision") == revision,
@@ -323,8 +356,12 @@ def live(profile, record=None):
             slot = private_io.open_child_directory(parent, name)
             stack.callback(os.close, slot)
             completed = release_controller._load_completed(slot, inputs)
-            release_controller._same(store.read("release-candidate.json"), completed)
-            session = Session(profile, config, store, context, inputs, completed)
+            release_controller._same(
+                store.read("release-candidate.json"), completed
+            )
+            session = Session(
+                profile, config, store, context, inputs, completed
+            )
             session.baseline_catalog, session.query_catalog = catalog.select(
                 profile, stack, config, store, session.native, inputs.key
             )
@@ -339,9 +376,12 @@ def live(profile, record=None):
             release_controller._same(
                 image_build._record(slot, "complete.json"), completed
             )
-            release_controller._same(store.read("release-candidate.json"), completed)
+            release_controller._same(
+                store.read("release-candidate.json"), completed
+            )
             require(
-                require_clean_revision(repo) == revision, "production_source_changed"
+                require_clean_revision(repo) == revision,
+                "production_source_changed",
             )
 
 
@@ -355,7 +395,9 @@ def evidence(native, groups, networks):
         "catalog_identity": native.authority["catalog_identity"],
         "release_compose": compose,
         "image_proof": native.image_proof,
-        "image_environment": native.images["conversation-api"]["Config"]["Env"],
+        "image_environment": native.images["conversation-api"]["Config"][
+            "Env"
+        ],
         "api_container": api[0],
         "catalog_network": networks[
             native.context["plan"]["project"] + "_search_backend"
@@ -371,7 +413,11 @@ class Session:
             store,
             context,
         )
-        self.inputs, self.completed, self.native = inputs, completed, inputs.host
+        self.inputs, self.completed, self.native = (
+            inputs,
+            completed,
+            inputs.host,
+        )
         self.docker = inputs.host.docker
         self.candidate = None
         self.record = None
@@ -388,7 +434,10 @@ class Session:
         projects.append(
             (
                 self.native.inference_compose["name"],
-                {v["name"] for v in self.native.inference_compose["networks"].values()},
+                {
+                    v["name"]
+                    for v in self.native.inference_compose["networks"].values()
+                },
             )
         )
         for host in (self.native, self.candidate):
@@ -449,7 +498,9 @@ class Session:
                 host.lease,
                 catalog_identity=host.authority["catalog_identity"],
                 image_proof=host.image_proof,
-                image_environment=host.images["conversation-api"]["Config"]["Env"],
+                image_environment=host.images["conversation-api"]["Config"][
+                    "Env"
+                ],
                 catalog_network=networks[
                     host.context["plan"]["project"] + "_search_backend"
                 ],
@@ -496,7 +547,9 @@ class Session:
             project = binding.context["plan"]["project"]
             release_controller._same(
                 snapshot_peers(
-                    binding.context, binding.authority["runtime"], snapshots[project]
+                    binding.context,
+                    binding.authority["runtime"],
+                    snapshots[project],
                 ),
                 snapshot_peers(
                     binding.context,
@@ -515,14 +568,19 @@ class Session:
         return min(maximum, left)
 
     def check_models(self, policy, expected_compute=None, *, deadline=None):
-        """Bounded ownership/residency checkpoint, without scanning the catalog."""
+        """
+        Bounded ownership/residency checkpoint, without scanning the catalog.
+        """
         from .probe import verify_residency
 
         def tls_runner(argv, **kwargs):
             return image_build._run(
                 argv,
                 timeout=self.remaining(kwargs["timeout"], deadline=deadline),
-                environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+                environment={
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                    "LANG": "C.UTF-8",
+                },
             )
 
         def gpu_runner(argv, *, timeout, max_bytes):
@@ -563,7 +621,10 @@ class Session:
                 "--format=csv,noheader,nounits",
             ],
             timeout=self.remaining(15, deadline=deadline),
-            environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            environment={
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+            },
         )
         require(result.returncode == 0, "compute_snapshot_failed")
         pairs = []
@@ -591,7 +652,8 @@ class Session:
         )
         self.compute_sha256 = digest(sorted(pairs))
         require(
-            expected_compute is None or self.compute_sha256 == expected_compute,
+            expected_compute is None
+            or self.compute_sha256 == expected_compute,
             "model_process_changed",
         )
         self.remaining(1, deadline=deadline)
@@ -631,13 +693,20 @@ class Session:
                 "shared_backend_catalog_selection_changed",
             )
         config = replace(
-            self.config, state_root=build_root(self.profile, record["revision"])
+            self.config,
+            state_root=build_root(self.profile, record["revision"]),
         )
         with locked_state(config, create=False) as store:
-            plan = source_bundle.committed_source_plan(source, record["revision"])
-            authority = image_authority.read_completed_images(config, store, plan)
+            plan = source_bundle.committed_source_plan(
+                source, record["revision"]
+            )
+            authority = image_authority.read_completed_images(
+                config, store, plan
+            )
             images = release_controller._images(self.docker, plan, authority)
-        images["filtered-embedding"] = self.native.inference_images["scope-model"]
+        images["filtered-embedding"] = self.native.inference_images[
+            "scope-model"
+        ]
         plans = composition.render_composition(
             self.query_catalog.config,
             self.query_context["plan"],
@@ -647,13 +716,17 @@ class Session:
             record["revision"],
             uid=os.geteuid(),
             gid=os.getegid(),
-            inference_source_sha256=plan["services"]["reranker"]["source_sha256"],
+            inference_source_sha256=plan["services"]["reranker"][
+                "source_sha256"
+            ],
         )
         gpu = copy.deepcopy(plans["inference"])
         for role, value in self.native.inference_images.items():
             gpu["services"][role]["image"] = value["Id"]
         release_controller._same(
-            gpu, self.native.inference_compose, "shared_backend_model_recipe_changed"
+            gpu,
+            self.native.inference_compose,
+            "shared_backend_model_recipe_changed",
         )
         compose = copy.deepcopy(plans["release"])
         for role, image in images.items():
@@ -666,7 +739,9 @@ class Session:
                     "io.depositar.ai.source.service": role,
                     "io.depositar.ai.source.sha256": p["source_sha256"],
                 }
-        require(compose["name"] != self.native.compose["name"], "candidate_is_live")
+        require(
+            compose["name"] != self.native.compose["name"], "candidate_is_live"
+        )
         return compose, images, authority["images"]["conversation-api"]
 
     def attach_record(self, record):
@@ -695,11 +770,14 @@ class Session:
 def prepare(profile, store, source):
     prior = current(store)
     require(
-        prior is None or prior["phase"] == "stopped", "candidate_already_registered"
+        prior is None or prior["phase"] == "stopped",
+        "candidate_already_registered",
     )
     source = path(str(source))
     revision = require_clean_revision(source)
-    policy = validate_shared_request_policy(profile["production_source"], source)
+    policy = validate_shared_request_policy(
+        profile["production_source"], source
+    )
     frozen = frozen_source(profile, revision)
     for folder in (frozen.parent, build_root(profile, revision).parent):
         os.close(private_io.open_directory(folder, create=True))
@@ -740,7 +818,9 @@ def prepare(profile, store, source):
                 "compose": compose,
                 "catalog_binding": session.query_catalog.identity(),
                 "baseline_receipt_sha256": digest(session.completed),
-                "model_file_identity_sha256": session.inputs.model_file_identity_sha256,
+                (
+                    "model_file_identity_sha256"
+                ): session.inputs.model_file_identity_sha256,
                 "compute_sha256": session.compute_sha256,
                 "network_id": None,
                 "external_network_ids": {
@@ -756,7 +836,9 @@ def prepare(profile, store, source):
         )
         require(
             type(record["model_file_identity_sha256"]) is str
-            and re.fullmatch(r"[0-9a-f]{64}", record["model_file_identity_sha256"]),
+            and re.fullmatch(
+                r"[0-9a-f]{64}", record["model_file_identity_sha256"]
+            ),
             "model_verification_cache_missing",
         )
     # Completed model/source FD checks must succeed before the cache is usable.
@@ -770,7 +852,8 @@ def candidate_rows(docker, record, compose_file):
         docker, compose["name"]
     )
     require(
-        names <= {compose["networks"]["website"]["name"]}, "candidate_inventory_changed"
+        names <= {compose["networks"]["website"]["name"]},
+        "candidate_inventory_changed",
     )
     if not ids:
         return [], names
@@ -792,7 +875,8 @@ def candidate_rows(docker, record, compose_file):
             "candidate_identity_changed",
         )
         require(
-            labels.get("com.docker.compose.project.config_files") == str(compose_file),
+            labels.get("com.docker.compose.project.config_files")
+            == str(compose_file),
             "candidate_launcher_changed",
         )
         require(
@@ -809,7 +893,10 @@ def candidate_rows(docker, record, compose_file):
         require(
             row.get("Image") == service["image"]
             and row["Config"].get("Image") == service["image"]
-            and all(labels.get(k) == v for k, v in service.get("labels", {}).items()),
+            and all(
+                labels.get(k) == v
+                for k, v in service.get("labels", {}).items()
+            ),
             "candidate_image_changed",
         )
         runtime._runtime_resources(
@@ -834,18 +921,22 @@ def candidate_rows(docker, record, compose_file):
             <= {compose["networks"][k]["name"] for k in service["networks"]},
             "candidate_network_changed",
         )
-        for name, attachment in (row["NetworkSettings"].get("Networks") or {}).items():
+        for name, attachment in (
+            row["NetworkSettings"].get("Networks") or {}
+        ).items():
             expected = record.get("external_network_ids", {}).get(name)
             if name == compose["networks"]["website"]["name"]:
                 expected = record.get("network_id")
             if expected is not None and attachment.get("NetworkID"):
                 require(
-                    attachment["NetworkID"] == expected, "candidate_network_changed"
+                    attachment["NetworkID"] == expected,
+                    "candidate_network_changed",
                 )
         observed[role] = row["Id"]
     if record["container_ids"]:
         require(
-            set(observed) <= set(record["container_ids"]), "candidate_inventory_changed"
+            set(observed) <= set(record["container_ids"]),
+            "candidate_inventory_changed",
         )
     return rows, names
 
@@ -858,7 +949,9 @@ def start(profile, store, record):
     with live(profile, record) as session:
         if record["phase"] == "running":
             session.attach_record(record)
-            session.verify(record["policy"]["policy"], record["compute_sha256"])
+            session.verify(
+                record["policy"]["policy"], record["compute_sha256"]
+            )
             return summary(record)
         session.verify(record["policy"]["policy"], record["compute_sha256"])
         compose, images, api_proof = session.candidate_inputs(record)
@@ -888,7 +981,8 @@ def start(profile, store, record):
         save(store, record, "creating")
         try:
             session.docker.call(
-                [*prefix, "create", "--no-build", "--pull", "never"], timeout=180
+                [*prefix, "create", "--no-build", "--pull", "never"],
+                timeout=180,
             )
             rows, _ = candidate_rows(
                 session.docker, record, profile["state_root"] / "compose.json"
@@ -911,7 +1005,8 @@ def start(profile, store, record):
             }
             save(store, record, "created")
             session.docker.call(
-                [*prefix, "start", "--wait", "--wait-timeout", "180"], timeout=210
+                [*prefix, "start", "--wait", "--wait-timeout", "180"],
+                timeout=210,
             )
             groups, networks = session.native.collect(clients=True)
             catalog_name = compose["networks"]["catalog"]["name"]
@@ -927,7 +1022,9 @@ def start(profile, store, record):
             ids, _ = release_controller.runtime_docker.project_inventory(
                 session.docker, compose["name"]
             )
-            rows = image_build._json(session.docker.call(["inspect", *sorted(ids)]))
+            rows = image_build._json(
+                session.docker.call(["inspect", *sorted(ids)])
+            )
             website = compose["networks"]["website"]["name"]
             networks[website] = image_build._json(
                 session.docker.call(["network", "inspect", website])
@@ -954,7 +1051,9 @@ def start(profile, store, record):
             }
             save(store, record, "starting")
             session.attach_record(record)
-            session.verify(record["policy"]["policy"], record["compute_sha256"])
+            session.verify(
+                record["policy"]["policy"], record["compute_sha256"]
+            )
             ready = release_probe.verify_private_release(
                 session.docker,
                 record["container_ids"],
@@ -964,7 +1063,9 @@ def start(profile, store, record):
                 search=False,
             )
             require(ready["readiness_verified"] is True, "candidate_not_ready")
-            session.verify(record["policy"]["policy"], record["compute_sha256"])
+            session.verify(
+                record["policy"]["policy"], record["compute_sha256"]
+            )
             record["runtime"] = session.last_candidate
             save(store, record, "starting")
         except BaseException:
@@ -980,7 +1081,9 @@ def stop(profile, store, record):
         return summary(record)
     from search.operations.deployment.runtime_docker import Docker
 
-    with tempfile.TemporaryDirectory(prefix="shared-backend-stop-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="shared-backend-stop-"
+    ) as temporary:
         docker = Docker(
             temporary, None, deadline=time.monotonic() + 180, max_commands=32
         )
@@ -996,16 +1099,22 @@ def stop(profile, store, record):
                 # Never discard an uncertain intent on an empty/partial view.
                 require(len(rows) == 3, "partial_creation_unconfirmed")
                 record["container_ids"] = {
-                    r["Config"]["Labels"]["com.docker.compose.service"]: r["Id"]
+                    r["Config"]["Labels"]["com.docker.compose.service"]: r[
+                        "Id"
+                    ]
                     for r in rows
                 }
                 save(store, record)
             owned_networks = []
             for name in names:
-                networks = image_build._json(docker.call(["network", "inspect", name]))
+                networks = image_build._json(
+                    docker.call(["network", "inspect", name])
+                )
                 require(
                     len(networks) == 1
-                    and networks[0].get("Labels", {}).get("com.docker.compose.project")
+                    and networks[0]
+                    .get("Labels", {})
+                    .get("com.docker.compose.project")
                     == record["compose"]["name"],
                     "candidate_network_changed",
                 )
@@ -1030,7 +1139,9 @@ def stop(profile, store, record):
                     len(rows) == 1
                     and rows[0].get("Id") == identifier
                     and not rows[0].get("Containers")
-                    and rows[0].get("Labels", {}).get("com.docker.compose.project")
+                    and rows[0]
+                    .get("Labels", {})
+                    .get("com.docker.compose.project")
                     == record["compose"]["name"],
                     "candidate_network_changed",
                 )
@@ -1042,14 +1153,22 @@ def stop(profile, store, record):
             "candidate_source_changed",
         )
         common = (
-            git(source, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            git(
+                source,
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            )
             .decode()
             .strip()
         )
         result = image_build._run(
             ["git", "--git-dir", common, "worktree", "remove", str(source)],
             timeout=60,
-            environment={"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            environment={
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+            },
         )
         require(result.returncode == 0, "source_operation_failed")
     build = build_root(profile, record["revision"])
@@ -1063,16 +1182,21 @@ def stop(profile, store, record):
     return summary(record)
 
 
-def operate(filename, operation, *, source=None, text=None, batch_identity=False):
+def operate(
+    filename, operation, *, source=None, text=None, batch_identity=False
+):
     require(
         operation in {"prepare", "start", "status", "query", "stop"},
         "operation_invalid",
     )
     require(
-        type(batch_identity) is bool and (not batch_identity or operation == "status"),
+        type(batch_identity) is bool
+        and (not batch_identity or operation == "status"),
         "batch_identity_operation_invalid",
     )
-    operator_revision = require_clean_revision(ROOT) if batch_identity else None
+    operator_revision = (
+        require_clean_revision(ROOT) if batch_identity else None
+    )
     profile = load_config(filename)
     with journal(profile["state_root"]) as store:
         record = current(store)
@@ -1084,7 +1208,8 @@ def operate(filename, operation, *, source=None, text=None, batch_identity=False
             return start(profile, store, record)
         if record is None or record["phase"] != "running":
             require(
-                operation == "status" and not batch_identity, "candidate_not_running"
+                operation == "status" and not batch_identity,
+                "candidate_not_running",
             )
             return summary(record) if record else {"status": "empty"}
         with live(profile, record) as session:
@@ -1103,7 +1228,9 @@ def operate(filename, operation, *, source=None, text=None, batch_identity=False
                         record["revision"],
                     )
                 finally:
-                    session.verify(record["policy"]["policy"], record["compute_sha256"])
+                    session.verify(
+                        record["policy"]["policy"], record["compute_sha256"]
+                    )
                 return {**summary(record), **result}
             result = {**summary(record), "runtime_verified": True}
             if batch_identity:
@@ -1114,7 +1241,9 @@ def operate(filename, operation, *, source=None, text=None, batch_identity=False
                     "batch_operator_changed",
                 )
                 result["batch_identity_sha256"] = digest(
-                    runtime_identity(session, record, resident, operator_revision)
+                    runtime_identity(
+                        session, record, resident, operator_revision
+                    )
                 )
         if batch_identity:
             require(
@@ -1125,12 +1254,16 @@ def operate(filename, operation, *, source=None, text=None, batch_identity=False
 
 
 def _query_stdin():
-    """Read one bounded UTF-8 query through EOF without waiting indefinitely."""
+    """Read one bounded UTF-8 query through EOF without waiting
+    indefinitely.
+    """
     deadline = time.monotonic() + QUERY_INPUT_SECONDS
     try:
         descriptor = sys.stdin.fileno()
         require(
-            type(descriptor) is int and descriptor >= 0 and not os.isatty(descriptor),
+            type(descriptor) is int
+            and descriptor >= 0
+            and not os.isatty(descriptor),
             "query_invalid",
         )
         blocking = os.get_blocking(descriptor)
@@ -1141,9 +1274,14 @@ def _query_stdin():
                 remaining = deadline - time.monotonic()
                 require(remaining > 0, "query_input_timeout")
                 ready, _, _ = select.select([descriptor], [], [], remaining)
-                require(ready and time.monotonic() < deadline, "query_input_timeout")
+                require(
+                    ready and time.monotonic() < deadline,
+                    "query_input_timeout",
+                )
                 try:
-                    part = os.read(descriptor, MAX_QUERY_INPUT_BYTES + 1 - len(raw))
+                    part = os.read(
+                        descriptor, MAX_QUERY_INPUT_BYTES + 1 - len(raw)
+                    )
                 except BlockingIOError:
                     continue
                 raw.extend(part)
@@ -1171,7 +1309,9 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("prepare").add_argument("--source", required=True)
     commands.add_parser("start")
-    commands.add_parser("status").add_argument("--batch-identity", action="store_true")
+    commands.add_parser("status").add_argument(
+        "--batch-identity", action="store_true"
+    )
     commands.add_parser("stop")
     commands.add_parser("query").add_argument(
         "--stdin", action="store_true", required=True

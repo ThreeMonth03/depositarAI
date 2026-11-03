@@ -1,4 +1,6 @@
-"""Validate batch evidence before evaluating a complete, unchanged quality plan."""
+"""Validate batch evidence before evaluating
+a complete, unchanged quality plan.
+"""
 
 import hashlib
 import json
@@ -19,7 +21,9 @@ ERROR = re.compile(r"shared_(?:batch|backend)_[a-z_]{1,128}\Z")
 
 
 class BatchEvidenceError(ValueError):
-    """Use fixed diagnostics without reflecting private evidence or file paths."""
+    """Use fixed diagnostics without reflecting
+    private evidence or file paths.
+    """
 
 
 def _require(condition, code):
@@ -42,14 +46,18 @@ def _identity_fields(value, depth=0):
     if type(value) is dict:
         _require(len(value) <= 128, "identity_invalid")
         for key, item in value.items():
-            _require(type(key) is str and 1 <= len(key) <= 128, "identity_invalid")
+            _require(
+                type(key) is str and 1 <= len(key) <= 128, "identity_invalid"
+            )
             if key.endswith("_sha256") or key in {"digest", "bundle_id"}:
                 _require(
-                    type(item) is str and HEX64.fullmatch(item), "identity_invalid"
+                    type(item) is str and HEX64.fullmatch(item),
+                    "identity_invalid",
                 )
             elif key.endswith("_revision") or key == "revision":
                 _require(
-                    type(item) is str and HEX40.fullmatch(item), "identity_invalid"
+                    type(item) is str and HEX40.fullmatch(item),
+                    "identity_invalid",
                 )
             _identity_fields(item, depth + 1)
     elif type(value) is list:
@@ -82,8 +90,14 @@ def _identity(value):
         "gpu_image_ids",
         "candidate_runtime",
     }
-    _require(type(value) is dict and required <= value.keys(), "identity_invalid")
-    for name in ("operator_revision", "candidate_revision", "production_revision"):
+    _require(
+        type(value) is dict and required <= value.keys(), "identity_invalid"
+    )
+    for name in (
+        "operator_revision",
+        "candidate_revision",
+        "production_revision",
+    ):
         _require(
             type(value[name]) is str and HEX40.fullmatch(value[name]),
             "identity_invalid",
@@ -146,7 +160,8 @@ def _outcomes(value, plan, captured):
     for case, expected in zip(value["cases"], plan["cases"]):
         _require(
             type(case) is dict
-            and set(case) == {"id", "status", "error", "session_reset", "turns"}
+            and set(case)
+            == {"id", "status", "error", "session_reset", "turns"}
             and case["id"] == expected["id"]
             and type(case["status"]) is str
             and case["status"] in {"complete", "failed", "not_run"}
@@ -155,7 +170,9 @@ def _outcomes(value, plan, captured):
             and len(case["turns"]) == len(expected["turns"]),
             "outcomes_invalid",
         )
-        _require(not stopped or case["status"] == "not_run", "outcomes_invalid")
+        _require(
+            not stopped or case["status"] == "not_run", "outcomes_invalid"
+        )
         ok = 0
         turn_stopped = False
         for number, turn in enumerate(case["turns"], 1):
@@ -168,7 +185,9 @@ def _outcomes(value, plan, captured):
                 "outcomes_invalid",
             )
             status = turn["status"]
-            _require(not turn_stopped or status == "not_run", "outcomes_invalid")
+            _require(
+                not turn_stopped or status == "not_run", "outcomes_invalid"
+            )
             if status == "not_run":
                 _require(set(turn) == {"turn", "status"}, "outcomes_invalid")
                 turn_stopped = True
@@ -177,7 +196,8 @@ def _outcomes(value, plan, captured):
                 if status == "failed":
                     fields.add("error")
                     _require(
-                        turn.get("error") is not None and _error(turn.get("error")),
+                        turn.get("error") is not None
+                        and _error(turn.get("error")),
                         "outcomes_invalid",
                     )
                     turn_stopped = True
@@ -207,7 +227,8 @@ def _outcomes(value, plan, captured):
             stopped = True
         else:
             _require(
-                case["error"] is not None and type(case["session_reset"]) is bool,
+                case["error"] is not None
+                and type(case["session_reset"]) is bool,
                 "outcomes_invalid",
             )
             stopped = True
@@ -235,7 +256,8 @@ def _responses(capture, identity):
             if search is not None:
                 _require(
                     type(search) is dict
-                    and search.get("revision") == identity["candidate_revision"]
+                    and search.get("revision")
+                    == identity["candidate_revision"]
                     and search.get("catalog_manifest_sha256")
                     == identity["catalog_manifest_sha256"],
                     "response_identity_mismatch",
@@ -244,19 +266,22 @@ def _responses(capture, identity):
 
 def _batch(record):
     _require(
-        type(record) is dict and set(record) == {"plan", "files"}, "record_invalid"
+        type(record) is dict and set(record) == {"plan", "files"},
+        "record_invalid",
     )
     plan, files = record["plan"], record["files"]
     contract.validate_cases(plan)
     _require(
-        len(plan["cases"]) <= 3 and sum(len(c["turns"]) for c in plan["cases"]) <= 8,
+        len(plan["cases"]) <= 3
+        and sum(len(c["turns"]) for c in plan["cases"]) <= 8,
         "subplan_invalid",
     )
     _require(type(files) is dict and set(files) == NAMES, "artifacts_missing")
     for name, raw in files.items():
         maximum = MAX_RECEIPT_BYTES if name == "run.json" else MAX_FILE_BYTES
         _require(
-            type(raw) is bytes and 1 <= len(raw) <= maximum, "artifact_size_invalid"
+            type(raw) is bytes and 1 <= len(raw) <= maximum,
+            "artifact_size_invalid",
         )
     run, captured, outcomes = (
         strict_json(files[name])
@@ -274,7 +299,8 @@ def _batch(record):
         "receipt_invalid",
     )
     _require(
-        run.get("plan_sha256") == contract.plan_digest(plan), "plan_digest_mismatch"
+        run.get("plan_sha256") == contract.plan_digest(plan),
+        "plan_digest_mismatch",
     )
     _require(
         type(run.get("operator_revision")) is str
@@ -338,16 +364,19 @@ def _batch(record):
 
 
 def aggregate(full_plan, records, *, baseline=None):
-    """Reject mixed evidence and retain every planned turn, including missing batches.
+    """Reject mixed evidence and retain every planned turn, including missing
+    batches.
 
-    Records contain a decoded subplan and the exact three artifact byte strings.
-    Only complete, identity-verified batches contribute observations. The return
-    value contains private case/card data; callers must restrict its publication.
+    Records contain a decoded subplan and the exact three artifact byte
+    strings. Only complete, identity-verified batches contribute observations.
+    The return value contains private case/card data; callers must restrict its
+    publication.
     """
     try:
         contract.validate_cases(full_plan)
         _require(
-            type(records) in (list, tuple) and len(records) <= 32, "records_invalid"
+            type(records) in (list, tuple) and len(records) <= 32,
+            "records_invalid",
         )
         expected = {case["id"]: case for case in full_plan["cases"]}
         selected, accepted, receipts = {}, [], []
@@ -360,7 +389,10 @@ def aggregate(full_plan, records, *, baseline=None):
             for case in record["plan"]["cases"]:
                 _require(case["id"] not in selected, "duplicate_case")
                 _require(expected.get(case["id"]) == case, "subplan_mismatch")
-                selected[case["id"]] = {"batch": number, "status": run["status"]}
+                selected[case["id"]] = {
+                    "batch": number,
+                    "status": run["status"],
+                }
             if run["identity_verified"] and bound is None:
                 baseline, bound = run["identity"], _identity(run["identity"])
             receipts.append(
@@ -374,7 +406,9 @@ def aggregate(full_plan, records, *, baseline=None):
                         record["files"]["run.json"]
                     ).hexdigest(),
                     "artifacts": run["artifacts"],
-                    "case_ids": [case["id"] for case in record["plan"]["cases"]],
+                    "case_ids": [
+                        case["id"] for case in record["plan"]["cases"]
+                    ],
                 }
             )
             if run["status"] == "complete":
@@ -387,7 +421,9 @@ def aggregate(full_plan, records, *, baseline=None):
         if bound is not None:
             identities.add(bound)
         _require(len(identities) <= 1, "mixed_identity")
-        report = evaluator.evaluate({"schema_version": 1, "cases": accepted}, full_plan)
+        report = evaluator.evaluate(
+            {"schema_version": 1, "cases": accepted}, full_plan
+        )
         trusted = {case["id"] for case in accepted}
         trusted_turns = sum(len(case["turns"]) for case in accepted)
         quality_failed = sum(
@@ -409,7 +445,9 @@ def aggregate(full_plan, records, *, baseline=None):
             "cases": [
                 {
                     "id": case["id"],
-                    **selected.get(case["id"], {"batch": None, "status": "missing"}),
+                    **selected.get(
+                        case["id"], {"batch": None, "status": "missing"}
+                    ),
                 }
                 for case in full_plan["cases"]
             ],

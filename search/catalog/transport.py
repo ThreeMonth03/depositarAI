@@ -43,7 +43,9 @@ class Deadline:
             or not math.isfinite(float(seconds))
             or not 0 < float(seconds) <= 3600
         ):
-            raise ConfigurationError("deadline must be finite and in (0, 3600]")
+            raise ConfigurationError(
+                "deadline must be finite and in (0, 3600]"
+            )
         return cls(clock() + float(seconds), clock)
 
     def remaining(self, cap: float) -> float:
@@ -62,7 +64,9 @@ class HTTPRequest:
 
     def header(self, name: str) -> Optional[str]:
         matches = [
-            value for key, value in self.headers if key.casefold() == name.casefold()
+            value
+            for key, value in self.headers
+            if key.casefold() == name.casefold()
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -76,7 +80,9 @@ class HTTPResponse:
 
     def header_values(self, name: str) -> List[str]:
         return [
-            value for key, value in self.headers if key.casefold() == name.casefold()
+            value
+            for key, value in self.headers
+            if key.casefold() == name.casefold()
         ]
 
 
@@ -115,16 +121,20 @@ class UrllibTransport:
         try:
             response = self._opener.open(raw_request, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            # Redirects and ordinary HTTP errors are data for the strict protocol
-            # layer.  Never include their body or request headers in an exception.
+            # Redirects and ordinary HTTP errors are data for the strict
+            # protocol layer. Never include their body or request headers in
+            # an exception.
             response = exc
         except (OSError, TimeoutError, urllib.error.URLError) as error:
             raise _transport_failure(error) from None
         try:
             header_pairs = tuple(
-                (str(key), str(value)) for key, value in response.headers.items()
+                (str(key), str(value))
+                for key, value in response.headers.items()
             )
-            header_bytes = sum(len(key) + len(value) + 4 for key, value in header_pairs)
+            header_bytes = sum(
+                len(key) + len(value) + 4 for key, value in header_pairs
+            )
             if header_bytes > MAX_RESPONSE_HEADER_BYTES:
                 raise ProtocolError("Fess response headers exceeded their cap")
             lengths = [
@@ -133,10 +143,14 @@ class UrllibTransport:
                 if key.casefold() == "content-length"
             ]
             if len(lengths) > 1:
-                raise ProtocolError("Fess response has ambiguous content length")
+                raise ProtocolError(
+                    "Fess response has ambiguous content length"
+                )
             if lengths:
                 if not lengths[0].isascii() or not lengths[0].isdigit():
-                    raise ProtocolError("Fess response content length is malformed")
+                    raise ProtocolError(
+                        "Fess response content length is malformed"
+                    )
                 if int(lengths[0]) > max_bytes:
                     raise ProtocolError("Fess response exceeded its byte cap")
             body = response.read(max_bytes + 1)

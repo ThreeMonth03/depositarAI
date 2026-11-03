@@ -23,7 +23,9 @@ MAX_PLAN_BYTES = 8 * 1024**2
 MAX_ATTEMPTS = 3
 MAX_OUTCOME_BYTES = 4096
 CHECKPOINT_RESERVE = 16 * 1024**2
-PROFILE_STATUSES = frozenset({"ok", "empty_text", "unsupported_format", "parse_error"})
+PROFILE_STATUSES = frozenset(
+    {"ok", "empty_text", "unsupported_format", "parse_error"}
+)
 ERROR_CODES = frozenset(
     {
         "document_batch_selection_invalid",
@@ -45,7 +47,9 @@ class BatchError(ValueError):
 
 
 def _source_root(path):
-    return Path(path) if path is not None else Path(__file__).resolve().parents[3]
+    return (
+        Path(path) if path is not None else Path(__file__).resolve().parents[3]
+    )
 
 
 def _read(parent, name, maximum):
@@ -65,7 +69,9 @@ def _read(parent, name, maximum):
 def _state(path, *, create, read_only=False):
     path = controller._external_root(path)
     try:
-        with controller._state(path, create=create, read_only=read_only) as descriptor:
+        with controller._state(
+            path, create=create, read_only=read_only
+        ) as descriptor:
             yield path, descriptor
     except (OSError, ValueError) as error:
         if isinstance(
@@ -99,7 +105,10 @@ def _selection_file(path):
     if (
         type(values) is not list
         or not 1 <= len(values) <= sets.MAX_SELECTED
-        or any(type(v) is not str or not controller.UUID.fullmatch(v) for v in values)
+        or any(
+            type(v) is not str or not controller.UUID.fullmatch(v)
+            for v in values
+        )
         or len(values) != len(set(values))
     ):
         raise BatchError("document_batch_selection_invalid")
@@ -125,7 +134,9 @@ def _entries(selected):
             "dataset_id": dataset_id,
             "resource_id": resource["id"],
             "format": resource["format"].strip().upper(),
-            "url_sha256": hashlib.sha256(resource["url"].encode("utf-8")).hexdigest(),
+            "url_sha256": hashlib.sha256(
+                resource["url"].encode("utf-8")
+            ).hexdigest(),
         }
         for dataset_id, resource in selected
     ]
@@ -149,7 +160,8 @@ def _validate_plan(plan):
             or type(plan["schema_version"]) is not int
             or plan["schema_version"] != 1
             or any(
-                type(plan[key]) is not str or not controller.SHA256.fullmatch(plan[key])
+                type(plan[key]) is not str
+                or not controller.SHA256.fullmatch(plan[key])
                 for key in (
                     "catalog_manifest_sha256",
                     "source_sha256",
@@ -159,7 +171,8 @@ def _validate_plan(plan):
             or type(plan["policy"]) is not dict
             or set(plan["policy"]) != {"encoding", "header_policy"}
             or plan["policy"]["encoding"] not in controller.ENCODINGS
-            or plan["policy"]["header_policy"] not in controller.HEADER_POLICIES
+            or plan["policy"]["header_policy"]
+            not in controller.HEADER_POLICIES
             or type(plan["resources"]) is not list
             or not 1 <= len(plan["resources"]) <= sets.MAX_SELECTED
         ):
@@ -168,9 +181,11 @@ def _validate_plan(plan):
         for row in plan["resources"]:
             if (
                 type(row) is not dict
-                or set(row) != {"dataset_id", "resource_id", "format", "url_sha256"}
+                or set(row)
+                != {"dataset_id", "resource_id", "format", "url_sha256"}
                 or any(
-                    type(row[key]) is not str or not controller.UUID.fullmatch(row[key])
+                    type(row[key]) is not str
+                    or not controller.UUID.fullmatch(row[key])
                     for key in ("dataset_id", "resource_id")
                 )
                 or row["format"] not in {"CSV", "PDF"}
@@ -182,7 +197,10 @@ def _validate_plan(plan):
             resource_ids.add(row["resource_id"])
             pairs.append((row["dataset_id"], row["resource_id"]))
             counts[row["dataset_id"]] += 1
-        if pairs != sorted(pairs) or max(counts.values()) > resources.MAX_RESOURCES:
+        if (
+            pairs != sorted(pairs)
+            or max(counts.values()) > resources.MAX_RESOURCES
+        ):
             raise ValueError
     except (KeyError, TypeError, ValueError):
         raise BatchError("document_batch_plan_invalid") from None
@@ -200,7 +218,9 @@ def _plan(descriptor, expected):
 
 def _outcome(descriptor, entry, plan_sha):
     try:
-        row = _read(descriptor, entry["resource_id"] + ".json", MAX_OUTCOME_BYTES)
+        row = _read(
+            descriptor, entry["resource_id"] + ".json", MAX_OUTCOME_BYTES
+        )
     except FileNotFoundError:
         return None
     base = {
@@ -227,12 +247,16 @@ def _outcome(descriptor, entry, plan_sha):
             or type(row["schema_version"]) is not int
             or row["schema_version"] != 1
             or row["plan_sha256"] != plan_sha
-            or any(row[key] != entry[key] for key in ("dataset_id", "resource_id"))
+            or any(
+                row[key] != entry[key] for key in ("dataset_id", "resource_id")
+            )
             or type(row["attempt"]) is not int
             or not 1 <= row["attempt"] <= MAX_ATTEMPTS
             or status not in PROFILE_STATUSES | {"running", "failed"}
             or type(row["helper_name"]) is not str
-            or not re.fullmatch(r"depositarai-extract-[0-9a-f]{32}", row["helper_name"])
+            or not re.fullmatch(
+                r"depositarai-extract-[0-9a-f]{32}", row["helper_name"]
+            )
         ):
             raise ValueError
         if status in PROFILE_STATUSES and (
@@ -257,7 +281,9 @@ def _verify_profile(profiles, row, entry, plan, tool):
 
     try:
         profile = _read(
-            profiles, row["profile_sha256"] + ".json", controller.MAX_RECORD_BYTES
+            profiles,
+            row["profile_sha256"] + ".json",
+            controller.MAX_RECORD_BYTES,
         )
         if controller.digest(profile) != row["profile_sha256"]:
             raise ValueError
@@ -330,17 +356,23 @@ def _snapshot(state_root, descriptor, plan, plan_sha):
 def _report(plan, plan_sha, rows):
     pending = sum(row is None or row["status"] == "running" for row in rows)
     failures = sum(
-        row is not None and row["status"] in {"failed", "parse_error"} for row in rows
+        row is not None and row["status"] in {"failed", "parse_error"}
+        for row in rows
     )
     return {
         "schema_version": 1,
-        "status": "checkpoint" if pending else "partial" if failures else "completed",
+        "status": "checkpoint"
+        if pending
+        else "partial"
+        if failures
+        else "completed",
         "plan_sha256": plan_sha,
         "catalog_manifest_sha256": plan["catalog_manifest_sha256"],
         "selected_count": len(rows),
         "pending_count": pending,
         "profile_count": sum(
-            row is not None and row["status"] in PROFILE_STATUSES for row in rows
+            row is not None and row["status"] in PROFILE_STATUSES
+            for row in rows
         ),
         "failed_count": failures,
         "retryable_count": sum(
@@ -362,7 +394,9 @@ def prepare(
     header_policy="first_record",
     source_root=None,
 ):
-    """Freeze explicit metadata selection and policy without downloads or Docker."""
+    """Freeze explicit metadata selection and policy without downloads or
+    Docker.
+    """
     if (
         type(encoding) is not str
         or encoding not in controller.ENCODINGS
@@ -385,9 +419,9 @@ def prepare(
         {
             "schema_version": 1,
             "catalog_manifest_sha256": manifest_sha256,
-            "source_sha256": _manifest(bundle_path, manifest_sha256)["artifacts"][
-                "source.jsonl.gz"
-            ]["sha256"],
+            "source_sha256": _manifest(bundle_path, manifest_sha256)[
+                "artifacts"
+            ]["source.jsonl.gz"]["sha256"],
             "extractor_source_sha256": extractor.source_identity(
                 _source_root(source_root)
             ),
@@ -415,7 +449,9 @@ def prepare(
                 raise BatchError("document_batch_plan_changed") from None
         for name in ("acquisition", "extractions", "profiles", "outcomes"):
             os.close(controller._child(descriptor, name))
-        rows, _ = _snapshot(state_root, descriptor, plan, controller.digest(plan))
+        rows, _ = _snapshot(
+            state_root, descriptor, plan, controller.digest(plan)
+        )
     report = _report(plan, controller.digest(plan), rows)
     if created:
         report["status"] = "prepared"
@@ -429,7 +465,9 @@ def _export_record(plan, rows):
         if row["status"] == "failed":
             failures.append({**fields, "code": row["code"]})
         else:
-            profiles.append({**fields, "profile_sha256": row["profile_sha256"]})
+            profiles.append(
+                {**fields, "profile_sha256": row["profile_sha256"]}
+            )
     return sets.validate(
         {
             "schema_version": 1,
@@ -461,7 +499,9 @@ def run(
     retry_failed=False,
     source_root=None,
 ):
-    """Process one bounded sequential pass, persisting each result before the next."""
+    """Process one bounded sequential pass, persisting each result before the
+    next.
+    """
     extractor.operator_ids()
     if (
         type(max_resources) is not int
@@ -483,23 +523,28 @@ def run(
             raise BatchError("document_batch_plan_changed") from None
         if (
             _entries(selected) != plan["resources"]
-            or _manifest(bundle_path, plan["catalog_manifest_sha256"])["artifacts"][
-                "source.jsonl.gz"
-            ]["sha256"]
+            or _manifest(bundle_path, plan["catalog_manifest_sha256"])[
+                "artifacts"
+            ]["source.jsonl.gz"]["sha256"]
             != plan["source_sha256"]
         ):
             raise BatchError("document_batch_plan_changed")
         selected = {
-            resource["id"]: (dataset_id, resource) for dataset_id, resource in selected
+            resource["id"]: (dataset_id, resource)
+            for dataset_id, resource in selected
         }
         if (
             extractor.source_identity(_source_root(source_root))
             != plan["extractor_source_sha256"]
         ):
             raise BatchError("document_batch_tool_changed")
-        rows, tool = _snapshot(Path(state_root), descriptor, plan, expected_plan_sha256)
+        rows, tool = _snapshot(
+            Path(state_root), descriptor, plan, expected_plan_sha256
+        )
         pending = [
-            i for i, row in enumerate(rows) if row is None or row["status"] == "running"
+            i
+            for i, row in enumerate(rows)
+            if row is None or row["status"] == "running"
         ]
         retries = (
             [
@@ -515,7 +560,8 @@ def run(
         work = (pending + retries)[:max_resources]
         if work:
             required = (
-                len(work) * (source.MAX_FILE_BYTES + 2 * controller.MAX_RECORD_BYTES)
+                len(work)
+                * (source.MAX_FILE_BYTES + 2 * controller.MAX_RECORD_BYTES)
                 + CHECKPOINT_RESERVE
             )
             if (
@@ -541,7 +587,9 @@ def run(
                 raise BatchError("document_batch_tool_changed")
             private_io.verify_directory(descriptor, state_root)
             controller._publish(descriptor, "tool.json", image)
-            extractions = private_io.open_child_directory(descriptor, "extractions")
+            extractions = private_io.open_child_directory(
+                descriptor, "extractions"
+            )
             profiles = private_io.open_child_directory(descriptor, "profiles")
             outcomes = private_io.open_child_directory(descriptor, "outcomes")
             try:
@@ -560,11 +608,16 @@ def run(
                         if prior
                         else 1,
                         "status": "running",
-                        "helper_name": "depositarai-extract-" + uuid.uuid4().hex,
+                        "helper_name": "depositarai-extract-"
+                        + uuid.uuid4().hex,
                     }
                     name = entry["resource_id"] + ".json"
                     private_io.write_json(
-                        outcomes, name, row, replace=True, max_bytes=MAX_OUTCOME_BYTES
+                        outcomes,
+                        name,
+                        row,
+                        replace=True,
+                        max_bytes=MAX_OUTCOME_BYTES,
                     )
                     try:
                         dataset_id, resource = selected[entry["resource_id"]]
@@ -581,7 +634,10 @@ def run(
                             container_name=row["helper_name"],
                         )
                         row.update(result)
-                    except (source.SourceError, extractor.ExtractorError) as error:
+                    except (
+                        source.SourceError,
+                        extractor.ExtractorError,
+                    ) as error:
                         if str(error) == "document_extractor_cleanup_failed":
                             raise
                         code = str(error)
@@ -596,10 +652,16 @@ def run(
                         (profiles, "profiles"),
                         (outcomes, "outcomes"),
                     ):
-                        private_io.verify_directory(child, state_root / child_name)
+                        private_io.verify_directory(
+                            child, state_root / child_name
+                        )
                     private_io.verify_directory(descriptor, state_root)
                     private_io.write_json(
-                        outcomes, name, row, replace=True, max_bytes=MAX_OUTCOME_BYTES
+                        outcomes,
+                        name,
+                        row,
+                        replace=True,
+                        max_bytes=MAX_OUTCOME_BYTES,
                     )
                     rows[index] = row
             finally:
@@ -613,10 +675,14 @@ def run(
 
 
 def status(state_root, expected_plan_sha256):
-    """Read verified progress; never build, download, repair, or publish a receipt."""
+    """Read verified progress; never build, download, repair, or publish a
+    receipt.
+    """
     with _state(state_root, create=False, read_only=True) as (_, descriptor):
         plan = _plan(descriptor, expected_plan_sha256)
-        rows, _ = _snapshot(Path(state_root), descriptor, plan, expected_plan_sha256)
+        rows, _ = _snapshot(
+            Path(state_root), descriptor, plan, expected_plan_sha256
+        )
         report = _report(plan, expected_plan_sha256, rows)
         if not report["pending_count"]:
             expected = _export_record(plan, rows)
@@ -627,7 +693,10 @@ def status(state_root, expected_plan_sha256):
             except sets.ProfileSetError:
                 try:
                     private_io.read_file(
-                        descriptor, filename, mode=0o600, max_bytes=sets.MAX_SET_BYTES
+                        descriptor,
+                        filename,
+                        mode=0o600,
+                        max_bytes=sets.MAX_SET_BYTES,
                     )
                 except FileNotFoundError:
                     report.update(status="checkpoint", export_pending=True)

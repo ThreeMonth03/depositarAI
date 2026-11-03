@@ -1,4 +1,5 @@
-"""Verify acquisition reuse, invalidation and corrupt-cache failure behavior."""
+"""Verify acquisition reuse, invalidation and corrupt-cache failure
+behavior."""
 
 import hashlib
 import json
@@ -13,7 +14,9 @@ from search.operations.shared.private_io import canonical
 
 class DocumentCacheTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-document-cache-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-document-cache-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name) / "cache"
         self.item = {
@@ -41,7 +44,9 @@ class DocumentCacheTests(unittest.TestCase):
         key = cache.key_for(source.source_identity(self.item))
         return self.root / ("resource-" + key + ".json")
 
-    def test_first_fetch_and_hit_preserve_body_and_original_acquisition_time(self):
+    def test_first_fetch_and_hit_preserve_body_and_original_acquisition_time(
+        self,
+    ):
         first, calls = self.acquire(now=100)
         self.assertEqual(1, calls)
         second, calls = self.acquire(now=101)
@@ -50,7 +55,9 @@ class DocumentCacheTests(unittest.TestCase):
         self.assertTrue(second["cache_hit"])
         self.assertEqual(first["local_path"], second["local_path"])
         self.assertEqual(100, second["acquired_at"])
-        self.assertEqual(hashlib.sha256(self.body).hexdigest(), second["sha256"])
+        self.assertEqual(
+            hashlib.sha256(self.body).hexdigest(), second["sha256"]
+        )
         self.assertEqual(self.body, second["local_path"].read_bytes())
         self.assertEqual(0o700, self.root.stat().st_mode & 0o777)
         for path in self.root.iterdir():
@@ -64,7 +71,9 @@ class DocumentCacheTests(unittest.TestCase):
         result, calls = self.acquire(now=100 + source.CACHE_TTL_SECONDS)
         self.assertEqual(1, calls)
         self.assertEqual(100 + source.CACHE_TTL_SECONDS, result["acquired_at"])
-        _, calls = self.acquire(now=100 + source.CACHE_TTL_SECONDS + 1, refresh=True)
+        _, calls = self.acquire(
+            now=100 + source.CACHE_TTL_SECONDS + 1, refresh=True
+        )
         self.assertEqual(1, calls)
 
     def test_resource_changes_invalidate_but_unrelated_metadata_reuses(self):
@@ -97,7 +106,9 @@ class DocumentCacheTests(unittest.TestCase):
         self.assertTrue(first["local_path"].is_file())
         self.assertTrue(second["local_path"].is_file())
 
-    def test_source_failure_does_not_promote_stale_cache_or_replace_receipt(self):
+    def test_source_failure_does_not_promote_stale_cache_or_replace_receipt(
+        self,
+    ):
         self.acquire(now=100)
         before = self.record_path().read_bytes()
         with patch.object(
@@ -108,7 +119,9 @@ class DocumentCacheTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 source.SourceError, "^document_source_http_failed$"
             ):
-                source.acquire(self.root, self.item, now=100 + source.CACHE_TTL_SECONDS)
+                source.acquire(
+                    self.root, self.item, now=100 + source.CACHE_TTL_SECONDS
+                )
         self.assertEqual(before, self.record_path().read_bytes())
 
     def test_receipt_identity_comparison_preserves_json_types(self):
@@ -143,7 +156,9 @@ class DocumentCacheTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         source.SourceError, "^document_cache_body_invalid$"
                     ):
-                        source.acquire(self.root, self.item, now=101, refresh=True)
+                        source.acquire(
+                            self.root, self.item, now=101, refresh=True
+                        )
                     fetch.assert_not_called()
 
     def test_receipt_validation_rejects_future_clock_and_invalid_shapes(self):
@@ -162,7 +177,9 @@ class DocumentCacheTests(unittest.TestCase):
                 elif corruption == "bytes":
                     record["bytes"] = True
                 if corruption == "duplicate":
-                    path.write_bytes(b'{"schema_version":1,"schema_version":1}\n')
+                    path.write_bytes(
+                        b'{"schema_version":1,"schema_version":1}\n'
+                    )
                 else:
                     path.write_bytes(canonical(record))
                 with patch.object(source, "fetch") as fetch:
@@ -173,11 +190,15 @@ class DocumentCacheTests(unittest.TestCase):
     def test_existing_unsafe_cache_and_lock_are_rejected(self):
         self.root.mkdir(mode=0o755)
         self.root.chmod(0o755)
-        with self.assertRaisesRegex(source.SourceError, "^document_cache_io_failed$"):
+        with self.assertRaisesRegex(
+            source.SourceError, "^document_cache_io_failed$"
+        ):
             source.acquire(self.root, self.item, now=100)
         self.root.chmod(0o700)
         (self.root / ".lock").symlink_to("/etc/hosts")
-        with self.assertRaisesRegex(source.SourceError, "^document_cache_io_failed$"):
+        with self.assertRaisesRegex(
+            source.SourceError, "^document_cache_io_failed$"
+        ):
             source.acquire(self.root, self.item, now=100)
 
     def test_root_lock_prevents_concurrent_acquisition(self):
@@ -190,6 +211,14 @@ class DocumentCacheTests(unittest.TestCase):
                 fetch.assert_not_called()
 
     def test_clock_and_options_require_exact_types(self):
-        for options in ({"now": True}, {"now": -1}, {"now": 1.2}, {"refresh": 1}):
-            with self.subTest(options=options), self.assertRaises(source.SourceError):
+        for options in (
+            {"now": True},
+            {"now": -1},
+            {"now": 1.2},
+            {"refresh": 1},
+        ):
+            with (
+                self.subTest(options=options),
+                self.assertRaises(source.SourceError),
+            ):
                 source.acquire(self.root, self.item, **options)

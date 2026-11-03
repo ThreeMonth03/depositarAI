@@ -53,9 +53,13 @@ class BoundedProcessCleanupTests(unittest.TestCase):
         failure = OSError("selector unavailable")
         with (
             patch.object(
-                bounded_process.selectors, "DefaultSelector", side_effect=failure
+                bounded_process.selectors,
+                "DefaultSelector",
+                side_effect=failure,
             ),
-            patch.object(bounded_process.os, "killpg", wraps=os.killpg) as killed,
+            patch.object(
+                bounded_process.os, "killpg", wraps=os.killpg
+            ) as killed,
         ):
             with self.assertRaises(OSError) as caught:
                 with bounded_process.captured_pipes(
@@ -83,9 +87,13 @@ class BoundedProcessCleanupTests(unittest.TestCase):
         selector.close = Mock(side_effect=close_then_fail)
         with (
             patch.object(
-                bounded_process.selectors, "DefaultSelector", return_value=selector
+                bounded_process.selectors,
+                "DefaultSelector",
+                return_value=selector,
             ),
-            patch.object(bounded_process.os, "killpg", wraps=os.killpg) as killed,
+            patch.object(
+                bounded_process.os, "killpg", wraps=os.killpg
+            ) as killed,
         ):
             with self.assertRaises(OSError) as caught:
                 with bounded_process.captured_pipes(
@@ -102,8 +110,11 @@ class BoundedProcessCleanupTests(unittest.TestCase):
 
 
 class BoundedProcessImportTests(unittest.TestCase):
-    def test_isolated_import_needs_no_application_dependencies_or_runtime_io(self):
-        script = """
+    def test_isolated_import_needs_no_application_dependencies_or_runtime_io(
+        self,
+    ):
+        script = (
+            """
 import builtins, os, selectors, socket, subprocess, sys
 sys.path.insert(0, sys.argv[1])
 def unexpected(*args, **kwargs):
@@ -114,12 +125,16 @@ selectors.DefaultSelector = unexpected
 from search.operations.shared import bounded_process
 assert callable(bounded_process.captured_pipes)
 for name in (
-    'search.api', 'search.operations.deployment', 'search.operations.catalog',
+    'search.api', 'search.operations.deployment', """
+            """'search.operations.catalog',
     'search.operations.metadata', 'search.operations.shared.runtime_probe',
-    'fastapi', 'django', 'rest_framework', 'adrf', 'pydantic', 'torch', 'haystack',
+    'fastapi', 'django', 'rest_framework', 'adrf', """
+            """'pydantic', 'torch', 'haystack',
 ):
-    assert not any(key == name or key.startswith(name + '.') for key in sys.modules), name
+    assert not any(key == name or key.startswith(name """
+            """+ '.') for key in sys.modules), name
 """
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(ROOT)],
             capture_output=True,
@@ -205,24 +220,32 @@ class BoundedInputTests(unittest.TestCase):
             return b"".join(stdout), b"".join(stderr)
 
     def test_binary_input_reaches_only_the_consumer_and_stdin_is_closed(self):
-        program = """
+        program = (
+            """
 import hashlib, json, sys
 raw = sys.stdin.buffer.read()
-print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}))
+print(json.dumps({'bytes': len(raw), 'sha256': """
+            """hashlib.sha256(raw).hexdigest()}))
 """
+        )
         payload = b"private-input-sentinel-100\x00\xff\n"
         process = self.spawn(program)
         self.assertNotIn(payload[:26].decode(), repr(process.args))
         output, errors = self.capture(process, payload)
         self.assertEqual(
             json.loads(output),
-            {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()},
+            {
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            },
         )
         self.assertEqual(errors, b"")
         self.assertNotIn(payload, output + errors)
         self.assert_closed_and_reaped(process)
 
-    def test_partial_writes_and_a_temporarily_full_pipe_preserve_exact_bytes(self):
+    def test_partial_writes_and_a_temporarily_full_pipe_preserve_exact_bytes(
+        self,
+    ):
         process = self.spawn(
             "import hashlib,sys; "
             "print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())"
@@ -243,18 +266,23 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
         with patch.object(bounded_process.os, "write", side_effect=write):
             output, errors = self.capture(process, payload)
         self.assertGreater(len(attempts), 2)
-        self.assertEqual(output.strip(), hashlib.sha256(payload).hexdigest().encode())
+        self.assertEqual(
+            output.strip(), hashlib.sha256(payload).hexdigest().encode()
+        )
         self.assertEqual(errors, b"")
         self.assert_closed_and_reaped(process)
 
     def test_input_and_output_backpressure_are_drained_concurrently(self):
-        program = """
+        program = (
+            """
 import hashlib, json, os, sys
 os.write(1, b'o' * 65536)
 os.write(2, b'e' * 65536)
 raw = sys.stdin.buffer.read()
-print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}))
+print(json.dumps({'bytes': len(raw), 'sha256': """
+            """hashlib.sha256(raw).hexdigest()}))
 """
+        )
         payload = b"private-input-sentinel-100" * 150
         process, prefix = self.filled_input(program)
         output, errors = self.capture(process, payload, maximum=132000)
@@ -272,7 +300,8 @@ print(json.dumps({'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
 
     def test_consumer_closing_stdin_early_still_closes_and_reaps(self):
         process = self.spawn(
-            "import os,time; os.close(0); os.write(1,b'closed'); time.sleep(10)"
+            "import os,time; os.close(0); "
+            "os.write(1,b'closed'); time.sleep(10)"
         )
         self.assertEqual(process.stdout.read(6), b"closed")
         with self.assertRaises(BrokenPipeError):

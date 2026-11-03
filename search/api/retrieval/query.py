@@ -1,4 +1,6 @@
-"""Compile literal searches and validated conditions into one OpenSearch query."""
+"""Compile literal searches and validated
+conditions into one OpenSearch query.
+"""
 
 from copy import deepcopy
 import math
@@ -41,7 +43,9 @@ def _translate(node):
     if op in ("<", "<=", ">", ">="):
         return {
             "range": {
-                field: {{"<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}[op]: value}
+                field: {
+                    {"<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}[op]: value
+                }
             }
         }
     raise ValueError("unsupported internal comparison")
@@ -75,7 +79,8 @@ def catalog_filter(bundle_id):
                 {"term": {"virtual_host": CATALOG_VIRTUAL_HOST}},
                 {"term": {"role": CATALOG_SEARCH_ROLE}},
             ],
-            # Fess 15.8's configured/default denied-role prefix is 'D'. This adapter
+            # Fess 15.8's configured/default denied-role prefix is 'D'. This
+            # adapter
             # is limited to the single verified public catalog role, not users'
             # general Fess role expressions.
             "must_not": [{"term": {"role": "D" + CATALOG_SEARCH_ROLE}}],
@@ -102,7 +107,9 @@ def retrieval_query(
         raise ValueError("top_k outside 1..20")
     literal = normalize_query(query)
     filt = {
-        "bool": {"filter": [catalog_filter(bundle_id), condition_filter(conditions)]}
+        "bool": {
+            "filter": [catalog_filter(bundle_id), condition_filter(conditions)]
+        }
     }
     if branch == "lexical":
         ranked = {
@@ -117,10 +124,15 @@ def retrieval_query(
         if (
             not isinstance(vector, list)
             or len(vector) != DIMENSIONS
-            or any(type(v) not in (int, float) or not math.isfinite(v) for v in vector)
+            or any(
+                type(v) not in (int, float) or not math.isfinite(v)
+                for v in vector
+            )
             or not any(vector)
         ):
-            raise ValueError("expected finite nonzero Granite 768D query vector")
+            raise ValueError(
+                "expected finite nonzero Granite 768D query vector"
+            )
         ranked = {
             "nested": {
                 "path": VECTOR_PATH,

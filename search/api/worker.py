@@ -39,7 +39,9 @@ def run(operation, payload, settings):
                 "POST",
                 url,
                 (("Content-Type", "application/json"),),
-                json.dumps(payload, ensure_ascii=False, allow_nan=False).encode(),
+                json.dumps(
+                    payload, ensure_ascii=False, allow_nan=False
+                ).encode(),
             ),
             # The parent process owns the shorter eight-second hard deadline.
             timeout=9,
@@ -64,13 +66,21 @@ def run(operation, payload, settings):
         from .retrieval.index import search
 
         bundle = CatalogBundle.load(
-            settings.bundle_path, expected_manifest_sha256=settings.manifest_sha256
+            settings.bundle_path,
+            expected_manifest_sha256=settings.manifest_sha256,
         )
         # Both requests use the same query-only index and catalog authority.
         for conditions in ({}, {"time": {"start": "2025", "end": "2025"}}):
-            search({"query": "氣候", "top_k": 1, "conditions": conditions}, settings)
+            search(
+                {"query": "氣候", "top_k": 1, "conditions": conditions},
+                settings,
+            )
         for role, model_name, model_digest in (
-            ("scope", OllamaScopeClassifier.model, OllamaScopeClassifier.model_digest),
+            (
+                "scope",
+                OllamaScopeClassifier.model,
+                OllamaScopeClassifier.model_digest,
+            ),
             ("answer", PLANNER_MODEL, PLANNER_MODEL_DIGEST),
         ):
             transport = ModelTransport(role)
@@ -81,7 +91,8 @@ def run(operation, payload, settings):
             )
             data = strict_json(response.body)
             if response.status != 200 or not any(
-                model.get("name") == model_name and model.get("digest") == model_digest
+                model.get("name") == model_name
+                and model.get("digest") == model_digest
                 for model in data.get("models", [])
             ):
                 raise ValueError("model identity mismatch")
@@ -91,7 +102,9 @@ def run(operation, payload, settings):
             try:
                 url = service_address("reranker", 8001) + "/healthz"
                 response = UrllibTransport().send(
-                    HTTPRequest("GET", url, ()), timeout=2, max_bytes=MAX_RESPONSE_BYTES
+                    HTTPRequest("GET", url, ()),
+                    timeout=2,
+                    max_bytes=MAX_RESPONSE_BYTES,
                 )
                 result["reranker_ready"] = (
                     response.status == 200
@@ -100,14 +113,17 @@ def run(operation, payload, settings):
                     == {"ready": True, "model_revision": MODEL_REVISION}
                 )
             except Exception:
-                pass  # Optional ranking may degrade without taking search offline.
+                # Optional ranking may degrade without taking search offline.
+                pass
         return result
     raise ValueError("unknown worker operation")
 
 
 def main():
     return run_worker(
-        lambda operation, payload: run(operation, payload, Settings.from_environment())
+        lambda operation, payload: run(
+            operation, payload, Settings.from_environment()
+        )
     )
 
 

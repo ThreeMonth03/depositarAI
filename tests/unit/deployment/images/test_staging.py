@@ -1,4 +1,6 @@
-"""Real clean Git/state and fake Docker coverage for the private image adapter."""
+"""Real clean Git/state and fake Docker coverage for the private image
+adapter.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ class ProductImageStagingTests(unittest.TestCase):
     def setUp(self):
         self.fixture = ImageStagingFixture(self)
 
-    def test_fresh_private_stage_build_receipts_and_product_pointer_bind_full_source(
+    def test_fresh_stage_receipts_and_pointer_bind_full_source(
         self,
     ):
         real_stage = source_bundle.stage_source_bundle
@@ -45,7 +47,8 @@ class ProductImageStagingTests(unittest.TestCase):
         self.assertFalse(result["services_started"])
         self.assertFalse(result["registry_published"])
         self.assertEqual(
-            image_build._digest(self.fixture.plan), result["source_manifest_sha256"]
+            image_build._digest(self.fixture.plan),
+            result["source_manifest_sha256"],
         )
         self.assertEqual(
             self.fixture.plan["source_map_sha256"], result["source_map_sha256"]
@@ -60,13 +63,17 @@ class ProductImageStagingTests(unittest.TestCase):
         with locked_state(self.fixture.config) as store:
             self.assertEqual(candidate, store.read("image-candidate.json"))
         for phase in ("stage-started", "stage-complete", "image-complete"):
-            self.assertEqual(0o600, self.fixture.record(phase).stat().st_mode & 0o777)
+            self.assertEqual(
+                0o600, self.fixture.record(phase).stat().st_mode & 0o777
+            )
             self.assertNotIn(
                 "never-save-this-value", self.fixture.record(phase).read_text()
             )
-            self.assertNotIn("PRIVATE_SENTINEL", self.fixture.record(phase).read_text())
+            self.assertNotIn(
+                "PRIVATE_SENTINEL", self.fixture.record(phase).read_text()
+            )
 
-    def test_completed_reuse_authenticates_git_and_reinspects_images_without_build(
+    def test_reuse_authenticates_git_and_images_without_build(
         self,
     ):
         first = self.fixture.invoke()
@@ -92,7 +99,10 @@ class ProductImageStagingTests(unittest.TestCase):
         )
         self.assertEqual(
             before,
-            {phase: self.fixture.record(phase).stat().st_mtime_ns for phase in before},
+            {
+                phase: self.fixture.record(phase).stat().st_mtime_ns
+                for phase in before
+            },
         )
 
     def test_dirty_checkout_or_different_source_sha_fails_before_staging(self):
@@ -107,9 +117,13 @@ class ProductImageStagingTests(unittest.TestCase):
         self.assertFalse(self.fixture.parent.exists())
         self.assertEqual([], self.fixture.docker.calls)
 
-    def test_source_failure_leaves_intent_and_does_not_adopt_or_retry_partial(self):
+    def test_source_failure_leaves_intent_and_does_not_adopt_or_retry_partial(
+        self,
+    ):
         with mock.patch.object(
-            source_bundle, "stage_source_bundle", side_effect=ValueError("sentinel")
+            source_bundle,
+            "stage_source_bundle",
+            side_effect=ValueError("sentinel"),
         ) as stage:
             with self.assertRaises(image_staging.ImageStagingError):
                 self.fixture.invoke()
@@ -138,7 +152,7 @@ class ProductImageStagingTests(unittest.TestCase):
         self.assertEqual(b"preserve evidence", marker.read_bytes())
         self.assertEqual([], self.fixture.docker.calls)
 
-    def test_independent_git_plan_rejects_consistent_tampered_manifest_and_receipts(
+    def test_git_plan_rejects_tampered_manifest_and_receipts(
         self,
     ):
         self.fixture.invoke()
@@ -171,10 +185,12 @@ class ProductImageStagingTests(unittest.TestCase):
         self.assertEqual([], self.fixture.docker.calls)
         self.assertEqual(
             expected_pointer,
-            (self.fixture.config.state_root / "image-candidate.json").read_bytes(),
+            (
+                self.fixture.config.state_root / "image-candidate.json"
+            ).read_bytes(),
         )
 
-    def test_build_failure_cannot_publish_and_ambiguous_image_intent_is_not_retried(
+    def test_build_failure_blocks_publish_and_ambiguous_intent_retry(
         self,
     ):
         self.fixture.docker.return_failure = True
@@ -182,7 +198,9 @@ class ProductImageStagingTests(unittest.TestCase):
             self.fixture.invoke()
         self.assertTrue(self.fixture.record("stage-complete").exists())
         self.assertTrue(
-            (self.fixture.slot / "images/conversation-api/started.json").exists()
+            (
+                self.fixture.slot / "images/conversation-api/started.json"
+            ).exists()
         )
         self.assertFalse(self.fixture.record("image-complete").exists())
         self.assertFalse(
@@ -190,7 +208,9 @@ class ProductImageStagingTests(unittest.TestCase):
         )
         self.fixture.docker.return_failure = False
         self.fixture.docker.calls.clear()
-        with self.assertRaisesRegex(image_build.ImageBuildError, "partial_state"):
+        with self.assertRaisesRegex(
+            image_build.ImageBuildError, "partial_state"
+        ):
             self.fixture.invoke()
         self.assertEqual([], self.fixture.docker.calls)
 
@@ -208,15 +228,19 @@ class ProductImageStagingTests(unittest.TestCase):
             self.fixture.invoke()
         self.assertEqual(
             expected_pointer,
-            (self.fixture.config.state_root / "image-candidate.json").read_bytes(),
+            (
+                self.fixture.config.state_root / "image-candidate.json"
+            ).read_bytes(),
         )
 
-    def test_checkout_mutation_during_build_cannot_publish_image_candidate(self):
+    def test_checkout_mutation_during_build_cannot_publish_image_candidate(
+        self,
+    ):
         def change_source(service, iid):
             if service == "web-nginx":
-                (self.fixture.repo / "search/api/conversation/app.py").write_text(
-                    "changed checkout during build\n"
-                )
+                (
+                    self.fixture.repo / "search/api/conversation/app.py"
+                ).write_text("changed checkout during build\n")
 
         self.fixture.docker.on_build = change_source
         with self.assertRaises(image_staging.ImageStagingError):
@@ -226,7 +250,9 @@ class ProductImageStagingTests(unittest.TestCase):
             (self.fixture.config.state_root / "image-candidate.json").exists()
         )
 
-    def test_late_stage_receipt_change_is_rejected_before_pointer_publication(self):
+    def test_late_stage_receipt_change_is_rejected_before_pointer_publication(
+        self,
+    ):
         def change_receipt(service, iid):
             if service == "web-nginx":
                 changed = self.fixture.read("stage-complete")
@@ -242,16 +268,22 @@ class ProductImageStagingTests(unittest.TestCase):
             (self.fixture.config.state_root / "image-candidate.json").exists()
         )
 
-    def test_unknown_state_symlinks_and_retention_are_refused_without_deletion(self):
+    def test_unknown_state_symlinks_and_retention_are_refused_without_deletion(
+        self,
+    ):
         with locked_state(self.fixture.config, create=True):
             self.fixture.parent.mkdir(mode=0o700)
         unknown = self.fixture.parent / "unknown"
         unknown.write_bytes(b"preserve")
-        with self.assertRaisesRegex(image_staging.ImageStagingError, "unknown_state"):
+        with self.assertRaisesRegex(
+            image_staging.ImageStagingError, "unknown_state"
+        ):
             self.fixture.invoke()
         self.assertEqual(b"preserve", unknown.read_bytes())
         unknown.unlink()
-        self.fixture.slot.symlink_to(self.fixture.repo, target_is_directory=True)
+        self.fixture.slot.symlink_to(
+            self.fixture.repo, target_is_directory=True
+        )
         with self.assertRaisesRegex(
             image_staging.ImageStagingError, "partial_source_state"
         ):
@@ -265,7 +297,9 @@ class ProductImageStagingTests(unittest.TestCase):
                 self.fixture.invoke()
         self.assertEqual([], self.fixture.docker.calls)
 
-    def test_builder_result_requires_closed_exact_types_source_and_image_proofs(self):
+    def test_builder_result_requires_exact_types_and_source_proofs(
+        self,
+    ):
         def result():
             return {
                 "schema_version": 1,
@@ -286,7 +320,9 @@ class ProductImageStagingTests(unittest.TestCase):
             lambda r: r.update(extra="unknown"),
             lambda r: r["images"]["web"].update(revision="b" * 40),
             lambda r: r["images"]["web"].update(source_sha256="f" * 64),
-            lambda r: r["images"]["web"].update(image_environment_sha256="F" * 64),
+            lambda r: r["images"]["web"].update(
+                image_environment_sha256="F" * 64
+            ),
             lambda r: r["images"]["web"].update(
                 image_id=r["images"]["reranker"]["image_id"]
             ),
@@ -296,7 +332,8 @@ class ProductImageStagingTests(unittest.TestCase):
             with self.assertRaises(image_staging.ImageStagingError):
                 image_staging._image_result(self.fixture.plan, value)
         self.assertEqual(
-            result()["images"], image_staging._image_result(self.fixture.plan, result())
+            result()["images"],
+            image_staging._image_result(self.fixture.plan, result()),
         )
 
 

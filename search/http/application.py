@@ -42,7 +42,8 @@ class ApplicationMiddleware:
     async def __call__(self, request):
         selected = request.scope["depositar.application"]
         request.urlconf = selected.urlconf
-        # The existing JSON contracts require UTF-8, independent of an untrusted
+        # The existing JSON contracts require UTF-8, independent of an
+        # untrusted
         # Content-Type charset parameter.
         request.encoding = "utf-8"
         return await self.get_response(request)
@@ -57,7 +58,8 @@ class Application:
                 _handler = get_asgi_application()
         self.handler = _handler
         self.lifespan = lifespan
-        # Module objects are valid, identity-hashed Django URLconfs. Keeping one
+        # Module objects are valid, identity-hashed Django URLconfs. Keeping
+        # one
         # per factory avoids replacing another application's routes.
         self.urlconf = ModuleType("depositar_routes")
         self.urlconf.urlpatterns = tuple(patterns)
@@ -85,7 +87,9 @@ class Application:
             finally:
                 pending_receive = None
 
-        task = asyncio.create_task(self.handler(scoped, receive_until_disconnect, send))
+        task = asyncio.create_task(
+            self.handler(scoped, receive_until_disconnect, send)
+        )
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -99,7 +103,8 @@ class Application:
                     await asyncio.shield(task)
                 except asyncio.CancelledError:
                     continue
-            # Retrieve any failure before propagating the caller's cancellation.
+            # Retrieve any failure before propagating the caller's
+            # cancellation.
             if not task.cancelled():
                 task.exception()
             raise

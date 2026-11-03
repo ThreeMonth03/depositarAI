@@ -23,7 +23,11 @@ def literal_run_blocks(source: str) -> list[str]:
     lines = source.splitlines()
     blocks = []
     for index, line in enumerate(lines):
-        if line.strip().removeprefix("- ") not in {"run: |", "run: |-", "run: |+"}:
+        if line.strip().removeprefix("- ") not in {
+            "run: |",
+            "run: |-",
+            "run: |+",
+        }:
             continue
         indentation = len(line) - len(line.lstrip())
         body = []
@@ -38,7 +42,9 @@ def literal_run_blocks(source: str) -> list[str]:
 
 
 class WorkflowSyntaxTests(unittest.TestCase):
-    def test_feature_updates_use_pr_ci_without_duplicate_push_runs(self) -> None:
+    def test_feature_updates_use_pr_ci_without_duplicate_push_runs(
+        self,
+    ) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n", ci)
         self.assertIn("  workflow_dispatch:", ci)
@@ -59,21 +65,36 @@ class WorkflowSyntaxTests(unittest.TestCase):
                     self.assertEqual(0, result.returncode, result.stderr)
 
     def test_extractor_preserves_an_unclosed_loop(self) -> None:
-        source = "steps:\n  - run: |\n      for value in a b; do\n        echo value\n"
+        source = (
+            "steps:\n"
+            "  - run: |\n"
+            "      for value in a b; do\n"
+            "        echo value\n"
+        )
         block = literal_run_blocks(source)[0]
         result = subprocess.run(
-            ["bash", "-n"], input=block, capture_output=True, text=True, check=False
+            ["bash", "-n"],
+            input=block,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         self.assertNotEqual(0, result.returncode)
 
-    def test_compose_jobs_and_source_package_share_the_pinned_installer(self) -> None:
+    def test_compose_jobs_and_source_package_share_the_pinned_installer(
+        self,
+    ) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        package = (ROOT / ".github/workflows/package.yml").read_text(encoding="utf-8")
+        package = (ROOT / ".github/workflows/package.yml").read_text(
+            encoding="utf-8"
+        )
         installer = "run: bash scripts/ci/install-compose.sh"
         self.assertEqual(4, ci.count(installer))
         self.assertEqual(2, package.count(installer))
 
-    def test_new_ci_helpers_are_in_the_core_syntax_and_unit_checks(self) -> None:
+    def test_new_ci_helpers_are_in_the_core_syntax_and_unit_checks(
+        self,
+    ) -> None:
         suite = (ROOT / "scripts/search-ci.sh").read_text(encoding="utf-8")
         for required in (
             "scripts/search-ci.sh",
@@ -90,7 +111,9 @@ class SourcePackageWorkflowTests(unittest.TestCase):
         self.package = (ROOT / ".github/workflows/package.yml").read_text(
             encoding="utf-8"
         )
-        self.ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.ci = (ROOT / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
 
     @staticmethod
     def jobs(source):
@@ -103,7 +126,9 @@ class SourcePackageWorkflowTests(unittest.TestCase):
             )
         }
 
-    def test_product_and_website_gates_must_pass_before_artifact_is_created(self):
+    def test_product_and_website_gates_must_pass_before_artifact_is_created(
+        self,
+    ):
         jobs = self.jobs(self.package)
         self.assertEqual(
             {
@@ -133,7 +158,10 @@ class SourcePackageWorkflowTests(unittest.TestCase):
                 ci_jobs["private-website-" + suite],
             )
         self.assertIn(
-            "needs: [private-website-oss-policy, private-website-oss-gateway, private-website-browser]",
+            (
+                "needs: [private-website-oss-policy, "
+                "private-website-oss-gateway, private-website-browser]"
+            ),
             ci_jobs["private-website"],
         )
         self.assertIn("if: always()", ci_jobs["private-website"])
@@ -161,12 +189,16 @@ class SourcePackageWorkflowTests(unittest.TestCase):
         positions = [block.index(value) for value in ordered]
         self.assertEqual(sorted(positions), positions)
         self.assertIn('"$GITHUB_SHA" "$GITLEAKS_BINARY"', block)
-        self.assertIn('"$RUNNER_TEMP/depositar-ai-release" "$GITHUB_SHA"', block)
+        self.assertIn(
+            '"$RUNNER_TEMP/depositar-ai-release" "$GITHUB_SHA"', block
+        )
         self.assertIn("path: ${{ runner.temp }}/depositar-ai-release/", block)
         self.assertIn("if-no-files-found: error", block)
         self.assertIn("retention-days: 7", block)
 
-    def test_release_workflow_never_deploys_or_uses_licensed_secret_action(self):
+    def test_release_workflow_never_deploys_or_uses_licensed_secret_action(
+        self,
+    ):
         self.assertIn("contents: read", self.package)
         for forbidden in (
             "contents: write",
@@ -211,7 +243,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                 {
                     prefix + "_RESULT": "success",
                     prefix + "_SCOPE_RUN": "false" if unaffected else "true",
-                    prefix + "_GATE_OUTCOME": "skipped" if unaffected else "success",
+                    prefix + "_GATE_OUTCOME": "skipped"
+                    if unaffected
+                    else "success",
                     prefix + "_SOURCE_SHA": sha,
                     prefix + "_SOURCE_TREE": tree,
                 }
@@ -232,12 +266,20 @@ class WebsiteAggregateTests(unittest.TestCase):
             check=False,
         )
 
-    def test_outputs_and_aggregate_environment_use_the_actual_step_evidence(self):
+    def test_outputs_and_aggregate_environment_use_the_actual_step_evidence(
+        self,
+    ):
         aggregate = self.jobs["private-website"]
         self.assertIn("timeout-minutes: 3", aggregate)
-        self.assertIn("id: aggregate\n        if: always() && !cancelled()", aggregate)
         self.assertIn(
-            "- name: Reject cancelled workflow\n        if: cancelled()\n        run: exit 1",
+            "id: aggregate\n        if: always() && !cancelled()", aggregate
+        )
+        self.assertIn(
+            (
+                "- name: Reject cancelled workflow\n"
+                "        if: cancelled()\n"
+                "        run: exit 1"
+            ),
             aggregate,
         )
         self.assertNotIn("WORKFLOW_CANCELLED", aggregate)
@@ -253,7 +295,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                 ("source_tree", "steps.source.outputs.tree"),
             ):
                 with self.subTest(suite=suite, output=output):
-                    self.assertIn(output + ": ${{ " + expression + " }}", block)
+                    self.assertIn(
+                        output + ": ${{ " + expression + " }}", block
+                    )
             for variable, expression in (
                 ("RESULT", "result"),
                 ("SCOPE_RUN", "outputs.scope_run"),
@@ -278,7 +322,9 @@ class WebsiteAggregateTests(unittest.TestCase):
         ):
             self.assertIn(variable + ": ${{ " + expression + " }}", aggregate)
 
-    def test_affected_and_confirmed_unaffected_cases_pass_with_distinct_reports(self):
+    def test_affected_and_unaffected_cases_have_distinct_reports(
+        self,
+    ):
         for event in ("pull_request", "push", "workflow_dispatch"):
             with self.subTest(event=event):
                 values = self.environment()
@@ -301,7 +347,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                 values[key] = value
                 self.assertNotEqual(0, self.run_aggregate(values).returncode)
 
-    def test_successful_jobs_still_require_the_actual_suite_step_outcomes(self):
+    def test_successful_jobs_still_require_the_actual_suite_step_outcomes(
+        self,
+    ):
         for unaffected in (False, True):
             expected = "skipped" if unaffected else "success"
             for key, value in product(
@@ -313,10 +361,14 @@ class WebsiteAggregateTests(unittest.TestCase):
                 with self.subTest(key=key, value=value, unaffected=unaffected):
                     values = self.environment(unaffected=unaffected)
                     values[key] = value
-                    self.assertNotEqual(0, self.run_aggregate(values).returncode)
+                    self.assertNotEqual(
+                        0, self.run_aggregate(values).returncode
+                    )
 
     def test_scopes_must_agree_and_use_the_two_valid_boolean_values(self):
-        for scopes in product(("true", "false", "", "unknown", "True", "0"), repeat=3):
+        for scopes in product(
+            ("true", "false", "", "unknown", "True", "0"), repeat=3
+        ):
             if scopes in (("true",) * 3, ("false",) * 3):
                 continue
             with self.subTest(scopes=scopes):
@@ -352,7 +404,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                 with self.subTest(key=key, value=value, unaffected=unaffected):
                     values = self.environment(unaffected=unaffected)
                     values[key] = value
-                    self.assertNotEqual(0, self.run_aggregate(values).returncode)
+                    self.assertNotEqual(
+                        0, self.run_aggregate(values).returncode
+                    )
         for keys, value in product(
             (
                 (
@@ -384,10 +438,13 @@ class WebsiteAggregateTests(unittest.TestCase):
                     continue
                 with self.subTest(missing=key, unaffected=unaffected):
                     self.assertNotEqual(
-                        0, self.run_aggregate(values, missing=(key,)).returncode
+                        0,
+                        self.run_aggregate(values, missing=(key,)).returncode,
                     )
 
-    def test_source_steps_read_actual_git_head_and_tree_before_emitting_outputs(self):
+    def test_source_outputs_follow_actual_git_head_and_tree(
+        self,
+    ):
         with tempfile.TemporaryDirectory(prefix="website-ci-source-") as raw:
             root = Path(raw)
             for arguments in (
@@ -412,7 +469,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                     timeout=10,
                 )
             sha = subprocess.check_output(
-                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True, timeout=10
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                text=True,
+                timeout=10,
             ).strip()
             tree = subprocess.check_output(
                 ["git", "-C", str(root), "rev-parse", "HEAD^{tree}"],
@@ -435,7 +494,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                     with self.subTest(job=name, expected=expected):
                         output = root / (name + "." + expected + ".outputs")
                         environment = dict(
-                            os.environ, GITHUB_SHA=expected, GITHUB_OUTPUT=str(output)
+                            os.environ,
+                            GITHUB_SHA=expected,
+                            GITHUB_OUTPUT=str(output),
                         )
                         result = subprocess.run(
                             ["bash", "-c", blocks[0]],
@@ -447,7 +508,9 @@ class WebsiteAggregateTests(unittest.TestCase):
                             timeout=5,
                         )
                         if expected == sha:
-                            self.assertEqual(0, result.returncode, result.stderr)
+                            self.assertEqual(
+                                0, result.returncode, result.stderr
+                            )
                             self.assertEqual(
                                 {"sha": sha, "tree": tree},
                                 dict(
@@ -456,7 +519,8 @@ class WebsiteAggregateTests(unittest.TestCase):
                                 ),
                             )
                             self.assertIn(
-                                "CI_SOURCE sha=" + sha + " tree=" + tree, result.stdout
+                                "CI_SOURCE sha=" + sha + " tree=" + tree,
+                                result.stdout,
                             )
                         else:
                             self.assertNotEqual(0, result.returncode)

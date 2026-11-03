@@ -13,7 +13,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 
-CATALOG_PROJECT = re.compile(r"depositar-ai-catalog-[0-9a-f]{12}-[0-9a-f]{12}\Z")
+CATALOG_PROJECT = re.compile(
+    r"depositar-ai-catalog-[0-9a-f]{12}-[0-9a-f]{12}\Z"
+)
 EXPECTED_SERVICES = {"fess-search", "opensearch-search", "ollama-embedding"}
 EXPECTED_NETWORK = "search_backend"
 CATALOG_VOLUME_NAME = re.compile(
@@ -38,7 +40,9 @@ FESS_PLUGIN_URL = (
     "https://maven.codelibs.org/release/org/codelibs/fess/"
     "fess-llm-ollama/15.8.0/fess-llm-ollama-15.8.0.jar"
 )
-FESS_PLUGIN_SHA256 = "08301d94101404ea8fd4ae9efb12cb61cf7d2f28b554653a1b65ee5233d39b84"
+FESS_PLUGIN_SHA256 = (
+    "08301d94101404ea8fd4ae9efb12cb61cf7d2f28b554653a1b65ee5233d39b84"
+)
 PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 CREDENTIAL_WORD = re.compile(
     r"(?<![A-Za-z0-9])(?:api[_.-]?key|credential|passwd|password|secret|token)"
@@ -52,7 +56,9 @@ CREDENTIAL_ASSIGNMENT = re.compile(
     re.IGNORECASE,
 )
 SIZE = re.compile(r"^([1-9][0-9]*)([kKmMgG])$")
-MODEL_ASSIGNMENT = re.compile(r"(?:^|\s)[^\s=]*[._-]model=([^\s]+)", re.IGNORECASE)
+MODEL_ASSIGNMENT = re.compile(
+    r"(?:^|\s)[^\s=]*[._-]model=([^\s]+)", re.IGNORECASE
+)
 OLLAMA_MODEL_COMMAND = re.compile(
     r"\bollama\s+(?:create|pull|run)\s+([^\s]+)", re.IGNORECASE
 )
@@ -96,7 +102,8 @@ COMMON_SERVICE_FIELDS = {
 EXPECTED_SERVICE_FIELDS = {
     "fess-search": COMMON_SERVICE_FIELDS
     | {"build", "depends_on", "networks", "secrets"},
-    "opensearch-search": COMMON_SERVICE_FIELDS | {"build", "networks", "ulimits"},
+    "opensearch-search": COMMON_SERVICE_FIELDS
+    | {"build", "networks", "ulimits"},
     "ollama-embedding": COMMON_SERVICE_FIELDS | {"depends_on", "network_mode"},
 }
 FESS_JAVA_OPTIONS = (
@@ -267,7 +274,9 @@ def command_text(value: Any) -> str:
         return ""
     if isinstance(value, str):
         return value
-    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+    if isinstance(value, Sequence) and not isinstance(
+        value, (bytes, bytearray)
+    ):
         return " ".join(str(item) for item in value)
     return str(value)
 
@@ -292,14 +301,20 @@ def assert_exact_build(
     args: Mapping[str, str],
     dockerfile: str = "Dockerfile",
 ) -> None:
-    require(service.get("image") == image, f"{name}: output image name changed")
+    require(
+        service.get("image") == image, f"{name}: output image name changed"
+    )
     build = as_mapping(service.get("build"), f"{name}: build")
     require(
         set(build) == {"context", "dockerfile", "args"},
         f"{name}: build fields changed",
     )
-    require(build.get("context") == str(context), f"{name}: build context changed")
-    require(build.get("dockerfile") == dockerfile, f"{name}: Dockerfile changed")
+    require(
+        build.get("context") == str(context), f"{name}: build context changed"
+    )
+    require(
+        build.get("dockerfile") == dockerfile, f"{name}: Dockerfile changed"
+    )
     actual_args = as_mapping(build.get("args"), f"{name}: build args")
     require(actual_args == args, f"{name}: reviewed build args changed")
 
@@ -313,7 +328,10 @@ def assert_exact_service_shape(service: Mapping[str, Any], name: str) -> None:
         f"(missing={sorted(expected_fields - actual_fields)!r}, "
         f"unexpected={sorted(actual_fields - expected_fields)!r})",
     )
-    require(service.get("command") is None, f"{name}: command override is forbidden")
+    require(
+        service.get("command") is None,
+        f"{name}: command override is forbidden",
+    )
     require(
         service.get("entrypoint") is None,
         f"{name}: entrypoint override is forbidden",
@@ -347,12 +365,18 @@ def assert_exact_environment(
 
 RESOURCE_BOUNDS = {
     "fess-search": ((1.0, 8.0), (4 * 1024**3, 16 * 1024**3), (128, 2048)),
-    "opensearch-search": ((1.0, 8.0), (4 * 1024**3, 16 * 1024**3), (256, 2048)),
+    "opensearch-search": (
+        (1.0, 8.0),
+        (4 * 1024**3, 16 * 1024**3),
+        (256, 2048),
+    ),
     "ollama-embedding": ((1.0, 16.0), (2 * 1024**3, 16 * 1024**3), (64, 512)),
 }
 
 
-def assert_no_plaintext_credentials(service: Mapping[str, Any], name: str) -> None:
+def assert_no_plaintext_credentials(
+    service: Mapping[str, Any], name: str
+) -> None:
     env = environment(service, name)
     for key, value in env.items():
         require(
@@ -375,7 +399,9 @@ def assert_no_plaintext_credentials(service: Mapping[str, Any], name: str) -> No
 
     labels = service.get("labels") or {}
     if isinstance(labels, Mapping):
-        label_text = " ".join(f"{key}={value}" for key, value in labels.items())
+        label_text = " ".join(
+            f"{key}={value}" for key, value in labels.items()
+        )
     elif isinstance(labels, list):
         label_text = " ".join(str(item) for item in labels)
     else:
@@ -403,7 +429,10 @@ def assert_exact_secrets(
     project: str,
 ) -> None:
     top_secrets = as_mapping(config.get("secrets"), "top-level secrets")
-    require(set(top_secrets) == FESS_SECRET_NAMES, "top-level secret allowlist changed")
+    require(
+        set(top_secrets) == FESS_SECRET_NAMES,
+        "top-level secret allowlist changed",
+    )
     for name in FESS_SECRET_NAMES:
         definition = as_mapping(top_secrets[name], f"top-level secret {name}")
         require(
@@ -420,10 +449,15 @@ def assert_exact_secrets(
         )
 
     for name in ("opensearch-search", "ollama-embedding"):
-        require(not services[name].get("secrets"), f"{name}: secrets are forbidden")
+        require(
+            not services[name].get("secrets"), f"{name}: secrets are forbidden"
+        )
 
     raw_fess_secrets = services["fess-search"].get("secrets")
-    require(isinstance(raw_fess_secrets, list), "fess-search: secrets must be a list")
+    require(
+        isinstance(raw_fess_secrets, list),
+        "fess-search: secrets must be a list",
+    )
     require(
         len(raw_fess_secrets) == len(FESS_SECRET_NAMES),
         "fess-search: secret allowlist changed",
@@ -436,11 +470,18 @@ def assert_exact_secrets(
             "fess-search: secret fields changed",
         )
         source = str(item.get("source") or "")
-        require(source in FESS_SECRET_NAMES, "fess-search: unexpected secret source")
+        require(
+            source in FESS_SECRET_NAMES,
+            "fess-search: unexpected secret source",
+        )
         require(source not in found, "fess-search: duplicate secret source")
-        require(item.get("target") == source, "fess-search: secret target changed")
+        require(
+            item.get("target") == source, "fess-search: secret target changed"
+        )
         found.add(source)
-    require(found == FESS_SECRET_NAMES, "fess-search: secret allowlist changed")
+    require(
+        found == FESS_SECRET_NAMES, "fess-search: secret allowlist changed"
+    )
 
     rendered = json.dumps(config, sort_keys=True)
     require(
@@ -449,9 +490,13 @@ def assert_exact_secrets(
     )
 
 
-def assert_no_device_reservations(service: Mapping[str, Any], name: str) -> None:
+def assert_no_device_reservations(
+    service: Mapping[str, Any], name: str
+) -> None:
     deploy = as_mapping(service.get("deploy") or {}, f"{name}: deploy")
-    resources = as_mapping(deploy.get("resources") or {}, f"{name}: deploy resources")
+    resources = as_mapping(
+        deploy.get("resources") or {}, f"{name}: deploy resources"
+    )
     reservations = as_mapping(
         resources.get("reservations") or {}, f"{name}: resource reservations"
     )
@@ -465,7 +510,9 @@ def assert_exact_runtime_device_requests(
     name: str,
     host_config: Mapping[str, Any],
 ) -> None:
-    """Reject host devices and accelerator requests in CPU catalog containers."""
+    """Reject host devices and accelerator requests in CPU catalog
+    containers.
+    """
 
     for field in ("Devices", "DeviceRequests"):
         value = host_config.get(field)
@@ -481,9 +528,13 @@ def assert_linux_boundary(
 ) -> None:
     require(not service.get("ports"), f"{name}: published ports are forbidden")
     require(
-        service.get("read_only") is True, f"{name}: root filesystem must be read-only"
+        service.get("read_only") is True,
+        f"{name}: root filesystem must be read-only",
     )
-    require(not service.get("privileged", False), f"{name}: privileged is forbidden")
+    require(
+        not service.get("privileged", False),
+        f"{name}: privileged is forbidden",
+    )
     require(not service.get("cap_add"), f"{name}: cap_add is forbidden")
     require(not service.get("devices"), f"{name}: host devices are forbidden")
     require(
@@ -494,12 +545,25 @@ def assert_linux_boundary(
     runtime = str(service.get("runtime") or "").lower()
     require(runtime != "nvidia", f"{name}: NVIDIA runtime is forbidden")
     assert_no_device_reservations(service, name)
-    require(service.get("network_mode") != "host", f"{name}: host network is forbidden")
-    require(service.get("pid") != "host", f"{name}: host PID namespace is forbidden")
-    require(service.get("ipc") != "host", f"{name}: host IPC namespace is forbidden")
+    require(
+        service.get("network_mode") != "host",
+        f"{name}: host network is forbidden",
+    )
+    require(
+        service.get("pid") != "host",
+        f"{name}: host PID namespace is forbidden",
+    )
+    require(
+        service.get("ipc") != "host",
+        f"{name}: host IPC namespace is forbidden",
+    )
     require("configs" not in service, f"{name}: Compose configs are forbidden")
-    require("volumes_from" not in service, f"{name}: volumes_from is forbidden")
-    require(set(service.get("cap_drop") or []) == {"ALL"}, f"{name}: cap_drop ALL")
+    require(
+        "volumes_from" not in service, f"{name}: volumes_from is forbidden"
+    )
+    require(
+        set(service.get("cap_drop") or []) == {"ALL"}, f"{name}: cap_drop ALL"
+    )
     require(
         service.get("security_opt") == ["no-new-privileges:true"],
         f"{name}: security_opt must be exactly no-new-privileges:true",
@@ -558,13 +622,15 @@ def assert_resources_and_health(service: Mapping[str, Any], name: str) -> None:
         f"{name}: PID limit is outside the reviewed bounds",
     )
     require(
-        service.get("restart") == "unless-stopped", f"{name}: restart policy changed"
+        service.get("restart") == "unless-stopped",
+        f"{name}: restart policy changed",
     )
     require(service.get("init") is True, f"{name}: init must be enabled")
 
     logging = as_mapping(service.get("logging"), f"{name}: logging")
     require(
-        logging.get("driver") == "json-file", f"{name}: json-file logging is required"
+        logging.get("driver") == "json-file",
+        f"{name}: json-file logging is required",
     )
     options = as_mapping(logging.get("options"), f"{name}: logging options")
     size = SIZE.fullmatch(str(options.get("max-size") or ""))
@@ -578,12 +644,19 @@ def assert_resources_and_health(service: Mapping[str, Any], name: str) -> None:
         max_files = int(options.get("max-file", 0))
     except (TypeError, ValueError) as error:
         raise ValueError(f"{name}: invalid log max-file") from error
-    require(1 <= max_files <= 10, f"{name}: log max-file must be between 1 and 10")
+    require(
+        1 <= max_files <= 10, f"{name}: log max-file must be between 1 and 10"
+    )
 
     health = as_mapping(service.get("healthcheck"), f"{name}: healthcheck")
-    require(not health.get("disable", False), f"{name}: healthcheck must be enabled")
+    require(
+        not health.get("disable", False),
+        f"{name}: healthcheck must be enabled",
+    )
     test = health.get("test")
-    require(test and test != ["NONE"], f"{name}: healthcheck command is required")
+    require(
+        test and test != ["NONE"], f"{name}: healthcheck command is required"
+    )
     for key in ("interval", "timeout", "retries"):
         require(
             health.get(key) not in (None, "", 0),
@@ -621,7 +694,9 @@ def derive_catalog_root(opensearch: Mapping[str, Any]) -> PurePosixPath:
         for mount in volumes(opensearch, "opensearch-search")
         if mount.get("target") == "/usr/share/opensearch/data"
     ]
-    require(len(data_mounts) == 1, "opensearch-search: one data mount is required")
+    require(
+        len(data_mounts) == 1, "opensearch-search: one data mount is required"
+    )
     assert_catalog_data_mount(data_mounts[0])
     dictionary = [
         mount
@@ -643,7 +718,8 @@ def derive_catalog_root(opensearch: Mapping[str, Any]) -> PurePosixPath:
         "opensearch-search: unsafe dictionary source",
     )
     require(
-        source_path.name == "dictionary" and source_path.parent.name == "opensearch",
+        source_path.name == "dictionary"
+        and source_path.parent.name == "opensearch",
         "opensearch-search: dictionary source path changed",
     )
     root = source_path.parent.parent
@@ -658,12 +734,16 @@ def assert_exact_volumes(
     for name, policies in EXPECTED_VOLUME_PATHS.items():
         service_mounts = volumes(services[name], name)
         require(
-            len(service_mounts) == len(policies), f"{name}: volume allowlist changed"
+            len(service_mounts) == len(policies),
+            f"{name}: volume allowlist changed",
         )
         mounts_by_target: dict[str, Mapping[str, Any]] = {}
         for mount in service_mounts:
             target = str(mount.get("target") or "")
-            require(target not in mounts_by_target, f"{name}: duplicate volume target")
+            require(
+                target not in mounts_by_target,
+                f"{name}: duplicate volume target",
+            )
             mounts_by_target[target] = mount
         require(
             set(mounts_by_target) == {target for _, target, _ in policies},
@@ -671,17 +751,22 @@ def assert_exact_volumes(
         )
         for relative_source, target, read_only in policies:
             mount = mounts_by_target[target]
-            if name == "opensearch-search" and target == "/usr/share/opensearch/data":
+            if (
+                name == "opensearch-search"
+                and target == "/usr/share/opensearch/data"
+            ):
                 assert_catalog_data_mount(mount)
                 continue
             expected_fields = {"type", "source", "target", "bind"}
             if read_only:
                 expected_fields.add("read_only")
             require(
-                set(mount) == expected_fields, f"{name}: mount fields changed: {target}"
+                set(mount) == expected_fields,
+                f"{name}: mount fields changed: {target}",
             )
             require(
-                mount.get("type") == "bind", f"{name}: only bind mounts are allowed"
+                mount.get("type") == "bind",
+                f"{name}: only bind mounts are allowed",
             )
             require(
                 mount.get("source") == str(root / relative_source),
@@ -738,16 +823,21 @@ def assert_granite_only(services: Mapping[str, Mapping[str, Any]]) -> None:
             normalized_key = key.upper().replace(".", "_").replace("-", "_")
             if normalized_key.endswith(("_MODEL", "_MODEL_NAME")):
                 require(
-                    value == GRANITE_MODEL, f"{name}: only {GRANITE_MODEL} is allowed"
+                    value == GRANITE_MODEL,
+                    f"{name}: only {GRANITE_MODEL} is allowed",
                 )
             for model in MODEL_ASSIGNMENT.findall(value):
                 require(
-                    model == GRANITE_MODEL, f"{name}: only {GRANITE_MODEL} is allowed"
+                    model == GRANITE_MODEL,
+                    f"{name}: only {GRANITE_MODEL} is allowed",
                 )
         for field in ("command", "entrypoint"):
-            for model in OLLAMA_MODEL_COMMAND.findall(command_text(service.get(field))):
+            for model in OLLAMA_MODEL_COMMAND.findall(
+                command_text(service.get(field))
+            ):
                 require(
-                    model == GRANITE_MODEL, f"{name}: only {GRANITE_MODEL} is allowed"
+                    model == GRANITE_MODEL,
+                    f"{name}: only {GRANITE_MODEL} is allowed",
                 )
 
 
@@ -755,7 +845,8 @@ def validate(config: Any) -> None:
     config = as_mapping(config, "Compose config")
     project = config.get("name")
     require(
-        type(project) is str and CATALOG_PROJECT.fullmatch(project) is not None,
+        type(project) is str
+        and CATALOG_PROJECT.fullmatch(project) is not None,
         "one qualified catalog project is required",
     )
     require("configs" not in config, "top-level Compose configs are forbidden")
@@ -764,7 +855,9 @@ def validate(config: Any) -> None:
         set(top_volumes) == {"catalog-index"},
         "catalog index volume allowlist changed",
     )
-    definition = as_mapping(top_volumes["catalog-index"], "catalog index volume")
+    definition = as_mapping(
+        top_volumes["catalog-index"], "catalog index volume"
+    )
     assert_catalog_volume_name(definition.get("name"))
     require(
         set(definition) == {"name", "external"}
@@ -779,11 +872,17 @@ def validate(config: Any) -> None:
         f"service allowlist changed: expected {sorted(EXPECTED_SERVICES)!r}",
     )
     top_networks = as_mapping(config.get("networks"), "networks")
-    require(set(top_networks) == {EXPECTED_NETWORK}, "search network allowlist changed")
-    backend = as_mapping(top_networks.get(EXPECTED_NETWORK), EXPECTED_NETWORK)
-    require(backend.get("internal") is True, f"{EXPECTED_NETWORK} must be internal")
     require(
-        backend.get("external") is not True, f"{EXPECTED_NETWORK} must not be external"
+        set(top_networks) == {EXPECTED_NETWORK},
+        "search network allowlist changed",
+    )
+    backend = as_mapping(top_networks.get(EXPECTED_NETWORK), EXPECTED_NETWORK)
+    require(
+        backend.get("internal") is True, f"{EXPECTED_NETWORK} must be internal"
+    )
+    require(
+        backend.get("external") is not True,
+        f"{EXPECTED_NETWORK} must not be external",
     )
 
     typed_services: dict[str, Mapping[str, Any]] = {}
@@ -801,8 +900,10 @@ def validate(config: Any) -> None:
     }
     require(
         len(runtime_users) == 1
-        and NUMERIC_NON_ROOT_USER.fullmatch(next(iter(runtime_users))) is not None,
-        "all search services must use the same explicit numeric non-root UID:GID",
+        and NUMERIC_NON_ROOT_USER.fullmatch(next(iter(runtime_users)))
+        is not None,
+        "all search services must use the same explicit numeric "
+        "non-root UID:GID",
     )
     runtime_identity = next(iter(runtime_users))
 
@@ -834,8 +935,12 @@ def validate(config: Any) -> None:
         image=OPENSEARCH_IMAGE,
         args={"OPENSEARCH_BASE_IMAGE": OPENSEARCH_BASE_IMAGE},
     )
-    require(ollama.get("image") == OLLAMA_IMAGE, "ollama-embedding: image changed")
-    require("build" not in ollama, "ollama-embedding: local build is forbidden")
+    require(
+        ollama.get("image") == OLLAMA_IMAGE, "ollama-embedding: image changed"
+    )
+    require(
+        "build" not in ollama, "ollama-embedding: local build is forbidden"
+    )
 
     require(
         network_names(fess, "fess-search") == {EXPECTED_NETWORK}
@@ -871,7 +976,9 @@ def validate(config: Any) -> None:
         login_options == [FESS_LOGIN_TOKEN],
         f"fess-search: exactly one {FESS_LOGIN_TOKEN} option is required",
     )
-    fess_health = as_mapping(fess.get("healthcheck"), "fess-search: healthcheck")
+    fess_health = as_mapping(
+        fess.get("healthcheck"), "fess-search: healthcheck"
+    )
     require(
         fess_health.get("test") == FESS_HEALTHCHECK,
         "fess-search: exact HTTP-200 healthcheck helper is required",
@@ -879,7 +986,8 @@ def validate(config: Any) -> None:
 
     fess_text = json.dumps(fess, sort_keys=True).lower()
     require(
-        re.search(r"(?:rag[._-])?chat[._-]enabled\s*[=:]\s*true", fess_text) is None,
+        re.search(r"(?:rag[._-])?chat[._-]enabled\s*[=:]\s*true", fess_text)
+        is None,
         "fess-search: RAG chat must remain disabled",
     )
     require(
@@ -910,11 +1018,13 @@ def validate(config: Any) -> None:
             "opensearch_security_disabled",
         }:
             require(
-                not is_enabled(value), "opensearch-search: security plugin is disabled"
+                not is_enabled(value),
+                "opensearch-search: security plugin is disabled",
             )
     os_text = json.dumps(opensearch, sort_keys=True).lower()
     require(
-        re.search(r"plugins[._-]security[._-]disabled\s*[=:]\s*true", os_text) is None,
+        re.search(r"plugins[._-]security[._-]disabled\s*[=:]\s*true", os_text)
+        is None,
         "opensearch-search: security plugin is disabled",
     )
     opensearch_health = as_mapping(
@@ -936,7 +1046,8 @@ def validate(config: Any) -> None:
     assert_granite_only(typed_services)
     rendered = json.dumps(config, sort_keys=True).lower()
     require(
-        "gpt-oss" not in rendered and "gpt_oss" not in rendered, "GPT-OSS is forbidden"
+        "gpt-oss" not in rendered and "gpt_oss" not in rendered,
+        "GPT-OSS is forbidden",
     )
     require(
         GRANITE_MODEL in rendered,
@@ -948,7 +1059,9 @@ def main() -> int:
     try:
         validate(json.load(sys.stdin))
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as error:
-        print(f"Error: invalid catalog Compose policy: {error}", file=sys.stderr)
+        print(
+            f"Error: invalid catalog Compose policy: {error}", file=sys.stderr
+        )
         return 1
     print("Catalog Compose isolation and resource policy passed.")
     return 0

@@ -1,4 +1,6 @@
-"""Real cookie tampering and owner transitions never reuse an earlier session."""
+"""Real cookie tampering and owner transitions never reuse an earlier
+session.
+"""
 
 import json
 import unittest
@@ -8,60 +10,71 @@ from tests.integration.public_entry import test_runtime as runtime_fixture
 
 # Only synthetic credentials in the disposable probe container are accessed.
 # Nothing returns raw cookie or bearer values to the host test process.
-COOKIE_PROBE = r"""
-from http.cookiejar import MozillaCookieJar
-from urllib.error import HTTPError
-from urllib.request import Request, build_opener, HTTPCookieProcessor, HTTPSHandler
-from pathlib import Path
-import copy
-import json
-import shutil
-import ssl
-import sys
-account, operation, argument = sys.argv[1:]
-path = Path('/tmp/' + account + '.cookies')
-if operation in ('snapshot', 'restore'):
-    backup = Path('/tmp/' + account + '.cookie-backup-' + argument)
-    source, destination = (path, backup) if operation == 'snapshot' else (backup, path)
-    shutil.copyfile(source, destination)
-    print(json.dumps({'changed': True}))
-    raise SystemExit
-jar = MozillaCookieJar(str(path))
-jar.load(ignore_discard=True, ignore_expires=True)
-if operation == 'tamper':
-    cookie = next(cookie for cookie in jar if cookie.name == argument)
-    offset = len(cookie.value) // 2
-    replacement = 'A' if cookie.value[offset] != 'A' else 'B'
-    cookie.value = cookie.value[:offset] + replacement + cookie.value[offset + 1:]
-    jar.save(ignore_discard=True, ignore_expires=True)
-    print(json.dumps({'changed': True}))
-    raise SystemExit
-if operation == 'copy_login':
-    other = MozillaCookieJar('/tmp/' + argument + '.cookies')
-    other.load(ignore_discard=True, ignore_expires=True)
-    cookie = next(cookie for cookie in other if cookie.name == '__Host-depositar-login')
-    jar.set_cookie(copy.copy(cookie))
-    jar.save(ignore_discard=True, ignore_expires=True)
-    print(json.dumps({'changed': True}))
-    raise SystemExit
-origin = 'https://public.test:9443'
-opener = build_opener(HTTPCookieProcessor(jar), HTTPSHandler(context=ssl.create_default_context(cafile='/fixture/tls.crt')))
-if operation == 'delete':
-    saved = json.loads(Path('/tmp/' + account + '.session').read_text())
-    request = Request(origin + '/api/session', method='DELETE', headers={
-        'Origin': origin, 'Authorization': 'Bearer ' + saved['token']})
-elif operation == 'logout':
-    request = Request(origin + '/auth/logout')
-else:
-    raise ValueError('unsupported isolated cookie operation')
-try:
-    response = opener.open(request, timeout=10)
-except HTTPError as error:
-    response = error
-response.read(128 * 1024)
-jar.save(ignore_discard=True, ignore_expires=True)
-print(json.dumps({'status': response.status}))
-"""
+COOKIE_PROBE = (
+    "\n"
+    "from http.cookiejar import MozillaCookieJar\n"
+    "from urllib.error import HTTPError\n"
+    "from urllib.request import Request, build_opener, "
+    "HTTPCookieProcessor, HTTPSHandler\n"
+    "from pathlib import Path\n"
+    "import copy\n"
+    "import json\n"
+    "import shutil\n"
+    "import ssl\n"
+    "import sys\n"
+    "account, operation, argument = sys.argv[1:]\n"
+    "path = Path('/tmp/' + account + '.cookies')\n"
+    "if operation in ('snapshot', 'restore'):\n"
+    "    backup = Path('/tmp/' + account + '.cookie-backup-' + argument)\n"
+    "    source, destination = (path, backup) if operation == "
+    "'snapshot' else (backup, path)\n"
+    "    shutil.copyfile(source, destination)\n"
+    "    print(json.dumps({'changed': True}))\n"
+    "    raise SystemExit\n"
+    "jar = MozillaCookieJar(str(path))\n"
+    "jar.load(ignore_discard=True, ignore_expires=True)\n"
+    "if operation == 'tamper':\n"
+    "    cookie = next(cookie for cookie in jar if cookie.name == "
+    "argument)\n"
+    "    offset = len(cookie.value) // 2\n"
+    "    replacement = 'A' if cookie.value[offset] != 'A' else 'B'\n"
+    "    cookie.value = cookie.value[:offset] + replacement + cookie."
+    "value[offset + 1:]\n"
+    "    jar.save(ignore_discard=True, ignore_expires=True)\n"
+    "    print(json.dumps({'changed': True}))\n"
+    "    raise SystemExit\n"
+    "if operation == 'copy_login':\n"
+    "    other = MozillaCookieJar('/tmp/' + argument + '.cookies')\n"
+    "    other.load(ignore_discard=True, ignore_expires=True)\n"
+    "    cookie = next(cookie for cookie in other if cookie.name == "
+    "'__Host-depositar-login')\n"
+    "    jar.set_cookie(copy.copy(cookie))\n"
+    "    jar.save(ignore_discard=True, ignore_expires=True)\n"
+    "    print(json.dumps({'changed': True}))\n"
+    "    raise SystemExit\n"
+    "origin = 'https://public.test:9443'\n"
+    "opener = build_opener(HTTPCookieProcessor(jar), "
+    "HTTPSHandler(context=ssl.create_default_context(cafile='/fixture/tl"
+    "s.crt')))\n"
+    "if operation == 'delete':\n"
+    "    saved = json.loads(Path('/tmp/' + account + '.session')."
+    "read_text())\n"
+    "    request = Request(origin + '/api/session', method='DELETE', "
+    "headers={\n"
+    "        'Origin': origin, 'Authorization': 'Bearer ' + "
+    "saved['token']})\n"
+    "elif operation == 'logout':\n"
+    "    request = Request(origin + '/auth/logout')\n"
+    "else:\n"
+    "    raise ValueError('unsupported isolated cookie operation')\n"
+    "try:\n"
+    "    response = opener.open(request, timeout=10)\n"
+    "except HTTPError as error:\n"
+    "    response = error\n"
+    "response.read(128 * 1024)\n"
+    "jar.save(ignore_discard=True, ignore_expires=True)\n"
+    "print(json.dumps({'status': response.status}))\n"
+)
 
 
 class IdentityGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
@@ -102,7 +115,9 @@ class IdentityGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         )
         return json.loads(result.stdout)
 
-    def test_tamper_login_account_switch_and_logout_keep_session_ownership(self):
+    def test_tamper_login_account_switch_and_logout_keep_session_ownership(
+        self,
+    ):
         account = "identity-transition"
         original = self.probe("access", account)["value"]["principal"]
         self.assertEqual(original["kind"], "guest")
@@ -120,7 +135,9 @@ class IdentityGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         # Wrong-owner cleanup did not remove the original guest's session.
         self.cookie(account, "restore", "guest")
         self.assertEqual(
-            self.probe("turn", account, {"query": "氣候", "version": 0})["status"],
+            self.probe("turn", account, {"query": "氣候", "version": 0})[
+                "status"
+            ],
             200,
         )
         self.assertEqual(self.calls(), 1)
@@ -138,14 +155,17 @@ class IdentityGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
 
         self.assertEqual(self.probe("login", "other-identity")["status"], 200)
         self.cookie(account, "copy_login", "other-identity")
-        # A valid different OIDC account still cannot use or delete this bearer.
+        # A valid different OIDC account still cannot use or delete this
+        # bearer.
         denied = self.probe("turn", account, {"query": "氣候", "version": 0})
         self.assertEqual(denied["status"], 410, denied)
         self.assertEqual(self.cookie(account, "delete")["status"], 200)
         self.assertEqual(self.calls(), 1)
         self.cookie(account, "restore", "user")
         self.assertEqual(
-            self.probe("turn", account, {"query": "氣候", "version": 0})["status"],
+            self.probe("turn", account, {"query": "氣候", "version": 0})[
+                "status"
+            ],
             200,
         )
         self.assertEqual(self.calls(), 2)

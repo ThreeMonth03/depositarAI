@@ -16,7 +16,14 @@ MAX_URL_CHARS = 2048
 
 _UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_CONTEXT_FIELDS = {"resource_id", "name", "format", "url", "columns", "excerpt"}
+_CONTEXT_FIELDS = {
+    "resource_id",
+    "name",
+    "format",
+    "url",
+    "columns",
+    "excerpt",
+}
 _ENRICHMENT_FIELDS = {
     "context",
     "index_text",
@@ -37,7 +44,9 @@ def _text(value, maximum, *, required=False):
         or (required and not value.strip())
         or unicodedata.normalize("NFKC", value) != value
         or "@" in value
-        or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value)
+        or any(
+            unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value
+        )
     ):
         raise ValueError("invalid resource context text")
     return value
@@ -85,7 +94,7 @@ def resource_url(dataset_url, resource_id):
 
 
 def validate_resource_context(value):
-    """Validate the closed public schema and return an independent JSON copy."""
+    """Validate the closed public schema; return an independent JSON copy."""
     if type(value) is not list or len(value) > MAX_RESOURCES:
         raise ValueError("invalid resource context list")
     output = []
@@ -108,7 +117,10 @@ def validate_resource_context(value):
         columns = item["columns"]
         if type(columns) is not list or len(columns) > MAX_COLUMNS:
             raise ValueError("invalid resource columns")
-        columns = [_text(column, MAX_COLUMN_CHARS, required=True) for column in columns]
+        columns = [
+            _text(column, MAX_COLUMN_CHARS, required=True)
+            for column in columns
+        ]
         if sum(map(len, columns)) > MAX_COLUMN_TOTAL_CHARS:
             raise ValueError("resource columns exceed total limit")
         excerpt = _text(item["excerpt"], MAX_EXCERPT_CHARS)
@@ -136,19 +148,27 @@ def validate_enrichment_resources(value):
     """Validate sealed private provenance and its exact public projection."""
     if type(value) is not list or len(value) > MAX_RESOURCES:
         raise ValueError("invalid resource enrichment list")
-    if any(type(item) is not dict or set(item) != _ENRICHMENT_FIELDS for item in value):
+    if any(
+        type(item) is not dict or set(item) != _ENRICHMENT_FIELDS
+        for item in value
+    ):
         raise ValueError("invalid resource enrichment fields")
     contexts = validate_resource_context([item["context"] for item in value])
     output = []
     for item, context in zip(value, contexts):
-        index_text = _text(item["index_text"], MAX_INDEX_TEXT_CHARS, required=True)
+        index_text = _text(
+            item["index_text"], MAX_INDEX_TEXT_CHARS, required=True
+        )
         if (
-            context["format"] == "CSV" and index_text != " ".join(context["columns"])
+            context["format"] == "CSV"
+            and index_text != " ".join(context["columns"])
         ) or (
             context["format"] == "PDF"
             and context["excerpt"] != index_text[:MAX_EXCERPT_CHARS]
         ):
-            raise ValueError("resource index text disagrees with public context")
+            raise ValueError(
+                "resource index text disagrees with public context"
+            )
         image = item["extractor_image_id"]
         if type(image) is not str or not image.startswith("sha256:"):
             raise ValueError("invalid resource extractor image")

@@ -172,7 +172,9 @@ class RealComplexityGateTests(unittest.TestCase):
                 (root / path).mkdir(parents=True, exist_ok=True)
             script = root / "scripts/ci/complexity.py"
             shutil.copyfile(SCRIPT, script)
-            (root / "ruff.toml").write_text("[lint.mccabe]\nmax-complexity = 10\n")
+            (root / "ruff.toml").write_text(
+                "[lint.mccabe]\nmax-complexity = 10\n"
+            )
             accepted = root / "search/planning/policy.py"
             accepted.write_text("def policy(value):\n    return value\n")
             (root / "search/operations/cli.py").write_text(
@@ -180,7 +182,8 @@ class RealComplexityGateTests(unittest.TestCase):
             )
             legacy = root / "search/legacy.py"
             complex_source = "def policy(value):\n" + "".join(
-                f"    if value == {i}:\n        return {i}\n" for i in range(11)
+                f"    if value == {i}:\n        return {i}\n"
+                for i in range(11)
             )
             legacy.write_text(complex_source)
             report = Path(name) / "report.json"
@@ -206,7 +209,9 @@ class RealComplexityGateTests(unittest.TestCase):
                         timeout=20,
                         check=False,
                     )
-                    self.assertEqual(result.returncode, expected, result.stderr)
+                    self.assertEqual(
+                        result.returncode, expected, result.stderr
+                    )
                     findings = json.loads(report.read_text())
                     self.assertEqual(len(findings), 1)
                     self.assertEqual(Path(findings[0]["filename"]), path)

@@ -36,7 +36,9 @@ def adapted_config(data_root, project):
     original = valid_config()
     raw = json.dumps(original)
     raw = raw.replace(CATALOG_ROOT, str(data_root))
-    raw = raw.replace(f"{RUNTIME_UID}:{RUNTIME_GID}", f"{os.geteuid()}:{os.getegid()}")
+    raw = raw.replace(
+        f"{RUNTIME_UID}:{RUNTIME_GID}", f"{os.geteuid()}:{os.getegid()}"
+    )
     raw = raw.replace(f"uid={RUNTIME_UID}", f"uid={os.geteuid()}")
     raw = raw.replace(f"gid={RUNTIME_GID}", f"gid={os.getegid()}")
     config = json.loads(raw)
@@ -52,14 +54,23 @@ def adapted_config(data_root, project):
 
 class CatalogBackendTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="depositar-backend-test-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-backend-test-"
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         roots = {}
-        for name in ("state", "api-models", "embedding-models", "reranker-models"):
+        for name in (
+            "state",
+            "api-models",
+            "embedding-models",
+            "reranker-models",
+        ):
             roots[name] = self.root / name
             roots[name].mkdir(mode=0o700)
-        uuids = tuple(f"GPU-0000000{i}-0000-4000-8000-000000000001" for i in range(4))
+        uuids = tuple(
+            f"GPU-0000000{i}-0000-4000-8000-000000000001" for i in range(4)
+        )
         self.config = ProductConfig(
             2,
             roots["state"],
@@ -90,7 +101,9 @@ class CatalogBackendTests(unittest.TestCase):
         if argv[:1] == ["git"]:
             if "ls-tree" in argv:
                 if self.missing_history:
-                    return subprocess.CompletedProcess(argv, 1, "", "missing old tree")
+                    return subprocess.CompletedProcess(
+                        argv, 1, "", "missing old tree"
+                    )
                 paths = (
                     *backend.STAGED_FILES,
                     *backend.BUILD_FILES,
@@ -99,15 +112,24 @@ class CatalogBackendTests(unittest.TestCase):
                 return subprocess.CompletedProcess(
                     argv,
                     0,
-                    "\0".join(p for p in paths if p not in self.missing_origin_files)
+                    "\0".join(
+                        p for p in paths if p not in self.missing_origin_files
+                    )
                     + "\0",
                     "",
                 )
             revision, relative = argv[-1].split(":", 1)
             if self.missing_history and revision == REVISION:
-                return subprocess.CompletedProcess(argv, 1, "", "missing old object")
-            if revision == REVISION and relative in self.unreadable_origin_files:
-                return subprocess.CompletedProcess(argv, 1, "", "unreadable old blob")
+                return subprocess.CompletedProcess(
+                    argv, 1, "", "missing old object"
+                )
+            if (
+                revision == REVISION
+                and relative in self.unreadable_origin_files
+            ):
+                return subprocess.CompletedProcess(
+                    argv, 1, "", "unreadable old blob"
+                )
             content = self.original_sources.get(
                 (revision, relative), (ROOT / relative).read_text()
             )
@@ -121,7 +143,9 @@ class CatalogBackendTests(unittest.TestCase):
             self.assertEqual(argv[7], receipt["reference"])
             self.assertEqual(argv[9], receipt["image_id"])
             if self.fail_bootstrap:
-                return subprocess.CompletedProcess(argv, 1, "", "private failure")
+                return subprocess.CompletedProcess(
+                    argv, 1, "", "private failure"
+                )
             self.assertEqual("--isolated-project", argv[4])
             tooling = Path(argv[3]).parents[1]
             values = dict(
@@ -134,24 +158,36 @@ class CatalogBackendTests(unittest.TestCase):
             self.assertRegex(
                 argv[7], r"\Adepositar-opensearch-search-hash:[0-9a-f]{40}\Z"
             )
-            self.assertEqual(argv[5].rsplit("-", 1)[1], argv[7].split(":")[1][:12])
+            self.assertEqual(
+                argv[5].rsplit("-", 1)[1], argv[7].split(":")[1][:12]
+            )
             self.assertEqual(["--hash-image-id", HASH_IMAGE_ID], argv[8:])
             data = Path(values["SEARCH_CATALOG_DATA_ROOT"])
             data.mkdir(mode=0o700)
-            for name in ("state", "secrets", "opensearch", "opensearch/config"):
+            for name in (
+                "state",
+                "secrets",
+                "opensearch",
+                "opensearch/config",
+            ):
                 (data / name).mkdir(mode=0o700)
             (data / "state/operations.lock").touch(mode=0o600)
             for number, name in enumerate(backend.SECRET_NAMES, 1):
                 secret = data / "secrets" / name
                 secret.write_text(
-                    str(number) * (32 if name == "fess_app_cipher_key" else 64) + "\n"
+                    str(number) * (32 if name == "fess_app_cipher_key" else 64)
+                    + "\n"
                 )
                 secret.chmod(0o600)
             for name in (*backend.SECURITY_FILES, "security-material.sha256"):
                 target = data / "opensearch/config" / name
-                target.write_text("nonsecret fake bootstrap material: " + name + "\n")
+                target.write_text(
+                    "nonsecret fake bootstrap material: " + name + "\n"
+                )
                 target.chmod(0o600 if name.endswith(".sha256") else 0o400)
-            return subprocess.CompletedProcess(argv, 0, "isolated bootstrap\n", "")
+            return subprocess.CompletedProcess(
+                argv, 0, "isolated bootstrap\n", ""
+            )
         if argv[:2] == ["docker", "build"]:
             self.assertEqual(300, timeout)
             self.assertIn("--network=none", argv)
@@ -165,7 +201,11 @@ class CatalogBackendTests(unittest.TestCase):
                 argv[argv.index("--build-arg") + 1],
             )
             self.assertEqual("tooling", context.parents[2].name)
-            for name in ("Dockerfile", ".dockerignore", "opensearch_healthcheck.py"):
+            for name in (
+                "Dockerfile",
+                ".dockerignore",
+                "opensearch_healthcheck.py",
+            ):
                 self.assertEqual(
                     (ROOT / "deploy/docker/opensearch" / name).read_bytes(),
                     (context / name).read_bytes(),
@@ -180,7 +220,9 @@ class CatalogBackendTests(unittest.TestCase):
             metadata = {"id": HASH_IMAGE_ID, "revision": revision}
             if self.hash_metadata_mutation:
                 self.hash_metadata_mutation(metadata)
-            return subprocess.CompletedProcess(argv, 0, json.dumps(metadata), "")
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps(metadata), ""
+            )
         if argv[:2] == ["docker", "compose"]:
             self.assertEqual(["config", "--format", "json"], argv[-3:])
             env = Path(argv[argv.index("--env-file") + 1])
@@ -207,14 +249,20 @@ class CatalogBackendTests(unittest.TestCase):
         name = self.bundle["bundle_id"][:12] + "-" + REVISION[:12]
         self.assertEqual("depositar-ai-catalog-" + name, result["project"])
         self.assertEqual(
-            self.config.state_root / "catalogs" / name, Path(result["work_root"])
+            self.config.state_root / "catalogs" / name,
+            Path(result["work_root"]),
         )
         self.assertEqual(
             (1, "prepared", 1),
-            (result["schema_version"], result["status"], result["document_count"]),
+            (
+                result["schema_version"],
+                result["status"],
+                result["document_count"],
+            ),
         )
         self.assertEqual(
-            result, json.loads((Path(result["work_root"]) / "plan.json").read_text())
+            result,
+            json.loads((Path(result["work_root"]) / "plan.json").read_text()),
         )
         self.assertEqual(
             set((*backend.STAGED_FILES, *backend.BUILD_FILES)),
@@ -226,7 +274,8 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual(1, sum(argv[0] == "bash" for argv, _ in self.calls))
         self.assertEqual(3, sum(argv[0] == "docker" for argv, _ in self.calls))
         self.assertEqual(
-            900, next(timeout for argv, timeout in self.calls if argv[0] == "bash")
+            900,
+            next(timeout for argv, timeout in self.calls if argv[0] == "bash"),
         )
         for name in (*backend.STAGED_FILES, *backend.BUILD_FILES):
             staged = Path(result["tooling_root"]) / name
@@ -246,7 +295,12 @@ class CatalogBackendTests(unittest.TestCase):
             self.assertEqual(plan, self.prepare())
         compose = json.loads(Path(plan["compose_file"]).read_text())
         self.assertEqual(
-            {"catalog-index": {"name": plan["project"] + "-index", "external": True}},
+            {
+                "catalog-index": {
+                    "name": plan["project"] + "-index",
+                    "external": True,
+                }
+            },
             compose["volumes"],
         )
         mount = next(
@@ -265,7 +319,9 @@ class CatalogBackendTests(unittest.TestCase):
         )
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
         self.assertFalse((Path(plan["work_root"]) / "volume.json").exists())
-        self.config = replace(self.config, schema_version=1, catalog_storage="bind")
+        self.config = replace(
+            self.config, schema_version=1, catalog_storage="bind"
+        )
         with self.assertRaises(ValueError):
             self.prepare()
 
@@ -273,7 +329,9 @@ class CatalogBackendTests(unittest.TestCase):
         def change_data_mount(compose):
             mount = next(
                 value
-                for value in compose["services"]["opensearch-search"]["volumes"]
+                for value in compose["services"]["opensearch-search"][
+                    "volumes"
+                ]
                 if value["target"] == "/usr/share/opensearch/data"
             )
             mount["source"] = "/etc/opensearch/data"
@@ -282,7 +340,9 @@ class CatalogBackendTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.prepare()
 
-    def test_hash_helper_receipt_seals_exact_sources_and_immutable_build_identity(self):
+    def test_hash_receipt_seals_sources_and_build_identity(
+        self,
+    ):
         prepared = self.prepare()
         receipt = Path(prepared["work_root"]) / "hash-image.json"
         sources = (
@@ -297,7 +357,9 @@ class CatalogBackendTests(unittest.TestCase):
                 "revision": REVISION,
                 "base": backend.APPROVED_OPENSEARCH_BASE,
                 "sources": {
-                    name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+                    name: hashlib.sha256(
+                        (ROOT / name).read_bytes()
+                    ).hexdigest()
                     for name in sources
                 },
             },
@@ -350,7 +412,9 @@ class CatalogBackendTests(unittest.TestCase):
             self.load_prepared()
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
-    def test_repeat_detects_valid_hex_secret_changed_with_unchanged_manifest(self):
+    def test_repeat_detects_valid_hex_secret_changed_with_unchanged_manifest(
+        self,
+    ):
         result = self.prepare()
         directory = Path(result["data_root"])
         manifest = directory / "opensearch/config/security-material.sha256"
@@ -368,7 +432,9 @@ class CatalogBackendTests(unittest.TestCase):
 
     def test_repeat_detects_static_security_file_byte_replacement(self):
         result = self.prepare()
-        path = Path(result["data_root"]) / "opensearch/config/roles_mapping.yml"
+        path = (
+            Path(result["data_root"]) / "opensearch/config/roles_mapping.yml"
+        )
         path.chmod(0o600)
         path.write_text("different role bindings\n")
         path.chmod(0o400)
@@ -377,7 +443,9 @@ class CatalogBackendTests(unittest.TestCase):
         ):
             self.load_prepared()
 
-    def test_security_material_fifo_symlink_and_extra_entries_fail_closed(self):
+    def test_security_material_fifo_symlink_and_extra_entries_fail_closed(
+        self,
+    ):
         result = self.prepare()
         data = Path(result["data_root"])
         path = data / "opensearch/config/node.pem"
@@ -413,7 +481,8 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertTrue(Path(first["compose_file"]).exists())
 
     def complete_hint(self, plan):
-        """Selection fixture only; runtime/vector authority is tested separately."""
+        """Selection fixture only; runtime/vector authority is tested
+        separately."""
         root = Path(plan["work_root"])
         backend._write_file(root / "runtime.json", b"{}\n")
         vectors = root / "vector-operations"
@@ -437,7 +506,7 @@ class CatalogBackendTests(unittest.TestCase):
             ).encode(),
         )
 
-    def test_complete_catalog_survives_unrelated_app_commit_without_any_docker_call(
+    def test_complete_catalog_survives_unrelated_commit_without_docker(
         self,
     ):
         first = self.prepare()
@@ -450,7 +519,9 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual(before, plan_path.read_bytes())
         self.assertEqual(REVISION, second["revision"])
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
-        self.assertEqual(1, len(list((self.config.state_root / "catalogs").iterdir())))
+        self.assertEqual(
+            1, len(list((self.config.state_root / "catalogs").iterdir()))
+        )
 
     def test_query_and_storage_changes_keep_catalog_and_original_provenance(
         self,
@@ -483,12 +554,17 @@ class CatalogBackendTests(unittest.TestCase):
                 self.assertEqual(first, loaded)
                 self.assertEqual(REVISION, loaded["revision"])
                 self.assertEqual(before, plan_path.read_bytes())
-                self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
+                self.assertTrue(
+                    all(argv[0] == "git" for argv, _ in self.calls)
+                )
                 self.assertEqual(
-                    1, len(list((self.config.state_root / "catalogs").iterdir()))
+                    1,
+                    len(list((self.config.state_root / "catalogs").iterdir())),
                 )
 
-    def test_auto_selection_skips_partial_slots_and_keeps_current_partial_slot(self):
+    def test_auto_selection_skips_partial_slots_and_keeps_current_partial_slot(
+        self,
+    ):
         first = self.prepare()
         complete = self.prepare(revision="c" * 40)
         self.complete_hint(complete)
@@ -507,7 +583,9 @@ class CatalogBackendTests(unittest.TestCase):
 
         self.assertLessEqual(set(ADMIN_FILES), set(backend.DATA_FILES))
 
-    def test_completed_catalog_reuses_original_compose_from_a_new_source_checkout(self):
+    def test_new_checkout_reuses_completed_catalog_compose(
+        self,
+    ):
         first = self.prepare()
         self.complete_hint(first)
         relocated = self.root / "new-checkout"
@@ -544,18 +622,26 @@ class CatalogBackendTests(unittest.TestCase):
             project=first["project"],
             uid=os.geteuid(),
             gid=os.getegid(),
-            policy_source=(ROOT / "scripts/validate_catalog_compose.py").read_bytes(),
+            policy_source=(
+                ROOT / "scripts/validate_catalog_compose.py"
+            ).read_bytes(),
         )
         for path in ("relative", "/tmp/source/../other", "/tmp//source", True):
             with (
                 self.subTest(path=path),
                 self.assertRaisesRegex(commands.BackendError, "build root"),
             ):
-                backend.validate_compose(compose, **arguments, sealed_build_root=path)
+                backend.validate_compose(
+                    compose, **arguments, sealed_build_root=path
+                )
         changed = copy.deepcopy(compose)
-        changed["services"]["opensearch-search"]["build"]["context"] = "/different"
+        changed["services"]["opensearch-search"]["build"]["context"] = (
+            "/different"
+        )
         with self.assertRaisesRegex(ValueError, "build context changed"):
-            backend.validate_compose(changed, **arguments, sealed_build_root=str(ROOT))
+            backend.validate_compose(
+                changed, **arguments, sealed_build_root=str(ROOT)
+            )
 
     def test_data_model_mapping_or_image_change_misses_the_old_catalog(self):
         for relative in (
@@ -579,7 +665,9 @@ class CatalogBackendTests(unittest.TestCase):
                             ROOT / relative
                         ).read_text() + "\n# Different original recipe\n"
                         second = self.prepare(revision="b" * 40)
-                        self.assertNotEqual(first["project"], second["project"])
+                        self.assertNotEqual(
+                            first["project"], second["project"]
+                        )
                     finally:
                         self.config = config
                         self.original_sources.clear()
@@ -592,7 +680,9 @@ class CatalogBackendTests(unittest.TestCase):
             result, self.prepare(revision="b" * 40, catalog_revision=REVISION)
         )
 
-    def test_changed_vector_profile_misses_while_orchestration_change_reuses(self):
+    def test_changed_vector_profile_misses_while_orchestration_change_reuses(
+        self,
+    ):
         first = self.prepare()
         self.complete_hint(first)
         relative = "search/operations/catalog/vectors.py"
@@ -610,7 +700,9 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual(first, self.prepare(revision="b" * 40))
 
     def test_vector_profile_has_no_unsealed_external_constant_dependency(self):
-        tree = ast.parse((ROOT / "search/operations/catalog/vectors.py").read_text())
+        tree = ast.parse(
+            (ROOT / "search/operations/catalog/vectors.py").read_text()
+        )
         recipe = next(
             node
             for node in tree.body
@@ -621,7 +713,9 @@ class CatalogBackendTests(unittest.TestCase):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 local.add(node.id)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                local.update(alias.asname or alias.name for alias in node.names)
+                local.update(
+                    alias.asname or alias.name for alias in node.names
+                )
         loaded = {
             node.id
             for node in ast.walk(recipe)
@@ -629,7 +723,9 @@ class CatalogBackendTests(unittest.TestCase):
         }
         self.assertEqual({"any", "execution", "RuntimeError"}, loaded - local)
 
-    def test_explicit_incompatible_origin_refuses_before_slot_or_docker_mutations(self):
+    def test_incompatible_origin_refuses_before_slot_or_docker(
+        self,
+    ):
         for relative in (
             "search/catalog/embedding.py",
             "search/operations/catalog/administration.py",
@@ -644,8 +740,12 @@ class CatalogBackendTests(unittest.TestCase):
                     backend.IncompatibleCatalog, "recipe changed"
                 ):
                     self.prepare(revision="b" * 40, catalog_revision=REVISION)
-                self.assertFalse((self.config.state_root / "catalogs").exists())
-                self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
+                self.assertFalse(
+                    (self.config.state_root / "catalogs").exists()
+                )
+                self.assertTrue(
+                    all(argv[0] == "git" for argv, _ in self.calls)
+                )
 
     def test_missing_origin_history_cannot_turn_into_a_cache_miss(self):
         first = self.prepare()
@@ -656,7 +756,9 @@ class CatalogBackendTests(unittest.TestCase):
             self.prepare(revision="b" * 40)
         self.assertNotIsInstance(error.exception, backend.IncompatibleCatalog)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
-        self.assertEqual(1, len(list((self.config.state_root / "catalogs").iterdir())))
+        self.assertEqual(
+            1, len(list((self.config.state_root / "catalogs").iterdir()))
+        )
 
     def test_readable_old_tree_without_new_recipe_input_is_a_cache_miss(self):
         first = self.prepare()
@@ -664,16 +766,22 @@ class CatalogBackendTests(unittest.TestCase):
         self.missing_origin_files.add("search/catalog/embedding.py")
         second = self.prepare(revision="b" * 40)
         self.assertNotEqual(first["project"], second["project"])
-        self.assertEqual(2, len(list((self.config.state_root / "catalogs").iterdir())))
+        self.assertEqual(
+            2, len(list((self.config.state_root / "catalogs").iterdir()))
+        )
 
     def test_explicit_old_tree_without_new_recipe_input_requires_rebuild(self):
         self.missing_origin_files.add("search/catalog/embedding.py")
-        with self.assertRaisesRegex(backend.IncompatibleCatalog, "rebuild required"):
+        with self.assertRaisesRegex(
+            backend.IncompatibleCatalog, "rebuild required"
+        ):
             self.prepare(revision="b" * 40, catalog_revision=REVISION)
         self.assertFalse((self.config.state_root / "catalogs").exists())
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
-    def test_origin_blob_read_error_is_not_misclassified_as_a_recipe_cache_miss(self):
+    def test_origin_blob_read_error_is_not_recipe_cache_miss(
+        self,
+    ):
         first = self.prepare()
         self.complete_hint(first)
         self.unreadable_origin_files.add("search/catalog/embedding.py")
@@ -682,7 +790,9 @@ class CatalogBackendTests(unittest.TestCase):
             self.prepare(revision="b" * 40)
         self.assertNotIsInstance(error.exception, backend.IncompatibleCatalog)
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
-        self.assertEqual(1, len(list((self.config.state_root / "catalogs").iterdir())))
+        self.assertEqual(
+            1, len(list((self.config.state_root / "catalogs").iterdir()))
+        )
 
     def test_cached_plan_still_requires_unchanged_security_material(self):
         first = self.prepare()
@@ -720,7 +830,9 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual("quarantined", failure["status"])
         self.assertEqual("bootstrap", failure["phase"])
         self.assertFalse(failure["active_modified"])
-        self.assertNotIn("private failure", (slot / "failure.json").read_text())
+        self.assertNotIn(
+            "private failure", (slot / "failure.json").read_text()
+        )
         self.assertFalse((slot / "plan.json").exists())
         self.assertEqual(
             HASH_IMAGE_ID,
@@ -742,7 +854,9 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertFalse((slot / "plan.json").exists())
         self.assertFalse((slot / "hash-image.json").exists())
 
-    def test_hash_image_identity_and_revision_are_verified_before_bootstrap(self):
+    def test_hash_image_identity_and_revision_are_verified_before_bootstrap(
+        self,
+    ):
         for number, mutation in enumerate(
             (
                 lambda value: value.update(revision="b" * 40),
@@ -753,13 +867,19 @@ class CatalogBackendTests(unittest.TestCase):
         ):
             with self.subTest(mutation=mutation):
                 self.hash_metadata_mutation = mutation
-                with self.assertRaisesRegex(commands.BackendError, "provenance"):
+                with self.assertRaisesRegex(
+                    commands.BackendError, "provenance"
+                ):
                     self.prepare(revision=f"{number:012x}" + "0" * 28)
-                self.assertTrue(all(argv[0] != "bash" for argv, _ in self.calls))
+                self.assertTrue(
+                    all(argv[0] != "bash" for argv, _ in self.calls)
+                )
                 self.assertTrue(
                     all(
                         not (slot / "hash-image.json").exists()
-                        for slot in (self.config.state_root / "catalogs").iterdir()
+                        for slot in (
+                            self.config.state_root / "catalogs"
+                        ).iterdir()
                     )
                 )
 
@@ -797,7 +917,9 @@ class CatalogBackendTests(unittest.TestCase):
         result = self.prepare()
         path = Path(result["tooling_root"]) / ".env.catalog"
         path.write_bytes(path.read_bytes() + b"SECRET=not-allowed\n")
-        with self.assertRaisesRegex(commands.BackendError, "environment changed"):
+        with self.assertRaisesRegex(
+            commands.BackendError, "environment changed"
+        ):
             self.prepare()
 
     def test_compose_digest_and_plan_identity_are_verified(self):
@@ -818,19 +940,26 @@ class CatalogBackendTests(unittest.TestCase):
             path.write_text(json.dumps(altered))
             with (
                 self.subTest(name=name),
-                self.assertRaisesRegex(commands.BackendError, "identity mismatch"),
+                self.assertRaisesRegex(
+                    commands.BackendError, "identity mismatch"
+                ),
             ):
                 self.prepare()
 
-    def test_work_directory_replacement_during_render_cannot_publish_plan(self):
+    def test_work_directory_replacement_during_render_cannot_publish_plan(
+        self,
+    ):
         replaced = []
 
         def replace_work(config):
             data_root = Path(
                 next(
                     mount["source"]
-                    for mount in config["services"]["opensearch-search"]["volumes"]
-                    if mount["target"] == "/usr/share/opensearch/config/dictionary"
+                    for mount in config["services"]["opensearch-search"][
+                        "volumes"
+                    ]
+                    if mount["target"]
+                    == "/usr/share/opensearch/config/dictionary"
                 )
             ).parents[1]
             work = data_root.parent
@@ -876,7 +1005,9 @@ class CatalogBackendTests(unittest.TestCase):
         self.assertEqual(before, set(slots.iterdir()))
         self.assertTrue(all(argv[0] == "git" for argv, _ in self.calls))
 
-    def test_only_exact_isolated_project_network_secrets_and_cpu_are_accepted(self):
+    def test_only_exact_isolated_project_network_secrets_and_cpu_are_accepted(
+        self,
+    ):
         project = "depositar-ai-catalog-" + "a" * 12 + "-" + "b" * 12
         data = self.root / "data"
         config = adapted_config(data, project)
@@ -893,11 +1024,17 @@ class CatalogBackendTests(unittest.TestCase):
         mutations = (
             lambda c: c.update(name="depositar-catalog"),
             lambda c: c["networks"]["search_backend"].update(internal=False),
-            lambda c: c["networks"]["search_backend"].update(name="shared-network"),
+            lambda c: c["networks"]["search_backend"].update(
+                name="shared-network"
+            ),
             lambda c: c["networks"]["search_backend"].update(external=True),
             lambda c: c["networks"]["search_backend"].update(attachable=True),
-            lambda c: c["networks"]["search_backend"].update(ipam={"driver": "custom"}),
-            lambda c: next(iter(c["secrets"].values())).update(name="shared-secret"),
+            lambda c: c["networks"]["search_backend"].update(
+                ipam={"driver": "custom"}
+            ),
+            lambda c: next(iter(c["secrets"].values())).update(
+                name="shared-secret"
+            ),
             lambda c: next(iter(c["secrets"].values())).update(
                 file="/run/active-secret"
             ),

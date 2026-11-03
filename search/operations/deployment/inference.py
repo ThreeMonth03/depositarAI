@@ -68,7 +68,11 @@ def _images(docker, source_plan, authority):
     proof = authority["images"]["reranker"]
     reranker = docker.inspect(proof["image_id"])
     fresh = source_bundle.validate_compatible_built_image(
-        source_plan, "reranker", authority["revision"], proof["image_id"], reranker
+        source_plan,
+        "reranker",
+        authority["revision"],
+        proof["image_id"],
+        reranker,
     )
     tagged = source_bundle.validate_compatible_built_image(
         source_plan,
@@ -93,13 +97,21 @@ def _images(docker, source_plan, authority):
         raise InferenceError("inference_ollama_registry_identity_changed")
     immutable = docker.inspect(image_id)
     _equal(immutable, ollama, "inference_ollama_immutable_identity_changed")
-    return {"scope-model": ollama, "answer-model": ollama, "reranker": reranker}
+    return {
+        "scope-model": ollama,
+        "answer-model": ollama,
+        "reranker": reranker,
+    }
 
 
 def _authority(config, store, source_plan, compose):
-    """Select only a sealed v2 slot's original build, never adopt live labels."""
+    """Select only a sealed v2 slot's original build, never adopt live
+    labels.
+    """
     if "inference" not in os.listdir(store.fd):
-        return image_authority.read_completed_images(config, store, source_plan)
+        return image_authority.read_completed_images(
+            config, store, source_plan
+        )
     descriptor = private_io.open_child_directory(store.fd, "inference")
     try:
         names = set(os.listdir(descriptor))
@@ -116,13 +128,18 @@ def _authority(config, store, source_plan, compose):
                 try:
                     if "started.json" in os.listdir(child):
                         started = image_build._record(child, "started.json")
-                        if type(started) is dict and started.get("schema_version") == 1:
+                        if (
+                            type(started) is dict
+                            and started.get("schema_version") == 1
+                        ):
                             raise InferenceError(
                                 "inference_legacy_state_requires_transition"
                             )
                 finally:
                     os.close(child)
-            return image_authority.read_completed_images(config, store, source_plan)
+            return image_authority.read_completed_images(
+                config, store, source_plan
+            )
         child = private_io.open_child_directory(descriptor, name)
         try:
             if set(os.listdir(child)) != {
@@ -130,7 +147,9 @@ def _authority(config, store, source_plan, compose):
                 "compose.json",
                 "complete.json",
             }:
-                raise InferenceError("inference_partial_state_recovery_required")
+                raise InferenceError(
+                    "inference_partial_state_recovery_required"
+                )
             started = image_build._record(child, "started.json")
             if (
                 type(started) is not dict
@@ -152,7 +171,9 @@ def _authority(config, store, source_plan, compose):
 
 def _refresh_authority(config, store, source_plan, authority):
     if authority["revision"] == source_plan["revision"]:
-        return image_authority.read_completed_images(config, store, source_plan)
+        return image_authority.read_completed_images(
+            config, store, source_plan
+        )
     return image_authority.read_completed_images_at_revision(
         config, store, source_plan, authority["revision"]
     )[1]
@@ -161,7 +182,9 @@ def _refresh_authority(config, store, source_plan, authority):
 def _model_plan(config):
     from search.reranker.model import MODEL_HASHES
 
-    api = doctor._ollama_files(config.api_model_root, prepare_search_models.PINS)
+    api = doctor._ollama_files(
+        config.api_model_root, prepare_search_models.PINS
+    )
     reranker = {}
     for name, expected in MODEL_HASHES.items():
         info = doctor._file_info(config.reranker_model_root / name)
@@ -171,7 +194,11 @@ def _model_plan(config):
     plans = {"api": api, "reranker": reranker}
     if (
         sum(map(len, plans.values())) > MAX_MODEL_FILES
-        or sum(item["bytes"] for files in plans.values() for item in files.values())
+        or sum(
+            item["bytes"]
+            for files in plans.values()
+            for item in files.values()
+        )
         > MAX_MODEL_BYTES
     ):
         raise InferenceError("inference_model_inventory_limit")
@@ -180,7 +207,9 @@ def _model_plan(config):
 
 @contextmanager
 def _verified_models(config, *, deadline=None, include_embedding=False):
-    """Deep verify fixed pin authority via retained no-follow ancestry/file FDs."""
+    """Deep verify fixed pin authority via retained no-follow ancestry/file
+    FDs.
+    """
     with _model_files(
         config, deadline=deadline, include_embedding=include_embedding
     ) as verified:
@@ -189,7 +218,11 @@ def _verified_models(config, *, deadline=None, include_embedding=False):
 
 @contextmanager
 def _resident_models(
-    config, expected_file_identity_sha256, *, deadline=None, include_embedding=True
+    config,
+    expected_file_identity_sha256,
+    *,
+    deadline=None,
+    include_embedding=True,
 ):
     """Reuse a prior deep identity only while the same model files stay pinned.
 
@@ -216,7 +249,9 @@ def _resident_models(
 def _model_files(
     config, *, deadline, include_embedding, expected_file_identity_sha256=None
 ):
-    """Share source pinning and race fences for deep and resident verification."""
+    """Share source pinning and race fences for deep and resident
+    verification.
+    """
 
     def check_deadline():
         if deadline is not None and time.monotonic() >= deadline:
@@ -229,7 +264,9 @@ def _model_files(
                 search_model_source.open_source_root(config.api_model_root)
             ),
             "reranker": stack.enter_context(
-                search_model_source.open_source_root(config.reranker_model_root)
+                search_model_source.open_source_root(
+                    config.reranker_model_root
+                )
             ),
         }
         plans = _model_plan(config)
@@ -237,14 +274,20 @@ def _model_files(
             from search.catalog.embedding import MODEL, MODEL_DIGEST
 
             roots["embedding"] = stack.enter_context(
-                search_model_source.open_source_root(config.embedding_model_root)
+                search_model_source.open_source_root(
+                    config.embedding_model_root
+                )
             )
             plans["embedding"] = doctor._ollama_files(
                 config.embedding_model_root, {MODEL: MODEL_DIGEST}
             )
         if (
             sum(map(len, plans.values())) > MAX_MODEL_FILES
-            or sum(item["bytes"] for files in plans.values() for item in files.values())
+            or sum(
+                item["bytes"]
+                for files in plans.values()
+                for item in files.values()
+            )
             > MAX_MODEL_BYTES
         ):
             raise InferenceError("inference_model_inventory_limit")
@@ -319,7 +362,8 @@ def _model_files(
             for descriptor, parent, name, expected in records:
                 check_deadline()
                 if (
-                    search_model_source._file_identity(os.fstat(descriptor)) != expected
+                    search_model_source._file_identity(os.fstat(descriptor))
+                    != expected
                     or search_model_source._file_identity(
                         os.stat(name, dir_fd=parent, follow_symlinks=False)
                     )
@@ -331,7 +375,8 @@ def _model_files(
             {
                 "schema_version": 1,
                 "files": sorted(
-                    identities, key=lambda item: (item["role"], item["relative"])
+                    identities,
+                    key=lambda item: (item["role"], item["relative"]),
                 ),
             }
         )
@@ -351,8 +396,12 @@ def _inspect_runtime(docker, compose, images):
     if len(ids) != 3 or names != expected:
         raise InferenceError("inference_runtime_inventory_changed")
     containers = image_build._json(docker.call(["inspect", *sorted(ids)]))
-    networks = image_build._json(docker.call(["network", "inspect", *sorted(names)]))
-    return inference_runtime.validate_runtime(compose, images, containers, networks)
+    networks = image_build._json(
+        docker.call(["network", "inspect", *sorted(names)])
+    )
+    return inference_runtime.validate_runtime(
+        compose, images, containers, networks
+    )
 
 
 def _gpu(config, allowed, runner, *, cpu_proofs=()):
@@ -423,7 +472,8 @@ def start_private_inference(
     Fresh starts require an empty exact project/network slot and globally free
     configured GPUs. Completed reuse verifies all running IDs, model bytes,
     immutable images, resource/mount policies and host GPU PID ownership again.
-    No missing image is pulled or built. There is no blind retry after a partial
+    No missing image is pulled or built. There is no blind retry after a
+    partial
     start and no automatic stop/delete or release-client network adoption.
     """
     parent_fd = slot_fd = None
@@ -454,7 +504,10 @@ def start_private_inference(
         )
         authority = _authority(config, store, source_plan, compose)
         with (
-            _verified_models(config, deadline=deadline) as (model_plan, verify_models),
+            _verified_models(config, deadline=deadline) as (
+                model_plan,
+                verify_models,
+            ),
             tempfile.TemporaryDirectory(
                 prefix="depositar-inference-client-"
             ) as temporary,
@@ -464,7 +517,9 @@ def start_private_inference(
             try:
                 if os.listdir(client_fd):
                     raise InferenceError("inference_client_config_not_empty")
-                docker = runtime_docker.Docker(client, docker_runner, deadline=deadline)
+                docker = runtime_docker.Docker(
+                    client, docker_runner, deadline=deadline
+                )
                 if (
                     image_build._json(
                         docker.call(["info", "--format", "{{json .OSType}}"])
@@ -477,8 +532,12 @@ def start_private_inference(
                 for name, image in images.items():
                     compose["services"][name]["image"] = image["Id"]
                 if b"$" in private_io.canonical(compose):
-                    raise InferenceError("inference_compose_interpolation_forbidden")
-                identity = _runtime_identity(compose, model_plan, authority, images)
+                    raise InferenceError(
+                        "inference_compose_interpolation_forbidden"
+                    )
+                identity = _runtime_identity(
+                    compose, model_plan, authority, images
+                )
                 parent = config.state_root / "inference"
                 store._check_directory()
                 parent_fd = private_io.open_child_directory(
@@ -523,10 +582,18 @@ def start_private_inference(
                         docker, compose["name"]
                     )
                     if ids or network_names:
-                        raise InferenceError("inference_legacy_runtime_not_adopted")
+                        raise InferenceError(
+                            "inference_legacy_runtime_not_adopted"
+                        )
                     _gpu(config, (), gpu_runner)
-                    if any(runtime_docker.project_inventory(docker, compose["name"])):
-                        raise InferenceError("inference_legacy_runtime_not_adopted")
+                    if any(
+                        runtime_docker.project_inventory(
+                            docker, compose["name"]
+                        )
+                    ):
+                        raise InferenceError(
+                            "inference_legacy_runtime_not_adopted"
+                        )
                     private_io.verify_directory(parent_fd, parent)
                     slot_fd = private_io.open_child_directory(
                         parent_fd, name, create=True
@@ -581,8 +648,14 @@ def start_private_inference(
                         "inference_start_identity_changed",
                     )
                     _gpu(config, (), gpu_runner)
-                    if any(runtime_docker.project_inventory(docker, compose["name"])):
-                        raise InferenceError("inference_legacy_runtime_not_adopted")
+                    if any(
+                        runtime_docker.project_inventory(
+                            docker, compose["name"]
+                        )
+                    ):
+                        raise InferenceError(
+                            "inference_legacy_runtime_not_adopted"
+                        )
                     private_io.verify_directory(parent_fd, parent)
                     private_io.verify_directory(slot_fd, slot)
                     docker.call(
@@ -613,7 +686,9 @@ def start_private_inference(
                     "website_started": False,
                 }
                 if reused:
-                    _equal(complete, result, "inference_completed_runtime_changed")
+                    _equal(
+                        complete, result, "inference_completed_runtime_changed"
+                    )
                 _gpu(
                     config,
                     inference_runtime.ownership_proofs(compose, proof, images),
@@ -682,7 +757,10 @@ def start_private_inference(
             )
         else:
             private_io.write_json(
-                slot_fd, "complete.json", result, max_bytes=image_build.MAX_RECORD_BYTES
+                slot_fd,
+                "complete.json",
+                result,
+                max_bytes=image_build.MAX_RECORD_BYTES,
             )
         store.write("inference-candidate.json", result, replace=True)
         return {**result, "runtime_reused": reused}
@@ -694,7 +772,9 @@ def start_private_inference(
         AttributeError,
         subprocess.SubprocessError,
     ) as error:
-        if isinstance(error, (InferenceError, inference_runtime.InferenceRuntimeError)):
+        if isinstance(
+            error, (InferenceError, inference_runtime.InferenceRuntimeError)
+        ):
             raise
         raise InferenceError("inference_operation_failed") from None
     finally:

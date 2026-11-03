@@ -26,7 +26,9 @@ class QueryContext(StrictModel):
     reference_time: str = Field(
         max_length=40, description="Offset-aware RFC3339 reference instant."
     )
-    timezone: str = Field(max_length=64, description="IANA timezone, e.g. Asia/Taipei.")
+    timezone: str = Field(
+        max_length=64, description="IANA timezone, e.g. Asia/Taipei."
+    )
 
     @model_validator(mode="after")
     def valid_clock(self):

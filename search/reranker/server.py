@@ -1,4 +1,5 @@
-"""Internal-only, bounded HTTP adapter. No credentials, URLs, tools or generation.
+"""Internal-only, bounded HTTP adapter. No credentials, URLs, tools or
+generation.
 
 The API has an eight-second hard subprocess deadline. This service has one
 inference slot, a six-second cooperative model budget and a nine-second process
@@ -104,7 +105,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, {"error": "invalid_request"})
         if not self.server.inference.acquire(blocking=False):
             return self.reply(503, {"error": "busy"})
-        # A disconnected client cannot release the GPU slot while CUDA still runs.
+        # A disconnected client cannot release the GPU slot while CUDA still
+        # runs.
         watchdog = threading.Timer(9, os._exit, args=(70,))
         watchdog.daemon = True
         watchdog.start()
@@ -123,7 +125,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     from .model import Ranker
 
-    Server(("0.0.0.0", 8001), Ranker("/model")).serve_forever(poll_interval=0.5)
+    Server(("0.0.0.0", 8001), Ranker("/model")).serve_forever(
+        poll_interval=0.5
+    )
 
 
 if __name__ == "__main__":

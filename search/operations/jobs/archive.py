@@ -74,7 +74,9 @@ def _inventory(directory, *, source=False):
                     walk(path / name, relative + "/", depth + 1)
                     require(len(found) > before, "archive_unknown_directory")
                 else:
-                    raw = private_io.read_file(fd, name, mode=0o600, max_bytes=MAX_FILE)
+                    raw = private_io.read_file(
+                        fd, name, mode=0o600, max_bytes=MAX_FILE
+                    )
                     total += len(raw)
                     require(
                         total <= MAX_TOTAL and len(found) < MAX_FILES,
@@ -117,7 +119,8 @@ def _evidence_matches(directory, expected, *, source=False):
             "archive_evidence_invalid",
         )
     require(
-        _inventory(directory, source=source) == expected, "archive_evidence_changed"
+        _inventory(directory, source=source) == expected,
+        "archive_evidence_changed",
     )
 
 
@@ -210,7 +213,9 @@ def _git(registry, *arguments):
 
 
 def _registration(registry, frozen):
-    blocks = _git(registry, "worktree", "list", "--porcelain", "-z").split(b"\0\0")
+    blocks = _git(registry, "worktree", "list", "--porcelain", "-z").split(
+        b"\0\0"
+    )
     matching = [
         block.split(b"\0")
         for block in blocks
@@ -237,7 +242,10 @@ def _source(registry, directory, request, *, expected=None, unlocked=False):
             and queue.path(request["source"]) != frozen,
             "archive_source_invalid",
         )
-        require(queue.revision(frozen) == request["revision"], "archive_source_changed")
+        require(
+            queue.revision(frozen) == request["revision"],
+            "archive_source_changed",
+        )
         common = queue.common_directory(frozen)
         require(
             common == queue.common_directory(registry["operator_source"]),
@@ -256,7 +264,10 @@ def _source(registry, directory, request, *, expected=None, unlocked=False):
                 "--ignored",
             ]
         )
-        require(clean.returncode == 0 and not clean.stdout, "archive_source_not_empty")
+        require(
+            clean.returncode == 0 and not clean.stdout,
+            "archive_source_not_empty",
+        )
         rows = _registration(registry, frozen)
         fixed = {
             b"worktree " + os.fsencode(frozen),
@@ -274,7 +285,9 @@ def _source(registry, directory, request, *, expected=None, unlocked=False):
             "inode": [info.st_dev, info.st_ino],
             "repository_sha256": queue.digest(str(common)),
         }
-        require(expected is None or expected == proof, "archive_source_changed")
+        require(
+            expected is None or expected == proof, "archive_source_changed"
+        )
         private_io.verify_directory(fd, frozen)
         return proof, b"locked " + LOCK_REASON.encode() in rows
     finally:
@@ -313,9 +326,12 @@ def _task_proof(registry, identifier, queued, task, *, cancelled):
 
 
 def _verify_archived(registry, identifier, directory):
-    """Verify committed archive bytes without calling queue lookup recursively."""
+    """Verify committed archive bytes without calling queue lookup
+    recursively.
+    """
     require(
-        type(identifier) is str and queue.JOB_ID.fullmatch(identifier), "id_invalid"
+        type(identifier) is str and queue.JOB_ID.fullmatch(identifier),
+        "id_invalid",
     )
     directory = queue.path(str(directory))
     require(
@@ -335,7 +351,9 @@ def _verify_archived(registry, identifier, directory):
         "archive_manifest_invalid",
     )
     require(not _exists(directory / "source"), "archive_evidence_changed")
-    _source_removed(registry, Path(registry["root"]) / "jobs" / identifier / "source")
+    _source_removed(
+        registry, Path(registry["root"]) / "jobs" / identifier / "source"
+    )
     _evidence_matches(directory, record["files"])
     request, result = (
         queue.read(directory / "request.json"),
@@ -348,11 +366,13 @@ def _verify_archived(registry, identifier, directory):
         and type(request.get("revision")) is str
         and queue.REVISION.fullmatch(request["revision"])
         and record["request_sha256"] == queue.digest(request)
-        and record["result_sha256"] == record["files"]["result.json"]["sha256"],
+        and record["result_sha256"]
+        == record["files"]["result.json"]["sha256"],
         "archive_manifest_invalid",
     )
     require(
-        result.get("job_id") == identifier and result.get("status") in queue.TERMINAL,
+        result.get("job_id") == identifier
+        and result.get("status") in queue.TERMINAL,
         "archive_result_invalid",
     )
     queued = queue.read(directory / "queue.json")
@@ -365,12 +385,16 @@ def _verify_archived(registry, identifier, directory):
     )
     require(
         record["repository_sha256"]
-        == queue.digest(str(queue.common_directory(registry["operator_source"]))),
+        == queue.digest(
+            str(queue.common_directory(registry["operator_source"]))
+        ),
         "archive_source_repository_changed",
     )
     slot = _artifact_directory(registry, request["revision"])
     require(
-        sources.verify_bundle(registry["operator_source"], slot, request["revision"])
+        sources.verify_bundle(
+            registry["operator_source"], slot, request["revision"]
+        )
         == record["source_artifact"],
         "archive_source_artifact_changed",
     )
@@ -378,7 +402,9 @@ def _verify_archived(registry, identifier, directory):
 
 
 def verify_archived(registry, identifier, directory):
-    """Check archived bytes with closed errors and no recursive queue lookup."""
+    """Check archived bytes with closed errors and no recursive queue
+    lookup.
+    """
     try:
         return _verify_archived(registry, identifier, directory)
     except JobError:
@@ -390,7 +416,8 @@ def verify_archived(registry, identifier, directory):
 def _clear_intent(registry, intent):
     root = Path(registry["root"])
     require(
-        queue.read(root / "archive-intent.json") == intent, "archive_intent_changed"
+        queue.read(root / "archive-intent.json") == intent,
+        "archive_intent_changed",
     )
     require(_locks(registry) == intent["locks"], "archive_lock_changed")
     fd = private_io.open_directory(root)
@@ -474,9 +501,13 @@ def _archive(registry, identifier, locks):
     state = _idle(registry)
     task_id = queued["task_id"]
     if intent is None:
-        require(not _exists(directory / "archive.json"), "archive_recovery_required")
         require(
-            (str(task_id) not in state["tasks"]) == cancelled, "archive_task_unverified"
+            not _exists(directory / "archive.json"),
+            "archive_recovery_required",
+        )
+        require(
+            (str(task_id) not in state["tasks"]) == cancelled,
+            "archive_task_unverified",
         )
         os.close(private_io.open_directory(root / "archive", create=True))
         _artifact_directory(registry, request["revision"], create=True)
@@ -505,12 +536,15 @@ def _archive(registry, identifier, locks):
             and intent["active"] == active,
             "archive_intent_changed",
         )
-    _task_proof(registry, identifier, queued, intent["task"], cancelled=cancelled)
+    _task_proof(
+        registry, identifier, queued, intent["task"], cancelled=cancelled
+    )
 
     if intent["phase"] == "prepared":
         state = _checkpoint(registry, intent)
         require(
-            (str(task_id) not in state["tasks"]) == cancelled, "archive_task_unverified"
+            (str(task_id) not in state["tasks"]) == cancelled,
+            "archive_task_unverified",
         )
         _source(registry, directory, request, expected=intent["source"])
         intent["source_artifact"] = sources.preserve_bundle(
@@ -520,7 +554,8 @@ def _archive(registry, identifier, locks):
         )
         state = _checkpoint(registry, intent)
         require(
-            (str(task_id) not in state["tasks"]) == cancelled, "archive_task_unverified"
+            (str(task_id) not in state["tasks"]) == cancelled,
+            "archive_task_unverified",
         )
         intent["phase"] = "removing_task"
         queue.write(intent_file, intent, replace=True)
@@ -539,7 +574,8 @@ def _archive(registry, identifier, locks):
         if str(task_id) in state["tasks"]:
             require(not cancelled, "archive_cancel_unverified")
             require(
-                state["tasks"][str(task_id)] == intent["task"], "archive_task_changed"
+                state["tasks"][str(task_id)] == intent["task"],
+                "archive_task_changed",
             )
             Pueue(registry).call("remove", str(task_id))
         _checkpoint(registry, intent, absent=task_id)
@@ -549,13 +585,21 @@ def _archive(registry, identifier, locks):
         _checkpoint(registry, intent, absent=task_id)
         if _exists(directory / "source"):
             _, locked = _source(
-                registry, directory, request, expected=intent["source"], unlocked=True
+                registry,
+                directory,
+                request,
+                expected=intent["source"],
+                unlocked=True,
             )
             if locked:
                 _checkpoint(registry, intent, absent=task_id)
                 _git(registry, "worktree", "unlock", str(directory / "source"))
             _source(
-                registry, directory, request, expected=intent["source"], unlocked=True
+                registry,
+                directory,
+                request,
+                expected=intent["source"],
+                unlocked=True,
             )
             _checkpoint(registry, intent, absent=task_id)
             _git(registry, "worktree", "remove", str(directory / "source"))
@@ -590,7 +634,9 @@ def _archive(registry, identifier, locks):
     jobs_fd = private_io.open_directory(root / "jobs")
     try:
         require(not _exists(target), "archive_duplicate_job")
-        os.rename(identifier, identifier, src_dir_fd=jobs_fd, dst_dir_fd=archive_fd)
+        os.rename(
+            identifier, identifier, src_dir_fd=jobs_fd, dst_dir_fd=archive_fd
+        )
         os.fsync(jobs_fd)
         os.fsync(archive_fd)
     finally:
@@ -603,9 +649,12 @@ def _archive(registry, identifier, locks):
 
 
 def archive(registry, identifier):
-    """Archive only an idle verified job; leave uncertain steps for reconciliation."""
+    """Archive only an idle verified job; leave uncertain steps for
+    reconciliation.
+    """
     require(
-        type(identifier) is str and queue.JOB_ID.fullmatch(identifier), "id_invalid"
+        type(identifier) is str and queue.JOB_ID.fullmatch(identifier),
+        "id_invalid",
     )
     root = Path(registry["root"])
     with (

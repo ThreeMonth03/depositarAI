@@ -1,4 +1,5 @@
-"""Frozen resource sets authenticate references without scanning private caches."""
+"""Frozen resource sets authenticate references without scanning private
+caches."""
 
 from copy import deepcopy
 import hashlib
@@ -38,7 +39,9 @@ class DocumentSetTests(unittest.TestCase):
         )
         return self.root / result["profile_set_file"]
 
-    def test_sorted_content_addressed_publication_is_idempotent_and_copied(self):
+    def test_sorted_content_addressed_publication_is_idempotent_and_copied(
+        self,
+    ):
         path = self.publish(list(reversed(self.rows)))
         record, digest = sets.read(path)
         self.assertEqual(self.rows, record["profiles"])
@@ -51,7 +54,9 @@ class DocumentSetTests(unittest.TestCase):
         self.assertEqual(self.rows, record["profiles"])
 
     def test_failure_only_set_is_explicit_and_duplicate_ids_are_rejected(self):
-        failure = {key: self.rows[0][key] for key in ("dataset_id", "resource_id")}
+        failure = {
+            key: self.rows[0][key] for key in ("dataset_id", "resource_id")
+        }
         failure["code"] = "document_source_failed"
         record, _ = sets.read(self.publish([], [failure]))
         self.assertEqual([failure], record["failures"])
@@ -118,10 +123,14 @@ class DocumentSetTests(unittest.TestCase):
 
     def test_count_and_byte_limits_fail_before_publication(self):
         with patch.object(sets, "MAX_SELECTED", 1):
-            with self.assertRaisesRegex(sets.ProfileSetError, "limit_exceeded"):
+            with self.assertRaisesRegex(
+                sets.ProfileSetError, "limit_exceeded"
+            ):
                 self.publish()
         with patch.object(sets, "MAX_SET_BYTES", 64):
-            with self.assertRaisesRegex(sets.ProfileSetError, "limit_exceeded"):
+            with self.assertRaisesRegex(
+                sets.ProfileSetError, "limit_exceeded"
+            ):
                 self.publish()
         self.assertEqual([], list(self.root.iterdir()))
 

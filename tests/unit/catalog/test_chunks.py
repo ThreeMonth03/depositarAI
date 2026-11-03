@@ -17,22 +17,32 @@ class NativeChunksTests(unittest.TestCase):
         content = [" 臺灣 🌧️\n", "e\u0301 data "]
         vectors = [vector(), vector()]
         payload = chunks.validate(content, vectors, "".join(content))
-        self.assertEqual({"content": content, "content_chunk_vector": vectors}, payload)
+        self.assertEqual(
+            {"content": content, "content_chunk_vector": vectors}, payload
+        )
         content[0] = "changed"
         vectors[0]["vector"][0] = -1.0
         self.assertEqual(" 臺灣 🌧️\n", payload["content"][0])
         self.assertEqual(1.0, payload["content_chunk_vector"][0]["vector"][0])
 
     def test_repeated_text_is_valid_when_order_and_vectors_align(self):
-        payload = chunks.validate(["same", "same"], [vector(), vector()], "samesame")
+        payload = chunks.validate(
+            ["same", "same"], [vector(), vector()], "samesame"
+        )
         self.assertEqual(["same", "same"], payload["content"])
 
-    def test_digest_binds_text_boundaries_even_when_full_text_and_vectors_match(self):
+    def test_digest_binds_boundaries_despite_matching_text_and_vectors(
+        self,
+    ):
         first = chunks.validate(["ab", "cdef"], [vector(), vector()], "abcdef")
-        shifted = chunks.validate(["abc", "def"], [vector(), vector()], "abcdef")
+        shifted = chunks.validate(
+            ["abc", "def"], [vector(), vector()], "abcdef"
+        )
         self.assertNotEqual(chunks.digest(first), chunks.digest(shifted))
 
-    def test_wrong_order_overlap_missing_text_and_malformed_chunks_are_rejected(self):
+    def test_invalid_order_overlap_text_and_chunks_are_rejected(
+        self,
+    ):
         cases = (
             (["def", "abc"], "abcdef"),
             (["abc", "cdef"], "abcdef"),
@@ -61,18 +71,24 @@ class NativeChunksTests(unittest.TestCase):
                     ValueError, "^catalog_chunk_content_invalid$"
                 ):
                     chunks.validate([original], [vector()], original)
-        with self.assertRaisesRegex(ValueError, "^catalog_chunk_content_invalid$"):
+        with self.assertRaisesRegex(
+            ValueError, "^catalog_chunk_content_invalid$"
+        ):
             chunks.validate(["x"] * 1001, [vector()] * 1001, "x" * 1001)
 
     def test_native_chunk_and_vector_counts_must_match(self):
         for vectors in (None, (), [], [vector()], [vector()] * 3):
-            with self.subTest(count=len(vectors) if vectors is not None else None):
+            with self.subTest(
+                count=len(vectors) if vectors is not None else None
+            ):
                 with self.assertRaisesRegex(
                     ValueError, "^catalog_chunk_vectors_invalid$"
                 ):
                     chunks.validate(["abc", "def"], vectors, "abcdef")
 
-    def test_only_exact_finite_nonzero_768_dimensional_vectors_are_accepted(self):
+    def test_only_exact_finite_nonzero_768_dimensional_vectors_are_accepted(
+        self,
+    ):
         invalid = (
             None,
             [],
@@ -96,7 +112,9 @@ class NativeChunksTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ValueError, "^catalog_chunk_vectors_invalid$"
                 ):
-                    chunks.validate(["private content"], [item], "private content")
+                    chunks.validate(
+                        ["private content"], [item], "private content"
+                    )
 
     def test_validation_does_not_mutate_inputs_on_failure(self):
         content = ["abc"]

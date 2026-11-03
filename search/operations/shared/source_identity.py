@@ -1,4 +1,6 @@
-"""Shared release identity; refuse dirty production bytes without leaking output."""
+"""Shared release identity; refuse dirty production bytes without leaking
+output.
+"""
 
 from pathlib import Path
 import re
@@ -6,7 +8,8 @@ import subprocess
 
 
 MAX_OUTPUT_BYTES = 64 * 1024
-# Runtime and every currently used operator helper, not research/data artifacts.
+# Runtime and every currently used operator helper, not research/data
+# artifacts.
 SOURCE_PATHS = (
     "Makefile",
     "search",
@@ -54,9 +57,10 @@ def _output(runner, argv):
 def require_clean_revision(repo_root: Path, runner=None) -> str:
     """Return one exact clean Git revision; no mutation, shell, or raw errors.
 
-    runner(argv, *, timeout) returns CompletedProcess, matching doctor injection.
-    Secrets/runtime mounts are ignored and never read; untracked production
-    source is intentionally included rather than silently omitted from release.
+    runner(argv, *, timeout) returns CompletedProcess, matching doctor
+    injection. Secrets/runtime mounts are ignored and never read; untracked
+    production source is intentionally included rather than silently omitted
+    from release.
     """
     runner = _runner if runner is None else runner
     prefix = ["git", "-C", str(Path(repo_root))]
@@ -66,7 +70,13 @@ def require_clean_revision(repo_root: Path, runner=None) -> str:
     if _output(
         runner,
         prefix
-        + ["status", "--porcelain", "--untracked-files=all", "--", *SOURCE_PATHS],
+        + [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            *SOURCE_PATHS,
+        ],
     ):
         raise ValueError("product_source_dirty")
     return revision

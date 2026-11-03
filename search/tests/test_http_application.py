@@ -55,16 +55,23 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(apps[0].urlconf, apps[1].urlconf)
         async with (
             httpx.AsyncClient(
-                transport=httpx.ASGITransport(apps[0]), base_url="http://testserver"
+                transport=httpx.ASGITransport(apps[0]),
+                base_url="http://testserver",
             ) as api,
             httpx.AsyncClient(
-                transport=httpx.ASGITransport(apps[1]), base_url="http://testserver"
+                transport=httpx.ASGITransport(apps[1]),
+                base_url="http://testserver",
             ) as web,
         ):
-            tasks = [asyncio.create_task(client.get("/")) for client in (api, web)]
+            tasks = [
+                asyncio.create_task(client.get("/")) for client in (api, web)
+            ]
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*(event.wait() for event in entered.values())), 2
+                    asyncio.gather(
+                        *(event.wait() for event in entered.values())
+                    ),
+                    2,
                 )
             finally:
                 release.set()
@@ -183,7 +190,9 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(running, {"api"})
         self.assertEqual(running, set())
 
-    async def test_lifespan_failures_are_reported_without_exception_details(self):
+    async def test_lifespan_failures_are_reported_without_exception_details(
+        self,
+    ):
         for phase in ("startup", "shutdown"):
             with self.subTest(phase=phase):
 
@@ -196,7 +205,10 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
                     raise RuntimeError("private configuration")
 
                 messages = iter(
-                    [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+                    [
+                        {"type": "lifespan.startup"},
+                        {"type": "lifespan.shutdown"},
+                    ]
                 )
                 sent = []
 
@@ -231,7 +243,9 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
             sent.append(message)
 
         await json_response(
-            {"error": "拒絕"}, status=413, headers={"X-Request-Id": "bounded-id"}
+            {"error": "拒絕"},
+            status=413,
+            headers={"X-Request-Id": "bounded-id"},
         )(http_scope(), receive, send)
         self.assertEqual(sent[0]["status"], 413)
         self.assertIn((b"x-request-id", b"bounded-id"), sent[0]["headers"])
@@ -243,12 +257,18 @@ class HTTPApplicationTests(unittest.IsolatedAsyncioTestCase):
 class BoundedBodyTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunks_are_capped_by_actual_total_bytes(self):
         messages = asyncio.Queue()
-        await messages.put({"type": "http.request", "body": b"ab", "more_body": True})
+        await messages.put(
+            {"type": "http.request", "body": b"ab", "more_body": True}
+        )
         await messages.put({"type": "http.request", "body": b"cd"})
         self.assertEqual(await bounded_body(messages.get, limit=4), b"abcd")
 
-        await messages.put({"type": "http.request", "body": b"ab", "more_body": True})
-        await messages.put({"type": "http.request", "body": b"cde", "more_body": True})
+        await messages.put(
+            {"type": "http.request", "body": b"ab", "more_body": True}
+        )
+        await messages.put(
+            {"type": "http.request", "body": b"cde", "more_body": True}
+        )
         await messages.put({"type": "http.request", "body": b"unread"})
         with self.assertRaises(ValueError):
             await bounded_body(messages.get, limit=4)
@@ -277,7 +297,9 @@ class BoundedBodyTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ValueError):
                     await bounded_body(messages.get, limit=4)
 
-    async def test_deadline_covers_all_chunks_and_cancels_pending_receive(self):
+    async def test_deadline_covers_all_chunks_and_cancels_pending_receive(
+        self,
+    ):
         cancelled = asyncio.Event()
         chunks = 0
 

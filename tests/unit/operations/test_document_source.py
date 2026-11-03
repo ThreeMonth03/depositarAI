@@ -58,7 +58,9 @@ class DocumentSourceTests(unittest.TestCase):
         identity = source.source_identity(item)
         self.assertNotIn("url", identity)
         self.assertNotIn(item["url"], str(identity))
-        changed = dict(item, description="updated description", dataset_id="other")
+        changed = dict(
+            item, description="updated description", dataset_id="other"
+        )
         self.assertEqual(identity, source.source_identity(changed))
 
     def test_declared_size_and_metadata_are_bounded(self):
@@ -74,11 +76,16 @@ class DocumentSourceTests(unittest.TestCase):
                 {"last_modified": []},
                 {"last_modified": "\ud800"},
             ):
-                with self.subTest(values=values), self.assertRaises(source.SourceError):
+                with (
+                    self.subTest(values=values),
+                    self.assertRaises(source.SourceError),
+                ):
                     source.fetch(resource(**values))
             run.assert_not_called()
 
-    def test_curl_policy_disables_config_proxy_redirects_and_remote_protocols(self):
+    def test_curl_policy_disables_config_proxy_redirects_and_remote_protocols(
+        self,
+    ):
         with patch.object(
             source,
             "_run",
@@ -104,7 +111,12 @@ class DocumentSourceTests(unittest.TestCase):
         self.assertNotIn("--insecure", command)
         self.assertEqual(b"station,pH\nA,7.2\n", body)
         self.assertEqual(
-            {"content_type": "text/csv", "etag": '"v1"', "last_modified": None}, headers
+            {
+                "content_type": "text/csv",
+                "etag": '"v1"',
+                "last_modified": None,
+            },
+            headers,
         )
 
     def test_informational_response_and_exact_content_length(self):
@@ -141,12 +153,18 @@ class DocumentSourceTests(unittest.TestCase):
             (
                 response(
                     b"abc",
-                    headers=[b"Content-Length: 3", b"Transfer-Encoding: chunked"],
+                    headers=[
+                        b"Content-Length: 3",
+                        b"Transfer-Encoding: chunked",
+                    ],
                 ),
                 "document_source_headers_invalid",
             ),
             (
-                response(b"abc", headers=[b"Content-Length: 3", b"Content-Length: 3"]),
+                response(
+                    b"abc",
+                    headers=[b"Content-Length: 3", b"Content-Length: 3"],
+                ),
                 "document_source_headers_invalid",
             ),
             (
@@ -185,7 +203,9 @@ class DocumentSourceTests(unittest.TestCase):
             with (
                 self.subTest(status=status),
                 patch.object(
-                    source, "_run", return_value=(status, b"private remote body")
+                    source,
+                    "_run",
+                    return_value=(status, b"private remote body"),
                 ),
             ):
                 with self.assertRaisesRegex(
@@ -210,12 +230,15 @@ class DocumentSourceTests(unittest.TestCase):
                 patch.object(source, "DEADLINE_SECONDS", 0.1),
                 patch.object(source, "MAX_CAPTURE_BYTES", 64),
             ):
-                with self.assertRaisesRegex(source.SourceError, "^" + expected + "$"):
+                with self.assertRaisesRegex(
+                    source.SourceError, "^" + expected + "$"
+                ):
                     source._run(command)
 
     def test_run_uses_minimal_environment_and_captures_bytes(self):
         with patch.dict(
-            os.environ, {"HTTPS_PROXY": "https://user:password@example.invalid"}
+            os.environ,
+            {"HTTPS_PROXY": "https://user:password@example.invalid"},
         ):
             status, raw = source._run(
                 [
@@ -229,7 +252,9 @@ class DocumentSourceTests(unittest.TestCase):
 
     def test_missing_curl_is_a_fixed_diagnostic(self):
         with patch.object(
-            source.subprocess, "Popen", side_effect=FileNotFoundError("private path")
+            source.subprocess,
+            "Popen",
+            side_effect=FileNotFoundError("private path"),
         ):
             with self.assertRaisesRegex(
                 source.SourceError, "^document_source_tool_unavailable$"

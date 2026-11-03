@@ -1,7 +1,8 @@
 """Bind model requests to reviewed peers without changing caller deadlines.
 
 Only explicit production residency rewrites keep_alive. Readiness requests keep
-their original request bytes; model identity and prompt policy stay in adapters.
+their original request bytes; model identity and prompt policy stay in
+adapters.
 """
 
 import dataclasses
@@ -15,12 +16,16 @@ from .peers import service_address
 
 
 class ModelTransport:
-    """Map the reviewed logical loopback contract onto one fixed Docker peer."""
+    """Map the reviewed logical loopback
+    contract onto one fixed Docker peer.
+    """
 
     def __init__(self, role, *, keep_alive=None):
         if role not in {"scope", "answer"}:
             raise ValueError("invalid model role")
-        if keep_alive is not None and (type(keep_alive) is not int or keep_alive != -1):
+        if keep_alive is not None and (
+            type(keep_alive) is not int or keep_alive != -1
+        ):
             raise ValueError("invalid model residency policy")
         # Readiness transports retain their original request bytes.
         # Only an explicit production factory opts into dedicated residency.
@@ -47,14 +52,21 @@ class ModelTransport:
                 raise ValueError("invalid model request shape")
             payload["keep_alive"] = -1
             body = json.dumps(
-                payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
             ).encode()
             if len(body) > MAX_REQUEST_BYTES:
                 raise ValueError("invalid model request size")
         upstream = dataclasses.replace(
             request, url=self.origin + parsed.path, body=body
         )
-        result = self.transport.send(upstream, timeout=timeout, max_bytes=max_bytes)
+        result = self.transport.send(
+            upstream, timeout=timeout, max_bytes=max_bytes
+        )
         if result.url != upstream.url:
             raise ValueError("model redirect refused")
-        return HTTPResponse(result.status, result.headers, result.body, request.url)
+        return HTTPResponse(
+            result.status, result.headers, result.body, request.url
+        )

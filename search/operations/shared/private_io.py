@@ -1,8 +1,10 @@
-"""Shared Linux private-state IO for cache, lifecycle receipts and catalog plans.
+"""Shared Linux private-state IO for cache, lifecycle receipts and catalog
+plans.
 
 File modes are caller policy. All paths are opened without following links;
-regular-file reads are bounded/nonblocking, and publication fsyncs the directory.
-This module does not interpret receipts, delete data or operate Docker.
+regular-file reads are bounded/nonblocking, and publication fsyncs the
+directory. This module does not interpret receipts, delete data or operate
+Docker.
 """
 
 from __future__ import annotations
@@ -54,11 +56,15 @@ def _name(name):
 
 
 def read_file(parent_fd, name, *, mode, max_bytes):
-    """Read one operator-owned, single-link regular file and detect replacement."""
+    """Read one operator-owned, single-link regular file and detect
+    replacement.
+    """
     _name(name)
     if type(max_bytes) is not int or max_bytes < 1:
         raise ValueError("private_io_byte_limit_invalid")
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    fd = os.open(
+        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd
+    )
     try:
         before = os.fstat(fd)
         if (
@@ -91,13 +97,19 @@ def read_file(parent_fd, name, *, mode, max_bytes):
 
 
 def write_json(parent_fd, name, value, *, replace=False, max_bytes):
-    """Publish a private JSON record durably; refuse overwrite unless explicit."""
+    """Publish a private JSON record durably; refuse overwrite unless
+    explicit.
+    """
     _name(name)
-    write_file(parent_fd, name, canonical(value), replace=replace, max_bytes=max_bytes)
+    write_file(
+        parent_fd, name, canonical(value), replace=replace, max_bytes=max_bytes
+    )
 
 
 def write_file(parent_fd, name, encoded, *, replace=False, max_bytes):
-    """Publish bounded raw bytes with the same private, durable no-clobber policy."""
+    """Publish bounded raw bytes with the same private, durable no-clobber
+    policy.
+    """
     _name(name)
     if (
         type(encoded) is not bytes
@@ -123,7 +135,9 @@ def write_file(parent_fd, name, encoded, *, replace=False, max_bytes):
             stream.flush()
             os.fsync(stream.fileno())
         if replace:
-            os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            os.replace(
+                temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd
+            )
         else:
             os.link(
                 temporary,
@@ -161,7 +175,9 @@ def open_directory(path, *, mode=0o700, create=False):
                 except FileExistsError:
                     pass
             child = os.open(
-                component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=fd,
             )
             os.close(fd)
             fd = child
@@ -190,7 +206,9 @@ def open_child_directory(parent_fd, name, *, mode=0o700, create=False):
     if create:
         os.mkdir(name, mode=mode, dir_fd=parent_fd)
         os.fsync(parent_fd)
-    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    fd = os.open(
+        name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+    )
     try:
         actual = os.fstat(fd)
         named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)

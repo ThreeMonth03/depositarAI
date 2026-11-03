@@ -12,7 +12,9 @@ PROJECTS = {
 
 
 def validate_image_labels(labels, revision, role):
-    """Bind a frontend image role to reviewed source and the current wire version."""
+    """Bind a frontend image role to reviewed source and the current wire
+    version.
+    """
     if (
         type(labels) is not dict
         or type(revision) is not str
@@ -24,7 +26,11 @@ def validate_image_labels(labels, revision, role):
         "org.opencontainers.image.revision": revision,
         "io.depositar.ai.public-entry.version": "2",
         **(
-            {"io.depositar.ai.conversation.version": str(CONVERSATION_CONTRACT_VERSION)}
+            {
+                "io.depositar.ai.conversation.version": str(
+                    CONVERSATION_CONTRACT_VERSION
+                )
+            }
             if role == "web"
             else {"io.depositar.ai.frontend.version": "1"}
         ),
@@ -68,7 +74,9 @@ def validate(config, *, intranet=False, prepare=False):
         or set(services["web-nginx"].get("environment", {})) != nginx_keys
     ):
         raise ValueError("standalone frontend environment policy drift")
-    origin = _origin(web["environment"].get("WEB_ORIGIN"), access_mode=access_mode)
+    origin = _origin(
+        web["environment"].get("WEB_ORIGIN"), access_mode=access_mode
+    )
     expected_host = origin.hostname if intranet else "127.0.0.1"
     expected_port = str(origin.port) if intranet else "18081"
     for name, service in services.items():
@@ -88,10 +96,14 @@ def validate(config, *, intranet=False, prepare=False):
             raise ValueError(
                 "website services must not allocate GPUs or host namespaces"
             )
-        if not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", str(service.get("user", ""))):
+        if not re.fullmatch(
+            r"[1-9][0-9]*:[1-9][0-9]*", str(service.get("user", ""))
+        ):
             raise ValueError("non-root numeric user required")
         tmp = service.get("tmpfs", [])
-        if len(tmp) != 1 or not tmp[0].startswith("/tmp:rw,noexec,nosuid,nodev,size="):
+        if len(tmp) != 1 or not tmp[0].startswith(
+            "/tmp:rw,noexec,nosuid,nodev,size="
+        ):
             raise ValueError("one bounded /tmp mount required")
         if (
             not service.get("mem_limit")
@@ -105,7 +117,9 @@ def validate(config, *, intranet=False, prepare=False):
                 or not mount.get("read_only")
                 or mount.get("bind", {}).get("create_host_path")
             ):
-                raise ValueError("only existing read-only bind inputs permitted")
+                raise ValueError(
+                    "only existing read-only bind inputs permitted"
+                )
             if "docker.sock" in mount.get("source", ""):
                 raise ValueError("no Docker socket in website")
         ports = service.get("ports", [])
@@ -141,17 +155,22 @@ def validate(config, *, intranet=False, prepare=False):
     expected_targets = {"/run/secrets/api_key"}
     if ca_file:
         if ca_file != "/run/certs/upstream-ca.pem":
-            raise ValueError("private upstream CA requires its fixed read-only mount")
+            raise ValueError(
+                "private upstream CA requires its fixed read-only mount"
+            )
         expected_targets.add(ca_file)
     if (
         len(mounts) != len(expected_targets)
         or {mount.get("target") for mount in mounts} != expected_targets
         or any(
-            not PurePosixPath(mount.get("source", "")).is_absolute() for mount in mounts
+            not PurePosixPath(mount.get("source", "")).is_absolute()
+            for mount in mounts
         )
         or (not intranet and services["web-nginx"].get("volumes"))
     ):
-        raise ValueError("remote frontend receives only its API key and optional CA")
+        raise ValueError(
+            "remote frontend receives only its API key and optional CA"
+        )
     if intranet:
         from . import access
 

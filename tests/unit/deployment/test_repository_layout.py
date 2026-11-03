@@ -69,7 +69,9 @@ def copy_sources(source: str) -> list[str]:
 
 
 def compose_builds(source: str) -> dict[str, tuple[str, str]]:
-    """Extract the explicit build maps used by these checked-in Compose files."""
+    """Extract the explicit build maps used by these checked-in Compose
+    files.
+    """
     builds = {}
     service = None
     lines = source.splitlines()
@@ -81,14 +83,22 @@ def compose_builds(source: str) -> dict[str, tuple[str, str]]:
             continue
         fields = {}
         for following in lines[index + 1 :]:
-            if following.strip() and len(following) - len(following.lstrip()) <= 4:
+            if (
+                following.strip()
+                and len(following) - len(following.lstrip()) <= 4
+            ):
                 break
-            match = re.fullmatch(r"      (context|dockerfile): (.+)", following)
+            match = re.fullmatch(
+                r"      (context|dockerfile): (.+)", following
+            )
             if match:
                 fields[match[1]] = shlex.split(match[2])[0]
         if service is None or "context" not in fields:
             raise ValueError("build must have a service and explicit context")
-        builds[service] = fields["context"], fields.get("dockerfile", "Dockerfile")
+        builds[service] = (
+            fields["context"],
+            fields.get("dockerfile", "Dockerfile"),
+        )
     return builds
 
 
@@ -96,7 +106,9 @@ class RepositoryLayoutTests(unittest.TestCase):
     def test_assets_match_the_current_product_layout(self) -> None:
         new_paths = list(COMPOSE_PATHS)
         new_paths += [f"deploy/env/{name}" for name in ENV_NAMES]
-        new_paths += [f"deploy/docker/{name}" for name in PRODUCTION_DOCKERFILES]
+        new_paths += [
+            f"deploy/docker/{name}" for name in PRODUCTION_DOCKERFILES
+        ]
         new_paths += [
             "deploy/config/web-nginx/nginx.conf",
             "deploy/config/fess/scheduled_job.bulk",
@@ -116,7 +128,9 @@ class RepositoryLayoutTests(unittest.TestCase):
                 path = ROOT / relative
                 self.assertFalse(path.exists() or path.is_symlink(), relative)
 
-    def test_compose_builds_resolve_to_declared_contexts_and_dockerfiles(self) -> None:
+    def test_compose_builds_resolve_to_declared_contexts_and_dockerfiles(
+        self,
+    ) -> None:
         expected = {
             ("deploy/compose/compose.catalog.yaml", "opensearch-search"): (
                 "../docker/opensearch",
@@ -145,8 +159,12 @@ class RepositoryLayoutTests(unittest.TestCase):
                 self.assertTrue((base / context / dockerfile).is_file(), build)
         self.assertEqual(expected, actual)
 
-    def test_local_copy_sources_exist_in_each_actual_build_context(self) -> None:
-        dockerfiles = [ROOT / "deploy/docker" / name for name in PRODUCTION_DOCKERFILES]
+    def test_local_copy_sources_exist_in_each_actual_build_context(
+        self,
+    ) -> None:
+        dockerfiles = [
+            ROOT / "deploy/docker" / name for name in PRODUCTION_DOCKERFILES
+        ]
         for dockerfile in dockerfiles:
             with self.subTest(dockerfile=str(dockerfile.relative_to(ROOT))):
                 sources = copy_sources(dockerfile.read_text())
@@ -158,14 +176,24 @@ class RepositoryLayoutTests(unittest.TestCase):
                     self.assertFalse(Path(source).is_absolute(), source)
                     self.assertNotIn("..", Path(source).parts, source)
                     matches = list(context.glob(source))
-                    self.assertTrue(matches, f"missing COPY {source} in {context}")
-                    self.assertTrue(all(path.exists() for path in matches), source)
+                    self.assertTrue(
+                        matches, f"missing COPY {source} in {context}"
+                    )
+                    self.assertTrue(
+                        all(path.exists() for path in matches), source
+                    )
 
-    def test_every_docker_context_has_an_explicit_deny_all_allowlist(self) -> None:
-        dockerfiles = [ROOT / "deploy/docker" / name for name in PRODUCTION_DOCKERFILES]
+    def test_every_docker_context_has_an_explicit_deny_all_allowlist(
+        self,
+    ) -> None:
+        dockerfiles = [
+            ROOT / "deploy/docker" / name for name in PRODUCTION_DOCKERFILES
+        ]
         for dockerfile in dockerfiles:
             with self.subTest(dockerfile=str(dockerfile.relative_to(ROOT))):
-                ignore = dockerfile.with_name(dockerfile.name + ".dockerignore")
+                ignore = dockerfile.with_name(
+                    dockerfile.name + ".dockerignore"
+                )
                 if dockerfile.parent.name == "opensearch":
                     ignore = dockerfile.parent / ".dockerignore"
                 self.assertTrue(ignore.is_file(), str(ignore))
@@ -177,16 +205,25 @@ class RepositoryLayoutTests(unittest.TestCase):
                 self.assertEqual("**", patterns[0])
                 for index, pattern in enumerate(patterns[1:], start=1):
                     if not pattern.startswith("!"):
-                        # Exclusions narrow directory exceptions before files reopen.
+                        # Exclusions narrow directory exceptions before files
+                        # reopen.
                         continue
-                    self.assertNotIn(pattern, {"!**", "!**/", "!*", "!*/", "!./"})
+                    self.assertNotIn(
+                        pattern, {"!**", "!**/", "!*", "!*/", "!./"}
+                    )
                     self.assertNotIn(".env", pattern)
-                    self.assertNotIn("models", Path(pattern.removeprefix("!")).parts)
+                    self.assertNotIn(
+                        "models", Path(pattern.removeprefix("!")).parts
+                    )
                     if pattern.endswith("/"):
                         self.assertLess(index + 1, len(patterns), pattern)
-                        self.assertEqual(pattern[1:] + "**", patterns[index + 1])
+                        self.assertEqual(
+                            pattern[1:] + "**", patterns[index + 1]
+                        )
 
-    def test_importer_keeps_an_explicit_canonical_package_source_closure(self) -> None:
+    def test_importer_keeps_an_explicit_canonical_package_source_closure(
+        self,
+    ) -> None:
         from search.catalog.build.identity import SOURCE_FILES
         from search.operations.catalog.administration import ADMIN_FILES
         from search.operations.catalog.backend import DATA_FILES
@@ -229,19 +266,25 @@ class RepositoryLayoutTests(unittest.TestCase):
         )
         self.assertEqual(len(copied), len(set(copied)))
         self.assertIn(
-            'ENTRYPOINT ["python3", "-E", "-s", "-B", "-u", "-m", "search.catalog_admin"]',
+            (
+                'ENTRYPOINT ["python3", "-E", "-s", "-B", "-u", '
+                '"-m", "search.catalog_admin"]'
+            ),
             dockerfile,
         )
         self.assertIn("WORKDIR /opt/depositar-search", dockerfile)
         self.assertIn("USER 65534:65534", dockerfile)
-        ignore = (ROOT / "deploy/docker/importer/Dockerfile.dockerignore").read_text()
+        ignore = (
+            ROOT / "deploy/docker/importer/Dockerfile.dockerignore"
+        ).read_text()
         allowed_files = {
             line[1:]
             for line in ignore.splitlines()
             if line.startswith("!") and not line.endswith("/")
         }
         self.assertEqual(
-            {"Dockerfile"} | {name for name in files if name.startswith("search/")},
+            {"Dockerfile"}
+            | {name for name in files if name.startswith("search/")},
             allowed_files,
         )
 
@@ -249,16 +292,23 @@ class RepositoryLayoutTests(unittest.TestCase):
         script = (ROOT / "scripts/search-web.sh").read_text()
         self.assertIn("for role in web web-nginx; do", script)
         self.assertIn(
-            'git archive "$SOURCE_REVISION" | docker build -f "deploy/docker/$role/Dockerfile"',
+            (
+                'git archive "$SOURCE_REVISION" | docker build -f '
+                '"deploy/docker/$role/Dockerfile"'
+            ),
             script,
         )
         self.assertNotIn("$SOURCE_REVISION:web", script)
 
-    def test_copy_parser_skips_build_stages_and_retains_local_sources(self) -> None:
+    def test_copy_parser_skips_build_stages_and_retains_local_sources(
+        self,
+    ) -> None:
         self.assertEqual(
             ["first.lock", "second.lock", "other.lock"],
             copy_sources(
-                "COPY --chown=root:root first.lock " + "\\" + "\n second.lock /tmp/\n"
+                "COPY --chown=root:root first.lock "
+                + "\\"
+                + "\n second.lock /tmp/\n"
                 "COPY --from=assets /web/dist /app/web-dist\n"
                 'COPY ["other.lock", "/tmp/other.lock"]\n'
             ),

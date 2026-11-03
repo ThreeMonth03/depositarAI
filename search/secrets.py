@@ -7,7 +7,9 @@ import stat
 
 
 def read_secret(path: Path) -> str:
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    fd = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    )
     try:
         metadata = os.fstat(fd)
         if (
@@ -32,7 +34,9 @@ def read_secret(path: Path) -> str:
             "st_ctime_ns",
         )
         # Reading can legitimately update atime, particularly on Ceph.
-        if any(getattr(current, key) != getattr(metadata, key) for key in fields):
+        if any(
+            getattr(current, key) != getattr(metadata, key) for key in fields
+        ):
             raise ValueError("secret changed during read")
     finally:
         os.close(fd)

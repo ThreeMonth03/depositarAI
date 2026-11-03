@@ -1,4 +1,5 @@
-"""Public frontend release transport and verified, single-platform OCI identity.
+"""Public frontend release transport and verified, single-platform OCI
+identity.
 
 GitHub CLI owns Sigstore verification. This module restricts the signed source
 identity and archive format before the deployment controller may call Docker.
@@ -44,7 +45,9 @@ PLATFORM = {"architecture": "amd64", "os": "linux"}
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}\Z")
+REPOSITORY = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}\Z"
+)
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 MAX_ARCHIVE_BYTES = 1024**3
@@ -92,7 +95,10 @@ def _identity(repository, revision):
 
 def validate_manifest(value, *, repository, revision):
     _identity(repository, revision)
-    _require(type(value) is dict and set(value) == MANIFEST_FIELDS, "manifest_invalid")
+    _require(
+        type(value) is dict and set(value) == MANIFEST_FIELDS,
+        "manifest_invalid",
+    )
     _require(
         type(value["schema_version"]) is int
         and value["schema_version"] == 1
@@ -102,14 +108,18 @@ def validate_manifest(value, *, repository, revision):
         and value["workflow"] == WORKFLOW
         and value["platform"] == "linux/amd64"
         and type(value["conversation_contract_version"]) is int
-        and value["conversation_contract_version"] == CONVERSATION_CONTRACT_VERSION
+        and value["conversation_contract_version"]
+        == CONVERSATION_CONTRACT_VERSION
         and type(value["images"]) is dict
         and set(value["images"]) == set(ROLES),
         "manifest_invalid",
     )
     for role in ROLES:
         item = value["images"][role]
-        _require(type(item) is dict and set(item) == IMAGE_FIELDS, "manifest_invalid")
+        _require(
+            type(item) is dict and set(item) == IMAGE_FIELDS,
+            "manifest_invalid",
+        )
         _require(
             item["archive"] == role + ".oci.tar"
             and type(item["archive_bytes"]) is int
@@ -130,7 +140,8 @@ def _open_regular(path, maximum):
     try:
         info = os.fstat(descriptor)
         _require(
-            stat.S_ISREG(info.st_mode) and 0 < info.st_size <= maximum, "file_invalid"
+            stat.S_ISREG(info.st_mode) and 0 < info.st_size <= maximum,
+            "file_invalid",
         )
         return os.fdopen(descriptor, "rb")
     except BaseException:
@@ -177,17 +188,31 @@ def describe_archive(path, revision, role):
                         len(members) < 512 and member.name not in members,
                         "archive_invalid",
                     )
-                    name = member.name.rstrip("/") if member.isdir() else member.name
+                    name = (
+                        member.name.rstrip("/")
+                        if member.isdir()
+                        else member.name
+                    )
                     _require(name not in members, "archive_invalid")
                     if member.isdir():
-                        _require(name in {"blobs", "blobs/sha256"}, "archive_invalid")
+                        _require(
+                            name in {"blobs", "blobs/sha256"},
+                            "archive_invalid",
+                        )
                     else:
                         _require(
                             member.isfile()
                             and member.size <= MAX_ARCHIVE_BYTES
                             and (
-                                name in {"index.json", "oci-layout", "manifest.json"}
-                                or re.fullmatch(r"blobs/sha256/[0-9a-f]{64}", name)
+                                name
+                                in {
+                                    "index.json",
+                                    "oci-layout",
+                                    "manifest.json",
+                                }
+                                or re.fullmatch(
+                                    r"blobs/sha256/[0-9a-f]{64}", name
+                                )
                             ),
                             "archive_invalid",
                         )
@@ -224,7 +249,8 @@ def describe_archive(path, revision, role):
                     )
                     with archive.extractfile(members[name]) as item:
                         _require(
-                            _hash(item) == descriptor["digest"][7:], "archive_invalid"
+                            _hash(item) == descriptor["digest"][7:],
+                            "archive_invalid",
                         )
                     visited.add(name)
                     return read_json(name) if json_value else None
@@ -270,10 +296,13 @@ def describe_archive(path, revision, role):
                     and config.get("architecture") == "amd64",
                     "archive_invalid",
                 )
-                policy.validate_image_labels(config["config"]["Labels"], revision, role)
+                policy.validate_image_labels(
+                    config["config"]["Labels"], revision, role
+                )
                 layers = image["layers"]
                 _require(
-                    type(layers) is list and 0 < len(layers) <= 128, "archive_invalid"
+                    type(layers) is list and 0 < len(layers) <= 128,
+                    "archive_invalid",
                 )
                 for layer in layers:
                     blob(
@@ -292,7 +321,10 @@ def describe_archive(path, revision, role):
                     and compatibility[0].get("Config")
                     == "blobs/sha256/" + config_descriptor["digest"][7:]
                     and compatibility[0].get("Layers")
-                    == ["blobs/sha256/" + layer["digest"][7:] for layer in layers]
+                    == [
+                        "blobs/sha256/" + layer["digest"][7:]
+                        for layer in layers
+                    ]
                     and {n for n in members if n.startswith("blobs/sha256/")}
                     == visited,
                     "archive_invalid",
@@ -326,8 +358,16 @@ def describe_archive(path, revision, role):
                     "platform_manifest": descriptor["digest"],
                     "image_config": config_descriptor["digest"],
                 }
-        except (tarfile.TarError, KeyError, TypeError, AttributeError, EOFError):
-            raise FrontendArtifactError("frontend_artifact_archive_invalid") from None
+        except (
+            tarfile.TarError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            EOFError,
+        ):
+            raise FrontendArtifactError(
+                "frontend_artifact_archive_invalid"
+            ) from None
 
 
 def validate_archive(path, image_entry, revision, role):
@@ -362,7 +402,9 @@ class _ReleaseRedirect(HTTPRedirectHandler):
     max_repeats = 2
     max_redirections = 3
 
-    def redirect_request(self, request, response, code, message, headers, newurl):
+    def redirect_request(
+        self, request, response, code, message, headers, newurl
+    ):
         _url(newurl)
         return super().redirect_request(
             request, response, code, message, headers, newurl
@@ -370,7 +412,9 @@ class _ReleaseRedirect(HTTPRedirectHandler):
 
 
 class _DownloadConnections(HTTPSHandler):
-    """One watchdog owns every retained channel, including redirect responses."""
+    """One watchdog owns every retained channel, including redirect
+    responses.
+    """
 
     def __init__(self):
         super().__init__()
@@ -415,7 +459,9 @@ def _download(url, *, maximum, destination=None, expected_bytes=None):
     _url(url)
     connections = _DownloadConnections()
     opener = build_opener(ProxyHandler({}), _ReleaseRedirect(), connections)
-    request = Request(url, headers={"User-Agent": "depositarAI-frontend-delivery/1"})
+    request = Request(
+        url, headers={"User-Agent": "depositarAI-frontend-delivery/1"}
+    )
     watchdog = threading.Timer(
         min(DOWNLOAD_SECONDS, 30)
         if maximum <= MAX_METADATA_BYTES
@@ -431,13 +477,18 @@ def _download(url, *, maximum, destination=None, expected_bytes=None):
             if destination is None:
                 raw = response.read(maximum + 1)
                 _require(
-                    not connections.stopped.is_set() and 0 < len(raw) <= maximum,
+                    not connections.stopped.is_set()
+                    and 0 < len(raw) <= maximum,
                     "download_limit",
                 )
                 return raw
             descriptor = os.open(
                 destination,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
                 0o600,
             )
             with os.fdopen(descriptor, "wb") as stream:
@@ -470,13 +521,22 @@ def checked_verifier(path):
     bytes or changing the runner's executable contract.
     """
     descriptor = None
-    fields = ("st_dev", "st_ino", "st_uid", "st_mode", "st_size", "st_mtime_ns")
+    fields = (
+        "st_dev",
+        "st_ino",
+        "st_uid",
+        "st_mode",
+        "st_size",
+        "st_mtime_ns",
+    )
     try:
         try:
             binary = Path(path)
             _require(binary.is_absolute(), "verifier_invalid")
             check_directory(binary.parent)
-            descriptor = os.open(binary, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+            descriptor = os.open(
+                binary, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
+            )
             info = os.fstat(descriptor)
             _require(
                 stat.S_ISREG(info.st_mode)
@@ -489,20 +549,35 @@ def checked_verifier(path):
             identity = tuple(getattr(info, field) for field in fields)
         except FrontendArtifactError:
             raise
-        except (NamespaceError, OSError, ValueError, TypeError, AttributeError):
-            raise FrontendArtifactError("frontend_artifact_verifier_invalid") from None
+        except (
+            NamespaceError,
+            OSError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ):
+            raise FrontendArtifactError(
+                "frontend_artifact_verifier_invalid"
+            ) from None
 
         def unchanged():
             try:
                 check_directory(binary.parent)
                 for current in (os.fstat(descriptor), binary.lstat()):
                     _require(
-                        tuple(getattr(current, field) for field in fields) == identity,
+                        tuple(getattr(current, field) for field in fields)
+                        == identity,
                         "verifier_changed",
                     )
             except FrontendArtifactError:
                 raise
-            except (NamespaceError, OSError, ValueError, TypeError, AttributeError):
+            except (
+                NamespaceError,
+                OSError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
                 raise FrontendArtifactError(
                     "frontend_artifact_verifier_invalid"
                 ) from None
@@ -518,10 +593,14 @@ def checked_verifier(path):
 def _verify_provenance(
     path, bundle, *, revision, repository, repository_id, gh_binary, runner
 ):
-    _require(type(repository_id) is int and repository_id > 0, "identity_invalid")
+    _require(
+        type(repository_id) is int and repository_id > 0, "identity_invalid"
+    )
     with (
         checked_verifier(gh_binary) as binary,
-        tempfile.TemporaryDirectory(prefix="depositar-frontend-verifier-") as temporary,
+        tempfile.TemporaryDirectory(
+            prefix="depositar-frontend-verifier-"
+        ) as temporary,
     ):
         environment = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -560,7 +639,8 @@ def _verify_provenance(
             environment=environment,
         )
     _require(
-        type(result.returncode) is int and result.returncode == 0, "provenance_invalid"
+        type(result.returncode) is int and result.returncode == 0,
+        "provenance_invalid",
     )
     raw = result.stdout
     if type(raw) is str:
@@ -570,22 +650,31 @@ def _verify_provenance(
         "provenance_invalid",
     )
     verified = strict_json(raw)
-    _require(type(verified) is list and 0 < len(verified) <= 8, "provenance_invalid")
+    _require(
+        type(verified) is list and 0 < len(verified) <= 8, "provenance_invalid"
+    )
     try:
         for item in verified:
-            certificate = item["verificationResult"]["signature"]["certificate"]
+            certificate = item["verificationResult"]["signature"][
+                "certificate"
+            ]
             _require(
-                certificate["sourceRepositoryIdentifier"] == str(repository_id),
+                certificate["sourceRepositoryIdentifier"]
+                == str(repository_id),
                 "provenance_invalid",
             )
     except (KeyError, TypeError):
-        raise FrontendArtifactError("frontend_artifact_provenance_invalid") from None
+        raise FrontendArtifactError(
+            "frontend_artifact_provenance_invalid"
+        ) from None
 
 
 def fetch_release(
     revision, repository, destination, gh_binary, *, repository_id, runner=None
 ):
-    """Fetch an exact public release without GitHub credentials or Docker calls."""
+    """Fetch an exact public release without GitHub credentials or Docker
+    calls.
+    """
     _identity(repository, revision)
     destination = Path(destination)
     info = destination.lstat()
@@ -613,9 +702,14 @@ def fetch_release(
             "release_invalid",
         )
         assets = metadata["assets"]
-        expected = {MANIFEST_FILE, BUNDLE_FILE, *(role + ".oci.tar" for role in ROLES)}
+        expected = {
+            MANIFEST_FILE,
+            BUNDLE_FILE,
+            *(role + ".oci.tar" for role in ROLES),
+        }
         _require(
-            type(assets) is list and len(assets) == len(expected), "release_invalid"
+            type(assets) is list and len(assets) == len(expected),
+            "release_invalid",
         )
         entries = {}
         for item in assets:
@@ -650,7 +744,9 @@ def fetch_release(
             runner=image_build._run if runner is None else runner,
         )
         manifest = load_manifest(
-            destination / MANIFEST_FILE, repository=repository, revision=revision
+            destination / MANIFEST_FILE,
+            repository=repository,
+            revision=revision,
         )
         for role in ROLES:
             item = manifest["images"][role]

@@ -109,12 +109,21 @@ _FIXED_ENDPOINTS = frozenset(
 
 
 _DYNAMIC_ENDPOINTS = (
-    ("GET", re.compile(r"^/admin/accesstoken/details/4/[A-Za-z0-9_-]{1,1000}$")),
+    (
+        "GET",
+        re.compile(r"^/admin/accesstoken/details/4/[A-Za-z0-9_-]{1,1000}$"),
+    ),
     ("PUT", re.compile(r"^/api/admin/scheduler/[A-Za-z0-9_-]{1,1000}/start$")),
     ("PUT", re.compile(r"^/api/admin/scheduler/[A-Za-z0-9_-]{1,1000}/stop$")),
-    ("GET", re.compile(r"^/api/admin/scheduler/setting/[A-Za-z0-9_-]{1,1000}$")),
+    (
+        "GET",
+        re.compile(r"^/api/admin/scheduler/setting/[A-Za-z0-9_-]{1,1000}$"),
+    ),
     ("GET", re.compile(r"^/admin/accesstoken/list/[1-9][0-9]{0,2}$")),
-    ("DELETE", re.compile(r"^/api/admin/accesstoken/setting/[A-Za-z0-9_-]{1,1000}$")),
+    (
+        "DELETE",
+        re.compile(r"^/api/admin/accesstoken/setting/[A-Za-z0-9_-]{1,1000}$"),
+    ),
 )
 
 
@@ -131,7 +140,9 @@ class _AdminHTML(HTMLParser):
         self._row: Optional[Dict[str, Any]] = None
         self._cell: Optional[List[str]] = None
 
-    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(
+        self, tag: str, attrs: List[Tuple[str, Optional[str]]]
+    ) -> None:
         values = dict(attrs)
         if tag == "a":
             href = values.get("href")
@@ -171,12 +182,16 @@ class _AdminHTML(HTMLParser):
             )
         elif tag == "tr":
             if self._row is not None:
-                raise ProtocolError("nested Fess admin table rows are not accepted")
+                raise ProtocolError(
+                    "nested Fess admin table rows are not accepted"
+                )
             self._row = {"href": values.get("data-href"), "cells": []}
             self.rows.append(self._row)
         elif tag in ("td", "th") and self._row is not None:
             if self._cell is not None:
-                raise ProtocolError("nested Fess admin table cells are not accepted")
+                raise ProtocolError(
+                    "nested Fess admin table cells are not accepted"
+                )
             self._cell = []
 
     def handle_data(self, data: str) -> None:
@@ -214,14 +229,19 @@ class AdminSession(FessSession):
         raise ConfigurationError("internal Fess endpoint is not allowlisted")
 
     def require_admin(self) -> None:
-        # This is checked from the login payload by login_admin below.  Kept as a
-        # separate method to make accidental ordinary-user token creation fail.
+        # This is checked from the login payload by login_admin below. Kept
+        # as a separate method to make accidental ordinary-user token creation
+        # fail.
         if self._session_id is None:
-            raise AuthenticationError("Fess administrator session is unavailable")
+            raise AuthenticationError(
+                "Fess administrator session is unavailable"
+            )
 
-    def login_admin(self, username: str, password: str, deadline: Deadline) -> None:
-        # Repeat the request here so the admin bit can be checked without storing
-        # the response or credentials on the object.
+    def login_admin(
+        self, username: str, password: str, deadline: Deadline
+    ) -> None:
+        # Repeat the request here so the admin bit can be checked without
+        # storing the response or credentials on the object.
         if USERNAME_RE.fullmatch(username or "") is None:
             raise AuthenticationError("Fess username is malformed")
         if (
@@ -249,10 +269,14 @@ class AdminSession(FessSession):
             or not isinstance(csrf, str)
             or CSRF_RE.fullmatch(csrf) is None
         ):
-            raise AuthenticationError("Fess administrator login was not confirmed")
+            raise AuthenticationError(
+                "Fess administrator login was not confirmed"
+            )
         self._session_id = self._one_session_cookie(response)
         self._csrf_token = csrf
-        self._admin_keepalive_at = self.clock() + ADMIN_SESSION_KEEPALIVE_SECONDS
+        self._admin_keepalive_at = (
+            self.clock() + ADMIN_SESSION_KEEPALIVE_SECONDS
+        )
 
     def _admin_html(self, path: str, deadline: Deadline) -> str:
         response = self._request(
@@ -275,7 +299,11 @@ class AdminSession(FessSession):
             parser.close()
         except (ProtocolError, ValueError):
             raise ProtocolError("Fess admin HTML shape is invalid") from None
-        if len(parser.forms) > 32 or len(parser.rows) > 128 or len(parser.links) > 4096:
+        if (
+            len(parser.forms) > 32
+            or len(parser.rows) > 128
+            or len(parser.links) > 4096
+        ):
             raise ProtocolError("Fess admin HTML exceeds its structural cap")
         return parser
 
@@ -298,7 +326,9 @@ class AdminSession(FessSession):
             raise ProtocolError("Fess token identifier is malformed")
         return prefix + urllib.parse.quote(token_id, safe="")
 
-    def _access_token_snapshot(self, deadline: Deadline) -> Tuple[Tuple[str, str], ...]:
+    def _access_token_snapshot(
+        self, deadline: Deadline
+    ) -> Tuple[Tuple[str, str], ...]:
         records: List[Tuple[str, str]] = []
         seen_paths = set()
         for page_number in range(1, MAX_ACCESS_TOKEN_PAGES + 1):
@@ -329,7 +359,9 @@ class AdminSession(FessSession):
                 seen_paths.add(detail_path)
                 page_records.append((cells[0], detail_path))
             if len(page_records) > ACCESS_TOKEN_PAGE_SIZE:
-                raise ProtocolError("Fess token listing exceeded its pinned page size")
+                raise ProtocolError(
+                    "Fess token listing exceeded its pinned page size"
+                )
             records.extend(page_records)
 
             next_page = page_number + 1
@@ -337,7 +369,12 @@ class AdminSession(FessSession):
             has_next = False
             for href in parser.links:
                 split = urllib.parse.urlsplit(href)
-                if split.scheme or split.netloc or split.query or split.fragment:
+                if (
+                    split.scheme
+                    or split.netloc
+                    or split.query
+                    or split.fragment
+                ):
                     continue
                 if split.path == next_path:
                     has_next = True
@@ -349,11 +386,15 @@ class AdminSession(FessSession):
                 raise ProtocolError("Fess token listing exceeded its page cap")
         raise ProtocolError("Fess token listing traversal did not terminate")
 
-    def _listed_token_paths(self, token_name: str, deadline: Deadline) -> List[str]:
+    def _listed_token_paths(
+        self, token_name: str, deadline: Deadline
+    ) -> List[str]:
         first = self._access_token_snapshot(deadline)
         second = self._access_token_snapshot(deadline)
         if first != second:
-            raise ProtocolError("Fess token listing changed during verification")
+            raise ProtocolError(
+                "Fess token listing changed during verification"
+            )
         return [path for name, path in first if name == token_name]
 
     def _token_from_detail(
@@ -370,7 +411,9 @@ class AdminSession(FessSession):
         token_id = urllib.parse.unquote(detail_path[len(prefix) :])
         if ID_RE.fullmatch(token_id) is None or "/" in token_id:
             raise ProtocolError("Fess token identifier is malformed")
-        parser = self._parse_admin_html(self._admin_html(detail_path, deadline))
+        parser = self._parse_admin_html(
+            self._admin_html(detail_path, deadline)
+        )
         fields: Dict[str, str] = {}
         for row in parser.rows:
             cells = row.get("cells") or []
@@ -397,7 +440,10 @@ class AdminSession(FessSession):
                 fields["Expires"] or "",
             )
             is None
-            or (expected_expiry is not None and fields["Expires"] != expected_expiry)
+            or (
+                expected_expiry is not None
+                and fields["Expires"] != expected_expiry
+            )
             or not 1 <= len(fields["Created Date"]) <= 128
         ):
             raise ProtocolError("Fess token detail is invalid")
@@ -425,7 +471,9 @@ class AdminSession(FessSession):
             )
         token_name = "depositar-import-" + nonce
         if self._listed_token_paths(token_name, deadline):
-            raise TokenCleanupError("an import token with this nonce already exists")
+            raise TokenCleanupError(
+                "an import token with this nonce already exists"
+            )
         create = self._parse_admin_html(
             self._admin_html("/admin/accesstoken/createnew/", deadline)
         )
@@ -534,7 +582,9 @@ class AdminSession(FessSession):
             self._parse_admin_html(
                 self._admin_html("/admin/accesstoken/list/1", deadline)
             )
-            self._admin_keepalive_at = self.clock() + ADMIN_SESSION_KEEPALIVE_SECONDS
+            self._admin_keepalive_at = (
+                self.clock() + ADMIN_SESSION_KEEPALIVE_SECONDS
+            )
         response = self._request(
             method,
             path,
@@ -578,7 +628,8 @@ class AdminSession(FessSession):
             if dispatched:
                 raise _diagnosed(
                     ImportFailed(
-                        "document bulk request failed; catalog may be partially imported"
+                        "document bulk request failed; "
+                        "catalog may be partially imported"
                     ),
                     stage="bulk_dispatched",
                     cause=_failure_cause(error),
@@ -588,9 +639,9 @@ class AdminSession(FessSession):
     def search_list(
         self, token: str, start: int, size: int, deadline: Deadline
     ) -> Mapping[str, Any]:
-        if not _exact_int(start, minimum=0, maximum=MAX_DOCUMENTS) or not _exact_int(
-            size, minimum=1, maximum=MAX_INVENTORY_PAGE
-        ):
+        if not _exact_int(
+            start, minimum=0, maximum=MAX_DOCUMENTS
+        ) or not _exact_int(size, minimum=1, maximum=MAX_INVENTORY_PAGE):
             raise ConfigurationError("SearchList page is outside its cap")
         return self._api_request(
             "PUT",
@@ -601,7 +652,9 @@ class AdminSession(FessSession):
             max_bytes=MAX_INVENTORY_RESPONSE_BYTES,
         )
 
-    def scheduler_settings(self, token: str, deadline: Deadline) -> Mapping[str, Any]:
+    def scheduler_settings(
+        self, token: str, deadline: Deadline
+    ) -> Mapping[str, Any]:
         return self._api_request(
             "GET",
             "/api/admin/scheduler/settings",
@@ -617,7 +670,8 @@ class AdminSession(FessSession):
             raise ConfigurationError("scheduler identifier is malformed")
         return self._api_request(
             "GET",
-            "/api/admin/scheduler/setting/" + urllib.parse.quote(scheduler_id, safe=""),
+            "/api/admin/scheduler/setting/"
+            + urllib.parse.quote(scheduler_id, safe=""),
             token=token,
             deadline=deadline,
         )
@@ -664,7 +718,9 @@ class AdminSession(FessSession):
             accepted_statuses=(0, 9),
         )
 
-    def stop_scheduler(self, token: str, scheduler_id: str, deadline: Deadline) -> None:
+    def stop_scheduler(
+        self, token: str, scheduler_id: str, deadline: Deadline
+    ) -> None:
         if ID_RE.fullmatch(scheduler_id or "") is None:
             raise ConfigurationError("scheduler identifier is malformed")
         response = self._api_request(
@@ -693,7 +749,8 @@ class AdminSession(FessSession):
             raise ConfigurationError("access-token identifier is malformed")
         self._api_request(
             "DELETE",
-            "/api/admin/accesstoken/setting/" + urllib.parse.quote(token_id, safe=""),
+            "/api/admin/accesstoken/setting/"
+            + urllib.parse.quote(token_id, safe=""),
             token=token,
             deadline=deadline,
         )
@@ -728,9 +785,9 @@ class AdminAccess:
         request_timeout: float = 20.0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-        utcnow: Callable[[], _datetime.datetime] = lambda: _datetime.datetime.now(
-            _datetime.timezone.utc
-        ),
+        utcnow: Callable[
+            [], _datetime.datetime
+        ] = lambda: _datetime.datetime.now(_datetime.timezone.utc),
     ) -> None:
         self.base_url = base_url
         self.transport = transport or UrllibTransport()
@@ -747,7 +804,9 @@ class AdminAccess:
             clock=self.clock,
         )
 
-    def _cleanup_retry(self, operation: Callable[[], Any], deadline: Deadline) -> Any:
+    def _cleanup_retry(
+        self, operation: Callable[[], Any], deadline: Deadline
+    ) -> Any:
         """Cleanup-only HTTP-429 retries, never bulk/create/start retries."""
         for attempt in range(MAX_CLEANUP_ATTEMPTS):
             deadline.remaining(self.request_timeout)
@@ -826,9 +885,13 @@ class AdminAccess:
             session.login_admin(username, password, deadline)
             logged_in = True
             token_cleanup_end = (
-                self.clock() + lifetime_minutes * 60 - TOKEN_EXPIRY_MARGIN_SECONDS
+                self.clock()
+                + lifetime_minutes * 60
+                - TOKEN_EXPIRY_MARGIN_SECONDS
             )
-            _vector_event(journal, "token-create-intent", {"token_name": token_name})
+            _vector_event(
+                journal, "token-create-intent", {"token_name": token_name}
+            )
             token_id, token, _ = session.create_ephemeral_admin_token(
                 nonce,
                 deadline,
@@ -854,7 +917,9 @@ class AdminAccess:
 
         if logged_in:
             cleanup_deadline = Deadline(
-                min(self.clock() + MAX_TOKEN_CLEANUP_SECONDS, token_cleanup_end),
+                min(
+                    self.clock() + MAX_TOKEN_CLEANUP_SECONDS, token_cleanup_end
+                ),
                 self.clock,
             )
             token_deadline = Deadline(
@@ -894,7 +959,9 @@ class AdminAccess:
                 # established only when recovery completed successfully.
                 try:
                     if self._cleanup_retry(
-                        lambda: session._listed_token_paths(token_name, token_deadline),
+                        lambda: session._listed_token_paths(
+                            token_name, token_deadline
+                        ),
                         token_deadline,
                     ):
                         note_cleanup_failure(
@@ -904,7 +971,9 @@ class AdminAccess:
                     note_cleanup_failure(error)
             if not cleanup_failed:
                 try:
-                    _vector_event(journal, "token-revoked", {"token_name": token_name})
+                    _vector_event(
+                        journal, "token-revoked", {"token_name": token_name}
+                    )
                 except CatalogError as error:
                     note_cleanup_failure(error, stage="token_journal")
             try:

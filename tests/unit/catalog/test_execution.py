@@ -20,14 +20,21 @@ from tests.unit.catalog.test_module_boundaries import (
 
 
 class CatalogExecutionTests(unittest.TestCase):
-    def test_volume_observation_reads_sealed_metadata_once_without_a_helper(self):
+    def test_volume_observation_reads_sealed_metadata_once_without_a_helper(
+        self,
+    ):
         from search.operations.catalog import volumes
-        from tests.unit.catalog.volume_fixtures import IMAGE, CatalogVolumeFixture
+        from tests.unit.catalog.volume_fixtures import (
+            IMAGE,
+            CatalogVolumeFixture,
+        )
 
         fixture = CatalogVolumeFixture(self)
         fixture.start_intent()
         expected = volumes.ensure(fixture.context)
-        execution.write_record(fixture.root, "admin-image.json", {"image_id": IMAGE})
+        execution.write_record(
+            fixture.root, "admin-image.json", {"image_id": IMAGE}
+        )
         fixture.calls.clear()
         image_calls = fixture.image.call_count
         self.assertEqual(expected, execution.require_storage(fixture.context))
@@ -47,7 +54,10 @@ class CatalogExecutionTests(unittest.TestCase):
                 fixture.metadata[field] = old
 
     def test_volume_binding_uses_the_complete_same_container_snapshot(self):
-        receipt = {"name": "fixed-volume", "metadata": {"mountpoint": "/opaque/volume"}}
+        receipt = {
+            "name": "fixed-volume",
+            "metadata": {"mountpoint": "/opaque/volume"},
+        }
         mount = {
             "Type": "volume",
             "Name": "fixed-volume",
@@ -57,7 +67,9 @@ class CatalogExecutionTests(unittest.TestCase):
             "RW": True,
         }
         row = {
-            "Config": {"Labels": {"com.docker.compose.service": "opensearch-search"}},
+            "Config": {
+                "Labels": {"com.docker.compose.service": "opensearch-search"}
+            },
             "Mounts": [mount],
         }
         execution.validate_storage_mounts(receipt, [row])
@@ -86,13 +98,20 @@ class CatalogExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "volume_binding_changed"):
             execution.validate_storage_mounts(None, [])
 
-    def test_real_child_recreates_iid_with_private_mode_without_parent_umask_changes(
+    def test_child_recreates_private_iid_without_parent_umask_changes(
         self,
     ):
-        with tempfile.TemporaryDirectory(prefix="catalog-child-umask-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="catalog-child-umask-"
+        ) as directory:
             path = Path(directory) / "iid"
             path.touch(mode=0o600)
-            script = "import os,sys; p=sys.argv[1]; os.unlink(p); fd=os.open(p, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o644); os.write(fd, b'sha256:example'); os.close(fd); print(oct(os.stat(p).st_mode & 0o777))"
+            script = (
+                "import os,sys; p=sys.argv[1]; os.unlink(p); "
+                "fd=os.open(p, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o644); "
+                "os.write(fd, b'sha256:example'); os.close(fd); "
+                "print(oct(os.stat(p).st_mode & 0o777))"
+            )
             outcome = commands.default_runner(Path(directory))(
                 [sys.executable, "-c", script, str(path)], timeout=10
             )
@@ -129,9 +148,15 @@ class CatalogExecutionTests(unittest.TestCase):
                 self.assertFalse(imports_namespace(found, namespace))
             for node in ast.walk(source_tree(module)):
                 if isinstance(node, ast.ImportFrom):
-                    if imported_module(node) == "search.operations.catalog.execution":
+                    if (
+                        imported_module(node)
+                        == "search.operations.catalog.execution"
+                    ):
                         self.assertTrue(
-                            all(not alias.name.startswith("_") for alias in node.names)
+                            all(
+                                not alias.name.startswith("_")
+                                for alias in node.names
+                            )
                         )
 
 
@@ -156,7 +181,9 @@ class CatalogPrebuiltImageReceiptTests(unittest.TestCase):
                 "services": {
                     name: {
                         "build": {
-                            "args": {"APP_BASE_IMAGE": "reviewed@sha256:" + "b" * 64}
+                            "args": {
+                                "APP_BASE_IMAGE": "reviewed@sha256:" + "b" * 64
+                            }
                         }
                     }
                     for name in self.sources
@@ -203,7 +230,9 @@ class CatalogPrebuiltImageReceiptTests(unittest.TestCase):
             "Config": {"Labels": {}},
         }
 
-    def test_explicit_image_proof_retains_security_preflight_and_does_not_write(self):
+    def test_image_proof_retains_readonly_security_preflight(
+        self,
+    ):
         with (
             patch.object(execution, "verify_security_material") as security,
             patch.object(
@@ -222,14 +251,18 @@ class CatalogPrebuiltImageReceiptTests(unittest.TestCase):
         images["fess-search"]["sources"].clear()
         self.assertTrue(self.receipt["images"]["fess-search"]["sources"])
 
-    def test_self_consistent_local_labels_cannot_replace_sealed_source_identity(self):
+    def test_local_labels_cannot_replace_sealed_source_identity(
+        self,
+    ):
         supplied = copy.deepcopy(self.receipt)
         entry = supplied["images"]["fess-search"]
         entry["sources"][next(iter(entry["sources"]))] = "9" * 64
         entry["labels"][execution.LABEL_PREFIX + "source-sha256"] = (
             execution.digest_record(entry["sources"])
         )
-        self.local_images[entry["reference"]]["Config"]["Labels"] = entry["labels"]
+        self.local_images[entry["reference"]]["Config"]["Labels"] = entry[
+            "labels"
+        ]
         with (
             patch.object(execution, "verify_security_material"),
             patch.object(
@@ -237,7 +270,9 @@ class CatalogPrebuiltImageReceiptTests(unittest.TestCase):
                 "inspect_image",
                 side_effect=lambda context, ref: self.local_images[ref],
             ),
-            self.assertRaisesRegex(ValueError, "catalog_image_source_receipt_changed"),
+            self.assertRaisesRegex(
+                ValueError, "catalog_image_source_receipt_changed"
+            ),
         ):
             execution.verify_images(self.context, supplied)
 
@@ -246,10 +281,14 @@ class CatalogPrebuiltImageReceiptTests(unittest.TestCase):
             patch.object(
                 execution,
                 "verify_security_material",
-                side_effect=execution.RuntimeError("catalog_security_material_changed"),
+                side_effect=execution.RuntimeError(
+                    "catalog_security_material_changed"
+                ),
             ),
             patch.object(execution, "inspect_image") as inspect,
-            self.assertRaisesRegex(ValueError, "catalog_security_material_changed"),
+            self.assertRaisesRegex(
+                ValueError, "catalog_security_material_changed"
+            ),
         ):
             execution.verify_images(self.context, self.receipt)
         inspect.assert_not_called()
@@ -267,7 +306,9 @@ class CatalogImageIdFileTests(unittest.TestCase):
 
     def write_iid(self, *, mode=0o600, raw=None):
         self.path.unlink(missing_ok=True)
-        self.path.write_bytes(self.image_id.encode("ascii") if raw is None else raw)
+        self.path.write_bytes(
+            self.image_id.encode("ascii") if raw is None else raw
+        )
         self.path.chmod(mode)
 
     def read_iid(self):
@@ -286,7 +327,9 @@ class CatalogImageIdFileTests(unittest.TestCase):
         for mode in (0o400, 0o640, 0o664, 0o666):
             with self.subTest(mode=oct(mode)):
                 self.write_iid(mode=mode)
-                with self.assertRaisesRegex(ValueError, "catalog_image_id_file_unsafe"):
+                with self.assertRaisesRegex(
+                    ValueError, "catalog_image_id_file_unsafe"
+                ):
                     self.read_iid()
 
     def test_fifo_is_rejected_before_open_and_cannot_block(self):
@@ -303,11 +346,15 @@ class CatalogImageIdFileTests(unittest.TestCase):
         target.write_bytes(self.image_id.encode("ascii"))
         target.chmod(0o600)
         self.path.symlink_to(target)
-        with self.assertRaisesRegex(ValueError, "catalog_image_id_file_unsafe"):
+        with self.assertRaisesRegex(
+            ValueError, "catalog_image_id_file_unsafe"
+        ):
             self.read_iid()
         self.path.unlink()
         os.link(target, self.path)
-        with self.assertRaisesRegex(ValueError, "catalog_image_id_file_unsafe"):
+        with self.assertRaisesRegex(
+            ValueError, "catalog_image_id_file_unsafe"
+        ):
             self.read_iid()
 
     def test_nonowner_file_stat_is_rejected(self):
@@ -364,8 +411,12 @@ class CatalogImageIdFileTests(unittest.TestCase):
             return original(*args, **kwargs)
 
         with (
-            patch.object(execution.private_io, "read_file", side_effect=replace_iid),
-            self.assertRaisesRegex(ValueError, "catalog_image_id_file_changed"),
+            patch.object(
+                execution.private_io, "read_file", side_effect=replace_iid
+            ),
+            self.assertRaisesRegex(
+                ValueError, "catalog_image_id_file_changed"
+            ),
         ):
             self.read_iid()
 
@@ -378,7 +429,9 @@ class CatalogImageIdFileTests(unittest.TestCase):
             return original(*args, **kwargs)
 
         with (
-            patch.object(execution.private_io, "read_file", side_effect=change_mode),
+            patch.object(
+                execution.private_io, "read_file", side_effect=change_mode
+            ),
             self.assertRaisesRegex(ValueError, "private_io_file_unsafe"),
         ):
             self.read_iid()
@@ -393,7 +446,9 @@ class CatalogImageIdFileTests(unittest.TestCase):
             return original(*args, **kwargs)
 
         with (
-            patch.object(execution.private_io, "read_file", side_effect=replace_parent),
+            patch.object(
+                execution.private_io, "read_file", side_effect=replace_parent
+            ),
             self.assertRaisesRegex(ValueError, "private_io_directory_changed"),
         ):
             self.read_iid()

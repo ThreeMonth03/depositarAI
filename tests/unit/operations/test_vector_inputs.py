@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 from search.operations import cli, config as product_config, lifecycle
 from search.operations.catalog import vectors
-from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+from search.operations.catalog.policy import (
+    RuntimeError as CatalogRuntimeError,
+)
 from search.operations.config import GPUConfig, ProductConfig
 from search.operations.state import locked_state
 from tests.unit.operations.test_lifecycle import REVISION, dataset
@@ -55,9 +57,13 @@ class VectorInputLifecycleTests(unittest.TestCase):
             with locked_state(self.config):
                 self.fail("product lock was not retained")
 
-    def test_lookup_retains_product_lock_and_leaves_no_operation_or_state_writes(self):
+    def test_lookup_keeps_product_lock_without_operation_or_state_writes(
+        self,
+    ):
         before = {
-            p: p.read_bytes() for p in self.config.state_root.rglob("*") if p.is_file()
+            p: p.read_bytes()
+            for p in self.config.state_root.rglob("*")
+            if p.is_file()
         }
 
         def lookup(config, plan, **options):
@@ -79,26 +85,38 @@ class VectorInputLifecycleTests(unittest.TestCase):
             },
         )
 
-    def test_lookup_rechecks_final_source_revision_without_writing_success(self):
+    def test_lookup_rechecks_final_source_revision_without_writing_success(
+        self,
+    ):
         before = set(self.config.state_root.glob("op-*.json"))
         with (
             patch.object(
-                lifecycle, "revision", side_effect=[REVISION, REVISION, "b" * 40]
+                lifecycle,
+                "revision",
+                side_effect=[REVISION, REVISION, "b" * 40],
             ),
-            patch.object(vectors, "inputs", return_value={"inputs_sha256": "1" * 64}),
-            self.assertRaisesRegex(ValueError, "product_invocation_source_changed"),
+            patch.object(
+                vectors, "inputs", return_value={"inputs_sha256": "1" * 64}
+            ),
+            self.assertRaisesRegex(
+                ValueError, "product_invocation_source_changed"
+            ),
         ):
             lifecycle.vector_inputs(self.config)
         self.assertEqual(before, set(self.config.state_root.glob("op-*.json")))
 
-    def test_build_forwards_optional_expectation_with_product_lock_retained(self):
+    def test_build_forwards_optional_expectation_with_product_lock_retained(
+        self,
+    ):
         for expected in (None, "2" * 64):
             with self.subTest(expected=expected):
 
                 def build(config, plan, **options):
                     self.assertIs(config, self.config)
                     self.assertEqual(self.plan, plan)
-                    self.assertEqual(expected, options["expected_inputs_sha256"])
+                    self.assertEqual(
+                        expected, options["expected_inputs_sha256"]
+                    )
                     self.assert_product_locked()
                     return {
                         "schema_version": 1,
@@ -114,7 +132,9 @@ class VectorInputLifecycleTests(unittest.TestCase):
                         },
                     }
 
-                with patch.object(vectors, "build", side_effect=build) as domain:
+                with patch.object(
+                    vectors, "build", side_effect=build
+                ) as domain:
                     report = lifecycle.build_vectors(
                         self.config, expected_inputs_sha256=expected
                     )
@@ -128,14 +148,19 @@ class VectorInputLifecycleTests(unittest.TestCase):
                 ValueError, "catalog_vector_expected_inputs_invalid"
             ),
         ):
-            lifecycle.build_vectors(self.config, expected_inputs_sha256="A" * 64)
+            lifecycle.build_vectors(
+                self.config, expected_inputs_sha256="A" * 64
+            )
         context.assert_not_called()
 
 
 class VectorInputCLITests(unittest.TestCase):
     def invoke(self, arguments):
         output, errors = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+        with (
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
             code = cli.main(["--config", "/private/product.json", *arguments])
         return code, output.getvalue(), errors.getvalue()
 
@@ -148,7 +173,9 @@ class VectorInputCLITests(unittest.TestCase):
         config = object()
         with (
             patch.object(product_config, "load_config", return_value=config),
-            patch.object(lifecycle, "vector_inputs", return_value=summary) as lookup,
+            patch.object(
+                lifecycle, "vector_inputs", return_value=summary
+            ) as lookup,
         ):
             code, output, errors = self.invoke(["vector-inputs"])
         self.assertEqual((0, ""), (code, errors))
@@ -169,7 +196,9 @@ class VectorInputCLITests(unittest.TestCase):
                 if expected is not None:
                     arguments += ["--expected-inputs-sha256", expected]
                 with (
-                    patch.object(product_config, "load_config", return_value=config),
+                    patch.object(
+                        product_config, "load_config", return_value=config
+                    ),
                     patch.object(
                         lifecycle,
                         "build_vectors",
@@ -192,11 +221,14 @@ class VectorInputCLITests(unittest.TestCase):
             patch.object(
                 lifecycle,
                 "vector_inputs",
-                side_effect=CatalogRuntimeError("catalog_admin_image_evidence_missing"),
+                side_effect=CatalogRuntimeError(
+                    "catalog_admin_image_evidence_missing"
+                ),
             ),
         ):
             code, output, errors = self.invoke(["vector-inputs"])
         self.assertEqual((1, ""), (code, output))
         self.assertEqual(
-            "catalog_admin_image_evidence_missing", json.loads(errors)["error_code"]
+            "catalog_admin_image_evidence_missing",
+            json.loads(errors)["error_code"],
         )

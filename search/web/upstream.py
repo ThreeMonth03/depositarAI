@@ -1,4 +1,6 @@
-"""Fixed operator-owned destination, TLS verification, no redirects or proxies."""
+"""Fixed operator-owned destination, TLS
+verification, no redirects or proxies.
+"""
 
 import asyncio
 from dataclasses import dataclass
@@ -39,12 +41,17 @@ class WebSettings:
             or not peer.hostname
         ):
             raise ValueError("upstream must be an operator configured origin")
-        if peer.scheme != "https" and self.upstream != "http://conversation-api:8000":
+        if (
+            peer.scheme != "https"
+            and self.upstream != "http://conversation-api:8000"
+        ):
             raise ValueError("remote GPU connections require verified HTTPS")
         if self.upstream_ca_file is not None and (
             not self.upstream_ca_file.is_absolute() or peer.scheme != "https"
         ):
-            raise ValueError("upstream CA requires HTTPS and an absolute file path")
+            raise ValueError(
+                "upstream CA requires HTTPS and an absolute file path"
+            )
 
     @classmethod
     def from_environment(cls):
@@ -59,7 +66,9 @@ class WebSettings:
                 if "WEB_EDGE_SECRET_FILE" in os.environ
                 else None
             ),
-            upstream_ca_file=Path(upstream_ca_file) if upstream_ca_file else None,
+            upstream_ca_file=Path(upstream_ca_file)
+            if upstream_ca_file
+            else None,
             access_mode=os.environ.get("WEB_ACCESS_MODE", "private"),
         )
 
@@ -72,11 +81,14 @@ class UpstreamError(Exception):
 class Upstream:
     def __init__(self, settings):
         self.settings = settings
-        # Keep HTTPX's public CA roots, without environment overrides. A private
+        # Keep HTTPX's public CA roots, without environment overrides. A
+        # private
         # CA extends that trust store; certificate and hostname checks stay on.
         self.tls_context = httpx.create_ssl_context(trust_env=False)
         if settings.upstream_ca_file is not None:
-            self.tls_context.load_verify_locations(cafile=settings.upstream_ca_file)
+            self.tls_context.load_verify_locations(
+                cafile=settings.upstream_ca_file
+            )
 
     async def turn(self, payload):
         try:
@@ -105,7 +117,9 @@ class Upstream:
                             raw.extend(block)
                             if len(raw) > MAX_TURN_RESPONSE_BYTES:
                                 raise ValueError("upstream response limit")
-                        value = TurnResponse.model_validate(strict_json(bytes(raw)))
+                        value = TurnResponse.model_validate(
+                            strict_json(bytes(raw))
+                        )
                         if (response.status_code == 503) != (
                             value.status == "unavailable"
                         ):

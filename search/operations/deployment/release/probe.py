@@ -2,8 +2,9 @@
 
 Only fixed probe code and public source/catalog identities enter Docker argv.
 The API credential and RAM session tokens stay inside their respective process;
-receipts contain no requests, generated text, cards, headers or HTTP error body.
-Successful smoke checks establish one search/refinement/reset path, not quality.
+receipts contain no requests, generated text, cards, headers or HTTP error
+body. Successful smoke checks establish one search/refinement/reset path, not
+quality.
 """
 
 from __future__ import annotations
@@ -35,14 +36,16 @@ class ReleaseProbeError(ValueError):
     """Fixed diagnostics without captured subprocess or HTTP output."""
 
 
-_WARMUP_SCRIPT = r"""
+_WARMUP_SCRIPT = (
+    r"""
 import json
 import math
 import sys
 import time
 
 from search.model_policy import (
-    PLANNER_MODEL, PLANNER_MODEL_DIGEST, SCOPE_MODEL, SCOPE_MODEL_DIGEST, SCOPE_NUM_CTX,
+    PLANNER_MODEL, PLANNER_MODEL_DIGEST, SCOPE_MODEL, """
+    r"""SCOPE_MODEL_DIGEST, SCOPE_NUM_CTX,
 )
 from search.operations.shared.runtime_probe import probe_models
 from search.planning.model import OPTIONS as PLANNER_OPTIONS
@@ -68,15 +71,18 @@ try:
     fields = {
         "role", "model", "digest", "status", "code", "resident_before",
         "num_ctx", "size_bytes", "vram_bytes", "processor", "load_ms",
-        "prompt_ms", "decode_ms", "prompt_eval_count", "eval_count", "elapsed_ms",
+        "prompt_ms", "decode_ms", "prompt_eval_count", "eval_count","""
+    r""" "elapsed_ms",
     }
     if (
         type(value) is not dict
         or set(value) != {
-            "schema_version", "status", "keep_alive", "gpu_uuid_verification",
+            "schema_version", "status", "keep_alive", """
+    r""""gpu_uuid_verification",
             "search_quality_verified", "models", "total_ms",
         }
-        or type(value["schema_version"]) is not int or value["schema_version"] != 1
+        or type(value["schema_version"]) is not int or """
+    r"""value["schema_version"] != 1
         or value["status"] != "ready"
         or type(value["keep_alive"]) is not int or value["keep_alive"] != -1
         or value["gpu_uuid_verification"] != "external_required"
@@ -93,10 +99,12 @@ try:
         raise ValueError("warmup_contract")
     for row, expected in zip(value["models"], (
         ("scope", SCOPE_MODEL, SCOPE_MODEL_DIGEST, SCOPE_NUM_CTX),
-        ("planner", PLANNER_MODEL, PLANNER_MODEL_DIGEST, PLANNER_OPTIONS["num_ctx"]),
+        ("planner", PLANNER_MODEL, PLANNER_MODEL_DIGEST, """
+    r"""PLANNER_OPTIONS["num_ctx"]),
     )):
         if (
-            (row["role"], row["model"], row["digest"], row["num_ctx"]) != expected
+            (row["role"], row["model"], row["digest"], """
+    r"""row["num_ctx"]) != expected
             or type(row["num_ctx"]) is not int
             or any(
                 type(row[key]) is not int or not 0 < row[key] <= 1024**4
@@ -104,7 +112,8 @@ try:
             )
             or row["size_bytes"] != row["vram_bytes"]
             or any(
-                type(row[key]) not in {int, float} or not math.isfinite(row[key])
+                type(row[key]) not in {int, float} or not """
+    r"""math.isfinite(row[key])
                 or not 0 <= row[key] <= 300000
                 for key in ("load_ms", "elapsed_ms")
             )
@@ -112,22 +121,26 @@ try:
             raise ValueError("warmup_identity")
     report["models"] = [
         {key: row[key] for key in (
-            "role", "model", "digest", "num_ctx", "size_bytes", "vram_bytes",
+            "role", "model", "digest", "num_ctx", "size_bytes", """
+    r""""vram_bytes",
             "processor", "load_ms", "elapsed_ms",
         )}
         for row in value["models"]
     ]
     report.update(
-        model_warmup_verified=True, full_gpu_residency_verified=True, code="ready",
+        model_warmup_verified=True, """
+    r"""full_gpu_residency_verified=True, code="ready",
     )
 except Exception:
     pass
 report["elapsed_ms"] = round(max(0, time.monotonic() - started) * 1000, 3)
 print(json.dumps(report, sort_keys=True, allow_nan=False))
 """
+)
 
 
-_HTTP_SCRIPT = r"""
+_HTTP_SCRIPT = (
+    r"""
 def remaining(cap):
     now = time.monotonic()
     left = DEADLINE - now
@@ -135,7 +148,8 @@ def remaining(cap):
         raise ValueError("deadline")
     return min(cap, left)
 
-def request(method, path, *, payload=None, token=None, expected=200, timeout=5):
+def request(method, path, *, payload=None, token=None, expected=200,"""
+    r""" timeout=5):
     headers = [("Accept", "application/json")]
     if ORIGIN is not None:
         headers.append(("Origin", ORIGIN))
@@ -144,7 +158,8 @@ def request(method, path, *, payload=None, token=None, expected=200, timeout=5):
     body = None
     if payload is not None:
         headers.append(("Content-Type", "application/json"))
-        body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+        body = json.dumps(payload, ensure_ascii=False, """
+    r"""allow_nan=False).encode()
     url = BASE_URL + path
     response = transport.send(
         HTTPRequest(method, url, tuple(headers), body),
@@ -167,6 +182,7 @@ def request(method, path, *, payload=None, token=None, expected=200, timeout=5):
 def emit(report):
     print(json.dumps(report, sort_keys=True, allow_nan=False))
 """
+)
 
 _COMMON_SCRIPT = (
     r"""
@@ -188,9 +204,8 @@ BASE_URL = "http://127.0.0.1:8000"
     + _HTTP_SCRIPT
 )
 
-_API_SCRIPT = (
-    _COMMON_SCRIPT
-    + r"""
+_API_SCRIPT = _COMMON_SCRIPT + (
+    r"""
 from search.api.shared.config import Settings
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
 from search.secrets import read_secret
@@ -222,7 +237,8 @@ def run():
     bundle = CatalogBundle.load(
         settings.bundle_path, expected_manifest_sha256=MANIFEST,
     )
-    if bundle.bundle_id != BUNDLE_ID or not 1 <= len(bundle.documents) <= 10000:
+    if bundle.bundle_id != BUNDLE_ID or not 1 <= """
+    r"""len(bundle.documents) <= 10000:
         raise ValueError("bundle")
     token = read_secret(settings.key_file)
     version = request("GET", "/v1/version", token=token)
@@ -278,15 +294,19 @@ emit(report)
 """
 )
 
-_STATIC_ACCEPTANCE_SCRIPT = r"""
+_STATIC_ACCEPTANCE_SCRIPT = (
+    r"""
 def check_assets():
     # Gateways serve the React build; direct BFF acceptance skips this hook.
     page = request("GET", "/")
-    if b'<div id="root"></div>' not in page or b"<title>depositar AI</title>" not in page:
+    if b'<div id="root"></div>' not in page or b"<title>depositar """
+    r"""AI</title>" not in page:
         raise ValueError("website_assets")
 """
+)
 
-_WEB_ACCEPTANCE_SCRIPT = r"""
+_WEB_ACCEPTANCE_SCRIPT = (
+    r"""
 import re
 from urllib.parse import urlsplit
 from search.api.conversation.contract import TurnResponse
@@ -309,12 +329,15 @@ def session():
     value = request("POST", "/api/session", payload={})
     if (
         type(value) is not dict
-        or set(value) != {"token", "version", "expires_in", "max_turns", "revision"}
+        or set(value) != {"token", "version", "expires_in", """
+    r""""max_turns", "revision"}
         or type(value["token"]) is not str
         or re.fullmatch(r"[A-Za-z0-9_-]{43}", value["token"]) is None
         or type(value["version"]) is not int or value["version"] != 0
-        or type(value["expires_in"]) is not int or not 1 <= value["expires_in"] <= 3600
-        or type(value["max_turns"]) is not int or not 2 <= value["max_turns"] <= 20
+        or type(value["expires_in"]) is not int or not 1 <= """
+    r"""value["expires_in"] <= 3600
+        or type(value["max_turns"]) is not int or not 2 <= """
+    r"""value["max_turns"] <= 20
         or value["revision"] != REVISION
     ):
         raise ValueError("session")
@@ -324,12 +347,15 @@ def turn(token, query, version):
     tick = time.monotonic()
     value = request(
         "POST", "/api/turn", token=token,
-        payload={"query": query, "version": version, "top_k": 3, "timezone": "Asia/Taipei"},
+        payload={"query": query, "version": version, "top_k": 3, """
+    r""""timezone": "Asia/Taipei"},
         timeout=130,
     )
     if (
-        type(value) is not dict or set(value) != {"version", "result", "context_used"}
-        or type(value["version"]) is not int or value["version"] != version + 1
+        type(value) is not dict or set(value) != {"version", """
+    r""""result", "context_used"}
+        or type(value["version"]) is not int or value["version"] != """
+    r"""version + 1
     ):
         raise ValueError("turn")
     context = ContextUsed.model_validate(value["context_used"])
@@ -339,24 +365,32 @@ def turn(token, query, version):
         context.timezone != "Asia/Taipei"
         or result.status != "ok" or result.reason != "none"
         or result.revision != REVISION or not result.state.topic
-        or search is None or search.status != "ok" or search.revision != REVISION
+        or search is None or search.status != "ok" or """
+    r"""search.revision != REVISION
         or search.catalog_manifest_sha256 != MANIFEST or search.mode != "ai"
         or search.decision != "search"
-        or search.filter_scope != ("none" if version == 0 else "index_prefilter")
-        or search.ranking != "nvidia-rerank" or search.rerank_status != "applied"
+        or search.filter_scope != ("none" if version == 0 else """
+    r""""index_prefilter")
+        or search.ranking != "nvidia-rerank" or """
+    r"""search.rerank_status != "applied"
         or search.context_used != context
         or not 1 <= len(search.cards) <= 3
         or not len(search.cards) <= search.candidate_count <= 20
-        or any(card.rank != index for index, card in enumerate(search.cards, 1))
-        or len({card.dataset_id for card in search.cards}) != len(search.cards)
+        or any(card.rank != index for index, card in """
+    r"""enumerate(search.cards, 1))
+        or len({card.dataset_id for card in search.cards}) != """
+    r"""len(search.cards)
         or (search.applied_conditions is None) != (version == 0)
         or search.parsed_conditions is None
-        or any(not math.isfinite(n) or n < 0 for n in result.timing_ms.values())
-        or any(not math.isfinite(n) or n < 0 for n in search.timing_ms.values())
+        or any(not math.isfinite(n) or n < 0 for n in """
+    r"""result.timing_ms.values())
+        or any(not math.isfinite(n) or n < 0 for n in """
+    r"""search.timing_ms.values())
     ):
         raise ValueError("search_contract")
     if any(
-        re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", card.dataset_id) is None
+        re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}","""
+    r""" card.dataset_id) is None
         or urlsplit(card.url).scheme != "https"
         or urlsplit(card.url).netloc != "data.depositar.io"
         or not urlsplit(card.url).path.startswith("/dataset/")
@@ -390,11 +424,13 @@ def run():
             or second.state.unapplied_time != first.state.unapplied_time
             or second.state.formats != ["CSV"]
             or second.search.applied_conditions.formats != ["CSV"]
-            or any(card.condition_status != "match" for card in second.search.cards)
+            or any(card.condition_status != "match" for card in """
+    r"""second.search.cards)
         ):
             raise ValueError("refinement")
         report["two_turn_search_verified"] = True
-        if request("DELETE", "/api/session", token=token) != {"status": "cleared"}:
+        if request("DELETE", "/api/session", token=token) != """
+    r"""{"status": "cleared"}:
             raise ValueError("reset")
         # Reject the old token before a new turn can reach GPU inference.
         if request(
@@ -410,7 +446,8 @@ def run():
             request("DELETE", "/api/session", token=replacement)
     finally:
         # Cleanup is safe after deletion and also on partial search failure.
-        if request("DELETE", "/api/session", token=token) != {"status": "cleared"}:
+        if request("DELETE", "/api/session", token=token) != """
+    r"""{"status": "cleared"}:
             raise ValueError("cleanup")
     report["session_reset_verified"] = True
     report["code"] = "ready"
@@ -421,6 +458,7 @@ except Exception:
     pass
 emit(report)
 """
+)
 
 _WEB_SCRIPT = (
     _COMMON_SCRIPT
@@ -460,7 +498,9 @@ def _json(raw):
         raise ReleaseProbeError("release_probe_output_invalid")
     try:
         value = json.loads(
-            raw.decode("utf-8"), object_pairs_hook=pairs, parse_constant=invalid
+            raw.decode("utf-8"),
+            object_pairs_hook=pairs,
+            parse_constant=invalid,
         )
     except (ValueError, UnicodeError, RecursionError):
         raise ReleaseProbeError("release_probe_output_invalid") from None
@@ -506,14 +546,20 @@ def _warmup(value, revision, bundle_id, manifest_sha256):
         or not math.isfinite(value["elapsed_ms"])
         or not 0 <= value["elapsed_ms"] <= WARMUP_SECONDS * 1000
         or value["code"] not in {"ready", "warmup_failed"}
-        or value["model_warmup_verified"] != value["full_gpu_residency_verified"]
+        or value["model_warmup_verified"]
+        != value["full_gpu_residency_verified"]
         or (value["code"] == "ready") != value["model_warmup_verified"]
         or len(value["models"]) != (2 if value["model_warmup_verified"] else 0)
     ):
         raise ReleaseProbeError("release_probe_warmup_contract_invalid")
     expected_models = (
         ("scope", SCOPE_MODEL, SCOPE_MODEL_DIGEST, SCOPE_NUM_CTX),
-        ("planner", PLANNER_MODEL, PLANNER_MODEL_DIGEST, PLANNER_OPTIONS["num_ctx"]),
+        (
+            "planner",
+            PLANNER_MODEL,
+            PLANNER_MODEL_DIGEST,
+            PLANNER_OPTIONS["num_ctx"],
+        ),
     )
     for row, expected in zip(value["models"], expected_models):
         if (
@@ -530,7 +576,8 @@ def _warmup(value, revision, bundle_id, manifest_sha256):
                 "load_ms",
                 "elapsed_ms",
             }
-            or (row["role"], row["model"], row["digest"], row["num_ctx"]) != expected
+            or (row["role"], row["model"], row["digest"], row["num_ctx"])
+            != expected
             or type(row["num_ctx"]) is not int
             or row["processor"] != "GPU"
             or any(
@@ -650,27 +697,31 @@ def verify_private_release(
     search=True,
     clock=time.monotonic,
 ):
-    """Return closed readiness and optional warmup/two-turn acceptance evidence.
+    """
+    Return closed readiness and optional warmup/two-turn acceptance evidence.
 
-    ``docker.call(arguments, timeout=...)`` must bound output and kill the whole
-    command process group on timeout. The host orchestrator independently proves
-    the container/image/network policy before and after this probe. No ingress,
-    extra network member or arbitrary user prompt is introduced. Search acceptance
-    first warms both pinned models once with the existing fixed private probe.
-    ``search=False`` checks readiness only and makes no warmup/search claim.
+    ``docker.call(arguments, timeout=...)`` must bound output and kill the
+    whole command process group on timeout. The host orchestrator independently
+    proves the container/image/network policy before and after this probe. No
+    ingress, extra network member or arbitrary user prompt is introduced.
+    Search acceptance first warms both pinned models once with the existing
+    fixed private probe. ``search=False`` checks readiness only and makes no
+    warmup/search claim.
     """
     if (
         type(container_ids) is not dict
         or set(container_ids) != SERVICES
         or any(
-            type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            type(value) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", value) is None
             for value in container_ids.values()
         )
         or len(set(container_ids.values())) != 3
         or type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
         or any(
-            type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            type(value) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", value) is None
             for value in (bundle_id, manifest_sha256)
         )
         or type(search) is not bool
@@ -680,7 +731,9 @@ def verify_private_release(
     if type(started) not in {int, float} or not math.isfinite(started):
         raise ReleaseProbeError("release_probe_clock_invalid")
     previous = started
-    total_seconds = API_SECONDS + (WARMUP_SECONDS + WEB_SECONDS if search else 0)
+    total_seconds = API_SECONDS + (
+        WARMUP_SECONDS + WEB_SECONDS if search else 0
+    )
 
     def run(service, script, timeout):
         nonlocal previous
@@ -730,7 +783,10 @@ def verify_private_release(
     website = None
     if search and api and api["backend_ready"]:
         website = _web(
-            run("web", _WEB_SCRIPT, WEB_SECONDS), revision, bundle_id, manifest_sha256
+            run("web", _WEB_SCRIPT, WEB_SECONDS),
+            revision,
+            bundle_id,
+            manifest_sha256,
         )
     return {
         "schema_version": 1,
@@ -738,15 +794,21 @@ def verify_private_release(
         "bundle_id": bundle_id,
         "manifest_sha256": manifest_sha256,
         "status": "ready"
-        if api and api["backend_ready"] and (not search or website["code"] == "ready")
+        if api
+        and api["backend_ready"]
+        and (not search or website["code"] == "ready")
         else "blocked",
-        "model_warmup_verified": bool(warmup and warmup["model_warmup_verified"]),
+        "model_warmup_verified": bool(
+            warmup and warmup["model_warmup_verified"]
+        ),
         "readiness_verified": bool(api and api["backend_ready"]),
         "search_requested": search,
         "two_turn_search_verified": bool(
             website and website["two_turn_search_verified"]
         ),
-        "session_reset_verified": bool(website and website["session_reset_verified"]),
+        "session_reset_verified": bool(
+            website and website["session_reset_verified"]
+        ),
         "search_quality_verified": False,
         "gateway_verified": False,
         "warmup": warmup,

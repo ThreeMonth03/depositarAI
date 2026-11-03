@@ -25,7 +25,9 @@ class SourceModesTests(unittest.TestCase):
         self.source = self.root / "source"
         self.source.mkdir(mode=0o775)
 
-    def test_acl_created_modes_become_git_modes_without_changing_untracked(self):
+    def test_acl_created_modes_become_git_modes_without_changing_untracked(
+        self,
+    ):
         (self.source / "nested").mkdir(mode=0o775)
         plain = self.source / "nested/plain.py"
         script = self.source / "run.sh"
@@ -36,7 +38,8 @@ class SourceModesTests(unittest.TestCase):
         script.chmod(0o775)
         untracked.chmod(0o664)
         restore_modes(
-            self.source, tree(("100644", "nested/plain.py"), ("100755", "run.sh"))
+            self.source,
+            tree(("100644", "nested/plain.py"), ("100755", "run.sh")),
         )
         self.assertEqual(plain.stat().st_mode & 0o777, 0o644)
         self.assertEqual(script.stat().st_mode & 0o777, 0o755)
@@ -52,7 +55,10 @@ class SourceModesTests(unittest.TestCase):
         (self.source / "leaf.py").symlink_to(target)
         (self.source / "linked").symlink_to(external, target_is_directory=True)
         for name in ("leaf.py", "linked/plain.py"):
-            with self.subTest(name=name), self.assertRaises((OSError, JobError)):
+            with (
+                self.subTest(name=name),
+                self.assertRaises((OSError, JobError)),
+            ):
                 restore_modes(self.source, tree(("100644", name)))
             self.assertEqual(target.stat().st_mode & 0o777, 0o664)
 

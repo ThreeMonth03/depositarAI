@@ -1,9 +1,9 @@
 """Bounded, read-only product preflight; never install, pull, or repair.
 
 Diagnostic codes are fixed. Command output, credentials, environment values,
-model contents, and host filesystem paths never enter the returned report.
-The Docker visibility probe uses only reviewed existing directories, no GPU,
-no network, a read-only container and mounts, and an already-local pinned image.
+model contents, and host filesystem paths never enter the returned report. The
+Docker visibility probe uses only reviewed existing directories, no GPU, no
+network, a read-only container and mounts, and an already-local pinned image.
 """
 
 from __future__ import annotations
@@ -16,8 +16,16 @@ import socket
 import stat
 import subprocess
 
-from .config import ProductConfig, ROOT, validate_config, validate_gpu_inventory
-from .shared.source_identity import SOURCE_PATHS as SOURCE_PATHS, require_clean_revision
+from .config import (
+    ProductConfig,
+    ROOT,
+    validate_config,
+    validate_gpu_inventory,
+)
+from .shared.source_identity import (
+    SOURCE_PATHS as SOURCE_PATHS,
+    require_clean_revision,
+)
 
 
 PROBE_IMAGE = (
@@ -69,15 +77,17 @@ def _file_info(path: Path, *, size=None):
 
 
 def _ollama_files(directory: Path, pins: dict[str, str]) -> dict:
-    """Hash small pinned manifests; check all referenced artifacts and sizes."""
+    """Hash small pinned manifests; check all referenced artifacts and
+    sizes.
+    """
     from scripts.prepare_search_models import verified_bytes
     from search.serialization import strict_json
 
     files = {}
     for model, expected in pins.items():
-        relative = Path("manifests/registry.ollama.ai/library") / model.replace(
-            ":", "/"
-        )
+        relative = Path(
+            "manifests/registry.ollama.ai/library"
+        ) / model.replace(":", "/")
         manifest = directory / relative
         info = _file_info(manifest)
         if info.st_size > MAX_MANIFEST_BYTES:
@@ -117,7 +127,8 @@ def _ollama_files(directory: Path, pins: dict[str, str]) -> dict:
 def _api_models(directory: Path, deep: bool) -> None:
     from scripts.prepare_search_models import checked_file, plan
 
-    # Production pin authority remains the adapters used by the existing helper.
+    # Production pin authority remains the adapters used by the existing
+    # helper.
     files = plan(directory)
     for relative, item in files.items():
         _file_info(directory / relative, size=item["bytes"])
@@ -191,7 +202,14 @@ def _storage(runner, path: Path, *, writable: bool) -> dict:
         raise ValueError("storage_not_accessible")
     raw = _command(
         runner,
-        ["findmnt", "--json", "--target", str(path), "--output", "FSTYPE,OPTIONS"],
+        [
+            "findmnt",
+            "--json",
+            "--target",
+            str(path),
+            "--output",
+            "FSTYPE,OPTIONS",
+        ],
     )
     value = json.loads(raw)
     mounts = value.get("filesystems")
@@ -264,52 +282,76 @@ def run_doctor(
         "status": "blocked",
         "source_revision": "unknown",
         "verification": "deep" if deep_verify else "light",
-        "hardware": {"cpu_count": os.cpu_count(), "ram_bytes": None, "gpus": []},
+        "hardware": {
+            "cpu_count": os.cpu_count(),
+            "ram_bytes": None,
+            "gpus": [],
+        },
         "checks": [],
     }
     try:
-        report["hardware"]["ram_bytes"] = os.sysconf("SC_PHYS_PAGES") * os.sysconf(
-            "SC_PAGE_SIZE"
-        )
+        report["hardware"]["ram_bytes"] = os.sysconf(
+            "SC_PHYS_PAGES"
+        ) * os.sysconf("SC_PAGE_SIZE")
     except (OSError, ValueError):
         pass
 
     def check(name, action, success="ok"):
         try:
             action()
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            subprocess.SubprocessError,
+        ):
             report["checks"].append(
                 {"name": name, "status": "blocked", "code": f"{name}_failed"}
             )
             return False
-        report["checks"].append({"name": name, "status": "ok", "code": success})
+        report["checks"].append(
+            {"name": name, "status": "ok", "code": success}
+        )
         return True
 
     if uid == 0:
         report["checks"].append(
-            {"name": "operator", "status": "blocked", "code": "non_root_required"}
+            {
+                "name": "operator",
+                "status": "blocked",
+                "code": "non_root_required",
+            }
         )
         return report
     hostname = socket.gethostname()
     report["hardware"]["hostname"] = (
-        hostname if re.fullmatch(r"[A-Za-z0-9._-]{1,253}", hostname) else "unknown"
+        hostname
+        if re.fullmatch(r"[A-Za-z0-9._-]{1,253}", hostname)
+        else "unknown"
     )
     report["hardware"]["uid"] = uid
     report["checks"].append({"name": "operator", "status": "ok", "code": "ok"})
     if not check(
         "configuration",
-        lambda: validate_config(config.to_dict(), repo_root=repo_root, uid=uid),
+        lambda: validate_config(
+            config.to_dict(), repo_root=repo_root, uid=uid
+        ),
     ):
         return report
 
     def source():
-        report["source_revision"] = require_clean_revision(repo_root, runner=runner)
+        report["source_revision"] = require_clean_revision(
+            repo_root, runner=runner
+        )
 
     check("source", source)
 
     def docker():
         server = json.loads(
-            _command(runner, ["docker", "version", "--format", "{{json .Server}}"])
+            _command(
+                runner, ["docker", "version", "--format", "{{json .Server}}"]
+            )
         )
         if type(server) is not dict or type(server.get("Version")) is not str:
             raise ValueError("docker_server_missing")
@@ -318,9 +360,14 @@ def run_doctor(
 
     def nvidia_runtime():
         runtimes = json.loads(
-            _command(runner, ["docker", "info", "--format", "{{json .Runtimes}}"])
+            _command(
+                runner, ["docker", "info", "--format", "{{json .Runtimes}}"]
+            )
         )
-        if type(runtimes) is not dict or type(runtimes.get("nvidia")) is not dict:
+        if (
+            type(runtimes) is not dict
+            or type(runtimes.get("nvidia")) is not dict
+        ):
             raise ValueError("nvidia_runtime_missing")
 
     if docker_ok:
@@ -348,7 +395,10 @@ def run_doctor(
     check("gpus", gpu)
 
     for name, action in (
-        ("api_models", lambda: _api_models(config.api_model_root, deep_verify)),
+        (
+            "api_models",
+            lambda: _api_models(config.api_model_root, deep_verify),
+        ),
         (
             "embedding_model",
             lambda: _embedding_model(config.embedding_model_root, deep_verify),
@@ -386,7 +436,14 @@ def run_doctor(
         def probe_image():
             identifier = _command(
                 runner,
-                ["docker", "image", "inspect", PROBE_IMAGE, "--format", "{{.Id}}"],
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    PROBE_IMAGE,
+                    "--format",
+                    "{{.Id}}",
+                ],
             )
             if re.fullmatch(r"sha256:[0-9a-f]{64}", identifier) is None:
                 raise ValueError("probe_image_invalid")
@@ -397,7 +454,10 @@ def run_doctor(
             if config.state_root.exists():
                 probe_roots.append(("state_storage", config.state_root, True))
             for name, path, _writable in probe_roots:
-                check(f"{name}_docker", lambda path=path: _probe(runner, path, uid))
+                check(
+                    f"{name}_docker",
+                    lambda path=path: _probe(runner, path, uid),
+                )
     if all(item["status"] == "ok" for item in report["checks"]):
         report["status"] = "ok"
     return report

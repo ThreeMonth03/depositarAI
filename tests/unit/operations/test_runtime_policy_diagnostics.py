@@ -1,4 +1,5 @@
-"""Native runtime proof failures remain closed at the CLI and receipt boundary."""
+"""Native runtime proof failures remain closed at the CLI and receipt
+boundary."""
 
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
@@ -12,7 +13,11 @@ from unittest.mock import patch
 
 from search.operations import cli, lifecycle
 from search.operations.catalog import policy
-from search.operations.deployment import composition, inference, inference_runtime
+from search.operations.deployment import (
+    composition,
+    inference,
+    inference_runtime,
+)
 from search.operations.deployment.runtime_docker import InferenceError
 from search.operations.state import locked_state, operation_receipts
 from tests.unit.deployment.test_composition import REVISION, product
@@ -72,7 +77,9 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
         return json.loads(errors.getvalue())
 
     def failure(self, error, command="start-inference", *, expected=None):
-        report = self.invoke(["--config", "/unused/product.json", command], error=error)
+        report = self.invoke(
+            ["--config", "/unused/product.json", command], error=error
+        )
         wanted = {
             "schema_version": 1,
             "status": "failed",
@@ -88,10 +95,14 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
         for owner, codes in OWNERS:
             for code in codes:
                 for command in COMMANDS:
-                    with self.subTest(owner=owner.__name__, code=code, command=command):
+                    with self.subTest(
+                        owner=owner.__name__, code=code, command=command
+                    ):
                         self.failure(owner(code), command, expected=code)
 
-    def test_native_gpu_rejection_exposes_only_the_fixed_owner_diagnostic(self):
+    def test_native_gpu_rejection_exposes_only_the_fixed_owner_diagnostic(
+        self,
+    ):
         with patch.object(
             inference.gpu_ownership,
             "run_gpu_ownership",
@@ -112,9 +123,16 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
 
     def test_catalog_diagnostics_keep_existing_command_scope(self):
         for code in OWNERS[0][1]:
-            for command in ("doctor", "status", "start-index", "reconcile-index"):
+            for command in (
+                "doctor",
+                "status",
+                "start-index",
+                "reconcile-index",
+            ):
                 with self.subTest(code=code, command=command):
-                    self.failure(policy.RuntimeError(code), command, expected=code)
+                    self.failure(
+                        policy.RuntimeError(code), command, expected=code
+                    )
 
     def test_inference_diagnostics_do_not_cross_other_commands(self):
         for owner, codes in OWNERS[1:]:
@@ -128,16 +146,22 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
                     "stage-catalog",
                     "prepare-query",
                 ):
-                    with self.subTest(owner=owner.__name__, code=code, command=command):
+                    with self.subTest(
+                        owner=owner.__name__, code=code, command=command
+                    ):
                         self.failure(owner(code), command)
 
-    def test_unknown_derived_forged_and_nonliteral_arguments_are_not_diagnostics(self):
+    def test_unknown_derived_forged_and_nonliteral_errors_stay_closed(
+        self,
+    ):
         class SecretText(str):
             def __str__(self):
                 raise AssertionError("must not convert a string subclass")
 
         for owner, codes in OWNERS:
-            derived = type("Derived", (owner,), {"__module__": owner.__module__})
+            derived = type(
+                "Derived", (owner,), {"__module__": owner.__module__}
+            )
             forged = type(
                 owner.__name__, (ValueError,), {"__module__": owner.__module__}
             )
@@ -160,7 +184,9 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
             with (
                 self.subTest(owner=owner.__name__),
                 patch.object(
-                    owner, "__str__", side_effect=AssertionError("no conversion")
+                    owner,
+                    "__str__",
+                    side_effect=AssertionError("no conversion"),
                 ),
             ):
                 self.failure(owner(codes[0]), expected=codes[0])
@@ -180,7 +206,9 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
                 with self.subTest(owner=owner.__name__, attribute=attribute):
                     self.failure(wrapper)
 
-    def test_stopped_native_snapshot_fails_inside_real_locked_lifecycle_operation(self):
+    def test_stopped_native_snapshot_fails_inside_locked_operation(
+        self,
+    ):
         with tempfile.TemporaryDirectory(
             prefix="depositar-runtime-proof-"
         ) as temporary:
@@ -210,21 +238,29 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
                 self.assertIs(value, config)
                 self.assertEqual(REVISION, revision)
                 self.assertEqual(cli.ROOT, options["repo_root"])
-                with self.assertRaisesRegex(ValueError, "^product_operation_busy$"):
+                with self.assertRaisesRegex(
+                    ValueError, "^product_operation_busy$"
+                ):
                     with locked_state(config):
-                        self.fail("runtime owner executed without its product lock")
+                        self.fail(
+                            "runtime owner executed without its product lock"
+                        )
                 return inference_runtime.validate_runtime(
                     compose, image_rows, containers, networks
                 )
 
             with (
-                patch("search.operations.config.load_config", return_value=config),
+                patch(
+                    "search.operations.config.load_config", return_value=config
+                ),
                 patch.object(lifecycle, "revision", return_value=REVISION),
                 patch.object(
                     inference, "start_private_inference", side_effect=stopped
                 ) as owner,
                 patch.object(
-                    subprocess, "Popen", side_effect=AssertionError("no processes")
+                    subprocess,
+                    "Popen",
+                    side_effect=AssertionError("no processes"),
                 ),
             ):
                 report = self.invoke(
@@ -232,7 +268,8 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
                 )
             owner.assert_called_once()
             self.assertEqual(
-                "inference_runtime_resource_or_health_changed", report["error_code"]
+                "inference_runtime_resource_or_health_changed",
+                report["error_code"],
             )
             self.assertIs(report["active_changed"], False)
             self.assertNotIn(str(root), json.dumps(report))
@@ -247,4 +284,6 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
             self.assertIs(receipt["active_changed"], False)
             self.assertNotIn(PRIVATE, json.dumps(receipt))
             self.assertFalse((config.state_root / "active.json").exists())
-            self.assertFalse((config.state_root / "inference-candidate.json").exists())
+            self.assertFalse(
+                (config.state_root / "inference-candidate.json").exists()
+            )

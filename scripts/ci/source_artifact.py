@@ -42,7 +42,9 @@ REVIEW_REASONS = frozenset(
 
 
 class ArtifactError(ValueError):
-    """Fixed diagnostic code; do not leak subprocess output or private paths."""
+    """Fixed diagnostic code; do not leak subprocess output or private
+    paths.
+    """
 
 
 def _run(argv, *, cwd=None, timeout=120, environment=None, umask=-1):
@@ -120,7 +122,9 @@ def _new_directory(value, *, excluded=()):
 
 
 def _read_file(path, *, maximum, digest_only=False):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    fd = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    )
     try:
         before = os.fstat(fd)
         if (
@@ -157,7 +161,8 @@ def _read_file(path, *, maximum, digest_only=False):
             "st_ctime_ns",
         )
         if count != before.st_size or any(
-            getattr(before, name) != getattr(after, name) for name in attributes
+            getattr(before, name) != getattr(after, name)
+            for name in attributes
         ):
             raise ArtifactError("source_artifact_changed")
         return digest.hexdigest() if digest_only else b"".join(blocks)
@@ -188,7 +193,8 @@ def _source_revision(repo):
             "-c",
             "import sys; from pathlib import Path; "
             "sys.path.insert(0, sys.argv[1]); "
-            "from search.operations.shared.source_identity import require_clean_revision; "
+            "from search.operations.shared.source_identity "
+            "import require_clean_revision; "
             "print(require_clean_revision(Path(sys.argv[1])))",
             repo,
         ],
@@ -258,7 +264,9 @@ def _verify_archive(path, tree):
             stream = archive.extractfile(member)
             if stream is None:
                 raise ArtifactError("source_archive_entry_invalid")
-            digest = hashlib.sha1(b"blob " + str(member.size).encode("ascii") + b"\x00")
+            digest = hashlib.sha1(
+                b"blob " + str(member.size).encode("ascii") + b"\x00"
+            )
             count = 0
             with stream:
                 while True:
@@ -269,7 +277,10 @@ def _verify_archive(path, tree):
                     digest.update(block)
             if count != member.size:
                 raise ArtifactError("source_archive_entry_invalid")
-            inventory[relative] = (digest.hexdigest(), bool(member.mode & 0o111))
+            inventory[relative] = (
+                digest.hexdigest(),
+                bool(member.mode & 0o111),
+            )
     if inventory != tree:
         raise ArtifactError("source_archive_inventory_mismatch")
 
@@ -280,9 +291,9 @@ def _names(revision):
 
 
 def _verify_bundle(path, revision):
-    if _run(["git", "bundle", "list-heads", path]) != (revision + " HEAD\n").encode(
-        "ascii"
-    ):
+    if _run(["git", "bundle", "list-heads", path]) != (
+        revision + " HEAD\n"
+    ).encode("ascii"):
         raise ArtifactError("source_bundle_revision_mismatch")
 
 
@@ -337,7 +348,8 @@ def _reviewed_entries(repo, revision, tree):
             raise ArtifactError("source_review_entry_invalid")
         fingerprint = item["fingerprint"]
         match = re.fullmatch(
-            r"([0-9a-f]{40}):([^:]+):generic-api-key:([1-9][0-9]*)", fingerprint
+            r"([0-9a-f]{40}):([^:]+):generic-api-key:([1-9][0-9]*)",
+            fingerprint,
         )
         if match is None or fingerprint in seen:
             raise ArtifactError("source_review_fingerprint_invalid")
@@ -354,7 +366,9 @@ def _reviewed_entries(repo, revision, tree):
             if line > source_lines[commit, path]:
                 raise ArtifactError("source_review_line_unavailable")
         except ArtifactError as error:
-            raise ArtifactError("source_review_position_unavailable") from error
+            raise ArtifactError(
+                "source_review_position_unavailable"
+            ) from error
         seen.add(fingerprint)
         result.append(fingerprint)
     return result, hashlib.sha256(raw).hexdigest()
@@ -371,9 +385,9 @@ def _scan(repo, revision, scanner, tree):
         or not info.st_mode & 0o111
     ):
         raise ArtifactError("source_scanner_unsafe")
-    if _run([scanner, "version"], timeout=20).strip() != SCANNER_VERSION.encode(
-        "ascii"
-    ):
+    if _run(
+        [scanner, "version"], timeout=20
+    ).strip() != SCANNER_VERSION.encode("ascii"):
         raise ArtifactError("source_scanner_version_invalid")
     environment = {
         key: value
@@ -384,9 +398,13 @@ def _scan(repo, revision, scanner, tree):
     with tempfile.TemporaryDirectory(prefix="depositar-source-scan-") as raw:
         root = Path(raw)
         configuration = root / "default.toml"
-        configuration.write_text("[extend]\nuseDefault = true\n", encoding="ascii")
+        configuration.write_text(
+            "[extend]\nuseDefault = true\n", encoding="ascii"
+        )
         ignore = root / "reviewed.gitleaksignore"
-        ignore.write_text("".join(value + "\n" for value in reviewed), encoding="utf-8")
+        ignore.write_text(
+            "".join(value + "\n" for value in reviewed), encoding="utf-8"
+        )
         try:
             _run(
                 [
@@ -446,7 +464,9 @@ def package(destination, revision, scanner, *, repo_root=ROOT):
     (target / revision_name).write_bytes((revision + "\n").encode("ascii"))
     records = []
     for name in _names(revision):
-        digest = _read_file(target / name, maximum=MAX_ARTIFACT_BYTES, digest_only=True)
+        digest = _read_file(
+            target / name, maximum=MAX_ARTIFACT_BYTES, digest_only=True
+        )
         records.append(digest + "  " + name + "\n")
     (target / "SHA256SUMS").write_text("".join(records), encoding="ascii")
     return {
@@ -474,15 +494,19 @@ def restore(package_directory, revision, destination):
     if len(records) != len(expected_names):
         raise ArtifactError("source_digest_manifest_invalid")
     for name, record in zip(expected_names, records):
-        match = re.fullmatch(r"([0-9a-f]{64})  " + re.escape(name) + r"\n", record)
+        match = re.fullmatch(
+            r"([0-9a-f]{64})  " + re.escape(name) + r"\n", record
+        )
         if match is None:
             raise ArtifactError("source_digest_manifest_invalid")
-        digest = _read_file(source / name, maximum=MAX_ARTIFACT_BYTES, digest_only=True)
+        digest = _read_file(
+            source / name, maximum=MAX_ARTIFACT_BYTES, digest_only=True
+        )
         if digest != match[1]:
             raise ArtifactError("source_artifact_digest_mismatch")
-    if _read_file(source / "SOURCE_REVISION", maximum=41) != (revision + "\n").encode(
-        "ascii"
-    ):
+    if _read_file(source / "SOURCE_REVISION", maximum=41) != (
+        revision + "\n"
+    ).encode("ascii"):
         raise ArtifactError("source_revision_mismatch")
     archive_name, bundle_name, _ = expected_names
     _verify_bundle(source / bundle_name, revision)
@@ -523,7 +547,14 @@ def restore(package_directory, revision, destination):
     ):
         raise ArtifactError("source_restore_not_clean")
     output = _run(
-        [sys.executable, "-I", "-S", "-B", target / "scripts/depositarai.py", "--help"],
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            target / "scripts/depositarai.py",
+            "--help",
+        ],
         cwd=target,
         timeout=30,
     )
@@ -556,24 +587,48 @@ def main(argv=None):
     create.add_argument(
         "destination", help="new absolute directory outside the checkout"
     )
-    create.add_argument("revision", help="trusted expected 40-character commit SHA")
-    create.add_argument("scanner", help="absolute verified Gitleaks 8.30.1 binary")
-    load = commands.add_parser("restore", help="digest-check and restore source only")
-    load.add_argument("package_directory", help="trusted source artifact directory")
-    load.add_argument("revision", help="expected SHA from the trusted workflow")
-    load.add_argument("destination", help="new absolute directory outside the checkout")
+    create.add_argument(
+        "revision", help="trusted expected 40-character commit SHA"
+    )
+    create.add_argument(
+        "scanner", help="absolute verified Gitleaks 8.30.1 binary"
+    )
+    load = commands.add_parser(
+        "restore", help="digest-check and restore source only"
+    )
+    load.add_argument(
+        "package_directory", help="trusted source artifact directory"
+    )
+    load.add_argument(
+        "revision", help="expected SHA from the trusted workflow"
+    )
+    load.add_argument(
+        "destination", help="new absolute directory outside the checkout"
+    )
     options = parser.parse_args(argv)
     os.umask(0o077)
     try:
         if options.command == "package":
-            report = package(options.destination, options.revision, options.scanner)
+            report = package(
+                options.destination, options.revision, options.scanner
+            )
         else:
             report = restore(
-                options.package_directory, options.revision, options.destination
+                options.package_directory,
+                options.revision,
+                options.destination,
             )
-    except (OSError, ValueError, UnicodeError, tarfile.TarError, ImportError) as error:
+    except (
+        OSError,
+        ValueError,
+        UnicodeError,
+        tarfile.TarError,
+        ImportError,
+    ) as error:
         code = (
-            str(error) if isinstance(error, ArtifactError) else "source_artifact_failed"
+            str(error)
+            if isinstance(error, ArtifactError)
+            else "source_artifact_failed"
         )
         print(json.dumps({"status": "failed", "code": code}), file=sys.stderr)
         return 1

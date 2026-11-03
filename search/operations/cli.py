@@ -132,7 +132,9 @@ _CATALOG_PROJECTION_CODES = frozenset(
 
 def _catalog_error_policy(owner):
     if owner == "search.operations.catalog.policy":
-        from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+        from search.operations.catalog.policy import (
+            RuntimeError as CatalogRuntimeError,
+        )
 
         return CatalogRuntimeError, _CATALOG_RUNTIME_CODES
     elif owner == "search.operations.catalog.access":
@@ -151,11 +153,15 @@ def _private_runtime_error_policy(owner):
 
         return InferenceError, _RUNTIME_DOCKER_CODES
     elif owner == "search.operations.deployment.inference_runtime":
-        from search.operations.deployment.inference_runtime import InferenceRuntimeError
+        from search.operations.deployment.inference_runtime import (
+            InferenceRuntimeError,
+        )
 
         return InferenceRuntimeError, _INFERENCE_RUNTIME_CODES
     else:
-        from search.operations.deployment.release.controller import ReleaseError
+        from search.operations.deployment.release.controller import (
+            ReleaseError,
+        )
 
         return ReleaseError, _RELEASE_CODES
 
@@ -166,7 +172,9 @@ def _product_error_policy(owner):
 
         return lifecycle.UpPrivateError, lifecycle.UP_PRIVATE_ERROR_CODES
     else:
-        from search.operations.deployment.payload import restore as product_restore
+        from search.operations.deployment.payload import (
+            restore as product_restore,
+        )
 
         return product_restore.ProductRestoreError, product_restore.ERROR_CODES
 
@@ -227,7 +235,10 @@ _ERROR_POLICIES = {
         _PRIVATE_RUNTIME_COMMANDS,
         _private_runtime_error_policy,
     ),
-    "search.operations.lifecycle": (frozenset({"up-private"}), _product_error_policy),
+    "search.operations.lifecycle": (
+        frozenset({"up-private"}),
+        _product_error_policy,
+    ),
     "search.operations.deployment.payload.restore": (
         frozenset({"restore-product"}),
         _product_error_policy,
@@ -257,7 +268,9 @@ _ERROR_POLICIES = {
         _document_error_policy,
     ),
     "search.operations.documents.sets": (
-        frozenset({"profile-resources", "sync", "stage-catalog", "up-private"}),
+        frozenset(
+            {"profile-resources", "sync", "stage-catalog", "up-private"}
+        ),
         _document_error_policy,
     ),
     "search.operations.documents.enrichment": (
@@ -341,7 +354,9 @@ def _profile_selection(arguments):
         help="explicit private SHA256.json resource profile; repeat up to 20",
     )
     selection.add_argument(
-        "--profile-set", type=Path, help="frozen private resource batch profile set"
+        "--profile-set",
+        type=Path,
+        help="frozen private resource batch profile set",
     )
 
 
@@ -355,7 +370,10 @@ def parser():
     commands = result.add_subparsers(dest="command", required=True)
     restore = commands.add_parser(
         "restore-product",
-        help="verify a trusted product package and restore source without runtime configuration",
+        help=(
+            "verify a trusted product package and restore source "
+            "without runtime configuration"
+        ),
     )
     restore.add_argument("--package", type=Path, required=True)
     restore.add_argument("--expected-revision", required=True)
@@ -380,21 +398,35 @@ def parser():
         "--header-policy",
         choices=("first-record", "absent"),
         default="first-record",
-        help="explicit CSV first-row assumption; not automatic header confirmation",
+        help=(
+            "explicit CSV first-row assumption; not automatic header "
+            "confirmation"
+        ),
     )
-    run = actions.add_parser("run", help="process at most 20 pending resource files")
+    run = actions.add_parser(
+        "run", help="process at most 20 pending resource files"
+    )
     run.add_argument("--bundle", type=Path, required=True)
     run.add_argument("--state-root", type=Path, required=True)
     run.add_argument("--expected-plan-sha256", required=True)
     run.add_argument("--max-resources", type=int, default=20)
     run.add_argument("--retry-failed", action="store_true")
-    status = actions.add_parser("status", help="inspect saved resource progress")
+    status = actions.add_parser(
+        "status", help="inspect saved resource progress"
+    )
     status.add_argument("--state-root", type=Path, required=True)
     status.add_argument("--expected-plan-sha256", required=True)
-    for command in ("prepare-public-entry", "up-public-entry", "update-public-entry"):
+    for command in (
+        "prepare-public-entry",
+        "up-public-entry",
+        "update-public-entry",
+    ):
         entry = commands.add_parser(
             command,
-            help="prepare/start a separate loopback authenticated CPU website; no GPU changes",
+            help=(
+                "prepare/start a separate loopback authenticated CPU "
+                "website; no GPU changes"
+            ),
         )
         entry.add_argument("--entry-config", type=Path, required=True)
         backend = entry.add_mutually_exclusive_group(required=True)
@@ -416,43 +448,73 @@ def parser():
     sync = commands.add_parser(
         "sync", help="cache public metadata; never alter the live index"
     )
-    sync.add_argument("--snapshot", type=Path, help="absolute JSONL(.gz), no network")
-    sync.add_argument("--force", action="store_true", help="bypass opt-in cache TTL")
+    sync.add_argument(
+        "--snapshot", type=Path, help="absolute JSONL(.gz), no network"
+    )
+    sync.add_argument(
+        "--force", action="store_true", help="bypass opt-in cache TTL"
+    )
     _profile_selection(sync)
     sync.add_argument("--baseline-bundle", type=Path)
     sync.add_argument("--baseline-manifest-sha256")
-    commands.add_parser("status", help="local staging receipts, not runtime health")
+    commands.add_parser(
+        "status", help="local staging receipts, not runtime health"
+    )
     commands.add_parser(
         "prepare-secrets",
-        help="create/reverify product-owned API key; never emit or rotate its bytes",
+        help=(
+            "create/reverify product-owned API key; never emit or "
+            "rotate its bytes"
+        ),
     )
     commands.add_parser(
         "start-inference",
-        help="start/reverify three private GPU services; no website or warmup claim",
+        help=(
+            "start/reverify three private GPU services; no website or "
+            "warmup claim"
+        ),
     )
     commands.add_parser(
         "start-release",
-        help="start/reverify three private CPU website services; no ports or gateway",
+        help=(
+            "start/reverify three private CPU website services; no "
+            "ports or gateway"
+        ),
     )
     commands.add_parser(
         "prepare-gateway",
-        help="reverify completed CPU release and stage a route candidate; no activation",
+        help=(
+            "reverify completed CPU release and stage a route "
+            "candidate; no activation"
+        ),
     )
     commands.add_parser(
         "activate-gateway",
-        help="first gateway activation after completed preparation; partial state requires recovery",
+        help=(
+            "first gateway activation after completed preparation; "
+            "partial state requires recovery"
+        ),
     )
     commands.add_parser(
         "build-images",
-        help="build/reverify sealed committed private images; no services or registry",
+        help=(
+            "build/reverify sealed committed private images; no "
+            "services or registry"
+        ),
     )
     commands.add_parser(
         "build-catalog-images",
-        help="build/reverify private catalog and admin images; never start services",
+        help=(
+            "build/reverify private catalog and admin images; never "
+            "start services"
+        ),
     )
     package = commands.add_parser(
         "package-product",
-        help="scan source and export prepared images, metadata and pinned models",
+        help=(
+            "scan source and export prepared images, metadata and "
+            "pinned models"
+        ),
     )
     package.add_argument("--destination", type=Path, required=True)
     package.add_argument(
@@ -461,36 +523,54 @@ def parser():
     package.add_argument(
         "--external-models",
         action="store_true",
-        help="record required models without copying them; package is incomplete",
+        help=(
+            "record required models without copying them; package is "
+            "incomplete"
+        ),
     )
     commands.add_parser(
         "prepare-query",
-        help="provision query-only identities for complete private vectors; no website",
+        help=(
+            "provision query-only identities for complete private "
+            "vectors; no website"
+        ),
     )
     prepare = commands.add_parser(
         "prepare-index", help="prepare an isolated CPU catalog; no activation"
     )
     prepare.add_argument(
         "--catalog-revision",
-        help="original catalog revision from a product package; requires compatible data recipe",
+        help=(
+            "original catalog revision from a product package; "
+            "requires compatible data recipe"
+        ),
     )
     start = commands.add_parser(
-        "start-index", help="start prepared private CPU catalog; no published ports"
+        "start-index",
+        help="start prepared private CPU catalog; no published ports",
     )
     start.add_argument(
         "--prebuilt-images",
         type=Path,
-        help="absolute private images.json receipt; use only existing local images",
+        help=(
+            "absolute private images.json receipt; use only existing "
+            "local images"
+        ),
     )
     commands.add_parser(
-        "import-index", help="import metadata into the private candidate; no vectors"
+        "import-index",
+        help="import metadata into the private candidate; no vectors",
     )
     commands.add_parser(
-        "reconcile-index", help="explicitly check full inventory; never retry import"
+        "reconcile-index",
+        help="explicitly check full inventory; never retry import",
     )
     commands.add_parser(
         "vector-inputs",
-        help="read the selected catalog's static vector-input digest without work",
+        help=(
+            "read the selected catalog's static vector-input digest "
+            "without work"
+        ),
     )
     vectors = commands.add_parser(
         "build-vectors",
@@ -502,18 +582,27 @@ def parser():
     for command, description in (
         (
             "stage-catalog",
-            "one locked metadata/index/vector staging flow; no website or activation",
+            (
+                "one locked metadata/index/vector staging flow; no website "
+                "or activation"
+            ),
         ),
         (
             "up-private",
-            "first private website activation on a prepared host; no update or public ingress",
+            (
+                "first private website activation on a prepared host; no "
+                "update or public ingress"
+            ),
         ),
     ):
         stage = commands.add_parser(
             command,
             help=description,
             description=description,
-            epilog="Pass --config /absolute/private/product.json before the command.",
+            epilog=(
+                "Pass --config /absolute/private/product.json before "
+                "the command."
+            ),
         )
         stage.add_argument(
             "--snapshot",
@@ -541,7 +630,9 @@ def _prebuilt_receipt(path):
         raise ValueError("product_image_receipt_path_invalid")
     descriptor = private_io.open_directory(path.parent)
     try:
-        raw = private_io.read_file(descriptor, path.name, mode=0o600, max_bytes=1024**2)
+        raw = private_io.read_file(
+            descriptor, path.name, mode=0o600, max_bytes=1024**2
+        )
         private_io.verify_directory(descriptor, path.parent)
     finally:
         os.close(descriptor)
@@ -560,15 +651,23 @@ def _prebuilt_receipt(path):
             raise ValueError("product_image_receipt_json_invalid")
         children = value.values() if type(value) is dict else value
         pending.extend(
-            (child, depth + 1) for child in children if type(child) in (dict, list)
+            (child, depth + 1)
+            for child in children
+            if type(child) in (dict, list)
         )
     return receipt
 
 
 def _selected_profiles(options):
     return {
-        **({"profile_files": options.profile_file} if options.profile_file else {}),
-        **({"profile_set": options.profile_set} if options.profile_set else {}),
+        **(
+            {"profile_files": options.profile_file}
+            if options.profile_file
+            else {}
+        ),
+        **(
+            {"profile_set": options.profile_set} if options.profile_set else {}
+        ),
     }
 
 
@@ -617,7 +716,9 @@ def _runtime_report(options):
     if options.command == "doctor":
         from search.operations import doctor
 
-        return doctor.run_doctor(config, repo_root=ROOT, deep_verify=options.deep)
+        return doctor.run_doctor(
+            config, repo_root=ROOT, deep_verify=options.deep
+        )
     from search.operations import lifecycle
 
     if options.command == "sync":
@@ -631,11 +732,17 @@ def _runtime_report(options):
             wall_seconds=options.wall_seconds,
             expected_inputs_sha256=options.expected_inputs_sha256,
         )
-    elif options.command == "start-index" and options.prebuilt_images is not None:
+    elif (
+        options.command == "start-index"
+        and options.prebuilt_images is not None
+    ):
         return lifecycle.start_index(
             config, prebuilt_images=_prebuilt_receipt(options.prebuilt_images)
         )
-    elif options.command == "prepare-index" and options.catalog_revision is not None:
+    elif (
+        options.command == "prepare-index"
+        and options.catalog_revision is not None
+    ):
         return lifecycle.prepare_index(
             config, catalog_revision=options.catalog_revision
         )
@@ -725,7 +832,9 @@ def _command_report(options):
     if options.command in PUBLIC_COMMANDS:
         return _public_entry_report(options)
     if options.command == "restore-product":
-        from search.operations.deployment.payload import restore as product_restore
+        from search.operations.deployment.payload import (
+            restore as product_restore,
+        )
 
         return product_restore.restore_product(
             options.package,
@@ -796,10 +905,17 @@ def main(argv=None):
     _validate_options(arguments, options)
     try:
         report = _command_report(options)
-        print(json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False))
+        print(
+            json.dumps(
+                report, ensure_ascii=False, sort_keys=True, allow_nan=False
+            )
+        )
         return _exit_status(options, report)
     except Exception as error:
         if not _handled_error(error):
             raise
-        print(json.dumps(_failure_report(error, options.command)), file=sys.stderr)
+        print(
+            json.dumps(_failure_report(error, options.command)),
+            file=sys.stderr,
+        )
         return 1

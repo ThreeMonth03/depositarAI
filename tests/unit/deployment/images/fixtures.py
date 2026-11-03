@@ -36,7 +36,10 @@ def fixture_sources():
     recipes = {
         path
         for recipe in source_bundle.RECIPES.values()
-        for path in (recipe["dockerfile"], recipe["dockerfile"] + ".dockerignore")
+        for path in (
+            recipe["dockerfile"],
+            recipe["dockerfile"] + ".dockerignore",
+        )
     }
     return {
         path: (ROOT / path).read_bytes()
@@ -67,14 +70,19 @@ class FakeDocker:
             self.images[service] = {
                 "Id": "sha256:" + str(index) * 64,
                 "Config": {
-                    "Labels": dict(plan["services"][service]["required_labels"]),
+                    "Labels": dict(
+                        plan["services"][service]["required_labels"]
+                    ),
                     "Env": [
                         key + "=" + value
                         for key, value in source_bundle._required_environment(
                             service, plan["revision"]
                         ).items()
                     ]
-                    + ["PATH=/usr/bin", "PRIVATE_SENTINEL=never-save-this-value"],
+                    + [
+                        "PATH=/usr/bin",
+                        "PRIVATE_SENTINEL=never-save-this-value",
+                    ],
                 },
             }
 
@@ -87,7 +95,9 @@ class FakeDocker:
         arguments = argv[5:]
         if arguments[0] == "info":
             assert not list(client.iterdir())
-            return subprocess.CompletedProcess(argv, 0, json.dumps(self.info), "")
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps(self.info), ""
+            )
         if arguments[0] == "build":
             iid = Path(arguments[arguments.index("--iidfile") + 1])
             service = iid.parent.name
@@ -102,7 +112,9 @@ class FakeDocker:
                     argv, 23, b"", b"private build output must not appear"
                 )
             if not iid.exists() and not iid.is_symlink():
-                iid.write_bytes(self.images[service]["Id"].encode() + self.iid_suffix)
+                iid.write_bytes(
+                    self.images[service]["Id"].encode() + self.iid_suffix
+                )
                 iid.chmod(self.iid_mode)
             return subprocess.CompletedProcess(argv, 0, b"built", b"")
         assert arguments[:2] == ["image", "inspect"]
@@ -112,16 +124,24 @@ class FakeDocker:
                 image["Id"],
                 image_build.TAGS[service] + self.plan["revision"],
             }:
-                return subprocess.CompletedProcess(argv, 0, json.dumps(image), "")
-        return subprocess.CompletedProcess(argv, 1, b"", b"private not found output")
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(image), ""
+                )
+        return subprocess.CompletedProcess(
+            argv, 1, b"", b"private not found output"
+        )
 
 
 class ImageStagingFixture:
-    """Create private staging evidence with cleanup owned by the running test."""
+    """Create private staging evidence with cleanup owned by the running
+    test.
+    """
 
     def __init__(self, test):
         self.test = test
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-image-staging-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-image-staging-test-"
+        )
         test.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.repo = self.root / "checkout"
@@ -147,7 +167,9 @@ class ImageStagingFixture:
         self.revision = self.git("rev-parse", "HEAD").strip()
         tree = fixture_tree(self.sources)
         tree["search/catalog/query.py"]["mode"] = "100755"
-        self.plan = source_bundle.plan_source_bundle(self.revision, tree, self.sources)
+        self.plan = source_bundle.plan_source_bundle(
+            self.revision, tree, self.sources
+        )
         self.config = ProductConfig(
             2,
             self.root / "product",

@@ -141,20 +141,30 @@ class _Host:
             inference_images,
         )
         self.verify_inference = verify_inference
-        self.compose, self.images, self.image_proof = compose, images, image_proof
+        self.compose, self.images, self.image_proof = (
+            compose,
+            images,
+            image_proof,
+        )
         self.lease = None
         self.last = None
 
     def collect(self, *, clients):
-        projects = [self.context["plan"]["project"], self.inference_compose["name"]]
+        projects = [
+            self.context["plan"]["project"],
+            self.inference_compose["name"],
+        ]
         if clients:
             projects.append(self.compose["name"])
         expected_networks = {
             projects[0]: {projects[0] + "_search_backend"},
             projects[1]: {
-                item["name"] for item in self.inference_compose["networks"].values()
+                item["name"]
+                for item in self.inference_compose["networks"].values()
             },
-            self.compose["name"]: {self.compose["networks"]["website"]["name"]},
+            self.compose["name"]: {
+                self.compose["networks"]["website"]["name"]
+            },
         }
         inventories = {}
         for project in projects:
@@ -165,7 +175,9 @@ class _Host:
         all_ids = [value for ids in inventories.values() for value in ids]
         if len(set(all_ids)) != len(all_ids):
             raise ReleaseError("release_runtime_identity_collision")
-        rows = image_build._json(self.docker.call(["inspect", *sorted(all_ids)]))
+        rows = image_build._json(
+            self.docker.call(["inspect", *sorted(all_ids)])
+        )
         if (
             type(rows) is not list
             or len(rows) != len(all_ids)
@@ -174,7 +186,9 @@ class _Host:
         ):
             raise ReleaseError("release_runtime_snapshot_invalid")
         names = sorted(set().union(*(expected_networks[p] for p in projects)))
-        networks = image_build._json(self.docker.call(["network", "inspect", *names]))
+        networks = image_build._json(
+            self.docker.call(["network", "inspect", *names])
+        )
         if (
             type(networks) is not list
             or len(networks) != len(names)
@@ -192,10 +206,14 @@ class _Host:
 
     def observe(self, _context=None, *, snapshot=None):
         storage_proof = execution.require_storage(self.context)
-        groups, networks = snapshot or self.collect(clients=self.lease is not None)
+        groups, networks = snapshot or self.collect(
+            clients=self.lease is not None
+        )
         catalog = groups[self.context["plan"]["project"]]
         execution.validate_storage_mounts(storage_proof, catalog)
-        catalog_network = networks[self.context["plan"]["project"] + "_search_backend"]
+        catalog_network = networks[
+            self.context["plan"]["project"] + "_search_backend"
+        ]
         gpu = groups[self.inference_compose["name"]]
         gpu_networks = [
             networks[entry["name"]]
@@ -217,13 +235,18 @@ class _Host:
                 catalog_network,
             )
             gpu_proof = inference_runtime.validate_runtime(
-                self.inference_compose, self.inference_images, gpu, gpu_networks
+                self.inference_compose,
+                self.inference_images,
+                gpu,
+                gpu_networks,
             )
             release_proof = None
         else:
             clients = groups[self.compose["name"]]
             api = [
-                row for row in clients if row["Id"] == self.lease["api_container_id"]
+                row
+                for row in clients
+                if row["Id"] == self.lease["api_container_id"]
             ]
             if len(api) != 1:
                 raise ReleaseError("release_api_identity_changed")
@@ -231,7 +254,9 @@ class _Host:
                 "catalog_identity": self.authority["catalog_identity"],
                 "release_compose": self.compose,
                 "image_proof": self.image_proof,
-                "image_environment": self.images["conversation-api"]["Config"]["Env"],
+                "image_environment": self.images["conversation-api"]["Config"][
+                    "Env"
+                ],
                 "api_container": api[0],
             }
             leased = client_lease.validate_leased_runtime(
@@ -257,7 +282,9 @@ class _Host:
                 catalog_network=catalog_network,
                 **arguments,
             )
-            release_proof = self._validate_release(clients, networks, catalog_network)
+            release_proof = self._validate_release(
+                clients, networks, catalog_network
+            )
         _same(
             catalog_proof,
             {
@@ -289,7 +316,9 @@ class _Host:
         api = [
             row
             for row in clients
-            if row.get("Config", {}).get("Labels", {}).get("com.docker.compose.service")
+            if row.get("Config", {})
+            .get("Labels", {})
+            .get("com.docker.compose.service")
             == "conversation-api"
         ]
         if len(api) != 1:
@@ -320,7 +349,9 @@ def start_private_release(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    """Start exactly three CPU services or freshly verify completed private reuse."""
+    """
+    Start exactly three CPU services or freshly verify completed private reuse.
+    """
     return _run(
         _start,
         config,
@@ -347,7 +378,8 @@ def verify_completed_private_release(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    """Recheck a completed release without starting services or model acceptance.
+    """
+    Recheck a completed release without starting services or model acceptance.
 
     The returned completion contains the original successful ML acceptance.
     This call freshly verifies its source, images, model files, query authority
@@ -449,25 +481,36 @@ def _runtime_inputs(
     source_plan = source_bundle.committed_source_plan(
         repo, revision, runner=source_runner
     )
-    image_authority = image_evidence.read_completed_images(config, store, source_plan)
+    image_authority = image_evidence.read_completed_images(
+        config, store, source_plan
+    )
     inference_plan = composition._inference(
         config,
         revision,
         os.geteuid(),
         os.getegid(),
-        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+        inference_source_sha256=source_plan["services"]["reranker"][
+            "source_sha256"
+        ],
     )
-    gpu_authority = inference._authority(config, store, source_plan, inference_plan)
+    gpu_authority = inference._authority(
+        config, store, source_plan, inference_plan
+    )
     # All acquired model/ancestry/client handles must exit successfully before
     # publication; no success survives a failed final FD/path verification.
     # The shared-candidate observer may reuse a prior deep verification only
     # while file identities AND the sealed resident GPU instance remain fixed.
     # All ordinary startup/activation callers retain full content hashing.
     model_context = (
-        inference._verified_models(config, deadline=deadline, include_embedding=True)
+        inference._verified_models(
+            config, deadline=deadline, include_embedding=True
+        )
         if model_file_identity is None
         else inference._resident_models(
-            config, model_file_identity, deadline=deadline, include_embedding=True
+            config,
+            model_file_identity,
+            deadline=deadline,
+            include_embedding=True,
         )
     )
     models, verify_models = stack.enter_context(model_context)
@@ -493,7 +536,9 @@ def _runtime_inputs(
         verify_client=verify_client,
     )
     if (
-        image_build._json(docker.call(["info", "--format", "{{json .OSType}}"]))
+        image_build._json(
+            docker.call(["info", "--format", "{{json .OSType}}"])
+        )
         != "linux"
     ):
         raise ReleaseError("release_daemon_unsupported")
@@ -512,7 +557,9 @@ def _runtime_inputs(
         revision,
         uid=os.geteuid(),
         gid=os.getegid(),
-        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+        inference_source_sha256=source_plan["services"]["reranker"][
+            "source_sha256"
+        ],
     )
     gpu_compose, compose = (
         copy.deepcopy(plans["inference"]),
@@ -584,10 +631,14 @@ def _runtime_inputs(
         )
         _same(execution.load_images(context), catalog_images)
         _same(
-            inference._refresh_authority(config, store, source_plan, gpu_authority),
+            inference._refresh_authority(
+                config, store, source_plan, gpu_authority
+            ),
             gpu_authority,
         )
-        _same(inference._images(docker, source_plan, gpu_authority), gpu_images)
+        _same(
+            inference._images(docker, source_plan, gpu_authority), gpu_images
+        )
         _same(
             _images(docker, source_plan, image_authority),
             {role: images[role] for role in ("web", "conversation-api")},
@@ -626,7 +677,8 @@ def _load_completed(slot_fd, inputs):
 def _verify_runtime(config, context, inputs, gpu_runner):
     host = inputs.host
     _same(
-        query.verify_authority(context, observe_runtime=host.observe), inputs.authority
+        query.verify_authority(context, observe_runtime=host.observe),
+        inputs.authority,
     )
     inference._gpu(
         config,
@@ -659,7 +711,8 @@ def _completed_receipt(identity, proof):
 def _final_authority(
     config, store, revision, context, repo, source_runner, inputs, deadline
 ):
-    # Model, ancestry and Docker client handles must have exited before this fence.
+    # Model, ancestry and Docker client handles must have exited before this
+    # fence.
     _same(query.read_authority(context), inputs.authority)
     _same(credentials.read_api_key_authority(config, store), inputs.key)
     inference._source_revision(repo, revision, source_runner)
@@ -680,7 +733,14 @@ def _verify_records(config, parent_fd, slot_fd, name, inputs, expected_files):
 
 
 def _verify_completed(
-    config, store, revision, context, repo, source_runner, docker_runner, gpu_runner
+    config,
+    store,
+    revision,
+    context,
+    repo,
+    source_runner,
+    docker_runner,
+    gpu_runner,
 ):
     deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS
     with ExitStack() as stack:
@@ -697,7 +757,8 @@ def _verify_completed(
         )
         host = inputs.host
         name = host.compose["name"].removeprefix("depositar-ai-")
-        # Missing or partial releases are never repaired or started by this path.
+        # Missing or partial releases are never repaired or started by this
+        # path.
         parent_fd = private_io.open_child_directory(store.fd, "releases")
         slot_fd = None
         try:
@@ -711,14 +772,29 @@ def _verify_completed(
             _same(completed, result, "release_completed_runtime_changed")
             _same(store.read("release-candidate.json"), result)
             _verify_runtime(config, context, inputs, gpu_runner)
-            _same(host.last[1], proof, "release_runtime_changed_during_verification")
+            _same(
+                host.last[1],
+                proof,
+                "release_runtime_changed_during_verification",
+            )
             inputs.refresh()
             host.observe()
-            _same(host.last[1], proof, "release_runtime_changed_during_verification")
+            _same(
+                host.last[1],
+                proof,
+                "release_runtime_changed_during_verification",
+            )
             inputs.verify_client()
             stack.close()
             _final_authority(
-                config, store, revision, context, repo, source_runner, inputs, deadline
+                config,
+                store,
+                revision,
+                context,
+                repo,
+                source_runner,
+                inputs,
+                deadline,
             )
             _verify_records(config, parent_fd, slot_fd, name, inputs, FILES)
             _same(image_build._record(slot_fd, "complete.json"), result)
@@ -731,7 +807,14 @@ def _verify_completed(
 
 
 def _start(
-    config, store, revision, context, repo, source_runner, docker_runner, gpu_runner
+    config,
+    store,
+    revision,
+    context,
+    repo,
+    source_runner,
+    docker_runner,
+    gpu_runner,
 ):
     deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS
     # All acquired model/ancestry/client handles must exit before publication.
@@ -770,22 +853,34 @@ def _start(
                     prior = store.read("release-candidate.json")
                 except FileNotFoundError:
                     prior = None
-                if type(prior) is dict and prior.get("project") == compose["name"]:
-                    raise ReleaseError("release_partial_state_recovery_required")
-                if any(runtime_docker.project_inventory(docker, compose["name"])):
+                if (
+                    type(prior) is dict
+                    and prior.get("project") == compose["name"]
+                ):
+                    raise ReleaseError(
+                        "release_partial_state_recovery_required"
+                    )
+                if any(
+                    runtime_docker.project_inventory(docker, compose["name"])
+                ):
                     raise ReleaseError("release_existing_runtime_not_adopted")
             _verify_runtime(config, context, inputs, gpu_runner)
 
             if not reused:
                 inputs.refresh()
                 private_io.verify_directory(parent_fd, parent)
-                slot_fd = private_io.open_child_directory(parent_fd, name, create=True)
+                slot_fd = private_io.open_child_directory(
+                    parent_fd, name, create=True
+                )
                 for filename, value in (
                     ("started.json", identity),
                     ("compose.json", compose),
                 ):
                     private_io.write_json(
-                        slot_fd, filename, value, max_bytes=image_build.MAX_RECORD_BYTES
+                        slot_fd,
+                        filename,
+                        value,
+                        max_bytes=image_build.MAX_RECORD_BYTES,
                     )
                 prefix = [
                     "compose",
@@ -809,7 +904,9 @@ def _start(
                     ),
                     gpu_runner,
                 )
-                if any(runtime_docker.project_inventory(docker, compose["name"])):
+                if any(
+                    runtime_docker.project_inventory(docker, compose["name"])
+                ):
                     raise ReleaseError("release_existing_runtime_not_adopted")
                 private_io.verify_directory(parent_fd, parent)
                 private_io.verify_directory(slot_fd, parent / name)
@@ -872,7 +969,11 @@ def _start(
                 query.verify_authority(context, observe_runtime=host.observe),
                 inputs.authority,
             )
-            _same(host.last[1], proof, "release_runtime_changed_during_acceptance")
+            _same(
+                host.last[1],
+                proof,
+                "release_runtime_changed_during_acceptance",
+            )
             inference._gpu(
                 config,
                 inference_runtime.ownership_proofs(
@@ -882,15 +983,29 @@ def _start(
             )
             inputs.refresh()
             host.observe()
-            _same(host.last[1], proof, "release_runtime_changed_during_acceptance")
+            _same(
+                host.last[1],
+                proof,
+                "release_runtime_changed_during_acceptance",
+            )
             inputs.verify_client()
-            # Exit every model/source handle before a completion can be written.
+            # Exit every model/source handle before a completion can be
+            # written.
             stack.close()
             _final_authority(
-                config, store, revision, context, repo, source_runner, inputs, deadline
+                config,
+                store,
+                revision,
+                context,
+                repo,
+                source_runner,
+                inputs,
+                deadline,
             )
             expected_files = FILES if reused else FILES - {"complete.json"}
-            _verify_records(config, parent_fd, slot_fd, name, inputs, expected_files)
+            _verify_records(
+                config, parent_fd, slot_fd, name, inputs, expected_files
+            )
             if reused:
                 _same(image_build._record(slot_fd, "complete.json"), result)
                 _same(store.read("release-candidate.json"), result)

@@ -20,7 +20,11 @@ from search.operations.catalog import (
     results,
     reuse,
 )
-from search.operations.catalog.policy import CONTAINER_ID, SERVICES, RuntimeError
+from search.operations.catalog.policy import (
+    CONTAINER_ID,
+    SERVICES,
+    RuntimeError,
+)
 from search.operations.shared import private_io
 from search.vector_journal import read_events, validate_all, validate_report
 
@@ -60,7 +64,8 @@ def _recipe(context):
 
 
 def _input_identity(context):
-    """Read authenticated static inputs while the caller holds the catalog lock."""
+    """Read authenticated static inputs while the caller holds the catalog
+    lock."""
     runtime, images = execution.require_runtime(context)
     image_record = execution.read_record(context["root"], "images.json")
     if (
@@ -81,7 +86,9 @@ def _input_identity(context):
 
 def inputs(config, plan, *, repo_root, runner=None):
     """Report static-input identity without model hashing or catalog writes."""
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     with execution.operation_lock(context):
         identity = _input_identity(context)
         return {
@@ -99,7 +106,12 @@ def _journal_identity(identity):
         "schema_version": 1,
         **{
             key: identity[key]
-            for key in ("run_id", "bundle_id", "manifest_sha256", "recipe_sha256")
+            for key in (
+                "run_id",
+                "bundle_id",
+                "manifest_sha256",
+                "recipe_sha256",
+            )
         },
     }
 
@@ -109,7 +121,12 @@ def _validate_result(result, identity, count):
     if (
         any(
             result[key] != identity[key]
-            for key in ("run_id", "recipe_sha256", "bundle_id", "manifest_sha256")
+            for key in (
+                "run_id",
+                "recipe_sha256",
+                "bundle_id",
+                "manifest_sha256",
+            )
         )
         or result["document_count"] != count
     ):
@@ -121,7 +138,9 @@ def _clean_events(directory, identity, result, expected_inventory):
         directory / "events", expected_identity=_journal_identity(identity)
     )
     validate_all(
-        events, expected_identity=_journal_identity(identity), require_result=True
+        events,
+        expected_identity=_journal_identity(identity),
+        require_result=True,
     )
     if events[-1]["payload"] != result:
         raise RuntimeError("catalog_vector_journal_result_mismatch")
@@ -131,7 +150,10 @@ def _clean_events(directory, identity, result, expected_inventory):
             inventory = tuple(
                 sorted(
                     tuple(row)
-                    for row in (*payload["done_entries"], *payload["pending_entries"])
+                    for row in (
+                        *payload["done_entries"],
+                        *payload["pending_entries"],
+                    )
                 )
             )
             if inventory != expected_inventory:
@@ -152,7 +174,7 @@ def _host_record(directory, name):
 
 
 def _history(context, image, recipe, *, read_only=False):
-    """Read complete cleanup chains; only the build path may create evidence."""
+    """Read full cleanup chains; only builds may create evidence."""
     if type(read_only) is not bool:
         raise RuntimeError("catalog_vector_readonly_invalid")
     root = context["root"] / "vector-operations"
@@ -171,16 +193,23 @@ def _history(context, image, recipe, *, read_only=False):
             raise RuntimeError("catalog_vector_orphan_evidence")
         execution.write_record(root, "recipe.json", recipe)
     runs = [path for path in root.iterdir() if path.name != "recipe.json"]
-    if (len(runs) > MAX_HISTORY or not read_only and len(runs) == MAX_HISTORY) or any(
-        not RUN_ID.fullmatch(path.name) for path in runs
-    ):
+    if (
+        len(runs) > MAX_HISTORY or not read_only and len(runs) == MAX_HISTORY
+    ) or any(not RUN_ID.fullmatch(path.name) for path in runs):
         raise RuntimeError("catalog_vector_history_invalid_or_full")
     completed, checkpoint_before = {}, {}
     for directory in runs:
         os.close(private_io.open_directory(directory))
         names = {path.name for path in directory.iterdir()}
-        if names != {"started.json", "container.json", "complete.json", "events"}:
-            raise RuntimeError("catalog_vector_pass_requires_explicit_recovery")
+        if names != {
+            "started.json",
+            "container.json",
+            "complete.json",
+            "events",
+        }:
+            raise RuntimeError(
+                "catalog_vector_pass_requires_explicit_recovery"
+            )
         started = _host_record(directory, "started.json")
         ordinal = started.get("pass_number")
         expected = {
@@ -190,7 +219,9 @@ def _history(context, image, recipe, *, read_only=False):
             "admin_image_id": image["image_id"],
             "recipe_sha256": recipe_hash,
             "pass_number": ordinal,
-            "expected_before_state_sha256": started.get("expected_before_state_sha256"),
+            "expected_before_state_sha256": started.get(
+                "expected_before_state_sha256"
+            ),
         }
         if (
             type(ordinal) is not int
@@ -222,7 +253,10 @@ def _history(context, image, recipe, *, read_only=False):
         result = complete["result"]
         _validate_result(result, expected, context["plan"]["document_count"])
         _clean_events(
-            directory, expected, result, context["bundle"].expected_inventory_entries
+            directory,
+            expected,
+            result,
+            context["bundle"].expected_inventory_entries,
         )
         completed[ordinal] = result
         checkpoint_before[ordinal] = expected["expected_before_state_sha256"]
@@ -243,12 +277,15 @@ def _history(context, image, recipe, *, read_only=False):
 
 
 def _complete_evidence(context, runtime):
-    """Shared journal gate; its caller separately establishes runtime authority."""
+    """Shared journal gate; its caller separately establishes runtime
+    authority."""
     runtime_sha256 = execution.digest_record(runtime)
     if administration._admin_ids(context):
         raise RuntimeError("catalog_vector_existing_helper_requires_recovery")
     image = administration._admin_image(context, read_only=True)
-    _, pending, _ = administration._admin_records(context, read_only=True, image=image)
+    _, pending, _ = administration._admin_records(
+        context, read_only=True, image=image
+    )
     if pending:
         raise RuntimeError("catalog_vector_import_requires_reconcile")
     _, recipe_hash, ordinal, previous = _history(
@@ -296,7 +333,9 @@ def _runtime_evidence(context):
     runtime = execution.read_record(root, "runtime.json")
     images = execution.load_images(context)
     overlay = {
-        "services": {name: {"image": item["image_id"]} for name, item in images.items()}
+        "services": {
+            name: {"image": item["image_id"]} for name, item in images.items()
+        }
     }
     ids = runtime.get("container_ids") if type(runtime) is dict else None
     network = runtime.get("network_id") if type(runtime) is dict else None
@@ -357,7 +396,8 @@ def verify_complete(context):
     lock. Runtime, existing image/import receipts and every vector journal are
     verified without obtaining admin HTTP credentials, creating a helper or
     token, or writing any files. Existing runtime verification still hashes its
-    sealed security material. This is a host cleanup proof, not a fresh OpenSearch
+    sealed security material. This is a host cleanup proof, not a fresh
+    OpenSearch
     vector scan: the query provisioner must separately compare actual vectors
     with ``after_state_sha256`` before allowing query access.
     """
@@ -387,7 +427,9 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
         if previous
         else None,
     }
-    execution.write_record(directory, "started.json", {**identity, "status": "started"})
+    execution.write_record(
+        directory, "started.json", {**identity, "status": "started"}
+    )
     container_id = None
     try:
         runtime, _ = execution.require_runtime(context)
@@ -401,10 +443,18 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
         if not CONTAINER_ID.fullmatch(container_id):
             raise RuntimeError("catalog_vector_helper_identity_invalid")
         execution.write_record(
-            directory, "container.json", {**identity, "container_id": container_id}
+            directory,
+            "container.json",
+            {**identity, "container_id": container_id},
         )
         before = administration._inspect_admin(
-            context, image, identity, container_id, fess_id, secret, journal=journal
+            context,
+            image,
+            identity,
+            container_id,
+            fess_id,
+            secret,
+            journal=journal,
         )
         if before["State"].get("Status") != "created":
             raise RuntimeError("catalog_vector_helper_already_started")
@@ -412,10 +462,17 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
             context, image["reference"], image["image_id"], image["labels"]
         )
         outcome = context["runner"](
-            ["docker", "start", "--attach", container_id], timeout=HELPER_TIMEOUT
+            ["docker", "start", "--attach", container_id],
+            timeout=HELPER_TIMEOUT,
         )
         after = administration._inspect_admin(
-            context, image, identity, container_id, fess_id, secret, journal=journal
+            context,
+            image,
+            identity,
+            container_id,
+            fess_id,
+            secret,
+            journal=journal,
         )
         if (
             after["State"].get("Status") != "exited"
@@ -428,12 +485,20 @@ def _one_pass(context, image, secret, root, recipe_hash, ordinal, previous):
         result = results.parse_record(outcome.stdout.encode("utf-8"))
         _validate_result(result, identity, context["plan"]["document_count"])
         _clean_events(
-            directory, identity, result, context["bundle"].expected_inventory_entries
+            directory,
+            identity,
+            result,
+            context["bundle"].expected_inventory_entries,
         )
-        if previous and result["before_state_sha256"] != previous["after_state_sha256"]:
+        if (
+            previous
+            and result["before_state_sha256"] != previous["after_state_sha256"]
+        ):
             raise RuntimeError("catalog_vector_progress_checkpoint_changed")
         execution.require_runtime(context)
-        commands.command_output(context["runner"], ["docker", "rm", container_id])
+        commands.command_output(
+            context["runner"], ["docker", "rm", container_id]
+        )
         remaining = commands.command_output(
             context["runner"],
             [
@@ -487,7 +552,7 @@ def build(
     clock=time.monotonic,
     expected_inputs_sha256=None,
 ):
-    """Resume only proven clean passes, bounded by count and invocation time."""
+    """Resume proven clean passes within count and invocation bounds."""
     if (
         type(max_passes) is not int
         or not 1 <= max_passes <= MAX_PASSES
@@ -500,7 +565,9 @@ def build(
         or re.fullmatch(r"[0-9a-f]{64}", expected_inputs_sha256) is None
     ):
         raise RuntimeError("catalog_vector_expected_inputs_invalid")
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     expires = clock() + wall_seconds
     with execution.operation_lock(context):
         image = None
@@ -515,7 +582,9 @@ def build(
 
         _embedding_model(context["data"] / "ollama/models", deep=True)
         if administration._admin_ids(context):
-            raise RuntimeError("catalog_vector_existing_helper_requires_recovery")
+            raise RuntimeError(
+                "catalog_vector_existing_helper_requires_recovery"
+            )
         _, pending, _ = administration._admin_records(context)
         if pending:
             raise RuntimeError("catalog_vector_import_requires_reconcile")
@@ -549,7 +618,13 @@ def build(
                 if clock() + HELPER_TIMEOUT > expires:
                     break
             result = _one_pass(
-                context, image, secret, root, recipe_hash, ordinal + 1, previous
+                context,
+                image,
+                secret,
+                root,
+                recipe_hash,
+                ordinal + 1,
+                previous,
             )
             ordinal += 1
             passes += 1

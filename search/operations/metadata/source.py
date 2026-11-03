@@ -1,4 +1,6 @@
-"""Bounded, anonymous public metadata download; never fetch dataset resources."""
+"""Bounded, anonymous public metadata download; never fetch dataset
+resources.
+"""
 
 from __future__ import annotations
 
@@ -54,7 +56,12 @@ def fetch_page(start, rows, deadline):
     if remaining <= 0:
         raise MetadataSourceError("refresh deadline exceeded")
     query = urllib.parse.urlencode(
-        {"include_private": "false", "sort": "id asc", "start": start, "rows": rows}
+        {
+            "include_private": "false",
+            "sort": "id asc",
+            "start": start,
+            "rows": rows,
+        }
     )
     request = urllib.request.Request(
         ENDPOINT + "?" + query,
@@ -64,12 +71,15 @@ def fetch_page(start, rows, deadline):
             "User-Agent": "depositar-public-metadata-sync/1",
         },
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), NoRedirect()
+    )
     with opener.open(request, timeout=min(30, remaining)) as response:
         if (
             response.status != 200
             or response.headers.get_content_type() != "application/json"
-            or response.headers.get("Content-Encoding", "identity") != "identity"
+            or response.headers.get("Content-Encoding", "identity")
+            != "identity"
         ):
             raise MetadataSourceError("unexpected CKAN response headers")
         declared = response.headers.get("Content-Length")
@@ -134,7 +144,9 @@ def collect(fetch, deadline, *, rows=PAGE_ROWS):
                 len(encoded) > policy.MAX_LINE_BYTES
                 or expanded > policy.MAX_EXPANDED_BYTES
             ):
-                raise MetadataSourceError("CKAN snapshot exceeds its byte limit")
+                raise MetadataSourceError(
+                    "CKAN snapshot exceeds its byte limit"
+                )
             records.append(item)
             previous_id = identifier
     return records
@@ -153,5 +165,7 @@ def stable_download(deadline, fetch=None):
     first_digest = records_digest(first)
     second = collect(fetch, deadline)
     if first_digest != records_digest(second):
-        raise MetadataSourceError("CKAN metadata changed between complete scans")
+        raise MetadataSourceError(
+            "CKAN metadata changed between complete scans"
+        )
     return first

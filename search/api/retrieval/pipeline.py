@@ -16,7 +16,8 @@ class IndexRetriever:
         self.ids = [identifier for identifier, _ in hits]
         return {
             "documents": [
-                Document(id=identifier, score=score) for identifier, score in hits
+                Document(id=identifier, score=score)
+                for identifier, score in hits
             ]
         }
 
@@ -24,7 +25,8 @@ class IndexRetriever:
 def retrieve(client, query, conditions, vector, top_k):
     pipeline = Pipeline()
     pipeline.add_component(
-        "fusion", DocumentJoiner(join_mode="reciprocal_rank_fusion", top_k=top_k)
+        "fusion",
+        DocumentJoiner(join_mode="reciprocal_rank_fusion", top_k=top_k),
     )
     branches = {}
     for branch in ("lexical", "vector"):
@@ -33,8 +35,14 @@ def retrieve(client, query, conditions, vector, top_k):
         pipeline.connect(branch + ".documents", "fusion.documents")
     result = pipeline.run(
         {
-            branch: {"query": query, "conditions": conditions, "vector": vector}
+            branch: {
+                "query": query,
+                "conditions": conditions,
+                "vector": vector,
+            }
             for branch in branches
         }
     )["fusion"]["documents"]
-    return result, {branch: adapter.ids for branch, adapter in branches.items()}
+    return result, {
+        branch: adapter.ids for branch, adapter in branches.items()
+    }

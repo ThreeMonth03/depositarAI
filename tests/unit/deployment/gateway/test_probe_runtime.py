@@ -18,7 +18,10 @@ from search.operations.deployment.gateway import probe_runtime as probe
 from search.operations.deployment import runtime_docker, source_bundle
 from search.operations.shared import private_io
 from tests.unit.deployment.release import test_probe as private
-from tests.unit.deployment.test_source_bundle import fixture_sources, fixture_tree
+from tests.unit.deployment.test_source_bundle import (
+    fixture_sources,
+    fixture_tree,
+)
 
 
 RUN = "d" * 32
@@ -223,7 +226,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
     def commands(self):
         return [arguments[0] for arguments, _ in self.docker.calls]
 
-    def test_native_success_has_twelve_calls_fixed_profile_and_no_authority(self):
+    def test_native_success_has_twelve_calls_fixed_profile_and_no_authority(
+        self,
+    ):
         result = self.invoke()
         self.assertEqual(result["website"], private.web_ready())
         self.assertTrue(result["gateway_http_verified"])
@@ -294,16 +299,23 @@ class NativeGatewayProbeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(self.docker.calls[5][1], 285)
-        self.assertTrue(all(0 < timeout <= 285 for _, timeout in self.docker.calls))
-        self.assertEqual(
-            set(os.listdir(self.fd)), {"intent.json", "container.json", "complete.json"}
+        self.assertTrue(
+            all(0 < timeout <= 285 for _, timeout in self.docker.calls)
         )
         self.assertEqual(
-            json.loads((self.directory / "complete.json").read_bytes())["report"],
+            set(os.listdir(self.fd)),
+            {"intent.json", "container.json", "complete.json"},
+        )
+        self.assertEqual(
+            json.loads((self.directory / "complete.json").read_bytes())[
+                "report"
+            ],
             result,
         )
 
-    def test_same_public_identity_cannot_reenter_completed_or_partial_directory(self):
+    def test_same_identity_cannot_reenter_complete_or_partial_directory(
+        self,
+    ):
         private_io.write_json(
             self.fd, "intent.json", {"status": "unknown"}, max_bytes=1024
         )
@@ -311,7 +323,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.assertEqual(self.docker.calls, [])
         self.assertEqual(set(os.listdir(self.fd)), {"intent.json"})
 
-    def test_invalid_public_identity_or_source_proof_fails_before_daemon_or_write(self):
+    def test_invalid_identity_or_source_fails_before_daemon_or_write(
+        self,
+    ):
         for name, value in (
             ("run_id", "unsafe\n"),
             ("revision", "x" * 40),
@@ -373,13 +387,22 @@ class NativeGatewayProbeTests(unittest.TestCase):
             ("HostConfig.MemorySwap", -1),
             ("HostConfig.NanoCpus", 0),
             ("HostConfig.PidsLimit", 0),
-            ("HostConfig.Ulimits", [{"Name": "nofile", "Soft": 65536, "Hard": 65536}]),
+            (
+                "HostConfig.Ulimits",
+                [{"Name": "nofile", "Soft": 65536, "Hard": 65536}],
+            ),
             ("HostConfig.LogConfig", {"Type": "json-file", "Config": {}}),
-            ("HostConfig.RestartPolicy", {"Name": "always", "MaximumRetryCount": 0}),
+            (
+                "HostConfig.RestartPolicy",
+                {"Name": "always", "MaximumRetryCount": 0},
+            ),
             ("HostConfig.Tmpfs", {"/tmp": "rw"}),
             ("NetworkSettings.Networks", {"host": {}, "catalog": {}}),
             ("NetworkSettings.Ports", {"8000/tcp": [{"HostPort": "8000"}]}),
-            ("Mounts", [{"Type": "bind", "Destination": "/secret", "RW": False}]),
+            (
+                "Mounts",
+                [{"Type": "bind", "Destination": "/secret", "RW": False}],
+            ),
             ("State.Status", "running"),
             ("State.Running", True),
             ("State.OOMKilled", True),
@@ -398,7 +421,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
                 for name in os.listdir(self.fd):
                     os.unlink(name, dir_fd=self.fd)
 
-    def test_timeout_running_or_unknown_exit_is_quarantined_without_kill_or_rm(self):
+    def test_timeout_running_or_unknown_exit_is_quarantined_without_kill_or_rm(
+        self,
+    ):
         self.docker.start_error = subprocess.TimeoutExpired(PRIVATE, 285)
         self.docker.exited["State"].update(Status="running", Running=True)
         self.failed()
@@ -406,10 +431,13 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.assertNotIn("rm", self.commands())
         self.assertNotIn("kill", self.commands())
         self.assertEqual(
-            set(os.listdir(self.fd)), {"intent.json", "container.json", "failure.json"}
+            set(os.listdir(self.fd)),
+            {"intent.json", "container.json", "failure.json"},
         )
 
-    def test_failed_start_with_confirmed_exact_exited_helper_is_removed_but_fails(self):
+    def test_failed_start_removes_exact_exited_helper_but_still_fails(
+        self,
+    ):
         self.docker.start_error = ValueError(PRIVATE)
         self.failed()
         self.assertEqual(self.commands().count("rm"), 1)
@@ -424,7 +452,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.failed()
         self.assertEqual(self.commands().count("rm"), 1)
 
-    def test_exited_profile_identity_or_capability_drift_prevents_removal(self):
+    def test_exited_profile_identity_or_capability_drift_prevents_removal(
+        self,
+    ):
         for field, value in (
             ("Image", "sha256:" + "1" * 64),
             ("Id", "1" * 64),
@@ -455,13 +485,17 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.failed()
         self.assertEqual(self.commands(), ["image"])
 
-    def test_ambiguous_create_output_never_selects_or_removes_a_container(self):
+    def test_ambiguous_create_output_never_selects_or_removes_a_container(
+        self,
+    ):
         original = self.docker.call
 
         def call(arguments, *, timeout):
             result = original(arguments, timeout=timeout)
             return (
-                result + CONTAINER_ID.encode() if arguments[0] == "create" else result
+                result + CONTAINER_ID.encode()
+                if arguments[0] == "create"
+                else result
             )
 
         self.docker.call = call
@@ -470,7 +504,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
         self.assertNotIn("rm", self.commands())
         self.assertFalse((self.directory / "container.json").exists())
 
-    def test_closed_output_contract_failures_clean_up_only_exact_exited_helper(self):
+    def test_closed_output_contract_failures_clean_up_only_exact_exited_helper(
+        self,
+    ):
         outputs = [
             PRIVATE.encode(),
             b"{}",
@@ -519,13 +555,17 @@ class NativeGatewayProbeTests(unittest.TestCase):
                 for name in os.listdir(self.fd):
                     os.unlink(name, dir_fd=self.fd)
 
-    def test_image_config_and_source_proof_are_freshly_checked_at_both_boundaries(self):
+    def test_image_config_and_source_rechecked_at_both_boundaries(
+        self,
+    ):
         self.docker.final_image = copy.deepcopy(self.image)
         self.docker.final_image["Config"]["Cmd"] = ["sh", "-c", PRIVATE]
         self.failed()
         self.assertEqual(self.commands().count("rm"), 1)
 
-    def test_receipt_edit_before_start_stops_without_mutating_created_helper(self):
+    def test_receipt_edit_before_start_stops_without_mutating_created_helper(
+        self,
+    ):
         def edit(arguments):
             if arguments[0] == "inspect":
                 (self.directory / "intent.json").write_bytes(b"{}\n")
@@ -562,7 +602,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
                 clock[0] = probe.TOTAL_SECONDS + 1
 
         self.docker.callback = advance
-        with mock.patch.object(probe.time, "monotonic", side_effect=lambda: clock[0]):
+        with mock.patch.object(
+            probe.time, "monotonic", side_effect=lambda: clock[0]
+        ):
             self.failed()
         self.assertNotIn("rm", self.commands())
 
@@ -577,10 +619,13 @@ class NativeGatewayProbeTests(unittest.TestCase):
             return result
 
         with (
-            mock.patch.object(probe.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(
+                probe.time, "monotonic", side_effect=lambda: clock[0]
+            ),
             mock.patch.object(private_io, "read_file", side_effect=read),
             self.assertRaisesRegex(
-                probe.GatewayProbeRuntimeError, "^gateway_probe_runtime_failed$"
+                probe.GatewayProbeRuntimeError,
+                "^gateway_probe_runtime_failed$",
             ),
         ):
             self.invoke()
@@ -593,7 +638,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
         failure = json.loads((self.directory / "failure.json").read_bytes())
         self.assertTrue(failure["helper_removed_verified"])
 
-    def test_uses_real_bounded_docker_client_without_host_wire_model_import(self):
+    def test_uses_real_bounded_docker_client_without_host_wire_model_import(
+        self,
+    ):
         fake = self.docker
 
         def runner(arguments, *, timeout, environment):
@@ -619,7 +666,9 @@ class NativeGatewayProbeTests(unittest.TestCase):
                 arguments, 0, fake.call(arguments[5:], timeout=timeout), b""
             )
 
-        self.docker = runtime_docker.Docker("/private/client", runner, max_commands=12)
+        self.docker = runtime_docker.Docker(
+            "/private/client", runner, max_commands=12
+        )
         with mock.patch.dict(sys.modules, {"pydantic": None}):
             result = self.invoke()
         self.assertTrue(result["gateway_http_verified"])

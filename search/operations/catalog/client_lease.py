@@ -34,7 +34,9 @@ from search.operations.shared import private_io
 SERVICE = "conversation-api"
 LABEL_PREFIX = "io.depositar.ai.source."
 CORES = frozenset({"fess-search", "opensearch-search"})
-NETWORK_KEYS = frozenset({"website", "existing-inference", "catalog", "ranking"})
+NETWORK_KEYS = frozenset(
+    {"website", "existing-inference", "catalog", "ranking"}
+)
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 INDEX = re.compile(r"fess\.[0-9]{14,20}\Z")
@@ -106,8 +108,9 @@ API_FIELDS = frozenset(
     }
 )
 EMPTY = (None, [])
-# This closed service profile matches the canonical API Dockerfile. A source-image
-# update that changes its startup must update this contract and its drift test.
+# This closed service profile matches the canonical API Dockerfile. A
+# source-image update that changes its startup must update this contract and
+# its drift test.
 API_COMMAND = (
     "python",
     "-m",
@@ -134,7 +137,8 @@ class LeaseError(ValueError):
 def lease_digest(value):
     """SHA256 of canonical UTF-8 JSON plus LF, shared with private receipts.
 
-    The digest binds bytes; it does not validate facts or authenticate a caller.
+    The digest binds bytes; it does not validate facts or authenticate a
+    caller.
     """
     try:
         encoded = private_io.canonical(value)
@@ -193,7 +197,9 @@ def _path(value):
 
 def _identity(lease, catalog, compose, image):
     _catalog_record(lease, LEASE_FIELDS, "catalog_client_lease_schema_invalid")
-    _catalog_record(catalog, CATALOG_FIELDS, "catalog_client_catalog_identity_invalid")
+    _catalog_record(
+        catalog, CATALOG_FIELDS, "catalog_client_catalog_identity_invalid"
+    )
     _closed(image, IMAGE_FIELDS, "catalog_client_image_proof_invalid")
     if (
         not _number(lease["lease_schema"], 1)
@@ -217,10 +223,15 @@ def _identity(lease, catalog, compose, image):
     ):
         raise LeaseError("catalog_client_lease_identity_invalid")
     cores = _closed(
-        lease["core_container_ids"], CORES, "catalog_client_core_identity_invalid"
+        lease["core_container_ids"],
+        CORES,
+        "catalog_client_core_identity_invalid",
     )
     if (
-        any(not _matches(value, policy.CONTAINER_ID) for value in cores.values())
+        any(
+            not _matches(value, policy.CONTAINER_ID)
+            for value in cores.values()
+        )
         or len(set(cores.values()) | {lease["api_container_id"]}) != 3
     ):
         raise LeaseError("catalog_client_core_identity_invalid")
@@ -232,7 +243,8 @@ def _identity(lease, catalog, compose, image):
             lease_digest(lease[key]) != lease_digest(catalog[key])
             for key in CATALOG_FIELDS
         )
-        or catalog.get("catalog_revision", lease["revision"]) != catalog_revision
+        or catalog.get("catalog_revision", lease["revision"])
+        != catalog_revision
     ):
         raise LeaseError("catalog_client_catalog_identity_changed")
     suffix = lease["bundle_id"][:12] + "-" + lease["revision"][:12]
@@ -281,7 +293,9 @@ def _identity(lease, catalog, compose, image):
 
 def _network_plan(lease, compose):
     definitions = _closed(
-        compose["networks"], NETWORK_KEYS, "catalog_client_network_plan_invalid"
+        compose["networks"],
+        NETWORK_KEYS,
+        "catalog_client_network_plan_invalid",
     )
     names = {}
     for key, value in definitions.items():
@@ -295,14 +309,18 @@ def _network_plan(lease, compose):
         if (
             type(value["name"]) is not str
             or key == "website"
-            and (value["internal"] is not True or value["attachable"] is not False)
+            and (
+                value["internal"] is not True
+                or value["attachable"] is not False
+            )
             or key != "website"
             and value["external"] is not True
         ):
             raise LeaseError("catalog_client_network_plan_invalid")
         names[key] = value["name"]
     inference = re.fullmatch(
-        r"(depositar-ai-inference-[0-9a-f]{12})_inference", names["existing-inference"]
+        r"(depositar-ai-inference-[0-9a-f]{12})_inference",
+        names["existing-inference"],
     )
     if (
         names["website"] != lease["release_project"] + "_website"
@@ -312,10 +330,15 @@ def _network_plan(lease, compose):
     ):
         raise LeaseError("catalog_client_network_plan_invalid")
     network_ids = _closed(
-        lease["network_ids"], set(names.values()), "catalog_client_network_ids_invalid"
+        lease["network_ids"],
+        set(names.values()),
+        "catalog_client_network_ids_invalid",
     )
     if (
-        any(not _matches(value, policy.CONTAINER_ID) for value in network_ids.values())
+        any(
+            not _matches(value, policy.CONTAINER_ID)
+            for value in network_ids.values()
+        )
         or len(set(network_ids.values())) != 4
         or network_ids[names["catalog"]] != lease["catalog_network_id"]
     ):
@@ -358,27 +381,38 @@ def _mount_plan(lease, expected):
     work = query_root.parent
     state = work.parent.parent
     approved = {
-        bundle_target: state / "cache/bundles" / ("sha256-" + lease["bundle_id"]),
+        bundle_target: state
+        / "cache/bundles"
+        / ("sha256-" + lease["bundle_id"]),
         "/run/secrets/api_key": state / "secrets/api_key",
-        "/run/secrets/index_query_password": query_root / "index-query-password",
+        "/run/secrets/index_query_password": query_root
+        / "index-query-password",
         "/run/index/binding.json": query_root / "binding.json",
         "/run/index/root-ca.pem": work / "data/opensearch/config/root-ca.pem",
     }
     if (
         query_root.name != "query-access"
         or work.parent.name != "catalogs"
-        or work.name != lease["catalog_project"].removeprefix("depositar-ai-catalog-")
+        or work.name
+        != lease["catalog_project"].removeprefix("depositar-ai-catalog-")
         or sources != approved
     ):
         raise LeaseError("catalog_client_mount_plan_invalid")
-    return {("bind", str(source), target, False) for target, source in sources.items()}
+    return {
+        ("bind", str(source), target, False)
+        for target, source in sources.items()
+    }
 
 
 def _service_plan(lease, compose):
     expected = _closed(
-        compose["services"][SERVICE], API_FIELDS, "catalog_client_api_plan_invalid"
+        compose["services"][SERVICE],
+        API_FIELDS,
+        "catalog_client_api_plan_invalid",
     )
-    user = re.fullmatch(r"([1-9][0-9]{0,9}):([1-9][0-9]{0,9})", str(expected["user"]))
+    user = re.fullmatch(
+        r"([1-9][0-9]{0,9}):([1-9][0-9]{0,9})", str(expected["user"])
+    )
     if (
         type(expected["user"]) is not str
         or user is None
@@ -394,7 +428,10 @@ def _service_plan(lease, compose):
         or policy._memory_bytes(expected["memswap_limit"]) != 2 * 1024**3
         or not _number(expected["pids_limit"], 96)
         or expected["logging"]
-        != {"driver": "json-file", "options": {"max-size": "5m", "max-file": "3"}}
+        != {
+            "driver": "json-file",
+            "options": {"max-size": "5m", "max-file": "3"},
+        }
         or policy._tmpfs(expected["tmpfs"])
         != policy._tmpfs(["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"])
         or expected["image"] != lease["api_image_id"]
@@ -406,7 +443,9 @@ def _service_plan(lease, compose):
         raise LeaseError("catalog_client_api_plan_invalid")
     environment = {
         "SEARCH_API_MANIFEST_SHA256": lease["manifest_sha256"],
-        "SEARCH_API_BUNDLE_PATH": policy.catalog_bundle_target(lease["bundle_id"]),
+        "SEARCH_API_BUNDLE_PATH": policy.catalog_bundle_target(
+            lease["bundle_id"]
+        ),
         "SEARCH_API_RERANK_ENABLED": "1",
         "SEARCH_API_RERANK_CANDIDATES": "20",
         "NVIDIA_VISIBLE_DEVICES": "void",
@@ -440,9 +479,12 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
     if type(row) is not dict:
         raise LeaseError("catalog_client_container_invalid")
     config, host, state, network = (
-        row.get(key) for key in ("Config", "HostConfig", "State", "NetworkSettings")
+        row.get(key)
+        for key in ("Config", "HostConfig", "State", "NetworkSettings")
     )
-    if any(type(value) is not dict for value in (config, host, state, network)):
+    if any(
+        type(value) is not dict for value in (config, host, state, network)
+    ):
         raise LeaseError("catalog_client_container_invalid")
     labels = config.get("Labels")
     approved_labels = {
@@ -456,7 +498,9 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
         or row.get("Image") != lease["api_image_id"]
         or config.get("Image") != lease["api_image_id"]
         or type(labels) is not dict
-        or any(labels.get(key) != value for key, value in approved_labels.items())
+        or any(
+            labels.get(key) != value for key, value in approved_labels.items()
+        )
     ):
         raise LeaseError("catalog_client_container_identity_changed")
     if (
@@ -519,7 +563,8 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
         or not _number(health.get("Retries"), approved["retries"])
         or any(
             not _number(
-                health.get(actual, 0), policy._duration(approved.get(setting, "0s"))
+                health.get(actual, 0),
+                policy._duration(approved.get(setting, "0s")),
             )
             for actual, setting in (
                 ("Interval", "interval"),
@@ -554,7 +599,10 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
             if mount.get("RW") is not False:
                 raise LeaseError("catalog_client_mounts_changed")
             binds.append(
-                tuple(mount.get(key) for key in ("Type", "Source", "Destination", "RW"))
+                tuple(
+                    mount.get(key)
+                    for key in ("Type", "Source", "Destination", "RW")
+                )
             )
     if (
         len(binds) != 5
@@ -569,7 +617,8 @@ def _actual(lease, expected, mounts, network_ids, image_environment, row):
         or type(attachments) is not dict
         or set(attachments) != set(network_ids)
         or any(
-            type(value) is not dict or value.get("NetworkID") != network_ids[name]
+            type(value) is not dict
+            or value.get("NetworkID") != network_ids[name]
             for name, value in attachments.items()
         )
     ):
@@ -590,12 +639,16 @@ def _validate_client_member(
 
     ``catalog_identity`` is the closed CATALOG_FIELDS summary of independently
     host-verified runtime/projection/access receipts, plus ``catalog_revision``
-    when a newer application reuses that original catalog. ``image_proof`` is the
+    when a newer application reuses that original catalog. ``image_proof`` is
+    the
     closed IMAGE_FIELDS host-verified source/image summary. Lease/image/compose
     source_sha256 is SHA256 of ``private_io.canonical(service_source_map)``:
-    paths map to Git mode, size and SHA256, including Dockerfile, deny-all ignore
-    and exact COPY inputs. Revision is Git's full 40-hex commit. Network IDs are
-    full actual IDs, keyed by rendered names. The API service must be separately
+    paths map to Git mode, size and SHA256, including Dockerfile, deny-all
+    ignore
+    and exact COPY inputs. Revision is Git's full 40-hex commit. Network IDs
+    are
+    full actual IDs, keyed by rendered names. The API service must be
+    separately
     sealed with an immutable image ID and the required source labels; renderer
     tags alone do not pass this validation. Other release service capabilities
     and the source-map/build inspection remain independent caller obligations.
@@ -616,21 +669,28 @@ def _validate_client_member(
         network_ids = _network_plan(lease, release_compose)
         expected, mounts = _service_plan(lease, release_compose)
         try:
-            image_env = source_bundle.parse_image_environment(image_environment)
+            image_env = source_bundle.parse_image_environment(
+                image_environment
+            )
         except source_bundle.SourceBundleError:
-            raise LeaseError("catalog_client_image_environment_invalid") from None
+            raise LeaseError(
+                "catalog_client_image_environment_invalid"
+            ) from None
         if (
             lease_digest(image_env) != image_proof["image_environment_sha256"]
             or image_env.get("SOURCE_REVISION") != lease["revision"]
         ):
             raise LeaseError("catalog_client_image_environment_changed")
         _actual(lease, expected, mounts, network_ids, image_env, api_container)
-        peers = set(lease["core_container_ids"].values()) | {lease["api_container_id"]}
+        peers = set(lease["core_container_ids"].values()) | {
+            lease["api_container_id"]
+        }
         network = catalog_network
         if (
             type(network) is not dict
             or network.get("Id") != lease["catalog_network_id"]
-            or network.get("Name") != lease["catalog_project"] + "_search_backend"
+            or network.get("Name")
+            != lease["catalog_project"] + "_search_backend"
             or network.get("Internal") is not True
             or network.get("Attachable") is not False
             or type(network.get("Containers")) is not dict
@@ -643,14 +703,18 @@ def _validate_client_member(
             "phase": "private_clients",
             "status": "verified",
             "lease_sha256": lease_digest(lease),
-            "image_environment_sha256": image_proof["image_environment_sha256"],
+            "image_environment_sha256": image_proof[
+                "image_environment_sha256"
+            ],
             **(
                 {"catalog_revision": lease["catalog_revision"]}
                 if "catalog_revision" in lease
                 else {}
             ),
             **{
-                key: lease[key] for key in CATALOG_FIELDS if key != "core_container_ids"
+                key: lease[key]
+                for key in CATALOG_FIELDS
+                if key != "core_container_ids"
             },
             "core_container_ids": dict(lease["core_container_ids"]),
             **{
@@ -713,10 +777,13 @@ def validate_clients(clients):
     """Prove one or two explicitly registered clients without filtering peers.
 
     Every member supplies all seven CLIENT_FIELDS, authenticated by the host as
-    for validate_client_lease. Registration and locking remain host duties; bare
-    IDs, previously returned proofs and caller-created dictionaries do not grant
+    for validate_client_lease. Registration and locking remain host duties;
+    bare
+    IDs, previously returned proofs and caller-created dictionaries do not
+    grant
     authority. Members sharing a catalog must supply identical full network
-    snapshots and catalog identities. Results retain input order and the original
+    snapshots and catalog identities. Results retain input order and the
+    original
     proof shape, with expected_peer_ids covering that entire catalog group.
     """
     try:
@@ -728,7 +795,10 @@ def validate_clients(clients):
         for member in clients:
             _closed(member, CLIENT_FIELDS, "catalog_client_set_invalid")
             proof = _validate_client_member(**member)
-            api_id, project = proof["api_container_id"], proof["release_project"]
+            api_id, project = (
+                proof["api_container_id"],
+                proof["release_project"],
+            )
             if api_id in api_ids or project in release_projects:
                 raise LeaseError("catalog_client_identity_duplicate")
             api_ids.add(api_id)
@@ -760,13 +830,17 @@ def validate_clients(clients):
                 raise LeaseError("catalog_client_network_snapshot_changed")
             group["peers"].add(api_id)
             proofs.append(proof)
-        core_ids = set().union(*(set(p["core_container_ids"].values()) for p in proofs))
+        core_ids = set().union(
+            *(set(p["core_container_ids"].values()) for p in proofs)
+        )
         if api_ids & core_ids:
             raise LeaseError("catalog_client_identity_duplicate")
         core_owners = {}
         for proof in proofs:
             for identifier in proof["core_container_ids"].values():
-                owner = core_owners.setdefault(identifier, proof["catalog_network_id"])
+                owner = core_owners.setdefault(
+                    identifier, proof["catalog_network_id"]
+                )
                 if owner != proof["catalog_network_id"]:
                     raise LeaseError("catalog_client_identity_duplicate")
         for group in groups.values():
@@ -806,19 +880,22 @@ def validate_leased_runtime(
     core_image_inspections,
     shared_clients=None,
 ):
-    """Prove catalog core and its selected API from authenticated supplied facts.
+    """Prove catalog core and its selected API from authenticated supplied
+    facts.
 
     This function is pure, not a host readiness/receipt facade. The host must
     independently authenticate the prepared source/Compose/image/query/lease
     records, hold product/catalog locks and collect actual same-snapshot Docker
-    evidence. It must also verify projection/access evidence and all non-catalog
+    evidence. It must also verify projection/access evidence and all
+    non-catalog
     networks. Supplied dictionaries cannot authenticate themselves.
 
     ``core_image_inspections`` contains actual inspections keyed by the three
     core roles, of the same immutable image IDs as ``core_images``. Startup Cmd
     and Entrypoint are checked here as in the baseline host execution proof.
     Docker may omit unset startup fields; exact ``.get`` comparison preserves
-    the baseline's missing/null equivalence while keeping null distinct from [].
+    the baseline's missing/null equivalence while keeping null distinct from
+    [].
     The supplied catalog network is passed UNFILTERED to the existing lease
     checker: exactly two core peers plus this API are allowed, never an extra
     helper, former release or unknown container. No baseline/network object is
@@ -895,7 +972,9 @@ def validate_leased_runtime(
                 type(attachment) is not dict
                 or attachment.get("NetworkID") != lease["catalog_network_id"]
             ):
-                raise LeaseError("catalog_client_core_network_identity_changed")
+                raise LeaseError(
+                    "catalog_client_core_network_identity_changed"
+                )
         if (
             type(core_plan) is not dict
             or not _number(core_plan.get("schema_version"), 1)
@@ -903,7 +982,8 @@ def validate_leased_runtime(
             or core_plan.get("revision")
             != lease.get("catalog_revision", lease["revision"])
             or core_plan.get("manifest_sha256") != lease["manifest_sha256"]
-            or {role: core_ids[role] for role in CORES} != lease["core_container_ids"]
+            or {role: core_ids[role] for role in CORES}
+            != lease["core_container_ids"]
             or len(set(core_ids.values()) | {lease["api_container_id"]}) != 4
         ):
             raise LeaseError("catalog_client_core_catalog_binding_changed")
@@ -919,7 +999,12 @@ def validate_leased_runtime(
                 policy.catalog_bundle_target(lease["bundle_id"]),
                 False,
             ),
-            ("bind", str(state / "secrets/api_key"), "/run/secrets/api_key", False),
+            (
+                "bind",
+                str(state / "secrets/api_key"),
+                "/run/secrets/api_key",
+                False,
+            ),
             (
                 "bind",
                 str(query_root / "index-query-password"),
@@ -945,8 +1030,10 @@ def validate_leased_runtime(
             / "catalogs"
             / lease["catalog_project"].removeprefix("depositar-ai-catalog-")
             or data != work / "data"
-            or bundle != state / "cache/bundles" / ("sha256-" + lease["bundle_id"])
-            or _mount_plan(lease, release_compose["services"][SERVICE]) != approved
+            or bundle
+            != state / "cache/bundles" / ("sha256-" + lease["bundle_id"])
+            or _mount_plan(lease, release_compose["services"][SERVICE])
+            != approved
         ):
             raise LeaseError("catalog_client_core_catalog_paths_changed")
         return {
@@ -964,4 +1051,6 @@ def validate_leased_runtime(
         OverflowError,
         RecursionError,
     ):
-        raise LeaseError("catalog_client_leased_runtime_evidence_invalid") from None
+        raise LeaseError(
+            "catalog_client_leased_runtime_evidence_invalid"
+        ) from None

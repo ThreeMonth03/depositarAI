@@ -76,7 +76,9 @@ class WebBoundary:
                 return await reject(400, "invalid_request")
             # Same-origin browser GET requests may omit Origin. Only this
             # read-only identity check accepts its absence; no CORS wildcard.
-            access_check = scope["method"] == "GET" and scope["path"] == "/api/access"
+            access_check = (
+                scope["method"] == "GET" and scope["path"] == "/api/access"
+            )
             if headers.get(b"origin") != self.origin and not (
                 access_check and b"origin" not in headers
             ):
@@ -92,11 +94,16 @@ class WebBoundary:
         length = headers.get(b"content-length", "")
         if is_post:
             if (
-                headers.get(b"content-type", "").split(";", 1)[0] != "application/json"
+                headers.get(b"content-type", "").split(";", 1)[0]
+                != "application/json"
                 or b"content-encoding" in headers
             ):
                 return await reject(415, "json_required")
-            if not length.isascii() or not length.isdecimal() or len(length) > 5:
+            if (
+                not length.isascii()
+                or not length.isdecimal()
+                or len(length) > 5
+            ):
                 return await reject(411, "length_required")
             if int(length) > 4096:
                 return await reject(413, "body_limit")
@@ -110,7 +117,9 @@ class WebBoundary:
             return await reject(400, "invalid_request")
 
         try:
-            body = await bounded_body(receive, limit=4096 if is_post else 0, timeout=5)
+            body = await bounded_body(
+                receive, limit=4096 if is_post else 0, timeout=5
+            )
             if is_post:
                 if len(body) != int(length):
                     raise ValueError("length mismatch")
@@ -124,7 +133,11 @@ class WebBoundary:
             nonlocal consumed
             if not consumed:
                 consumed = True
-                return {"type": "http.request", "body": body, "more_body": False}
+                return {
+                    "type": "http.request",
+                    "body": body,
+                    "more_body": False,
+                }
             return await original_receive()
 
         async def secure_send(message):
@@ -135,7 +148,13 @@ class WebBoundary:
                     (b"referrer-policy", b"no-referrer"),
                     (
                         b"content-security-policy",
-                        b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+                        (
+                            b"default-src 'self'; script-src 'self'; "
+                            b"style-src 'self' 'unsafe-inline'; img-src "
+                            b"'self'; connect-src 'self'; object-src 'none'; "
+                            b"base-uri 'none'; frame-ancestors 'none'; "
+                            b"form-action 'self'"
+                        ),
                     ),
                     (
                         b"permissions-policy",
@@ -226,7 +245,9 @@ def create_app(settings=None, upstream=None, sessions=None):
         try:
             async with slots.claim():
                 session = sessions.begin(
-                    token(request), payload.version, request.scope["state"]["owner"]
+                    token(request),
+                    payload.version,
+                    request.scope["state"]["owner"],
                 )
                 try:
                     data = TurnRequest(

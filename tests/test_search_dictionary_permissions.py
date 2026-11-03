@@ -14,7 +14,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts/search_dictionary_permissions.py"
-SPEC = importlib.util.spec_from_file_location("search_dictionary_permissions", HELPER)
+SPEC = importlib.util.spec_from_file_location(
+    "search_dictionary_permissions", HELPER
+)
 assert SPEC is not None and SPEC.loader is not None
 POLICY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(POLICY)
@@ -22,7 +24,9 @@ SPEC.loader.exec_module(POLICY)
 
 class SearchDictionaryPermissionsTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="dictionary-policy-")
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="dictionary-policy-"
+        )
         self.root = Path(self.temporary.name) / "storage"
         self.dictionary = self.root / "opensearch" / "dictionary"
         self.dictionary.mkdir(parents=True)
@@ -39,7 +43,9 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
             timeout=5,
         )
 
-    def test_converges_directories_and_regular_files_then_check_accepts(self) -> None:
+    def test_converges_directories_and_regular_files_then_check_accepts(
+        self,
+    ) -> None:
         nested = self.dictionary / "nested"
         nested.mkdir(mode=0o755)
         first = self.dictionary / "synonym.txt"
@@ -50,7 +56,9 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
         nested.chmod(0o750)
         first.chmod(0o644)
         second.chmod(0o660)
-        opensearch_mode = stat.S_IMODE((self.root / "opensearch").stat().st_mode)
+        opensearch_mode = stat.S_IMODE(
+            (self.root / "opensearch").stat().st_mode
+        )
 
         converged = self.run_helper("--converge")
         self.assertEqual(0, converged.returncode, converged.stderr)
@@ -105,7 +113,9 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
         path.write_text("words\n", encoding="utf-8")
         path.chmod(0o600)
 
-        with mock.patch.object(POLICY.os, "getuid", return_value=os.getuid() + 1):
+        with mock.patch.object(
+            POLICY.os, "getuid", return_value=os.getuid() + 1
+        ):
             with self.assertRaisesRegex(POLICY.PolicyError, "unsafe metadata"):
                 POLICY.enforce(str(self.root), False)
 
@@ -132,12 +142,16 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
                 POLICY.enforce(str(self.root), False)
 
     def test_bootstrap_uses_the_shared_policy(self) -> None:
-        bootstrap = (ROOT / "scripts/bootstrap-catalog.sh").read_text(encoding="utf-8")
+        bootstrap = (ROOT / "scripts/bootstrap-catalog.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertLess(
             bootstrap.index("flock -n 9"),
             bootstrap.index('"$dictionary_permissions" --converge'),
         )
-        self.assertEqual(1, bootstrap.count('"$dictionary_permissions" --converge'))
+        self.assertEqual(
+            1, bootstrap.count('"$dictionary_permissions" --converge')
+        )
         self.assertEqual(
             1,
             bootstrap.count("timeout --signal=TERM --kill-after=5s 60s"),

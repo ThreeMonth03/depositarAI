@@ -21,7 +21,9 @@ def sealed_catalog_storage(test, context):
     data.mkdir(mode=0o700)
     context.update(root=root, data=data)
     plan = context["plan"]
-    plan.setdefault("compose_sha256", execution.digest_record(context["compose"]))
+    plan.setdefault(
+        "compose_sha256", execution.digest_record(context["compose"])
+    )
     plan.setdefault("security_material_sha256", "e" * 64)
     identity = volume_policy.identity(
         execution.catalog_identity(context),
@@ -44,7 +46,9 @@ def sealed_catalog_storage(test, context):
     for name, record in {
         "admin-image.json": {"image_id": image},
         "volume-started.json": volume_policy.started(identity, image),
-        "volume.json": volume_policy.expected_receipt(identity, image, metadata),
+        "volume.json": volume_policy.expected_receipt(
+            identity, image, metadata
+        ),
     }.items():
         execution.write_record(root, name, record)
     storage = SimpleNamespace(metadata=metadata, calls=[])
@@ -63,7 +67,9 @@ def sealed_catalog_storage(test, context):
         )
         test.assertEqual(30, timeout)
         storage.calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, json.dumps(storage.metadata), "")
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps(storage.metadata), ""
+        )
 
     context["runner"] = runner
     return storage

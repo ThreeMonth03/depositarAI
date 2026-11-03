@@ -11,15 +11,18 @@ from search.model_policy import OLLAMA_BASE_URL
 class ModelTransportTests(unittest.TestCase):
     def test_dns_only_accepts_one_private_address_of_allowlisted_service(self):
         with patch(
-            "socket.getaddrinfo", return_value=[(2, 1, 6, "", ("172.20.0.2", 11434))]
+            "socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("172.20.0.2", 11434))],
         ):
             self.assertEqual(
-                "http://172.20.0.2:11434", service_address("scope-model", 11434)
+                "http://172.20.0.2:11434",
+                service_address("scope-model", 11434),
             )
             with self.assertRaises(ValueError):
                 service_address("evil.example", 11434)
         with patch(
-            "socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 11434))]
+            "socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("8.8.8.8", 11434))],
         ):
             with self.assertRaises(ValueError):
                 service_address("scope-model", 11434)
@@ -30,7 +33,12 @@ class ModelTransportTests(unittest.TestCase):
             return_value="http://172.20.0.2:11434",
         ):
             transport = ModelTransport("scope")
-        for path in ("/api/pull", "/api/chat?x=1", "/api/chat#x", "//evil.example"):
+        for path in (
+            "/api/pull",
+            "/api/chat?x=1",
+            "/api/chat#x",
+            "//evil.example",
+        ):
             with self.assertRaises(ValueError):
                 transport.send(
                     HTTPRequest("POST", OLLAMA_BASE_URL + path, ()),

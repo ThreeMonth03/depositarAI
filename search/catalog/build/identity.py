@@ -1,4 +1,4 @@
-"""Bind metadata output to the complete, explicitly reviewed builder sources."""
+"""Bind metadata output to the complete reviewed builder sources."""
 
 import hashlib
 from pathlib import Path
@@ -30,7 +30,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def source_digest() -> str:
-    """Hash each producing input, including its relative path, in canonical JSON."""
+    """Hash each producing input, including its relative path, in canonical
+    JSON."""
     # A new helper requires an explicit closure review rather than silently
     # disappearing from the source identity.
     actual = {
@@ -42,6 +43,7 @@ def source_digest() -> str:
         raise policy.BundleError("metadata builder source closure mismatch")
     source_bytes = {path: (ROOT / path).read_bytes() for path in SOURCE_FILES}
     digests = {
-        path: hashlib.sha256(source_bytes[path]).hexdigest() for path in SOURCE_FILES
+        path: hashlib.sha256(source_bytes[path]).hexdigest()
+        for path in SOURCE_FILES
     }
     return hashlib.sha256(codec.canonical_json(digests)).hexdigest()

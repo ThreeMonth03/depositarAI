@@ -1,7 +1,9 @@
-"""Copy only the two API-pinned Ollama models; never modify a source or service.
+"""Copy only the two API-pinned Ollama models; never modify a source or
+service.
 
 A new destination is required. Failed/partial copies remain for inspection and
-are never accepted by verify. Model hashes, not a mutable model tag, bind bytes.
+are never accepted by verify. Model hashes, not a mutable model tag, bind
+bytes.
 """
 
 from __future__ import annotations
@@ -43,7 +45,8 @@ def directory(path):
 
 def checked_file(path, expected, size=None, output=None):
     # Reject symlink ancestors as well as the leaf. Runtime roots are private,
-    # operator-owned directories; a hostile root operator is outside this scope.
+    # operator-owned directories; a hostile root operator is outside this
+    # scope.
     directory(path.parent)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     digest = hashlib.sha256()
@@ -78,7 +81,9 @@ def checked_file(path, expected, size=None, output=None):
 
 
 def verified_bytes(path, expected, *, max_bytes=128 * 1024):
-    """Return the same bounded bytes which passed descriptor and hash checks."""
+    """Return the same bounded bytes which passed descriptor and hash
+    checks.
+    """
     size = path.lstat().st_size
     if not 1 <= size <= max_bytes:
         raise ValueError("verified file size is invalid")
@@ -91,9 +96,9 @@ def plan(source):
     source = directory(source)
     files = {}
     for model, expected in PINS.items():
-        relative = Path("manifests/registry.ollama.ai/library") / model.replace(
-            ":", "/"
-        )
+        relative = Path(
+            "manifests/registry.ollama.ai/library"
+        ) / model.replace(":", "/")
         path = source / relative
         raw = verified_bytes(path, expected)
         size = len(raw)
@@ -122,7 +127,9 @@ def _verify_inventory(root, expected):
             observed = set()
             for entry in entries:
                 if entry.name not in names:
-                    raise ValueError("unexpected model-store files or directories")
+                    raise ValueError(
+                        "unexpected model-store files or directories"
+                    )
                 observed.add(entry.name)
         if observed != names:
             raise ValueError("incomplete model-store directory")
@@ -175,14 +182,18 @@ def prepare(source, destination):
     ):
         raise ValueError("use a new dedicated model directory")
     files = plan(source)
-    with search_model_source.create_private_root(parent, destination.name) as root:
+    with search_model_source.create_private_root(
+        parent, destination.name
+    ) as root:
         # Pre-create/validate every parent before copying multi-GB artifacts.
         parents = {
             name: root.relative_parent(name, private=True, create=True)
             for name in sorted(files)
         }
-        # Blobs first, manifests last. Only completed copies have a verification
-        # receipt; callers must verify before switching any service to this store.
+        # Blobs first, manifests last. Only completed copies have a
+        # verification
+        # receipt; callers must verify before switching any service to this
+        # store.
         for name in sorted(files):
             item = files[name]
             target = destination / name
@@ -190,12 +201,18 @@ def prepare(source, destination):
             root.verify()
             fd = os.open(
                 leaf,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | os.O_NONBLOCK,
                 0o400,
                 dir_fd=parent_fd,
             )
             with os.fdopen(fd, "wb") as output:
-                checked_file(source / name, item["sha256"], item["bytes"], output)
+                checked_file(
+                    source / name, item["sha256"], item["bytes"], output
+                )
                 output.flush()
                 os.fsync(output.fileno())
                 opened = os.fstat(output.fileno())
@@ -213,7 +230,11 @@ def prepare(source, destination):
         root.verify()
         fd = os.open(
             RECEIPT,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | os.O_NONBLOCK,
             0o400,
             dir_fd=root.fd,
         )
@@ -230,7 +251,9 @@ def prepare(source, destination):
         os.fsync(root.fd)
         root.verify()
         if (
-            private_io.read_file(root.fd, RECEIPT, mode=0o400, max_bytes=128 * 1024)
+            private_io.read_file(
+                root.fd, RECEIPT, mode=0o400, max_bytes=128 * 1024
+            )
             != raw_receipt
         ):
             raise ValueError("model destination receipt changed")

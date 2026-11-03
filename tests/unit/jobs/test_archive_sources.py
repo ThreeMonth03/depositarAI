@@ -1,4 +1,6 @@
-"""Keep archived Git source independently restorable before removing a worktree."""
+"""Keep archived Git source independently restorable before removing a
+worktree.
+"""
 
 import hashlib
 import json
@@ -16,7 +18,9 @@ from search.operations.shared import private_io
 
 class SourceBundleTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="archive-source-fixture-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="archive-source-fixture-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.root.chmod(0o700)
@@ -77,7 +81,9 @@ class SourceBundleTests(unittest.TestCase):
     def rejected(self, operation):
         with self.assertRaises(JobError) as caught:
             operation()
-        self.assertRegex(str(caught.exception), r"^job_source_artifact_[a-z_]+$")
+        self.assertRegex(
+            str(caught.exception), r"^job_source_artifact_[a-z_]+$"
+        )
         self.assertNotIn(str(self.root), str(caught.exception))
 
     def rebind(self, raw):
@@ -97,11 +103,17 @@ class SourceBundleTests(unittest.TestCase):
         before = (self.source / "program.py").read_bytes()
         record = self.preserve()
         self.assertEqual(record, self.verify())
-        self.assertEqual(set(record), {"revision", "bundle_name", "bytes", "sha256"})
-        self.assertEqual(record["revision"], self.revision)
-        self.assertEqual((self.slot / "source.bundle").stat().st_size, record["bytes"])
         self.assertEqual(
-            hashlib.sha256((self.slot / "source.bundle").read_bytes()).hexdigest(),
+            set(record), {"revision", "bundle_name", "bytes", "sha256"}
+        )
+        self.assertEqual(record["revision"], self.revision)
+        self.assertEqual(
+            (self.slot / "source.bundle").stat().st_size, record["bytes"]
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                (self.slot / "source.bundle").read_bytes()
+            ).hexdigest(),
             record["sha256"],
         )
         self.assertEqual(self.slot.stat().st_mode & 0o777, 0o700)
@@ -126,7 +138,9 @@ class SourceBundleTests(unittest.TestCase):
             },
         )
 
-    def test_locked_detached_frozen_worktree_can_be_preserved_without_removing_it(self):
+    def test_locked_frozen_worktree_is_preserved_without_removal(
+        self,
+    ):
         frozen = self.root / "frozen"
         self.git(
             "worktree",
@@ -146,7 +160,9 @@ class SourceBundleTests(unittest.TestCase):
         self.assertIn(b"locked queued resource pass\0", listing)
         self.assertIn(str(frozen).encode(), listing)
 
-    def test_bundle_restore_proof_does_not_depend_on_original_object_database(self):
+    def test_bundle_restore_proof_does_not_depend_on_original_object_database(
+        self,
+    ):
         record = self.preserve()
         independent = self.root / "empty-repository"
         independent.mkdir(mode=0o700)
@@ -157,14 +173,17 @@ class SourceBundleTests(unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(
-            record, sources.verify_bundle(independent, self.slot, self.revision)
+            record,
+            sources.verify_bundle(independent, self.slot, self.revision),
         )
 
     def test_wrong_or_malformed_revision_never_creates_artifact(self):
         for value in ("a" * 40, "A" * 40, "a" * 39, True, b"a" * 40):
             with self.subTest(value_type=type(value).__name__):
                 self.rejected(
-                    lambda: sources.preserve_bundle(self.source, self.slot, value)
+                    lambda: sources.preserve_bundle(
+                        self.source, self.slot, value
+                    )
                 )
                 self.assertFalse(self.slot.exists())
 
@@ -176,7 +195,9 @@ class SourceBundleTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.rejected(self.preserve)
                 self.assertFalse(self.slot.exists())
-                self.assertEqual(target.read_bytes(), b"PRIVATE_CONTENT_DO_NOT_REMOVE")
+                self.assertEqual(
+                    target.read_bytes(), b"PRIVATE_CONTENT_DO_NOT_REMOVE"
+                )
             if original is None:
                 target.unlink()
             else:
@@ -185,7 +206,9 @@ class SourceBundleTests(unittest.TestCase):
     def test_source_symlink_or_nonprivate_source_is_refused(self):
         linked = self.root / "linked-source"
         linked.symlink_to(self.source, target_is_directory=True)
-        self.rejected(lambda: sources.preserve_bundle(linked, self.slot, self.revision))
+        self.rejected(
+            lambda: sources.preserve_bundle(linked, self.slot, self.revision)
+        )
         self.source.chmod(0o755)
         self.rejected(self.preserve)
         self.assertFalse(self.slot.exists())
@@ -235,12 +258,16 @@ class SourceBundleTests(unittest.TestCase):
             ("bundle_name", "../other.bundle"),
         ):
             changed = record | {key: value}
-            (self.slot / "source.json").write_bytes(private_io.canonical(changed))
+            (self.slot / "source.json").write_bytes(
+                private_io.canonical(changed)
+            )
             with self.subTest(key=key):
                 self.rejected(self.verify)
         self.rebind(raw)
 
-    def test_header_only_bundle_checks_do_not_replace_actual_restore_proof(self):
+    def test_header_only_bundle_checks_do_not_replace_actual_restore_proof(
+        self,
+    ):
         self.preserve()
         raw = (self.slot / "source.bundle").read_bytes()
         header = raw[: raw.index(b"\n\n") + 2]
@@ -285,18 +312,22 @@ class SourceBundleTests(unittest.TestCase):
         with patch.object(sources, "MAX_BUNDLE_BYTES", 1):
             self.rejected(self.verify)
 
-    def test_interrupted_manifest_publication_preserves_partial_evidence_for_recovery(
+    def test_interrupted_manifest_preserves_recovery_evidence(
         self,
     ):
         with patch.object(
-            private_io, "write_json", side_effect=OSError("fixture interruption")
+            private_io,
+            "write_json",
+            side_effect=OSError("fixture interruption"),
         ):
             self.rejected(self.preserve)
         raw = (self.slot / "source.bundle").read_bytes()
         self.assertFalse((self.slot / "source.json").exists())
         self.rejected(self.preserve)
         self.assertEqual(raw, (self.slot / "source.bundle").read_bytes())
-        self.assertEqual(self.git("rev-parse", "HEAD").decode().strip(), self.revision)
+        self.assertEqual(
+            self.git("rev-parse", "HEAD").decode().strip(), self.revision
+        )
         self.assertTrue((self.source / "program.py").exists())
 
     def test_verification_does_not_execute_checkout_hooks_or_source(self):

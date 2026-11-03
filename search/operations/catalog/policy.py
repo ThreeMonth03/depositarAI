@@ -18,7 +18,10 @@ class RuntimeError(ValueError):
 
 def catalog_bundle_target(bundle_id):
     """Preserve the verified content-addressed basename inside a helper."""
-    if type(bundle_id) is not str or re.fullmatch(r"[0-9a-f]{64}", bundle_id) is None:
+    if (
+        type(bundle_id) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", bundle_id) is None
+    ):
         raise RuntimeError("catalog_admin_bundle_id_invalid")
     return "/catalog/sha256-" + bundle_id
 
@@ -33,7 +36,8 @@ def _tmpfs(value):
             result[target] = frozenset(options.split(","))
     elif type(value) is dict:
         result = {
-            name: frozenset(options.split(",")) for name, options in value.items()
+            name: frozenset(options.split(","))
+            for name, options in value.items()
         }
     else:
         raise RuntimeError("catalog_tmpfs_invalid")
@@ -54,8 +58,11 @@ def _private_namespaces(host):
 
 
 def _memory_bytes(value):
-    """Normalize canonical byte counts, not units or permissive numeric input."""
-    if type(value) is str and re.fullmatch(r"[1-9][0-9]{0,18}", value) is not None:
+    """Normalize canonical byte counts; reject units and permissive input."""
+    if (
+        type(value) is str
+        and re.fullmatch(r"[1-9][0-9]{0,18}", value) is not None
+    ):
         value = int(value)
     if type(value) is not int or not 1 <= value <= 2**63 - 1:
         raise RuntimeError("catalog_runtime_memory_bytes_invalid")
@@ -68,7 +75,8 @@ def _volume_name(compose, mount):
     if (
         mount.get("source") != "catalog-index"
         or mount.get("target") != "/usr/share/opensearch/data"
-        or definition != {"name": compose.get("name", "") + "-index", "external": True}
+        or definition
+        != {"name": compose.get("name", "") + "-index", "external": True}
         or definition.get("external") is not True
         or type(name) is not str
     ):
@@ -123,13 +131,16 @@ def validate_core_containers(plan, compose, images, containers):
             or host.get("Init") is not True
             or not _private_namespaces(host)
             or host.get("NanoCpus") != int(float(expected["cpus"]) * 10**9)
-            or _memory_bytes(host.get("Memory")) != _memory_bytes(expected["mem_limit"])
+            or _memory_bytes(host.get("Memory"))
+            != _memory_bytes(expected["mem_limit"])
             or _memory_bytes(host.get("MemorySwap"))
             != _memory_bytes(expected["memswap_limit"])
             or host.get("PidsLimit") != expected["pids_limit"]
             or host.get("RestartPolicy", {}).get("Name") != expected["restart"]
-            or host.get("LogConfig", {}).get("Type") != expected["logging"]["driver"]
-            or host.get("LogConfig", {}).get("Config") != expected["logging"]["options"]
+            or host.get("LogConfig", {}).get("Type")
+            != expected["logging"]["driver"]
+            or host.get("LogConfig", {}).get("Config")
+            != expected["logging"]["options"]
             or _tmpfs(host.get("Tmpfs") or {}) != _tmpfs(expected["tmpfs"])
             or _ulimits(host.get("Ulimits") or [])
             != _ulimits(expected.get("ulimits", {}))
@@ -205,10 +216,14 @@ def validate_core_containers(plan, compose, images, containers):
             )
             for secret in expected.get("secrets", [])
         )
-        if len(mounts) != len(set(mounts)) or set(mounts) != set(expected_mounts):
+        if len(mounts) != len(set(mounts)) or set(mounts) != set(
+            expected_mounts
+        ):
             raise RuntimeError("catalog_runtime_mounts_changed")
         named_mounts = [
-            mount for mount in row.get("Mounts") or [] if mount.get("Type") == "volume"
+            mount
+            for mount in row.get("Mounts") or []
+            if mount.get("Type") == "volume"
         ]
         if named_mounts:
             if (
@@ -228,10 +243,12 @@ def validate_core_containers(plan, compose, images, containers):
             if (
                 len(host_volumes) != 1
                 or host_volumes[0].get("Source") != named_mounts[0]["Name"]
-                or host_volumes[0].get("Target") != "/usr/share/opensearch/data"
+                or host_volumes[0].get("Target")
+                != "/usr/share/opensearch/data"
                 or host_volumes[0].get("ReadOnly", False) is not False
                 or host_volumes[0].get("VolumeOptions") != {"NoCopy": True}
-                or host_volumes[0].get("VolumeOptions", {}).get("NoCopy") is not True
+                or host_volumes[0].get("VolumeOptions", {}).get("NoCopy")
+                is not True
                 or not set(host_volumes[0])
                 <= {
                     "Type",
@@ -241,7 +258,8 @@ def validate_core_containers(plan, compose, images, containers):
                     "VolumeOptions",
                     "Consistency",
                 }
-                or host_volumes[0].get("Consistency", "") not in {"", "default"}
+                or host_volumes[0].get("Consistency", "")
+                not in {"", "default"}
             ):
                 raise RuntimeError("catalog_runtime_volume_options_changed")
     if set(by_service) != SERVICES:
@@ -249,12 +267,16 @@ def validate_core_containers(plan, compose, images, containers):
     fess_id = by_service["fess-search"]["Id"]
     for name, row in by_service.items():
         mode = (
-            "container:" + fess_id if name == "ollama-embedding" else expected_network
+            "container:" + fess_id
+            if name == "ollama-embedding"
+            else expected_network
         )
         if row["HostConfig"].get("NetworkMode") != mode:
             raise RuntimeError("catalog_runtime_network_namespace_changed")
         attachments = set(row.get("NetworkSettings", {}).get("Networks") or {})
-        if attachments != (set() if name == "ollama-embedding" else {expected_network}):
+        if attachments != (
+            set() if name == "ollama-embedding" else {expected_network}
+        ):
             raise RuntimeError("catalog_runtime_network_attachments_changed")
     return {name: row["Id"] for name, row in by_service.items()}
 
@@ -268,7 +290,9 @@ def validate_runtime(plan, compose, images, containers, network):
     """
     container_ids = validate_core_containers(plan, compose, images, containers)
     expected_network = plan["project"] + "_search_backend"
-    peers = {container_ids[name] for name in ("fess-search", "opensearch-search")}
+    peers = {
+        container_ids[name] for name in ("fess-search", "opensearch-search")
+    }
     if (
         network.get("Name") != expected_network
         or network.get("Internal") is not True
@@ -287,7 +311,10 @@ def validate_runtime(plan, compose, images, containers, network):
 
 def _ulimits(value):
     if type(value) is dict:
-        return {name: (entry["soft"], entry["hard"]) for name, entry in value.items()}
+        return {
+            name: (entry["soft"], entry["hard"])
+            for name, entry in value.items()
+        }
     if type(value) is list:
         result = {}
         for entry in value:
@@ -303,7 +330,9 @@ def _duration(value):
     if (
         type(value) is not str
         or len(value) > 126
-        or re.fullmatch(r"(?:(?:0|[1-9][0-9]{0,18})(?:ns|us|ms|s|m|h)){1,6}", value)
+        or re.fullmatch(
+            r"(?:(?:0|[1-9][0-9]{0,18})(?:ns|us|ms|s|m|h)){1,6}", value
+        )
         is None
     ):
         raise RuntimeError("catalog_healthcheck_duration_invalid")
@@ -340,13 +369,20 @@ def admin_arguments(context, identity, *, journal=None):
     if identity["operation"] in {"import", "reconcile"}:
         if journal is not None:
             raise RuntimeError("catalog_admin_unexpected_journal")
-        return [*command, "600" if identity["operation"] == "import" else "180"]
+        return [
+            *command,
+            "600" if identity["operation"] == "import" else "180",
+        ]
     if (
         identity["operation"] != "vector-pass"
         or re.fullmatch(r"[0-9a-f]{32}", identity.get("run_id", "")) is None
-        or re.fullmatch(r"[0-9a-f]{64}", identity.get("recipe_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", identity.get("recipe_sha256", ""))
+        is None
         or journal
-        != context["root"] / "vector-operations" / identity["run_id"] / "events"
+        != context["root"]
+        / "vector-operations"
+        / identity["run_id"]
+        / "events"
         or any(character in str(journal) for character in (",", "\n", "\r"))
     ):
         raise RuntimeError("catalog_vector_journal_identity_invalid")
@@ -376,7 +412,7 @@ def admin_arguments(context, identity, *, journal=None):
 def validate_admin(
     context, image, identity, row, fess_id, secret, *, stopped, journal=None
 ):
-    """Prove the exact helper's capabilities before it reads a secret or exits."""
+    """Prove the exact helper's capabilities before secret reads or exit."""
     host, config, state = (
         row.get("HostConfig", {}),
         row.get("Config", {}),
@@ -392,8 +428,18 @@ def validate_admin(
     bundle_target = catalog_bundle_target(context["bundle"].bundle_id)
     expected_cmd = admin_arguments(context, identity, journal=journal)
     expected_mounts = {
-        ("bind", str(Path(context["plan"]["bundle_path"])), bundle_target, False),
-        ("bind", str(secret), "/run/secrets/fess_initial_admin_password", False),
+        (
+            "bind",
+            str(Path(context["plan"]["bundle_path"])),
+            bundle_target,
+            False,
+        ),
+        (
+            "bind",
+            str(secret),
+            "/run/secrets/fess_initial_admin_password",
+            False,
+        ),
     }
     if journal is not None:
         expected_mounts.add(("bind", str(journal), "/vector-journal", True))
@@ -416,9 +462,11 @@ def validate_admin(
         or config.get("Cmd") != expected_cmd
         or config.get("Entrypoint")
         != ["python3", "-E", "-s", "-B", "-u", "-m", "search.catalog_admin"]
-        or labels.get(LABEL_PREFIX + "admin-project") != context["plan"]["project"]
+        or labels.get(LABEL_PREFIX + "admin-project")
+        != context["plan"]["project"]
         or labels.get(LABEL_PREFIX + "admin-run") != identity["run_id"]
-        or labels.get(LABEL_PREFIX + "admin-operation") != identity["operation"]
+        or labels.get(LABEL_PREFIX + "admin-operation")
+        != identity["operation"]
         or labels.get("com.docker.compose.project")
         or environment.get("NVIDIA_VISIBLE_DEVICES") != "void"
         or environment.get("CUDA_VISIBLE_DEVICES") != ""

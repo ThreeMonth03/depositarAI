@@ -1,9 +1,10 @@
-"""Prepare the singleton gateway for an authenticated completed private release.
+"""
+Prepare the singleton gateway for an authenticated completed private release.
 
-This first gateway lifecycle step writes a candidate route and pinned plan only.
-It never starts Nginx, publishes active.conf, reloads routing or changes active
-state. Activation must freshly authenticate routed peers and probe the host's
-loopback endpoint; these prepared records grant neither capability.
+This first gateway lifecycle step writes a candidate route and pinned plan
+only. It never starts Nginx, publishes active.conf, reloads routing or changes
+active state. Activation must freshly authenticate routed peers and probe the
+host's loopback endpoint; these prepared records grant neither capability.
 """
 
 from __future__ import annotations
@@ -38,7 +39,9 @@ MAX_ROUTE_BYTES = 16 * 1024
 
 
 class GatewayError(ValueError):
-    """Closed gateway diagnostics without private responses or operator bytes."""
+    """Closed gateway diagnostics without private responses or operator
+    bytes.
+    """
 
 
 def _require(condition, code):
@@ -47,7 +50,9 @@ def _require(condition, code):
 
 
 def _same(actual, expected, code="evidence_changed"):
-    _require(private_io.canonical(actual) == private_io.canonical(expected), code)
+    _require(
+        private_io.canonical(actual) == private_io.canonical(expected), code
+    )
 
 
 def prepare_gateway(
@@ -62,7 +67,8 @@ def prepare_gateway(
     catalog_runner=None,
     gpu_runner=None,
 ):
-    """Reverify existing CPU3 and stage candidates, with no deployment mutation.
+    """
+    Reverify existing CPU3 and stage candidates, with no deployment mutation.
 
     The caller holds the product lock. The completed release verifier owns the
     catalog lock and rechecks its source, images, model files, query authority,
@@ -126,7 +132,9 @@ def _prepare(
         revision,
         uid=os.geteuid(),
         gid=os.getegid(),
-        inference_source_sha256=source_plan["services"]["reranker"]["source_sha256"],
+        inference_source_sha256=source_plan["services"]["reranker"][
+            "source_sha256"
+        ],
     )
     cpu_project = plans["release"]["name"]
     slot_name = cpu_project.removeprefix("depositar-ai-")
@@ -136,8 +144,13 @@ def _prepare(
         stack.callback(os.close, parent)
         slot = private_io.open_child_directory(parent, slot_name)
         stack.callback(os.close, slot)
-        _require(set(os.listdir(slot)) == release.FILES, "completed_release_required")
-        records = {name: image_build._record(slot, name) for name in release.FILES}
+        _require(
+            set(os.listdir(slot)) == release.FILES,
+            "completed_release_required",
+        )
+        records = {
+            name: image_build._record(slot, name) for name in release.FILES
+        }
         completed = records["complete.json"]
         _same(store.read("release-candidate.json"), completed)
         _require(
@@ -152,21 +165,28 @@ def _prepare(
             gateway_fd = private_io.open_child_directory(store.fd, "gateway")
             stack.callback(os.close, gateway_fd)
             _require(
-                set(os.listdir(gateway_fd)) == FILES, "partial_state_recovery_required"
+                set(os.listdir(gateway_fd)) == FILES,
+                "partial_state_recovery_required",
             )
             routes_fd = private_io.open_child_directory(gateway_fd, "routes")
             stack.callback(os.close, routes_fd)
             _require(
-                set(os.listdir(routes_fd)) == ROUTES, "partial_state_recovery_required"
+                set(os.listdir(routes_fd)) == ROUTES,
+                "partial_state_recovery_required",
             )
         deadline = time.monotonic() + runtime_docker.TOTAL_SECONDS + 600
-        authority = image_evidence.read_completed_images(config, store, source_plan)
+        authority = image_evidence.read_completed_images(
+            config, store, source_plan
+        )
         proof = authority["images"][gateway_runtime.ROLE]
-        # Every client handle exits successfully before any candidate publication.
+        # Every client handle exits successfully before any candidate
+        # publication.
         with ExitStack() as transport:
             client = Path(
                 transport.enter_context(
-                    tempfile.TemporaryDirectory(prefix="depositar-gateway-client-")
+                    tempfile.TemporaryDirectory(
+                        prefix="depositar-gateway-client-"
+                    )
                 )
             )
             client_fd = private_io.open_directory(client)
@@ -224,7 +244,8 @@ def _prepare(
                 gpu_runner=gpu_runner,
             )
             _require(
-                accepted.get("runtime_reused") is True, "completed_release_required"
+                accepted.get("runtime_reused") is True,
+                "completed_release_required",
             )
             _same(
                 {
@@ -237,7 +258,9 @@ def _prepare(
             verify_gateway_image()
             no_gateway_runtime()
             _same(
-                image_evidence.read_completed_images(config, store, source_plan),
+                image_evidence.read_completed_images(
+                    config, store, source_plan
+                ),
                 authority,
             )
             verify_client()
@@ -246,7 +269,9 @@ def _prepare(
         service.update(
             image=proof["image_id"],
             labels=release_runtime._labels(
-                records["lease.json"], gateway_runtime.ROLE, proof["source_sha256"]
+                records["lease.json"],
+                gateway_runtime.ROLE,
+                proof["source_sha256"],
             ),
         )
         gateway_runtime._plan(
@@ -259,7 +284,9 @@ def _prepare(
             "revision": revision,
             "project": composition.GATEWAY_PROJECT,
             "release_project": cpu_project,
-            "release_complete_sha256": release.execution.digest_record(completed),
+            "release_complete_sha256": release.execution.digest_record(
+                completed
+            ),
             "release_lease_sha256": release.execution.digest_record(
                 records["lease.json"]
             ),
@@ -311,7 +338,10 @@ def _prepare(
             _same(image_build._record(gateway_fd, "compose.json"), gateway)
             _require(
                 private_io.read_file(
-                    routes_fd, "candidate.conf", mode=0o600, max_bytes=MAX_ROUTE_BYTES
+                    routes_fd,
+                    "candidate.conf",
+                    mode=0o600,
+                    max_bytes=MAX_ROUTE_BYTES,
                 )
                 == route,
                 "route_changed",

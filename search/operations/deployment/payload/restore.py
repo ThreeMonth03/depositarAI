@@ -59,7 +59,8 @@ GIT_ENVIRONMENT = (
 PLAN_KEYS = frozenset(
     "schema_version kind revision source images models metadata catalog "
     "credentials_included payload_self_contained install_complete "
-    "runtime_install_verified registry_identity_restore_verified active_changed".split()
+    "runtime_install_verified registry_identity_restore_verified "
+    "active_changed".split()
 )
 
 
@@ -81,7 +82,9 @@ def _safe_run(arguments, *, timeout):
 
 
 def _python(arguments, *, timeout):
-    result = _safe_run([sys.executable, "-I", "-S", "-B", *arguments], timeout=timeout)
+    result = _safe_run(
+        [sys.executable, "-I", "-S", "-B", *arguments], timeout=timeout
+    )
     if result.returncode != 0:
         raise ValueError("offline_child_failed")
     return image_build._json(result.stdout)
@@ -97,99 +100,119 @@ def _restore_source(package, revision, destination):
 # The authenticated packaged revision owns its historical COPY closure and
 # catalog compatibility policy. Import it in another interpreter, never into
 # this process's already-loaded controller modules. Only Git is invoked here.
-SOURCE_PROOF = r"""
-import hashlib, json, os, subprocess, sys
-from pathlib import Path
-root, payload = map(Path, sys.argv[1:3])
-expected_manifest = sys.argv[3]
-# Trusted consumer policy: hash the committed builder closure independently of
-# packaged builder code. The package cannot shrink or replace these inputs.
-metadata_builder_files = (
-    "search/__init__.py",
-    "search/catalog/__init__.py",
-    "search/catalog/build/__init__.py",
-    "search/catalog/build/__main__.py",
-    "search/catalog/build/builder.py",
-    "search/catalog/build/cli.py",
-    "search/catalog/build/codec.py",
-    "search/catalog/build/identity.py",
-    "search/catalog/build/normalize.py",
-    "search/catalog/build/policy.py",
-    "search/catalog/build/snapshot.py",
-    "search/catalog/build/storage.py",
-    "search/catalog/policy.py",
-    "search/catalog/resources.py",
+SOURCE_PROOF = (
+    "\n"
+    "import hashlib, json, os, subprocess, sys\n"
+    "from pathlib import Path\n"
+    "root, payload = map(Path, sys.argv[1:3])\n"
+    "expected_manifest = sys.argv[3]\n"
+    "# Trusted consumer policy: hash the committed builder closure "
+    "independently of\n"
+    "# packaged builder code. The package cannot shrink or replace "
+    "these inputs.\n"
+    "metadata_builder_files = (\n"
+    '    "search/__init__.py",\n'
+    '    "search/catalog/__init__.py",\n'
+    '    "search/catalog/build/__init__.py",\n'
+    '    "search/catalog/build/__main__.py",\n'
+    '    "search/catalog/build/builder.py",\n'
+    '    "search/catalog/build/cli.py",\n'
+    '    "search/catalog/build/codec.py",\n'
+    '    "search/catalog/build/identity.py",\n'
+    '    "search/catalog/build/normalize.py",\n'
+    '    "search/catalog/build/policy.py",\n'
+    '    "search/catalog/build/snapshot.py",\n'
+    '    "search/catalog/build/storage.py",\n'
+    '    "search/catalog/policy.py",\n'
+    '    "search/catalog/resources.py",\n'
+    ")\n"
+    "sys.path.insert(0, str(root))\n"
+    "from search.operations.deployment import source_bundle, "
+    "product_package\n"
+    "from search.operations.catalog import backend, execution, "
+    "administration\n"
+    "from search.operations.shared import private_io\n"
+    "environment = [\n"
+    '    "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", '
+    '"LC_ALL=C.UTF-8",\n'
+    '    "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",\n'
+    '    "GIT_CONFIG_SYSTEM=/dev/null", "GIT_TERMINAL_PROMPT=0",\n'
+    '    "GIT_NO_REPLACE_OBJECTS=1",\n'
+    "]\n"
+    "def run(argv, *, timeout):\n"
+    '    if argv[0] != "git":\n'
+    '        raise ValueError("git_only")\n'
+    "    return source_bundle._runner(\n"
+    '        ["/usr/bin/env", "-i", *environment, "git", '
+    '"--no-replace-objects", *argv[1:]],\n'
+    "        timeout=timeout,\n"
+    "    )\n"
+    "def text_run(argv, *, timeout):\n"
+    "    result = run(argv, timeout=timeout)\n"
+    "    return subprocess.CompletedProcess(argv, result.returncode,\n"
+    '        result.stdout.decode("utf-8"), '
+    'result.stderr.decode("utf-8"))\n'
+    "payload_fd = private_io.open_directory(payload)\n"
+    "def read_record(name, expected):\n"
+    "    raw = private_io.read_file(payload_fd, name, mode=0o600,\n"
+    "        max_bytes=product_package.MAX_RECORD_BYTES)\n"
+    "    if hashlib.sha256(raw).hexdigest() != expected:\n"
+    '        raise ValueError("package_changed")\n'
+    "    private_io.verify_directory(payload_fd, payload)\n"
+    "    return json.loads(raw)\n"
+    'plan = read_record("package.json", expected_manifest)\n'
+    'revision, origin = plan["revision"], plan["catalog"]["revision"]\n'
+    "app = source_bundle.committed_source_plan(root, revision, "
+    "runner=run)\n"
+    'backend.validate_compatibility({"revision": origin}, '
+    "repo_root=root,\n"
+    "    revision=revision, runner=text_run)\n"
+    "git = source_bundle._Git(root, run)\n"
+    "tree = git.tree(origin)\n"
+    "names = set(administration.ADMIN_FILES)\n"
+    'for role in ("fess-search", "opensearch-search"):\n'
+    "    names.update(execution.service_sources(role))\n"
+    "names.update(metadata_builder_files)\n"
+    "blobs = {}\n"
+    "for name in sorted(names):\n"
+    '    if tree[name]["mode"] not in {"100644", "100755"} or '
+    'tree[name]["type"] != "blob":\n'
+    '        raise ValueError("source_mode")\n'
+    '    blobs[name] = git.raw(["git", "-C", str(root), "show", '
+    'origin + ":" + name],\n'
+    "        max_bytes=source_bundle.MAX_FILE_BYTES)\n"
+    "metadata_builder_digest = hashlib.sha256(json.dumps(\n"
+    "    {name: hashlib.sha256(blobs[name]).hexdigest() for name in "
+    "metadata_builder_files},\n"
+    "    ensure_ascii=False, allow_nan=False, sort_keys=True, "
+    'separators=(",", ":"),\n'
+    ').encode("utf-8")).hexdigest()\n'
+    "catalog = {}\n"
+    "for role in product_package.CATALOG_ROLES:\n"
+    "    paths = administration.ADMIN_FILES if role == "
+    '"catalog-admin" else execution.service_sources(\n'
+    '        "opensearch-search" if role == "opensearch-hash" else '
+    "role)\n"
+    "    catalog[role] = execution.digest_record({name: "
+    "hashlib.sha256(blobs[name]).hexdigest()\n"
+    "        for name in paths})\n"
+    'receipt = plan["catalog_image_receipt"]\n'
+    "if receipt is not None:\n"
+    "    product_package._catalog_images(plan, "
+    'read_record(receipt["path"], receipt["sha256"]))\n'
+    "git.clean(revision)\n"
+    "private_io.verify_directory(payload_fd, payload)\n"
+    "os.close(payload_fd)\n"
+    "print(json.dumps({\n"
+    '    "revision": revision, "catalog_revision": origin,\n'
+    '    "source_tree": git.raw(["git", "-C", str(root), "rev-parse", '
+    'revision + "^{tree}"]).decode().strip(),\n'
+    '    "app_sources": {role: value["source_sha256"] for role, value '
+    'in app["services"].items()},\n'
+    '    "catalog_sources": catalog,\n'
+    '    "metadata_builder_sha256": metadata_builder_digest,\n'
+    "}, sort_keys=True))\n"
 )
-sys.path.insert(0, str(root))
-from search.operations.deployment import source_bundle, product_package
-from search.operations.catalog import backend, execution, administration
-from search.operations.shared import private_io
-environment = [
-    "PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8",
-    "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-    "GIT_CONFIG_SYSTEM=/dev/null", "GIT_TERMINAL_PROMPT=0",
-    "GIT_NO_REPLACE_OBJECTS=1",
-]
-def run(argv, *, timeout):
-    if argv[0] != "git":
-        raise ValueError("git_only")
-    return source_bundle._runner(
-        ["/usr/bin/env", "-i", *environment, "git", "--no-replace-objects", *argv[1:]],
-        timeout=timeout,
-    )
-def text_run(argv, *, timeout):
-    result = run(argv, timeout=timeout)
-    return subprocess.CompletedProcess(argv, result.returncode,
-        result.stdout.decode("utf-8"), result.stderr.decode("utf-8"))
-payload_fd = private_io.open_directory(payload)
-def read_record(name, expected):
-    raw = private_io.read_file(payload_fd, name, mode=0o600,
-        max_bytes=product_package.MAX_RECORD_BYTES)
-    if hashlib.sha256(raw).hexdigest() != expected:
-        raise ValueError("package_changed")
-    private_io.verify_directory(payload_fd, payload)
-    return json.loads(raw)
-plan = read_record("package.json", expected_manifest)
-revision, origin = plan["revision"], plan["catalog"]["revision"]
-app = source_bundle.committed_source_plan(root, revision, runner=run)
-backend.validate_compatibility({"revision": origin}, repo_root=root,
-    revision=revision, runner=text_run)
-git = source_bundle._Git(root, run)
-tree = git.tree(origin)
-names = set(administration.ADMIN_FILES)
-for role in ("fess-search", "opensearch-search"):
-    names.update(execution.service_sources(role))
-names.update(metadata_builder_files)
-blobs = {}
-for name in sorted(names):
-    if tree[name]["mode"] not in {"100644", "100755"} or tree[name]["type"] != "blob":
-        raise ValueError("source_mode")
-    blobs[name] = git.raw(["git", "-C", str(root), "show", origin + ":" + name],
-        max_bytes=source_bundle.MAX_FILE_BYTES)
-metadata_builder_digest = hashlib.sha256(json.dumps(
-    {name: hashlib.sha256(blobs[name]).hexdigest() for name in metadata_builder_files},
-    ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
-).encode("utf-8")).hexdigest()
-catalog = {}
-for role in product_package.CATALOG_ROLES:
-    paths = administration.ADMIN_FILES if role == "catalog-admin" else execution.service_sources(
-        "opensearch-search" if role == "opensearch-hash" else role)
-    catalog[role] = execution.digest_record({name: hashlib.sha256(blobs[name]).hexdigest()
-        for name in paths})
-receipt = plan["catalog_image_receipt"]
-if receipt is not None:
-    product_package._catalog_images(plan, read_record(receipt["path"], receipt["sha256"]))
-git.clean(revision)
-private_io.verify_directory(payload_fd, payload)
-os.close(payload_fd)
-print(json.dumps({
-    "revision": revision, "catalog_revision": origin,
-    "source_tree": git.raw(["git", "-C", str(root), "rev-parse", revision + "^{tree}"]).decode().strip(),
-    "app_sources": {role: value["source_sha256"] for role, value in app["services"].items()},
-    "catalog_sources": catalog,
-    "metadata_builder_sha256": metadata_builder_digest,
-}, sort_keys=True))
-"""
 
 
 def _source_proof(source, package, manifest, manifest_sha256):
@@ -238,7 +261,9 @@ def _manifest(raw, revision):
             PLAN_KEYS | {"status", "image_archive", "catalog_image_receipt"},
             "manifest_invalid",
         )
-        plan = product_package._validate_plan({key: value[key] for key in PLAN_KEYS})
+        plan = product_package._validate_plan(
+            {key: value[key] for key in PLAN_KEYS}
+        )
         if value["revision"] != revision or value["status"] != "packaged":
             _fail("manifest_invalid")
         archive = value["image_archive"]
@@ -256,7 +281,9 @@ def _manifest(raw, revision):
         product_package._hash(archive["sha256"])
         receipt = value["catalog_image_receipt"]
         if receipt is not None:
-            product_package._keys(receipt, {"path", "sha256"}, "receipt_invalid")
+            product_package._keys(
+                receipt, {"path", "sha256"}, "receipt_invalid"
+            )
             if receipt != {
                 "path": "catalog-images.json",
                 "sha256": plan["catalog"]["image_receipt_sha256"],
@@ -360,8 +387,14 @@ def _models(root, manifest):
         from search.reranker.model import MODEL_HASHES
 
         expected = manifest["models"]["files"]
-        for role, pins in (("api", PINS), ("embedding", {MODEL: MODEL_DIGEST})):
-            if doctor._ollama_files(root / "models" / role, pins) != expected[role]:
+        for role, pins in (
+            ("api", PINS),
+            ("embedding", {MODEL: MODEL_DIGEST}),
+        ):
+            if (
+                doctor._ollama_files(root / "models" / role, pins)
+                != expected[role]
+            ):
                 _fail("models_invalid")
         if {
             name: item["sha256"] for name, item in expected["reranker"].items()
@@ -372,12 +405,20 @@ def _models(root, manifest):
 
 
 def _metadata(package_fd, root_fd, destination, manifest, snapshot):
-    target = destination / "metadata" / ("sha256-" + manifest["metadata"]["bundle_id"])
+    target = (
+        destination
+        / "metadata"
+        / ("sha256-" + manifest["metadata"]["bundle_id"])
+    )
     try:
         with ExitStack() as stack:
-            parent = private_io.open_child_directory(root_fd, "metadata", create=True)
+            parent = private_io.open_child_directory(
+                root_fd, "metadata", create=True
+            )
             stack.callback(os.close, parent)
-            child = private_io.open_child_directory(parent, target.name, create=True)
+            child = private_io.open_child_directory(
+                parent, target.name, create=True
+            )
             stack.callback(os.close, child)
             for name, record in manifest["metadata"]["files"].items():
                 fd = os.open(
@@ -387,7 +428,13 @@ def _metadata(package_fd, root_fd, destination, manifest, snapshot):
                     dir_fd=child,
                 )
                 with os.fdopen(fd, "wb") as output:
-                    _stream(package_fd, "metadata/" + name, record, snapshot, output)
+                    _stream(
+                        package_fd,
+                        "metadata/" + name,
+                        record,
+                        snapshot,
+                        output,
+                    )
                     output.flush()
                     os.fchmod(output.fileno(), 0o400)
                     os.fsync(output.fileno())
@@ -398,7 +445,8 @@ def _metadata(package_fd, root_fd, destination, manifest, snapshot):
             private_io.verify_directory(parent, target.parent)
             private_io.verify_directory(child, target, mode=0o500)
         bundle = CatalogBundle.load(
-            target, expected_manifest_sha256=manifest["metadata"]["manifest_sha256"]
+            target,
+            expected_manifest_sha256=manifest["metadata"]["manifest_sha256"],
         )
         if (
             bundle.bundle_id != manifest["metadata"]["bundle_id"]
@@ -479,7 +527,8 @@ def restore_product(
 
     The optional source_restorer is an internal test seam. The default invokes
     the existing real-Git restorer in a sanitized isolated Python subprocess.
-    Failure preserves a new partial destination and never publishes restore.json.
+    Failure preserves a new partial destination and never publishes
+    restore.json.
     """
     try:
         if (
@@ -517,7 +566,8 @@ def restore_product(
                 }
             )
             assets["images.tar"] = {
-                key: manifest["image_archive"][key] for key in ("bytes", "sha256")
+                key: manifest["image_archive"][key]
+                for key in ("bytes", "sha256")
             }
             assets["package.json"] = {
                 "bytes": len(raw),
@@ -536,7 +586,10 @@ def restore_product(
                     "bytes": len(receipt),
                     "sha256": manifest["catalog"]["image_receipt_sha256"],
                 }
-            if sum(item["bytes"] for item in assets.values()) > MAX_TOTAL_BYTES:
+            if (
+                sum(item["bytes"] for item in assets.values())
+                > MAX_TOTAL_BYTES
+            ):
                 _fail("inventory_invalid")
             names = set(assets) | {"SHA256SUMS"}
             snapshot = _inventory(package_fd, names)
@@ -556,14 +609,22 @@ def restore_product(
                 _stream(package_fd, name, record, snapshot)
             descriptor = _open_asset(package_fd, "images.tar")
             try:
-                if private_io.identity(os.fstat(descriptor)) != snapshot["images.tar"]:
+                if (
+                    private_io.identity(os.fstat(descriptor))
+                    != snapshot["images.tar"]
+                ):
                     _fail("dependency_changed")
                 if (
-                    product_package._check_archive(descriptor, manifest["images"])
+                    product_package._check_archive(
+                        descriptor, manifest["images"]
+                    )
                     != manifest["image_archive"]["format"]
                 ):
                     _fail("archive_invalid")
-                if private_io.identity(os.fstat(descriptor)) != snapshot["images.tar"]:
+                if (
+                    private_io.identity(os.fstat(descriptor))
+                    != snapshot["images.tar"]
+                ):
                     _fail("dependency_changed")
             except ProductRestoreError:
                 raise
@@ -579,15 +640,21 @@ def restore_product(
             except FileExistsError:
                 _fail("destination_exists")
             os.fsync(parent_fd)
-            root_fd = private_io.open_child_directory(parent_fd, destination.name)
+            root_fd = private_io.open_child_directory(
+                parent_fd, destination.name
+            )
             stack.callback(os.close, root_fd)
             metadata, sealed_metadata = _metadata(
                 package_fd, root_fd, destination, manifest, snapshot
             )
-            restore = _restore_source if source_restorer is None else source_restorer
+            restore = (
+                _restore_source if source_restorer is None else source_restorer
+            )
             try:
                 restored = restore(
-                    package / "source", expected_revision, destination / "source"
+                    package / "source",
+                    expected_revision,
+                    destination / "source",
                 )
                 expected = {
                     "schema_version": 1,
@@ -606,7 +673,8 @@ def restore_product(
                     or not 1
                     <= restored["tracked_file_count"]
                     <= source_artifact.MAX_FILES
-                    or private_io.canonical(restored) != private_io.canonical(expected)
+                    or private_io.canonical(restored)
+                    != private_io.canonical(expected)
                 ):
                     _fail("source_restore_failed")
             except Exception:
@@ -614,7 +682,10 @@ def restore_product(
             source_fd = private_io.open_directory(destination / "source")
             stack.callback(os.close, source_fd)
             proof = _source_proof(
-                destination / "source", package, manifest, expected_manifest_sha256
+                destination / "source",
+                package,
+                manifest,
+                expected_manifest_sha256,
             )
             if _sealed_metadata(metadata) != sealed_metadata:
                 _fail("dependency_changed")

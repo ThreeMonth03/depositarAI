@@ -49,7 +49,9 @@ def report_findings(command, destination):
     try:
         findings = json.loads(result.stdout)
     except (ValueError, UnicodeError):
-        raise ComplexityError("Ruff returned invalid complexity JSON") from None
+        raise ComplexityError(
+            "Ruff returned invalid complexity JSON"
+        ) from None
     if type(findings) is not list or any(
         type(row) is not dict or row.get("code") != "C901" for row in findings
     ):
@@ -67,7 +69,9 @@ def main(argv=None):
     )
     options = parser.parse_args(argv)
     command = (
-        [options.ruff] if options.ruff is not None else [sys.executable, "-m", "ruff"]
+        [options.ruff]
+        if options.ruff is not None
+        else [sys.executable, "-m", "ruff"]
     )
     try:
         count = report_findings(command, options.report)

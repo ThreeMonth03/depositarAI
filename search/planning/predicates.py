@@ -16,7 +16,9 @@ MIN_DAY, MAX_DAY = date.min.toordinal(), date.max.toordinal()
 
 
 def date_bounds(value):
-    """Return ordinal bounds and precision; accept unpadded month/day fields."""
+    """Return ordinal bounds and precision;
+    accept unpadded month/day fields.
+    """
     if not isinstance(value, str) or not re.fullmatch(
         r"[0-9]{4}(?:-[0-9]{1,2}(?:-[0-9]{1,2})?)?", value
     ):
@@ -56,7 +58,9 @@ def project(document):
         value = temporal[side]
         known = value not in (None, "")
         try:
-            low, high, precision = date_bounds(value) if known else (0, 0, "absent")
+            low, high, precision = (
+                date_bounds(value) if known else (0, 0, "absent")
+            )
         except ValueError:
             low, high, precision, invalid = 0, 0, "invalid", True
             known = False
@@ -91,7 +95,9 @@ def project(document):
         coordinates = (0, 0, 0, 0)
         result["bbox_known"] = False
     result.update(zip(("west", "south", "east", "north"), coordinates))
-    formats = {f.strip().upper() for f in document["resource_formats"] if f.strip()}
+    formats = {
+        f.strip().upper() for f in document["resource_formats"] if f.strip()
+    }
     result["formats_known"] = bool(formats)
     for name in FORMATS:
         result["format_" + name] = name in formats
@@ -113,8 +119,14 @@ def validate_conditions(conditions):
             raise ValueError("time endpoints required")
         if value["start"] is None and value["end"] is None:
             raise ValueError("empty time condition")
-        low = MIN_DAY if value["start"] is None else date_bounds(value["start"])[0]
-        high = MAX_DAY if value["end"] is None else date_bounds(value["end"])[1]
+        low = (
+            MIN_DAY
+            if value["start"] is None
+            else date_bounds(value["start"])[0]
+        )
+        high = (
+            MAX_DAY if value["end"] is None else date_bounds(value["end"])[1]
+        )
         if low > high:
             raise ValueError("reversed query interval")
         result["time"] = (low, high)
@@ -163,9 +175,15 @@ def compile_filters(conditions):
                 logic(
                     "OR",
                     logic(
-                        "AND", c("start_known", "==", True), c("start_lo", ">", high)
+                        "AND",
+                        c("start_known", "==", True),
+                        c("start_lo", ">", high),
                     ),
-                    logic("AND", c("end_known", "==", True), c("end_hi", "<", low)),
+                    logic(
+                        "AND",
+                        c("end_known", "==", True),
+                        c("end_hi", "<", low),
+                    ),
                 ),
             )
         )
@@ -196,7 +214,9 @@ def compile_filters(conditions):
         )
     if "formats" in query:
         matches.append(
-            logic("OR", *(c("format_" + f, "==", True) for f in query["formats"]))
+            logic(
+                "OR", *(c("format_" + f, "==", True) for f in query["formats"])
+            )
         )
         exclusions.append(
             logic(
@@ -206,8 +226,12 @@ def compile_filters(conditions):
             )
         )
     return {
-        "match": logic("AND", *matches) if matches else c("record", "==", True),
-        "outside": logic("OR", *exclusions) if exclusions else c("record", "==", False),
+        "match": logic("AND", *matches)
+        if matches
+        else c("record", "==", True),
+        "outside": logic("OR", *exclusions)
+        if exclusions
+        else c("record", "==", False),
     }
 
 

@@ -1,4 +1,4 @@
-"""Validate Fess's ordered, non-overlapping native chunk/vector representation."""
+"""Validate Fess's ordered, non-overlapping native chunks and vectors."""
 
 from __future__ import annotations
 
@@ -37,7 +37,8 @@ def _finite(number):
 
 
 def validate(content_chunks, vectors, original_content):
-    """Copy aligned native arrays whose text exactly reproduces the sealed input.
+    """Copy aligned native arrays whose text exactly reproduces the sealed
+    input.
 
     The fixed Fess length-chunker profile has zero overlap and preserves every
     character. This verifies its result without implementing Java chunking in
@@ -76,5 +77,6 @@ def validate(content_chunks, vectors, original_content):
 
 
 def digest(payload):
-    """Hash a validated native payload, binding text boundaries to vector order."""
+    """Hash a validated native payload, binding text boundaries to vector
+    order."""
     return hashlib.sha256(private_io.canonical(payload)).hexdigest()

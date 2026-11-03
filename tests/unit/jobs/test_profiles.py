@@ -71,11 +71,15 @@ class ProfileTests(unittest.TestCase):
         return {
             "type": "quality-batch",
             "config": str(self.config),
-            "config_sha256": hashlib.sha256(self.config.read_bytes()).hexdigest(),
+            "config_sha256": hashlib.sha256(
+                self.config.read_bytes()
+            ).hexdigest(),
             "source_revision": "a" * 40,
             "candidate_revision": "b" * 40,
             "cases": str(self.cases),
-            "cases_sha256": hashlib.sha256(self.cases.read_bytes()).hexdigest(),
+            "cases_sha256": hashlib.sha256(
+                self.cases.read_bytes()
+            ).hexdigest(),
             "plan_sha256": plan_digest(plan),
             "expected_identity_sha256": "c" * 64,
         }
@@ -84,7 +88,9 @@ class ProfileTests(unittest.TestCase):
         return {
             "type": "vector-pass",
             "config": str(self.config),
-            "config_sha256": hashlib.sha256(self.config.read_bytes()).hexdigest(),
+            "config_sha256": hashlib.sha256(
+                self.config.read_bytes()
+            ).hexdigest(),
             "source_revision": "a" * 40,
             "catalog_revision": "d" * 40,
             "bundle_id": "e" * 64,
@@ -99,11 +105,15 @@ class ProfileTests(unittest.TestCase):
             "type": "resource-pass",
             "bundle": str(self.root / "bundle"),
             "state_root": str(self.state),
-            "plan_sha256": hashlib.sha256(private_io.canonical(plan)).hexdigest(),
+            "plan_sha256": hashlib.sha256(
+                private_io.canonical(plan)
+            ).hexdigest(),
             "manifest_sha256": "f" * 64,
         }
 
-    def test_three_explicit_schemas_reject_command_and_environment_passthrough(self):
+    def test_three_explicit_schemas_reject_command_and_environment_passthrough(
+        self,
+    ):
         for profile in (self.resource(), self.quality(), self.vector()):
             with self.subTest(kind=profile["type"]):
                 profiles.validate(profile, self.queue_root)
@@ -119,7 +129,9 @@ class ProfileTests(unittest.TestCase):
                 ):
                     profiles.validate({**profile, key: value}, self.queue_root)
             missing = dict(profile)
-            missing.pop(next(key for key in profile if key.endswith("_sha256")))
+            missing.pop(
+                next(key for key in profile if key.endswith("_sha256"))
+            )
             with self.assertRaisesRegex(JobError, "profile_invalid"):
                 profiles.validate(missing, self.queue_root)
 
@@ -134,12 +146,20 @@ class ProfileTests(unittest.TestCase):
                         "0" * (len(profile[key]) - 1),
                     ):
                         with (
-                            self.subTest(kind=profile["type"], key=key, value=value),
-                            self.assertRaisesRegex(JobError, "profile_invalid"),
+                            self.subTest(
+                                kind=profile["type"], key=key, value=value
+                            ),
+                            self.assertRaisesRegex(
+                                JobError, "profile_invalid"
+                            ),
                         ):
-                            profiles.validate({**profile, key: value}, self.queue_root)
+                            profiles.validate(
+                                {**profile, key: value}, self.queue_root
+                            )
 
-    def test_executing_source_binding_is_distinct_from_catalog_or_candidate(self):
+    def test_executing_source_binding_is_distinct_from_catalog_or_candidate(
+        self,
+    ):
         for profile in (self.quality(), self.vector()):
             profiles.verify_source(profile, "a" * 40)
             with self.assertRaisesRegex(JobError, "profile_source_changed"):
@@ -155,9 +175,11 @@ class ProfileTests(unittest.TestCase):
             str(self.root),
         ):
             with self.subTest(value=value), self.assertRaises(JobError):
-                profiles.validate({**self.quality(), "config": value}, self.queue_root)
+                profiles.validate(
+                    {**self.quality(), "config": value}, self.queue_root
+                )
 
-    def test_quality_freeze_preserves_raw_query_config_and_existing_absolute_paths(
+    def test_quality_freeze_preserves_queries_config_and_paths(
         self,
     ):
         profile = self.quality()
@@ -166,9 +188,9 @@ class ProfileTests(unittest.TestCase):
         frozen = profiles.read_frozen(self.job, profile)
         self.assertEqual(files, frozen)
         self.assertEqual(self.config_bytes, frozen["native-config.json"])
-        query = json.loads(frozen["quality-cases.json"])["cases"][0]["turns"][0][
-            "query"
-        ]
+        query = json.loads(frozen["quality-cases.json"])["cases"][0]["turns"][
+            0
+        ]["query"]
         self.assertEqual("  找２０２４年的\n氣候資料  ", query)
         self.assertEqual(
             "/absolute/private/native-state",
@@ -184,7 +206,9 @@ class ProfileTests(unittest.TestCase):
         profiles.freeze(self.job, profile, files)
         self.assertEqual(files, profiles.read_frozen(self.job, profile))
 
-    def test_original_changes_deletion_and_symlinks_do_not_rebind_frozen_quality(self):
+    def test_source_changes_cannot_rebind_frozen_quality(
+        self,
+    ):
         profile = self.quality()
         files = profiles.load_inputs(profile)
         profiles.freeze(self.job, profile, files)
@@ -208,7 +232,9 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(JobError, "profile_cases_changed"):
             profiles.load_inputs(profile)
 
-    def test_native_plan_digest_does_not_use_the_receipt_newline_canonicalization(self):
+    def test_native_plan_digest_keeps_distinct_newline_policy(
+        self,
+    ):
         profile = self.quality()
         profile["plan_sha256"] = hashlib.sha256(
             private_io.canonical(self.plan)
@@ -217,7 +243,9 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(JobError, "profile_plan_changed"):
             profiles.load_inputs(profile)
 
-    def test_quality_batch_accepts_eight_turns_but_refuses_more_cases_or_turns(self):
+    def test_quality_batch_accepts_eight_turns_but_refuses_more_cases_or_turns(
+        self,
+    ):
         accepted = self.make_plan((3, 3, 2))
         self.save_cases(accepted)
         profiles.load_inputs(self.quality(accepted))
@@ -273,12 +301,16 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(JobError, "profile_cases_changed"):
             profiles.read_frozen(self.job, profile)
 
-    def test_missing_input_or_second_publish_does_not_overwrite_frozen_files(self):
+    def test_missing_input_or_second_publish_does_not_overwrite_frozen_files(
+        self,
+    ):
         profile = self.quality()
         files = profiles.load_inputs(profile)
         with self.assertRaisesRegex(JobError, "profile_inputs_invalid"):
             profiles.freeze(
-                self.job, profile, {"native-config.json": files["native-config.json"]}
+                self.job,
+                profile,
+                {"native-config.json": files["native-config.json"]},
             )
         self.assertEqual([], list(self.job.iterdir()))
         profiles.freeze(self.job, profile, files)
@@ -286,7 +318,9 @@ class ProfileTests(unittest.TestCase):
             profiles.freeze(self.job, profile, files)
         self.assertEqual(files, profiles.read_frozen(self.job, profile))
 
-    def test_resource_plan_contract_remains_digest_bound_without_new_sidecars(self):
+    def test_resource_plan_contract_remains_digest_bound_without_new_sidecars(
+        self,
+    ):
         profile = self.resource()
         profiles.validate(profile, self.queue_root)
         self.assertEqual({}, profiles.load_inputs(profile))

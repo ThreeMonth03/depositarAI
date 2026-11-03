@@ -15,10 +15,17 @@ from search.operations.config import GPUConfig, ProductConfig
 from search.operations.deployment import gpu_ownership as ownership
 
 
-UUIDS = tuple(f"GPU-00000000-0000-0000-0000-{index:012d}" for index in range(1, 5))
+UUIDS = tuple(
+    f"GPU-00000000-0000-0000-0000-{index:012d}" for index in range(1, 5)
+)
 GPUS = GPUConfig(UUIDS[0], (UUIDS[1], UUIDS[2]), UUIDS[3])
 CONFIG = ProductConfig(
-    2, Path("/state"), Path("/api"), Path("/embedding"), Path("/reranker"), GPUS
+    2,
+    Path("/state"),
+    Path("/api"),
+    Path("/embedding"),
+    Path("/reranker"),
+    GPUS,
 )
 INVENTORY = "\n".join(f"{value}, {index}" for index, value in enumerate(UUIDS))
 IMAGE = "sha256:" + "a" * 64
@@ -28,7 +35,9 @@ RERANKER_ID = "3" * 64
 CPU_ID = "4" * 64
 SCOPE = ownership.GPUContainerProof(SCOPE_ID, IMAGE, "scope", (UUIDS[0],))
 PLANNER = ownership.GPUContainerProof(PLANNER_ID, IMAGE, "planner", UUIDS[1:3])
-RERANKER = ownership.GPUContainerProof(RERANKER_ID, IMAGE, "reranker", (UUIDS[3],))
+RERANKER = ownership.GPUContainerProof(
+    RERANKER_ID, IMAGE, "reranker", (UUIDS[3],)
+)
 
 
 def container(identifier=CPU_ID, *, pid=100, gpu_uuids=()):
@@ -99,7 +108,11 @@ def tls_container(role="inner", *, identifier=None):
         if role == "outer"
         else None
     )
-    targets = ["/run/endpoint.conf", f"/run/tls/{role}.crt", f"/run/tls/{role}.key"]
+    targets = [
+        "/run/endpoint.conf",
+        f"/run/tls/{role}.crt",
+        f"/run/tls/{role}.key",
+    ]
     if role == "outer":
         targets.append("/run/tls/ca.pem")
     row["Mounts"] = [
@@ -130,7 +143,10 @@ def tls_proof(row, role="inner"):
 
 def tls_sources(*rows):
     return frozenset(
-        m["Source"] for row in rows for m in row["Mounts"] if m.get("Type") == "bind"
+        m["Source"]
+        for row in rows
+        for m in row["Mounts"]
+        if m.get("Type") == "bind"
     )
 
 
@@ -152,13 +168,20 @@ class FakeRunner:
         if self.result_override is not None:
             return self.result_override
         if argv[0] == "nvidia-smi":
-            result = INVENTORY if argv[1] == "--query-gpu=uuid,index" else self.compute
+            result = (
+                INVENTORY
+                if argv[1] == "--query-gpu=uuid,index"
+                else self.compute
+            )
         elif argv[0] == "python3":
             if argv[1:5] != ["-I", "-S", "-B", "-c"]:
                 raise AssertionError("metadata probe must use isolated Python")
             result = "ok\n"
         else:
-            if tuple(argv[: len(ownership.DOCKER_PREFIX)]) != ownership.DOCKER_PREFIX:
+            if (
+                tuple(argv[: len(ownership.DOCKER_PREFIX)])
+                != ownership.DOCKER_PREFIX
+            ):
                 raise AssertionError("wrong local Docker command prefix")
             command = argv[len(ownership.DOCKER_PREFIX)]
             if command == "info":
@@ -209,7 +232,9 @@ class GPUOwnershipTests(unittest.TestCase):
         return ownership.validate_gpu_ownership(GPUS, **values)
 
     def blocked(self, code, **changes):
-        with self.assertRaisesRegex(ownership.GPUOwnershipError, "^" + code + "$"):
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "^" + code + "$"
+        ):
             self.validate(**changes)
 
     def test_four_unclaimed_gpus_and_cpu_container_pass(self):
@@ -221,7 +246,8 @@ class GPUOwnershipTests(unittest.TestCase):
 
     def test_idle_gpu_claim_is_blocked_without_compute_activity(self):
         self.blocked(
-            "gpu_ownership_unsealed_gpu_container", containers=[scope_container()]
+            "gpu_ownership_unsealed_gpu_container",
+            containers=[scope_container()],
         )
 
     def test_existing_exact_sealed_idle_gpu_container_passes(self):
@@ -289,7 +315,11 @@ class GPUOwnershipTests(unittest.TestCase):
     def test_replaced_container_id_or_image_is_rejected(self):
         for field, value, code in (
             ("Id", "5" * 64, "gpu_ownership_unsealed_gpu_container"),
-            ("Image", "sha256:" + "b" * 64, "gpu_ownership_sealed_identity_changed"),
+            (
+                "Image",
+                "sha256:" + "b" * 64,
+                "gpu_ownership_sealed_identity_changed",
+            ),
         ):
             row = scope_container()
             row[field] = value
@@ -302,15 +332,23 @@ class GPUOwnershipTests(unittest.TestCase):
                 )
 
     def test_missing_sealed_container_is_rejected(self):
-        self.blocked("gpu_ownership_sealed_container_missing", allowed=(SCOPE,))
+        self.blocked(
+            "gpu_ownership_sealed_container_missing", allowed=(SCOPE,)
+        )
 
     def test_proof_requires_full_ids_exact_role_gpus_and_no_duplicates(self):
         invalid = (
-            ownership.GPUContainerProof("scope-model", IMAGE, "scope", (UUIDS[0],)),
-            ownership.GPUContainerProof(SCOPE_ID, "image:latest", "scope", (UUIDS[0],)),
+            ownership.GPUContainerProof(
+                "scope-model", IMAGE, "scope", (UUIDS[0],)
+            ),
+            ownership.GPUContainerProof(
+                SCOPE_ID, "image:latest", "scope", (UUIDS[0],)
+            ),
             ownership.GPUContainerProof(SCOPE_ID, IMAGE, "any", (UUIDS[0],)),
             ownership.GPUContainerProof(SCOPE_ID, IMAGE, "scope", (UUIDS[3],)),
-            ownership.GPUContainerProof(SCOPE_ID, IMAGE, "planner", (UUIDS[1],)),
+            ownership.GPUContainerProof(
+                SCOPE_ID, IMAGE, "planner", (UUIDS[1],)
+            ),
         )
         for proof in invalid:
             with self.subTest(proof=proof):
@@ -373,7 +411,9 @@ class GPUOwnershipTests(unittest.TestCase):
         for change in ({"DeviceIDs": []}, {"Other": False}):
             row = scope_container()
             row["HostConfig"]["DeviceRequests"][0].update(change)
-            self.blocked("gpu_ownership_device_scope_unknown", containers=[row])
+            self.blocked(
+                "gpu_ownership_device_scope_unknown", containers=[row]
+            )
 
     def test_legacy_visible_devices_cannot_grant_gpu(self):
         for value in ("all", "0", UUIDS[0], "nvidia.com/gpu=all"):
@@ -398,7 +438,9 @@ class GPUOwnershipTests(unittest.TestCase):
         for value in (UUIDS[3], "none", "void", UUIDS[0] + "," + UUIDS[0]):
             row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=" + value]
             with self.subTest(value=value):
-                self.blocked("gpu_ownership_legacy_gpu_access", containers=[row])
+                self.blocked(
+                    "gpu_ownership_legacy_gpu_access", containers=[row]
+                )
 
     def test_nvidia_runtime_no_gpu_visible_is_cpu_only(self):
         for value in ("", "none", "void"):
@@ -406,7 +448,9 @@ class GPUOwnershipTests(unittest.TestCase):
             row["HostConfig"]["Runtime"] = "nvidia"
             row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=" + value]
             with self.subTest(value=value):
-                self.assertEqual(self.validate(containers=[row])["status"], "ok")
+                self.assertEqual(
+                    self.validate(containers=[row])["status"], "ok"
+                )
 
     def test_management_devices_imex_and_duplicate_env_rejected(self):
         for key in ownership.NVIDIA_KEYS[1:]:
@@ -415,9 +459,13 @@ class GPUOwnershipTests(unittest.TestCase):
             self.blocked("gpu_ownership_legacy_gpu_access", containers=[row])
         row = container()
         row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=void"] * 2
-        self.blocked("gpu_ownership_nvidia_environment_invalid", containers=[row])
+        self.blocked(
+            "gpu_ownership_nvidia_environment_invalid", containers=[row]
+        )
 
-    def test_host_namespace_privileged_custom_runtime_annotations_rejected(self):
+    def test_host_namespace_privileged_custom_runtime_annotations_rejected(
+        self,
+    ):
         for field, value in (
             ("Privileged", True),
             ("Privileged", None),
@@ -431,9 +479,13 @@ class GPUOwnershipTests(unittest.TestCase):
             row = container()
             row["HostConfig"][field] = value
             with self.subTest(field=field, value=value):
-                self.blocked("gpu_ownership_container_host_access", containers=[row])
+                self.blocked(
+                    "gpu_ownership_container_host_access", containers=[row]
+                )
 
-    def test_direct_host_devices_rules_caps_and_inherited_volumes_rejected(self):
+    def test_direct_host_devices_rules_caps_and_inherited_volumes_rejected(
+        self,
+    ):
         for field, value in (
             ("Devices", [{"PathOnHost": "/dev/nvidia0"}]),
             ("DeviceCgroupRules", ["c 195:* rwm"]),
@@ -443,7 +495,9 @@ class GPUOwnershipTests(unittest.TestCase):
             row = container()
             row["HostConfig"][field] = value
             with self.subTest(field=field):
-                self.blocked("gpu_ownership_container_device_access", containers=[row])
+                self.blocked(
+                    "gpu_ownership_container_device_access", containers=[row]
+                )
 
     def test_mount_source_and_destination_host_access_rejected(self):
         for path in (
@@ -459,9 +513,13 @@ class GPUOwnershipTests(unittest.TestCase):
             for source, target in ((path, "/data"), ("/data", path)):
                 row = bind(container(), source, target)
                 with self.subTest(source=source, target=target):
-                    self.blocked("gpu_ownership_host_access_mount", containers=[row])
+                    self.blocked(
+                        "gpu_ownership_host_access_mount", containers=[row]
+                    )
 
-    def test_mount_path_alias_propagation_inherited_driver_volume_rejected(self):
+    def test_mount_path_alias_propagation_inherited_driver_volume_rejected(
+        self,
+    ):
         for source in (
             "/data/../dev",
             "/data//x",
@@ -476,7 +534,9 @@ class GPUOwnershipTests(unittest.TestCase):
                 )
         row = bind(container(), "/data")
         row["Mounts"][0]["Propagation"] = "rshared"
-        self.blocked("gpu_ownership_mount_propagation_unknown", containers=[row])
+        self.blocked(
+            "gpu_ownership_mount_propagation_unknown", containers=[row]
+        )
         row = bind(container(), "/data")
         row["Mounts"][0]["Type"] = "volume"
         self.blocked("gpu_ownership_mount_type_unknown", containers=[row])
@@ -495,13 +555,17 @@ class GPUOwnershipTests(unittest.TestCase):
                     "ok",
                     self.validate(
                         containers=[row],
-                        verified_bind_sources=frozenset({"/private/query-file"}),
+                        verified_bind_sources=frozenset(
+                            {"/private/query-file"}
+                        ),
                     )["status"],
                 )
                 row["Mounts"][0]["RW"] = True
-                self.blocked("gpu_ownership_host_access_mount", containers=[row])
+                self.blocked(
+                    "gpu_ownership_host_access_mount", containers=[row]
+                )
 
-    def test_query_destination_exception_never_allows_host_run_sources_or_sockets(
+    def test_query_destination_exception_rejects_run_sources_or_sockets(
         self,
     ):
         for source, target in (
@@ -509,7 +573,10 @@ class GPUOwnershipTests(unittest.TestCase):
             ("/run/index/binding.json", "/run/index/binding.json"),
             ("/private", "/run/other"),
             ("/private", "/run/opensearch-ca"),
-            ("/run/opensearch-ca/root-ca.pem", "/run/opensearch-ca/root-ca.pem"),
+            (
+                "/run/opensearch-ca/root-ca.pem",
+                "/run/opensearch-ca/root-ca.pem",
+            ),
             ("/private", "/run/secrets/docker.sock"),
             ("/private", "/run/index/containerd.sock"),
         ):
@@ -532,7 +599,9 @@ class GPUOwnershipTests(unittest.TestCase):
     def test_host_bind_and_actual_mount_must_agree(self):
         row = bind(container(), "/catalog")
         row["HostConfig"]["Binds"] = ["/other:/data:ro"]
-        self.blocked("gpu_ownership_mount_inventory_mismatch", containers=[row])
+        self.blocked(
+            "gpu_ownership_mount_inventory_mismatch", containers=[row]
+        )
 
     def test_container_count_duplicate_shape_state_fail_closed(self):
         self.blocked(
@@ -540,7 +609,8 @@ class GPUOwnershipTests(unittest.TestCase):
             containers=[container()] * (ownership.MAX_CONTAINERS + 1),
         )
         self.blocked(
-            "gpu_ownership_container_duplicate", containers=[container(), container()]
+            "gpu_ownership_container_duplicate",
+            containers=[container(), container()],
         )
         for field, value in (
             ("Paused", True),
@@ -551,7 +621,9 @@ class GPUOwnershipTests(unittest.TestCase):
             row = container()
             row["State"][field] = value
             with self.subTest(field=field):
-                self.blocked("gpu_ownership_container_not_running", containers=[row])
+                self.blocked(
+                    "gpu_ownership_container_not_running", containers=[row]
+                )
         row = container()
         row["Config"] = {"Env": ["PRIVATE_SECRET=do-not-expose"]}
         self.blocked("gpu_ownership_container_shape_invalid", containers=[row])
@@ -620,7 +692,9 @@ class GPUOwnershipTests(unittest.TestCase):
         for key in ("Runtime", "PidMode", "IpcMode"):
             row = container()
             row["HostConfig"][key] = []
-            self.blocked("gpu_ownership_container_host_access", containers=[row])
+            self.blocked(
+                "gpu_ownership_container_host_access", containers=[row]
+            )
         row = scope_container()
         row["HostConfig"]["DeviceRequests"][0]["Driver"] = {}
         self.blocked("gpu_ownership_device_scope_unknown", containers=[row])
@@ -630,7 +704,8 @@ class GPUOwnershipTests(unittest.TestCase):
             with self.assertRaises(ownership.GPUOwnershipError):
                 self.validate(containers=[row])
         self.blocked(
-            "gpu_ownership_mount_path_invalid", containers=[bind(container(), "//")]
+            "gpu_ownership_mount_path_invalid",
+            containers=[bind(container(), "//")],
         )
 
 
@@ -656,8 +731,12 @@ class GPUHostGatherTests(unittest.TestCase):
 
     def test_allowed_idle_container_still_runs_top_and_compute_query(self):
         runner = FakeRunner([scope_container()], pids={SCOPE_ID: "PID\n101"})
-        self.assertEqual(self.run_preflight(runner, allowed=(SCOPE,))["status"], "ok")
-        self.assertTrue(any("top" in argv for argv, _timeout, _cap in runner.calls))
+        self.assertEqual(
+            self.run_preflight(runner, allowed=(SCOPE,))["status"], "ok"
+        )
+        self.assertTrue(
+            any("top" in argv for argv, _timeout, _cap in runner.calls)
+        )
         self.assertTrue(
             any(
                 "--query-compute-apps=gpu_uuid,pid" in argv
@@ -676,14 +755,17 @@ class GPUHostGatherTests(unittest.TestCase):
         ):
             self.assertNotIn(excluded, ownership.INSPECT_FORMAT)
         self.assertIn("NVIDIA_VISIBLE_DEVICES", ownership.INSPECT_FORMAT)
-        self.assertIn('index .HostConfig "Annotations"', ownership.INSPECT_FORMAT)
+        self.assertIn(
+            'index .HostConfig "Annotations"', ownership.INSPECT_FORMAT
+        )
         self.assertIn('index .HostConfig "Mounts"', ownership.INSPECT_FORMAT)
 
     def test_new_running_container_rejects_snapshot(self):
         runner = FakeRunner([container()])
         runner.new_ids = (CPU_ID, "5" * 64)
         self.assertEqual(
-            self.run_preflight(runner)["code"], "gpu_ownership_snapshot_changed"
+            self.run_preflight(runner)["code"],
+            "gpu_ownership_snapshot_changed",
         )
 
     def test_restart_or_resource_mutation_rejects_snapshot(self):
@@ -695,7 +777,8 @@ class GPUHostGatherTests(unittest.TestCase):
             runner = FakeRunner([container()])
             runner.changed_inspect = change
             self.assertEqual(
-                self.run_preflight(runner)["code"], "gpu_ownership_snapshot_changed"
+                self.run_preflight(runner)["code"],
+                "gpu_ownership_snapshot_changed",
             )
 
     def test_mount_presentation_order_does_not_change_the_snapshot(self):
@@ -707,27 +790,38 @@ class GPUHostGatherTests(unittest.TestCase):
         runner.changed_inspect = lambda value: value["Mounts"].reverse()
         self.assertEqual("ok", self.run_preflight(runner)["status"])
 
-    def test_mount_content_changes_remain_rejected_after_order_normalization(self):
+    def test_mount_content_changes_remain_rejected_after_order_normalization(
+        self,
+    ):
         for change in (
             lambda row: row["Mounts"][0].update(RW=True),
             lambda row: row["Mounts"][0].update(Source="/different/source"),
-            lambda row: row["Mounts"][0].update(Destination="/different/target"),
+            lambda row: row["Mounts"][0].update(
+                Destination="/different/target"
+            ),
         ):
             with self.subTest(change=change):
-                runner = FakeRunner([bind(container(), "/data/source", "/data")])
+                runner = FakeRunner(
+                    [bind(container(), "/data/source", "/data")]
+                )
 
                 # Keep the independently represented source/target pair aligned
-                # when changing it, so snapshot comparison itself must reject it.
+                # when changing it, so snapshot comparison itself must reject
+                # it.
                 def changed(row):
                     change(row)
                     mount = row["Mounts"][0]
                     row["HostConfig"]["Binds"] = [
-                        mount["Source"] + ":" + mount["Destination"] + ":ro,rprivate"
+                        mount["Source"]
+                        + ":"
+                        + mount["Destination"]
+                        + ":ro,rprivate"
                     ]
 
                 runner.changed_inspect = changed
                 self.assertEqual(
-                    "gpu_ownership_snapshot_changed", self.run_preflight(runner)["code"]
+                    "gpu_ownership_snapshot_changed",
+                    self.run_preflight(runner)["code"],
                 )
 
     def test_command_error_does_not_leak_output_or_exception(self):
@@ -740,7 +834,9 @@ class GPUHostGatherTests(unittest.TestCase):
         self.assertNotIn("SECRET", json.dumps(result))
 
         def unknown_code(_argv, **_kwargs):
-            raise ownership.GPUOwnershipError("gpu_ownership_private_secret_value")
+            raise ownership.GPUOwnershipError(
+                "gpu_ownership_private_secret_value"
+            )
 
         result = self.run_preflight(unknown_code)
         self.assertEqual(result["code"], "gpu_ownership_preflight_failed")
@@ -759,7 +855,8 @@ class GPUHostGatherTests(unittest.TestCase):
             0, "x" * ownership.MAX_OUTPUT_BYTES, "x"
         )
         self.assertEqual(
-            self.run_preflight(runner)["code"], "gpu_ownership_command_output_limit"
+            self.run_preflight(runner)["code"],
+            "gpu_ownership_command_output_limit",
         )
 
     def test_total_output_and_command_count_limits_are_enforced(self):
@@ -800,16 +897,21 @@ class GPUHostGatherTests(unittest.TestCase):
         def fail():
             raise RuntimeError("SECRET_CLOCK")
 
-        result = ownership.run_gpu_ownership(CONFIG, runner=FakeRunner(), clock=fail)
+        result = ownership.run_gpu_ownership(
+            CONFIG, runner=FakeRunner(), clock=fail
+        )
         self.assertEqual(result["code"], "gpu_ownership_preflight_failed")
 
     def test_remote_or_unknown_runtime_profile_rejected(self):
         runner = FakeRunner()
         runner.default_runtime = "unknown"
         self.assertEqual(
-            self.run_preflight(runner)["code"], "gpu_ownership_host_profile_unsupported"
+            self.run_preflight(runner)["code"],
+            "gpu_ownership_host_profile_unsupported",
         )
-        self.assertEqual(ownership.DOCKER_PREFIX[2], "unix:///var/run/docker.sock")
+        self.assertEqual(
+            ownership.DOCKER_PREFIX[2], "unix:///var/run/docker.sock"
+        )
 
     def test_strict_json_decode_failures_are_sanitized(self):
         for value in (
@@ -821,22 +923,30 @@ class GPUHostGatherTests(unittest.TestCase):
             runner = FakeRunner()
             runner.result_override = ownership.CommandResult(0, value)
             self.assertEqual(
-                self.run_preflight(runner)["code"], "gpu_ownership_json_invalid"
+                self.run_preflight(runner)["code"],
+                "gpu_ownership_json_invalid",
             )
-        with mock.patch.object(ownership, "strict_json", side_effect=RecursionError):
+        with mock.patch.object(
+            ownership, "strict_json", side_effect=RecursionError
+        ):
             self.assertEqual(
-                self.run_preflight(FakeRunner())["code"], "gpu_ownership_json_invalid"
+                self.run_preflight(FakeRunner())["code"],
+                "gpu_ownership_json_invalid",
             )
 
     def test_non_utf8_command_text_remains_a_sanitized_preflight_failure(self):
         runner = FakeRunner()
-        runner.result_override = ownership.CommandResult(0, "\ud800private-input")
+        runner.result_override = ownership.CommandResult(
+            0, "\ud800private-input"
+        )
         report = self.run_preflight(runner)
         self.assertEqual("gpu_ownership_preflight_failed", report["code"])
         self.assertNotIn("private-input", json.dumps(report))
 
     def test_actual_mount_probe_reads_metadata_only(self):
-        with tempfile.TemporaryDirectory(prefix="depositar-gpu-source.") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-gpu-source."
+        ) as directory:
             source = Path(directory)
             file = source / "private"
             file.write_text("SECRET_DO_NOT_READ")
@@ -845,11 +955,13 @@ class GPUHostGatherTests(unittest.TestCase):
             link = source / "alias"
             link.symlink_to(file)
             with self.assertRaisesRegex(
-                ownership.GPUOwnershipError, "^gpu_ownership_mount_source_alias$"
+                ownership.GPUOwnershipError,
+                "^gpu_ownership_mount_source_alias$",
             ):
                 ownership.probe_bind_source(str(link))
             with self.assertRaisesRegex(
-                ownership.GPUOwnershipError, "^gpu_ownership_mount_source_unverified$"
+                ownership.GPUOwnershipError,
+                "^gpu_ownership_mount_source_unverified$",
             ):
                 ownership.probe_bind_source(str(source / "missing"))
 
@@ -857,7 +969,8 @@ class GPUHostGatherTests(unittest.TestCase):
         runner = FakeRunner([bind(container(), "/catalog")])
         probed = []
         result = self.run_preflight(
-            runner, bind_source_probe=lambda source, **_limits: probed.append(source)
+            runner,
+            bind_source_probe=lambda source, **_limits: probed.append(source),
         )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(probed, ["/catalog"])
@@ -873,7 +986,9 @@ class GPUHostGatherTests(unittest.TestCase):
 
     def test_real_bounded_runner_output_and_timeout(self):
         result = ownership.bounded_runner(
-            [sys.executable, "-I", "-S", "-c", "print('ok')"], timeout=2, max_bytes=128
+            [sys.executable, "-I", "-S", "-c", "print('ok')"],
+            timeout=2,
+            max_bytes=128,
         )
         self.assertEqual(result.stdout, "ok\n")
         with self.assertRaisesRegex(
@@ -888,7 +1003,13 @@ class GPUHostGatherTests(unittest.TestCase):
             ownership.GPUOwnershipError, "^gpu_ownership_command_timeout$"
         ):
             ownership.bounded_runner(
-                [sys.executable, "-I", "-S", "-c", "import time;time.sleep(1)"],
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-c",
+                    "import time;time.sleep(1)",
+                ],
                 timeout=0.02,
                 max_bytes=128,
             )
@@ -934,7 +1055,10 @@ class LocalVolumeRunner(FakeRunner):
         self.changed_root = None
 
     def __call__(self, argv, **limits):
-        if argv[0] == "docker" and argv[len(ownership.DOCKER_PREFIX)] == "volume":
+        if (
+            argv[0] == "docker"
+            and argv[len(ownership.DOCKER_PREFIX)] == "volume"
+        ):
             self.calls.append((argv, limits["timeout"], limits["max_bytes"]))
             self.volume_calls += 1
             metadata = asdict(local_volume_proof(argv[-1], self.root))
@@ -943,7 +1067,10 @@ class LocalVolumeRunner(FakeRunner):
                 self.changed_metadata(metadata, self.volume_calls)
             return ownership.CommandResult(0, json.dumps(metadata))
         result = super().__call__(argv, **limits)
-        if argv[0] == "docker" and argv[len(ownership.DOCKER_PREFIX)] == "info":
+        if (
+            argv[0] == "docker"
+            and argv[len(ownership.DOCKER_PREFIX)] == "info"
+        ):
             self.info_calls += 1
             info = json.loads(result.stdout)
             info["DockerRootDir"] = (
@@ -956,7 +1083,9 @@ class LocalVolumeRunner(FakeRunner):
 
 
 class LocalVolumeOwnershipTests(unittest.TestCase):
-    """Fixture hardware only; these tests never establish host GPU ownership."""
+    """Fixture hardware only; these tests never establish host GPU
+    ownership.
+    """
 
     def validate(self, rows, proofs=()):
         return ownership.validate_gpu_ownership(
@@ -974,10 +1103,14 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
             ownership.GPUOwnershipError, "volume_evidence_invalid"
         ):
             self.validate([row])
-        self.assertEqual(self.validate([row], (local_volume_proof(),))["status"], "ok")
+        self.assertEqual(
+            self.validate([row], (local_volume_proof(),))["status"], "ok"
+        )
         self.assertEqual(ownership._container(row)[3], ())
 
-    def test_shared_local_volume_is_deduplicated_and_host_binds_match_name(self):
+    def test_shared_local_volume_is_deduplicated_and_host_binds_match_name(
+        self,
+    ):
         proof = local_volume_proof()
         row = volume_container()
         row["HostConfig"]["Binds"] = [
@@ -1017,15 +1150,23 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
             ("name", "x" * 256),
             ("mountpoint", proof.mountpoint + "/"),
             ("mountpoint", "/var/lib/docker/volumes/other/_data"),
-            ("mountpoint", "/var/lib/docker-other/volumes/catalog-index/_data"),
+            (
+                "mountpoint",
+                "/var/lib/docker-other/volumes/catalog-index/_data",
+            ),
             ("docker_root_dir", "/var/lib/docker/../dev"),
         ):
             with self.subTest(field=field, value=value):
                 with self.assertRaises(ownership.GPUOwnershipError):
                     self.validate(
-                        [volume_container()], (replace(proof, **{field: value}),)
+                        [volume_container()],
+                        (replace(proof, **{field: value}),),
                     )
-        for proofs in ((proof, proof), (proof, local_volume_proof("extra")), [proof]):
+        for proofs in (
+            (proof, proof),
+            (proof, local_volume_proof("extra")),
+            [proof],
+        ):
             with self.assertRaisesRegex(
                 ownership.GPUOwnershipError, "volume_evidence_invalid"
             ):
@@ -1055,7 +1196,9 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
                 with self.assertRaises(ownership.GPUOwnershipError):
                     self.validate([row], (proof,))
 
-    def test_collector_checks_root_and_each_volume_twice_with_bounded_projection(self):
+    def test_collector_rechecks_root_and_volumes_with_bounded_projection(
+        self,
+    ):
         runner = LocalVolumeRunner([volume_container()])
         result = ownership.run_gpu_ownership(CONFIG, runner=runner)
         self.assertEqual(result["status"], "ok")
@@ -1085,7 +1228,9 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
             with self.subTest(field=key):
                 runner = LocalVolumeRunner([volume_container()])
                 runner.changed_metadata = (
-                    lambda row, count: row.update({key: value}) if count > 1 else None
+                    lambda row, count: row.update({key: value})
+                    if count > 1
+                    else None
                 )
                 report = ownership.run_gpu_ownership(CONFIG, runner=runner)
                 self.assertEqual(report["status"], "blocked")
@@ -1104,14 +1249,18 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
             "gpu_ownership_snapshot_changed",
         )
 
-    def test_driver_options_missing_metadata_and_volume_bounds_fail_closed(self):
+    def test_driver_options_missing_metadata_and_volume_bounds_fail_closed(
+        self,
+    ):
         for options in (False, None, 1):
             runner = LocalVolumeRunner([volume_container()])
             runner.changed_metadata = lambda row, _count: row.update(
                 options_empty=options
             )
             report = ownership.run_gpu_ownership(CONFIG, runner=runner)
-            self.assertEqual(report["code"], "gpu_ownership_volume_metadata_invalid")
+            self.assertEqual(
+                report["code"], "gpu_ownership_volume_metadata_invalid"
+            )
         runner = LocalVolumeRunner([volume_container()])
         runner.changed_metadata = lambda row, _count: row.pop("scope")
         self.assertEqual(
@@ -1130,14 +1279,20 @@ class LocalVolumeOwnershipTests(unittest.TestCase):
 
 
 class GPUCompositionContractTests(unittest.TestCase):
-    """Allocation handoff only; no real Docker normalization or runtime proof."""
+    """Allocation handoff only; no real Docker normalization or runtime
+    proof.
+    """
 
     def rendered(self):
         from search.operations.deployment.composition import (
             QueryBindingPaths,
             render_composition,
         )
-        from tests.unit.deployment.test_composition import REVISION, catalog, product
+        from tests.unit.deployment.test_composition import (
+            REVISION,
+            catalog,
+            product,
+        )
 
         config = product()
         plan = catalog(config)
@@ -1172,15 +1327,19 @@ class GPUCompositionContractTests(unittest.TestCase):
                 + service["environment"]["NVIDIA_VISIBLE_DEVICES"]
             ]
             self.assertEqual(
-                service["environment"]["NVIDIA_DRIVER_CAPABILITIES"], "compute,utility"
+                service["environment"]["NVIDIA_DRIVER_CAPABILITIES"],
+                "compute,utility",
             )
             rows.append(row)
             proofs.append(
-                ownership.GPUContainerProof(identifier, IMAGE, role, identifiers)
+                ownership.GPUContainerProof(
+                    identifier, IMAGE, role, identifiers
+                )
             )
             pids[identifier] = f"PID\n{pid}"
         inventory = "\n".join(
-            f"{value},{index}" for index, value in enumerate(config.gpus.all_uuids())
+            f"{value},{index}"
+            for index, value in enumerate(config.gpus.all_uuids())
         )
         return config, {
             "inventory": inventory,
@@ -1193,7 +1352,10 @@ class GPUCompositionContractTests(unittest.TestCase):
     def test_renderer_explicit_role_uuids_satisfy_ownership_profile(self):
         config, evidence = self.rendered()
         self.assertEqual(
-            ownership.validate_gpu_ownership(config.gpus, **evidence)["status"], "ok"
+            ownership.validate_gpu_ownership(config.gpus, **evidence)[
+                "status"
+            ],
+            "ok",
         )
 
     def test_base_image_all_cannot_override_explicit_renderer_allocation(self):
@@ -1236,7 +1398,9 @@ class TLSCPUOwnershipTests(unittest.TestCase):
         with self.assertRaises(ownership.GPUOwnershipError):
             self.validate([inner, outer], ())
 
-    def test_every_projected_field_is_bound_and_mount_order_is_not_identity(self):
+    def test_every_projected_field_is_bound_and_mount_order_is_not_identity(
+        self,
+    ):
         row = tls_container()
         proof = tls_proof(row)
         for mutate in (
@@ -1255,7 +1419,9 @@ class TLSCPUOwnershipTests(unittest.TestCase):
                 ):
                     self.validate([changed], (proof,))
         row["Mounts"].reverse()
-        self.assertEqual(ownership.cpu_projection_sha256(row), proof.projection_sha256)
+        self.assertEqual(
+            ownership.cpu_projection_sha256(row), proof.projection_sha256
+        )
         self.assertEqual(self.validate([row], (proof,))["status"], "ok")
 
     def test_resealed_cpu_proof_cannot_grant_gpu_or_host_device_access(self):
@@ -1264,12 +1430,18 @@ class TLSCPUOwnershipTests(unittest.TestCase):
             lambda r: r["HostConfig"].update(PidMode="host"),
             lambda r: r["HostConfig"].update(IpcMode="host"),
             lambda r: r["HostConfig"].update(Runtime="nvidia"),
-            lambda r: r["HostConfig"].update(Devices=[{"PathOnHost": "/dev/nvidia0"}]),
-            lambda r: r["HostConfig"].update(DeviceCgroupRules=["c 195:* rwm"]),
+            lambda r: r["HostConfig"].update(
+                Devices=[{"PathOnHost": "/dev/nvidia0"}]
+            ),
+            lambda r: r["HostConfig"].update(
+                DeviceCgroupRules=["c 195:* rwm"]
+            ),
             lambda r: r["HostConfig"].update(VolumesFrom=["other"]),
             lambda r: r["HostConfig"].update(AnnotationsPresent=True),
             lambda r: r["HostConfig"].update(
-                DeviceRequests=scope_container()["HostConfig"]["DeviceRequests"]
+                DeviceRequests=scope_container()["HostConfig"][
+                    "DeviceRequests"
+                ]
             ),
             lambda r: r.update(NVIDIAEnv=["NVIDIA_VISIBLE_DEVICES=all"]),
             lambda r: r.update(
@@ -1290,7 +1462,11 @@ class TLSCPUOwnershipTests(unittest.TestCase):
             ("inner", [], True),
             ("inner", ["NET_BIND_SERVICE"], False),
             ("outer", sorted(ownership.TLS_OUTER_CAPS), True),
-            ("outer", sorted(ownership.TLS_OUTER_CAPS | {"NET_BIND_SERVICE"}), True),
+            (
+                "outer",
+                sorted(ownership.TLS_OUTER_CAPS | {"NET_BIND_SERVICE"}),
+                True,
+            ),
             ("outer", ["NET_BIND_SERVICE"], False),
             ("outer", sorted(ownership.TLS_OUTER_CAPS | {"SYS_ADMIN"}), False),
         ):
@@ -1299,7 +1475,10 @@ class TLSCPUOwnershipTests(unittest.TestCase):
                 row["HostConfig"]["CapAdd"] = caps
                 if accepted:
                     self.assertEqual(
-                        self.validate([row], (tls_proof(row, role),))["status"], "ok"
+                        self.validate([row], (tls_proof(row, role),))[
+                            "status"
+                        ],
+                        "ok",
                     )
                 else:
                     with self.assertRaises(ownership.GPUOwnershipError):
@@ -1337,18 +1516,28 @@ class TLSCPUOwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ownership.GPUOwnershipError, "mount_source_unverified"
         ):
-            self.validate([row], (tls_proof(row),), verified_bind_sources=frozenset())
+            self.validate(
+                [row], (tls_proof(row),), verified_bind_sources=frozenset()
+            )
 
     def test_cpu_proofs_cannot_authorize_compute_or_replace_gpu_proofs(self):
         row = tls_container()
         proof = tls_proof(row)
-        with self.assertRaisesRegex(ownership.GPUOwnershipError, "unknown_compute_pid"):
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "unknown_compute_pid"
+        ):
             self.validate([row], (proof,), compute_apps=f"{UUIDS[0]},100")
-        with self.assertRaisesRegex(ownership.GPUOwnershipError, "proof_invalid"):
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "proof_invalid"
+        ):
             self.validate([row], (), allowed=(proof,))
-        with self.assertRaisesRegex(ownership.GPUOwnershipError, "cpu_proof_invalid"):
+        with self.assertRaisesRegex(
+            ownership.GPUOwnershipError, "cpu_proof_invalid"
+        ):
             self.validate(
-                [row], (replace(proof, container_id=SCOPE_ID),), allowed=(SCOPE,)
+                [row],
+                (replace(proof, container_id=SCOPE_ID),),
+                allowed=(SCOPE,),
             )
 
     def test_cpu_proof_schema_identity_and_missing_peers_are_closed(self):
@@ -1375,18 +1564,24 @@ class TLSCPUOwnershipTests(unittest.TestCase):
         ):
             self.validate([], (proof,))
 
-    def test_gather_retains_tls_and_other_cpu_containers_and_rechecks_snapshot(self):
+    def test_gather_retains_tls_and_other_cpu_containers_and_rechecks_snapshot(
+        self,
+    ):
         inner, outer = tls_container(), tls_container("outer")
         runner = FakeRunner([inner, container(), outer])
         proofs = (tls_proof(inner), tls_proof(outer, "outer"))
-        result = ownership.run_gpu_ownership(CONFIG, runner=runner, cpu_proofs=proofs)
+        result = ownership.run_gpu_ownership(
+            CONFIG, runner=runner, cpu_proofs=proofs
+        )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["running_container_count"], 3)
         self.assertEqual(set(runner.inspect_count.values()), {2})
         self.assertFalse(any("top" in call[0] for call in runner.calls))
         runner = FakeRunner([inner, outer])
         runner.changed_inspect = lambda row: row.update(RestartCount=1)
-        result = ownership.run_gpu_ownership(CONFIG, runner=runner, cpu_proofs=proofs)
+        result = ownership.run_gpu_ownership(
+            CONFIG, runner=runner, cpu_proofs=proofs
+        )
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["code"], "gpu_ownership_cpu_identity_changed")
 

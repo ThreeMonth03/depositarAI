@@ -21,7 +21,9 @@ REVISION = "a" * 40
 
 class ProductCredentialsTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-credentials-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-credentials-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = ProductConfig(
@@ -38,7 +40,9 @@ class ProductCredentialsTests(unittest.TestCase):
     def prepare(self, revision=REVISION):
         with (
             locked_state(self.config, create=True) as store,
-            patch.object(credentials, "require_clean_revision", return_value=revision),
+            patch.object(
+                credentials, "require_clean_revision", return_value=revision
+            ),
         ):
             return credentials.prepare_api_key(
                 self.config, store, revision, repo_root=self.root
@@ -87,14 +91,18 @@ class ProductCredentialsTests(unittest.TestCase):
         self.config = replace(self.config, cache_ttl_seconds=60)
         self.assertTrue(self.prepare("b" * 40)["api_key_reused"])
         self.assertEqual(before, self.key.read_bytes())
-        started = json.loads((self.key_root / credentials.STARTED).read_bytes())
+        started = json.loads(
+            (self.key_root / credentials.STARTED).read_bytes()
+        )
         self.assertEqual(REVISION, started["creation_revision"])
 
     def test_incomplete_state_is_not_adopted_or_rotated(self):
         self.prepare()
         original = self.key.read_bytes()
         (self.key_root / credentials.COMPLETED).unlink()
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.prepare()
         self.assertEqual(original, self.key.read_bytes())
         self.assertFalse((self.key_root / credentials.COMPLETED).exists())
@@ -105,7 +113,9 @@ class ProductCredentialsTests(unittest.TestCase):
         self.key_root.rename(saved)
         with (
             patch.object(credentials.secrets, "token_hex") as generate,
-            self.assertRaisesRegex(credentials.CredentialError, "recovery_required"),
+            self.assertRaisesRegex(
+                credentials.CredentialError, "recovery_required"
+            ),
         ):
             self.prepare()
         generate.assert_not_called()
@@ -118,7 +128,9 @@ class ProductCredentialsTests(unittest.TestCase):
         self.key_root.mkdir(mode=0o700)
         with (
             patch.object(credentials.secrets, "token_hex") as generate,
-            self.assertRaisesRegex(credentials.CredentialError, "recovery_required"),
+            self.assertRaisesRegex(
+                credentials.CredentialError, "recovery_required"
+            ),
         ):
             self.prepare()
         generate.assert_not_called()
@@ -128,7 +140,9 @@ class ProductCredentialsTests(unittest.TestCase):
         self.prepare()
         original = self.key.read_bytes()
         (self.config.state_root / credentials.ANCHOR).unlink()
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.prepare()
         self.assertEqual(original, self.key.read_bytes())
 
@@ -136,33 +150,47 @@ class ProductCredentialsTests(unittest.TestCase):
         self.prepare()
         extra = self.key_root / "unexpected-secret"
         extra.touch(mode=0o600)
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.prepare()
         self.assertTrue(extra.exists())
 
     def test_original_configuration_binding_cannot_be_changed(self):
         self.prepare()
-        started = json.loads((self.key_root / credentials.STARTED).read_bytes())
+        started = json.loads(
+            (self.key_root / credentials.STARTED).read_bytes()
+        )
         started["configuration_sha256"] = "0" * 64
         self.overwrite(credentials.STARTED, started)
-        with self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "receipt_changed"
+        ):
             self.prepare()
 
     def test_boolean_schema_is_not_integer_identity(self):
         self.prepare()
-        started = json.loads((self.key_root / credentials.STARTED).read_bytes())
+        started = json.loads(
+            (self.key_root / credentials.STARTED).read_bytes()
+        )
         started["schema_version"] = True
         self.overwrite(credentials.STARTED, started)
-        with self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "receipt_changed"
+        ):
             self.prepare()
 
     def test_modified_key_does_not_update_its_receipt(self):
         self.prepare()
         original = (self.key_root / credentials.COMPLETED).read_bytes()
         self.key.write_bytes(b"f" * 64 + b"\n")
-        with self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "receipt_changed"
+        ):
             self.prepare()
-        self.assertEqual(original, (self.key_root / credentials.COMPLETED).read_bytes())
+        self.assertEqual(
+            original, (self.key_root / credentials.COMPLETED).read_bytes()
+        )
 
     def test_duplicate_json_fields_are_rejected(self):
         self.prepare()
@@ -205,13 +233,17 @@ class ProductCredentialsTests(unittest.TestCase):
             self.prepare()
 
     def test_invalid_randomness_leaves_intent_for_explicit_recovery(self):
-        with patch.object(credentials.secrets, "token_hex", return_value="bad"):
+        with patch.object(
+            credentials.secrets, "token_hex", return_value="bad"
+        ):
             with self.assertRaisesRegex(
                 credentials.CredentialError, "generation_invalid"
             ):
                 self.prepare()
         self.assertEqual({credentials.STARTED}, set(os.listdir(self.key_root)))
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.prepare()
 
     def test_source_drift_before_creation_leaves_no_secret_root(self):
@@ -256,15 +288,25 @@ class ProductCredentialsTests(unittest.TestCase):
         self.prepare()
         before = self.file_snapshot()
         with (
-            patch.object(private_io, "write_file", side_effect=AssertionError("write")),
-            patch.object(private_io, "write_json", side_effect=AssertionError("write")),
             patch.object(
-                credentials.secrets, "token_hex", side_effect=AssertionError("generate")
+                private_io, "write_file", side_effect=AssertionError("write")
+            ),
+            patch.object(
+                private_io, "write_json", side_effect=AssertionError("write")
+            ),
+            patch.object(
+                credentials.secrets,
+                "token_hex",
+                side_effect=AssertionError("generate"),
             ),
         ):
             report = self.read_authority()
-        completed = json.loads((self.key_root / credentials.COMPLETED).read_bytes())
-        self.assertEqual({"credential_sha256": credentials._digest(completed)}, report)
+        completed = json.loads(
+            (self.key_root / credentials.COMPLETED).read_bytes()
+        )
+        self.assertEqual(
+            {"credential_sha256": credentials._digest(completed)}, report
+        )
         self.assertEqual(before, self.file_snapshot())
         encoded = json.dumps(report)
         self.assertNotIn(self.key.read_text().strip(), encoded)
@@ -293,22 +335,30 @@ class ProductCredentialsTests(unittest.TestCase):
         complete = self.key_root / credentials.COMPLETED
         original = complete.read_bytes()
         complete.unlink()
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.read_authority()
         complete.write_bytes(original)
         complete.chmod(0o600)
         (self.key_root / "unknown").touch(mode=0o600)
-        with self.assertRaisesRegex(credentials.CredentialError, "recovery_required"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "recovery_required"
+        ):
             self.read_authority()
 
     def test_readonly_changed_key_or_closed_receipt_is_rejected(self):
         self.prepare()
         original = self.key.read_bytes()
         self.key.write_bytes(b"f" * 64 + b"\n")
-        with self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"):
+        with self.assertRaisesRegex(
+            credentials.CredentialError, "receipt_changed"
+        ):
             self.read_authority()
         self.key.write_bytes(original)
-        complete = json.loads((self.key_root / credentials.COMPLETED).read_bytes())
+        complete = json.loads(
+            (self.key_root / credentials.COMPLETED).read_bytes()
+        )
         for field, value in (
             ("schema_version", True),
             ("key_sha256", "0" * 64),
@@ -318,13 +368,17 @@ class ProductCredentialsTests(unittest.TestCase):
             self.overwrite(credentials.COMPLETED, {**complete, field: value})
             with (
                 self.subTest(field=field),
-                self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"),
+                self.assertRaisesRegex(
+                    credentials.CredentialError, "receipt_changed"
+                ),
             ):
                 self.read_authority()
 
     def test_readonly_anchor_started_and_configuration_must_agree(self):
         self.prepare()
-        started = json.loads((self.key_root / credentials.STARTED).read_bytes())
+        started = json.loads(
+            (self.key_root / credentials.STARTED).read_bytes()
+        )
         for field, value in (
             ("schema_version", True),
             ("creation_revision", "bad"),
@@ -333,7 +387,9 @@ class ProductCredentialsTests(unittest.TestCase):
             self.overwrite(credentials.STARTED, {**started, field: value})
             with (
                 self.subTest(field=field),
-                self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"),
+                self.assertRaisesRegex(
+                    credentials.CredentialError, "receipt_changed"
+                ),
             ):
                 self.read_authority()
         self.overwrite(credentials.STARTED, started)
@@ -343,7 +399,9 @@ class ProductCredentialsTests(unittest.TestCase):
                 {**started, "creation_revision": "bad"},
                 replace=True,
             )
-            with self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"):
+            with self.assertRaisesRegex(
+                credentials.CredentialError, "receipt_changed"
+            ):
                 credentials.read_api_key_authority(self.config, store)
         with locked_state(self.config) as store:
             store.write("product.json", {}, replace=True)
@@ -352,7 +410,9 @@ class ProductCredentialsTests(unittest.TestCase):
             ):
                 credentials.read_api_key_authority(self.config, store)
 
-    def test_readonly_authority_rejects_linked_key_and_replaced_secret_directory(self):
+    def test_readonly_authority_rejects_linked_or_replaced_secrets(
+        self,
+    ):
         self.prepare()
         target = self.root / "external-key"
         original = self.key.read_bytes()
@@ -377,7 +437,9 @@ class ProductCredentialsTests(unittest.TestCase):
             calls.append(name)
             return result
 
-        with patch.object(credentials, "_record", side_effect=replace_directory):
+        with patch.object(
+            credentials, "_record", side_effect=replace_directory
+        ):
             with self.assertRaises(credentials.CredentialError):
                 self.read_authority()
         self.assertEqual([], list(self.key_root.iterdir()))
@@ -391,7 +453,7 @@ class ProductCredentialsTests(unittest.TestCase):
                 credentials.read_api_key_authority(self.config, store)
         self.assertEqual([], list(self.config.state_root.iterdir()))
 
-    def test_changed_key_and_completion_during_verification_cannot_publish_stale_digest(
+    def test_key_and_completion_changes_cannot_publish_stale_digest(
         self,
     ):
         self.prepare()
@@ -420,7 +482,11 @@ class ProductCredentialsTests(unittest.TestCase):
             self.overwrite(credentials.COMPLETED, original_complete)
             with (
                 self.subTest(reader=reader.__name__),
-                patch.object(credentials, "_record", side_effect=changed_material),
-                self.assertRaisesRegex(credentials.CredentialError, "receipt_changed"),
+                patch.object(
+                    credentials, "_record", side_effect=changed_material
+                ),
+                self.assertRaisesRegex(
+                    credentials.CredentialError, "receipt_changed"
+                ),
             ):
                 reader()

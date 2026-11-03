@@ -16,38 +16,47 @@ from unittest.mock import patch
 from search.operations.jobs import pueue
 
 
-SEALS = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
-NATIVE_SOURCE = r"""
-#define _GNU_SOURCE
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#ifndef MARKER
-#define MARKER "native-fixture"
-#endif
-
-int main(int argc, char **argv) {
-    if (argc < 3 || strcmp(argv[1], "--config")) return 20;
-    int foreign = argc > 4 ? fcntl(atoi(argv[4]), F_GETFD) : -2;
-    int binary = open(argv[0], O_RDONLY);
-    int config = open(argv[2], O_RDONLY);
-    if (binary < 0 || config < 0) return 21;
-    printf("%s\nforeign=%d\nbinary-seals=%d\nconfig-seals=%d\nconfig:\n",
-           MARKER, foreign, fcntl(binary, F_GET_SEALS), fcntl(config, F_GET_SEALS));
-    char buffer[1024];
-    ssize_t count;
-    while ((count = read(config, buffer, sizeof(buffer))) > 0) {
-        if (fwrite(buffer, 1, count, stdout) != (size_t) count) return 22;
-    }
-    close(binary);
-    close(config);
-    fflush(stdout);
-    if (argc > 3 && !strcmp(argv[3], "sleep")) sleep(5);
-    return argc > 3 && !strcmp(argv[3], "fail") ? 23 : 0;
-}
-"""
+SEALS = (
+    fcntl.F_SEAL_WRITE
+    | fcntl.F_SEAL_GROW
+    | fcntl.F_SEAL_SHRINK
+    | fcntl.F_SEAL_SEAL
+)
+NATIVE_SOURCE = (
+    "\n"
+    "#define _GNU_SOURCE\n"
+    "#include <fcntl.h>\n"
+    "#include <stdio.h>\n"
+    "#include <stdlib.h>\n"
+    "#include <string.h>\n"
+    "#include <unistd.h>\n"
+    "#ifndef MARKER\n"
+    '#define MARKER "native-fixture"\n'
+    "#endif\n"
+    "\n"
+    "int main(int argc, char **argv) {\n"
+    '    if (argc < 3 || strcmp(argv[1], "--config")) return 20;\n'
+    "    int foreign = argc > 4 ? fcntl(atoi(argv[4]), F_GETFD) : -2;\n"
+    "    int binary = open(argv[0], O_RDONLY);\n"
+    "    int config = open(argv[2], O_RDONLY);\n"
+    "    if (binary < 0 || config < 0) return 21;\n"
+    '    printf("%s\\nforeign=%d\\nbinary-seals=%d\\nconfig-seals=%d\\ncon'
+    'fig:\\n",\n'
+    "           MARKER, foreign, fcntl(binary, F_GET_SEALS), "
+    "fcntl(config, F_GET_SEALS));\n"
+    "    char buffer[1024];\n"
+    "    ssize_t count;\n"
+    "    while ((count = read(config, buffer, sizeof(buffer))) > 0) {\n"
+    "        if (fwrite(buffer, 1, count, stdout) != (size_t) count) "
+    "return 22;\n"
+    "    }\n"
+    "    close(binary);\n"
+    "    close(config);\n"
+    "    fflush(stdout);\n"
+    '    if (argc > 3 && !strcmp(argv[3], "sleep")) sleep(5);\n'
+    '    return argc > 3 && !strcmp(argv[3], "fail") ? 23 : 0;\n'
+    "}\n"
+)
 
 
 class PueueDescriptorTests(unittest.TestCase):
@@ -61,7 +70,9 @@ class PueueDescriptorTests(unittest.TestCase):
         cls.native = directory / "fixture"
         compiler = shutil.which("cc", path=pueue.ENVIRONMENT["PATH"])
         if compiler is None:
-            raise RuntimeError("native transport fixtures require the host C compiler")
+            raise RuntimeError(
+                "native transport fixtures require the host C compiler"
+            )
         subprocess.run(
             [compiler, "-Wall", "-Werror", "-o", cls.native, source],
             env=pueue.ENVIRONMENT,
@@ -71,7 +82,13 @@ class PueueDescriptorTests(unittest.TestCase):
         cls.native.chmod(0o700)
         cls.replacement = directory / "replacement"
         subprocess.run(
-            [compiler, '-DMARKER="replacement-fixture"', "-o", cls.replacement, source],
+            [
+                compiler,
+                '-DMARKER="replacement-fixture"',
+                "-o",
+                cls.replacement,
+                source,
+            ],
             env=pueue.ENVIRONMENT,
             check=True,
             capture_output=True,
@@ -79,7 +96,9 @@ class PueueDescriptorTests(unittest.TestCase):
         cls.replacement.chmod(0o700)
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pueue-descriptor-fixture-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="pueue-descriptor-fixture-"
+        )
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
         self.root = self.base / "inputs"
@@ -94,14 +113,19 @@ class PueueDescriptorTests(unittest.TestCase):
             "pueue": str(self.binary),
         }
         self.config = pueue.configuration(self.registry)
-        for name, encoded in (("pueue.yml", self.config), ("aliases.yml", b"{}\n")):
+        for name, encoded in (
+            ("pueue.yml", self.config),
+            ("aliases.yml", b"{}\n"),
+        ):
             path = self.root / name
             path.write_bytes(encoded)
             path.chmod(0o600)
         self.fd_sets, self.processes = [], []
         self.addCleanup(patch.stopall)
         patch.object(
-            pueue, "BINARY_SHA256", hashlib.sha256(self.binary.read_bytes()).hexdigest()
+            pueue,
+            "BINARY_SHA256",
+            hashlib.sha256(self.binary.read_bytes()).hexdigest(),
         ).start()
 
     def call(self, *arguments, before=None, timeout=None):
@@ -154,19 +178,29 @@ class PueueDescriptorTests(unittest.TestCase):
             self.root.mkdir(mode=0o700)
             self.binary.write_bytes(self.replacement.read_bytes())
             self.binary.chmod(0o700)
-            (self.root / "pueue.yml").write_bytes(b"replacement configuration\n")
+            (self.root / "pueue.yml").write_bytes(
+                b"replacement configuration\n"
+            )
 
         self.assert_native_config(self.call("status", before=replace))
 
     def test_same_inode_rewrite_does_not_change_verified_child_inputs(self):
-        before = self.binary.stat().st_ino, (self.root / "pueue.yml").stat().st_ino
+        before = (
+            self.binary.stat().st_ino,
+            (self.root / "pueue.yml").stat().st_ino,
+        )
 
         def rewrite(_argv, _kwargs):
             self.binary.write_bytes(self.replacement.read_bytes())
-            (self.root / "pueue.yml").write_bytes(b"replacement configuration\n")
+            (self.root / "pueue.yml").write_bytes(
+                b"replacement configuration\n"
+            )
             self.assertEqual(
                 before,
-                (self.binary.stat().st_ino, (self.root / "pueue.yml").stat().st_ino),
+                (
+                    self.binary.stat().st_ino,
+                    (self.root / "pueue.yml").stat().st_ino,
+                ),
             )
 
         self.assert_native_config(self.call("status", before=rewrite))
@@ -212,9 +246,17 @@ class PueueDescriptorTests(unittest.TestCase):
         with patch.object(pueue.os, "write", side_effect=partial):
             self.assert_native_config(self.call("status"))
 
-    def test_sealing_and_second_snapshot_failures_close_handles_without_dispatch(self):
+    def test_seal_and_resnapshot_failures_close_without_dispatch(
+        self,
+    ):
         original_create, original_fcntl = os.memfd_create, fcntl.fcntl
-        for failure in ("create-second", "seal", "get-seal", "unsealed", "zero-write"):
+        for failure in (
+            "create-second",
+            "seal",
+            "get-seal",
+            "unsealed",
+            "zero-write",
+        ):
             created = []
 
             def create(*args):
@@ -255,7 +297,9 @@ class PueueDescriptorTests(unittest.TestCase):
                     with self.assertRaises(OSError):
                         os.fstat(fd)
 
-    def test_exec_refusal_has_no_pathname_fallback_and_closes_descriptors(self):
+    def test_exec_refusal_has_no_pathname_fallback_and_closes_descriptors(
+        self,
+    ):
         def refuse(argv, kwargs):
             self.assertTrue(str(argv[0]).startswith("/proc/self/fd/"))
             self.assertEqual(len(kwargs["pass_fds"]), 2)
@@ -269,7 +313,9 @@ class PueueDescriptorTests(unittest.TestCase):
     def test_unavailable_memfd_refuses_without_dispatch(self):
         with (
             patch.object(
-                pueue.os, "memfd_create", side_effect=OSError(errno.ENOSYS, "fixture")
+                pueue.os,
+                "memfd_create",
+                side_effect=OSError(errno.ENOSYS, "fixture"),
             ),
             patch.object(pueue.subprocess, "Popen") as spawn,
             self.assertRaisesRegex(pueue.JobError, "job_sealed_input_failed"),
@@ -277,12 +323,18 @@ class PueueDescriptorTests(unittest.TestCase):
             pueue.Pueue(self.registry).call("status")
         spawn.assert_not_called()
 
-    def test_nonzero_exit_output_limit_and_deadline_close_both_descriptors(self):
-        with self.assertRaisesRegex(pueue.JobError, "job_queue_command_failed"):
+    def test_nonzero_exit_output_limit_and_deadline_close_both_descriptors(
+        self,
+    ):
+        with self.assertRaisesRegex(
+            pueue.JobError, "job_queue_command_failed"
+        ):
             self.call("fail")
         self.assert_handles_closed()
         with patch.object(pueue, "MAX_OUTPUT", 32):
-            with self.assertRaisesRegex(pueue.JobError, "job_command_output_limit"):
+            with self.assertRaisesRegex(
+                pueue.JobError, "job_command_output_limit"
+            ):
                 self.call("status")
         self.assert_handles_closed()
         with self.assertRaisesRegex(pueue.JobError, "job_command_timeout"):

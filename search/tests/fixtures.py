@@ -46,7 +46,11 @@ def result(index: int, score: float) -> dict:
         "license_title": "Creative Commons Attribution",
         "metadata_created": "2026-01-01T00:00:00",
         "metadata_modified": "2026-09-10T00:00:00",
-        "temporal_coverage": {"start": "2020", "end": "2025", "status": "complete"},
+        "temporal_coverage": {
+            "start": "2020",
+            "end": "2025",
+            "status": "complete",
+        },
         "resource_count": 2,
         "rank_fusion_score": score,
         "searchers": ["opensearch-bm25", "opensearch-knn"],
@@ -59,7 +63,9 @@ def report(query: str, count: int = TOP_K, *, conditions=None) -> dict:
     return {
         "manifest_sha256": "b" * 64,
         "query_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-        "conditions": copy.deepcopy(conditions) if conditions is not None else {},
+        "conditions": copy.deepcopy(conditions)
+        if conditions is not None
+        else {},
         "ranking": RANKING,
         "results": rows,
     }
@@ -70,7 +76,9 @@ def condition_document(start=None, end=None, bbox=None, formats=None):
         "temporal": {"start": start, "end": end},
         "bbox": {
             "status": "complete" if bbox is not None else "absent",
-            **dict(zip(("x_min", "y_min", "x_max", "y_max"), bbox or [None] * 4)),
+            **dict(
+                zip(("x_min", "y_min", "x_max", "y_max"), bbox or [None] * 4)
+            ),
         },
         "resource_formats": formats or [],
     }
@@ -83,7 +91,10 @@ class RetrievalFixture:
     def __init__(self):
         self.calls = []
         self.retrieval = None
-        self.rerank = {"order": [4, 3, 2, 1, 0], "model_revision": MODEL_REVISION}
+        self.rerank = {
+            "order": [4, 3, 2, 1, 0],
+            "model_revision": MODEL_REVISION,
+        }
         self.states = {
             IDS[0]: "unknown",
             IDS[1]: "match",
@@ -191,7 +202,9 @@ class ConversationHTTPFixture:
 
     def turn(self, **body):
         return self.client.post(
-            "/v1/turn", headers=self.headers, json={"query": "找氣候資料", **body}
+            "/v1/turn",
+            headers=self.headers,
+            json={"query": "找氣候資料", **body},
         )
 
 
@@ -212,7 +225,9 @@ class ClosingResponse:
         self._url = url
         self._closed = False
         self.fp = SimpleNamespace(
-            raw=SimpleNamespace(_sock=SimpleNamespace(settimeout=lambda _value: None))
+            raw=SimpleNamespace(
+                _sock=SimpleNamespace(settimeout=lambda _value: None)
+            )
         )
 
     def isclosed(self):

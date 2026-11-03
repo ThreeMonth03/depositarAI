@@ -1,4 +1,6 @@
-"""Async DRF views with JSON-only parsing and application-owned authentication."""
+"""Async DRF views with JSON-only parsing
+and application-owned authentication.
+"""
 
 # DRF resolves settings while importing its view classes.
 from . import application as _application  # noqa: F401

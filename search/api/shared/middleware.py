@@ -17,7 +17,10 @@ ERRORS = {
     408: ("request_timeout", "Request body deadline exceeded."),
     411: ("length_required", "Content-Length is required."),
     413: ("request_too_large", "Request body exceeds the allowed size."),
-    415: ("unsupported_media_type", "Use application/json without compression."),
+    415: (
+        "unsupported_media_type",
+        "Use application/json without compression.",
+    ),
     422: (
         "invalid_request",
         "Request fields do not match the search contract.",
@@ -36,7 +39,10 @@ def error_details(status, request_id):
     if status in (429, 503):
         headers["Retry-After"] = "2"
     return (
-        {"error": {"code": code, "message": message}, "request_id": request_id},
+        {
+            "error": {"code": code, "message": message},
+            "request_id": request_id,
+        },
         headers,
     )
 
@@ -77,7 +83,9 @@ class BoundaryMiddleware:
             except (OSError, ValueError, UnicodeError):
                 return await reject(503)
             supplied = headers.get("authorization", "")
-            if not hmac.compare_digest(supplied.encode(), ("Bearer " + key).encode()):
+            if not hmac.compare_digest(
+                supplied.encode(), ("Bearer " + key).encode()
+            ):
                 return await reject(401)
         post = scope["method"] == "POST"
         if post:
@@ -88,7 +96,11 @@ class BoundaryMiddleware:
             ):
                 return await reject(415)
             length = headers.get("content-length", "")
-            if not length.isascii() or not length.isdecimal() or len(length) > 8:
+            if (
+                not length.isascii()
+                or not length.isdecimal()
+                or len(length) > 8
+            ):
                 return await reject(411)
             if int(length) > self.max_body_bytes:
                 return await reject(413)
@@ -106,7 +118,9 @@ class BoundaryMiddleware:
             ):
                 return await reject(400)
         try:
-            body = await bounded_body(receive, limit=self.max_body_bytes if post else 0)
+            body = await bounded_body(
+                receive, limit=self.max_body_bytes if post else 0
+            )
             if post:
                 if len(body) != int(length):
                     raise ValueError("wrong body length")
@@ -121,7 +135,11 @@ class BoundaryMiddleware:
             nonlocal consumed
             if not consumed:
                 consumed = True
-                return {"type": "http.request", "body": body, "more_body": False}
+                return {
+                    "type": "http.request",
+                    "body": body,
+                    "more_body": False,
+                }
             return await receive()
 
         async def send_headers(message):

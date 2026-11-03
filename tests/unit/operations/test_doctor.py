@@ -73,7 +73,11 @@ class ProductDoctorTests(unittest.TestCase):
         self.private = self.root / "private"
         self.private.mkdir(mode=0o700)
         roots = {}
-        for name in ("api_model_root", "embedding_model_root", "reranker_model_root"):
+        for name in (
+            "api_model_root",
+            "embedding_model_root",
+            "reranker_model_root",
+        ):
             path = self.root / name
             path.mkdir(mode=0o700)
             roots[name] = str(path)
@@ -100,16 +104,25 @@ class ProductDoctorTests(unittest.TestCase):
 
     def run_doctor(self, **kwargs):
         # Tests may themselves run as root; ownership is still checked against
-        # the real fixture owner. Only the separate operator assertion is mocked.
-        with mock.patch.object(doctor, "validate_config", return_value=self.config):
+        # the real fixture owner. Only the separate operator assertion is
+        # mocked.
+        with mock.patch.object(
+            doctor, "validate_config", return_value=self.config
+        ):
             return doctor.run_doctor(
-                self.config, repo_root=self.repo, runner=self.runner, uid=1234, **kwargs
+                self.config,
+                repo_root=self.repo,
+                runner=self.runner,
+                uid=1234,
+                **kwargs,
             )
 
     def codes(self, report):
         return {item["name"]: item["code"] for item in report["checks"]}
 
-    def test_complete_light_check_reports_roles_resources_revision_without_paths(self):
+    def test_light_check_reports_roles_resources_revision_without_paths(
+        self,
+    ):
         result = self.run_doctor()
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["verification"], "light")
@@ -121,7 +134,9 @@ class ProductDoctorTests(unittest.TestCase):
         self.assertEqual(result["hardware"]["gpus"][0]["memory_mib"], 11264)
         self.assertGreater(result["hardware"]["cpu_count"], 0)
         self.assertNotIn(str(self.root), json.dumps(result))
-        self._api_models.assert_called_once_with(self.config.api_model_root, False)
+        self._api_models.assert_called_once_with(
+            self.config.api_model_root, False
+        )
         self._embedding_model.assert_called_once_with(
             self.config.embedding_model_root, False
         )
@@ -139,12 +154,18 @@ class ProductDoctorTests(unittest.TestCase):
         with mock.patch.object(
             doctor, "validate_config", side_effect=ValueError("PRIVATE PATH")
         ):
-            result = doctor.run_doctor(self.config, runner=self.runner, uid=1234)
-        self.assertEqual(self.codes(result)["configuration"], "configuration_failed")
+            result = doctor.run_doctor(
+                self.config, runner=self.runner, uid=1234
+            )
+        self.assertEqual(
+            self.codes(result)["configuration"], "configuration_failed"
+        )
         self.assertEqual(self.runner.calls, [])
         self.assertNotIn("PRIVATE PATH", json.dumps(result))
 
-    def test_docker_probe_is_local_readonly_no_gpu_and_uses_only_approved_roots(self):
+    def test_docker_probe_is_readonly_cpu_and_uses_only_approved_roots(
+        self,
+    ):
         self.run_doctor()
         calls = [
             argv
@@ -179,7 +200,9 @@ class ProductDoctorTests(unittest.TestCase):
         self.assertNotIn(str(self.private), mounts)
         self.assertFalse(self.config.state_root.exists())
 
-    def test_existing_state_is_also_probed_without_creating_or_changing_files(self):
+    def test_existing_state_is_also_probed_without_creating_or_changing_files(
+        self,
+    ):
         self.config.state_root.mkdir(mode=0o700)
         marker = self.config.state_root / "marker"
         marker.write_text("kept")
@@ -194,10 +217,15 @@ class ProductDoctorTests(unittest.TestCase):
         self.assertEqual(marker.read_text(), "kept")
 
     def test_missing_probe_image_never_pulls_or_runs_and_blocks(self):
-        self.runner.fail = lambda argv: argv[:3] == ["docker", "image", "inspect"]
+        self.runner.fail = lambda argv: argv[:3] == [
+            "docker",
+            "image",
+            "inspect",
+        ]
         result = self.run_doctor()
         self.assertEqual(
-            self.codes(result)["storage_probe_image"], "storage_probe_image_failed"
+            self.codes(result)["storage_probe_image"],
+            "storage_probe_image_failed",
         )
         self.assertFalse(
             any(argv[:2] == ["docker", "run"] for argv, _ in self.runner.calls)
@@ -218,15 +246,21 @@ class ProductDoctorTests(unittest.TestCase):
         self.runner.fail = lambda argv: argv[:2] == ["docker", "info"]
         result = self.run_doctor()
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(self.codes(result)["nvidia_runtime"], "nvidia_runtime_failed")
-        self.assertFalse(any("--gpus" in argv for argv, _ in self.runner.calls))
+        self.assertEqual(
+            self.codes(result)["nvidia_runtime"], "nvidia_runtime_failed"
+        )
+        self.assertFalse(
+            any("--gpus" in argv for argv, _ in self.runner.calls)
+        )
 
     def test_old_and_malformed_compose_versions_block(self):
         for version in ("2.20.0", "PRIVATE INVALID", "", "5.5.0-malicious"):
             self.runner.compose_version = version
             with self.subTest(version=version):
                 result = self.run_doctor()
-                self.assertEqual(self.codes(result)["compose"], "compose_failed")
+                self.assertEqual(
+                    self.codes(result)["compose"], "compose_failed"
+                )
 
     def test_source_revision_must_be_exact_and_dirty_source_blocks(self):
         self.runner.revision = "PRIVATE RAW OUTPUT"
@@ -245,7 +279,9 @@ class ProductDoctorTests(unittest.TestCase):
         self.assertIn("scripts/depositarai.py", status_call)
         self.assertIn("web", status_call)
 
-    def test_missing_or_invalid_gpu_records_block_without_exposing_output(self):
+    def test_missing_or_invalid_gpu_records_block_without_exposing_output(
+        self,
+    ):
         for raw in (
             "\n".join(self.runner.gpus.splitlines()[:3]),
             "PRIVATE GPU OUTPUT",
@@ -268,7 +304,9 @@ class ProductDoctorTests(unittest.TestCase):
     def test_deep_is_explicit_and_forwarded_to_each_model_verifier(self):
         result = self.run_doctor(deep_verify=True)
         self.assertEqual(result["verification"], "deep")
-        self._api_models.assert_called_once_with(self.config.api_model_root, True)
+        self._api_models.assert_called_once_with(
+            self.config.api_model_root, True
+        )
         self._embedding_model.assert_called_once_with(
             self.config.embedding_model_root, True
         )
@@ -296,8 +334,12 @@ class ProductDoctorTests(unittest.TestCase):
             subprocess.TimeoutExpired(["PRIVATE command"], 15),
         ):
             runner = mock.Mock(side_effect=error)
-            with mock.patch.object(doctor, "validate_config", return_value=self.config):
-                result = doctor.run_doctor(self.config, runner=runner, uid=1234)
+            with mock.patch.object(
+                doctor, "validate_config", return_value=self.config
+            ):
+                result = doctor.run_doctor(
+                    self.config, runner=runner, uid=1234
+                )
             self.assertEqual(result["status"], "blocked")
             self.assertNotIn("PRIVATE", json.dumps(result))
 
@@ -316,7 +358,11 @@ class ModelPreflightTests(unittest.TestCase):
         descriptor = {"digest": "sha256:" + "b" * 64, "size": 7}
         self.manifest.write_text(
             json.dumps(
-                {"schemaVersion": 2, "config": descriptor, "layers": [descriptor]}
+                {
+                    "schemaVersion": 2,
+                    "config": descriptor,
+                    "layers": [descriptor],
+                }
             )
         )
         self.digest = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
@@ -357,14 +403,21 @@ class ModelPreflightTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             doctor._ollama_files(self.root, {"test:8b": self.digest})
 
-    def test_api_light_deep_reuses_plan_and_hashes_weights_only_when_explicit(self):
+    def test_api_light_deep_reuses_plan_and_hashes_weights_only_when_explicit(
+        self,
+    ):
         files = {
-            str(self.blob.relative_to(self.root)): {"sha256": "b" * 64, "bytes": 7}
+            str(self.blob.relative_to(self.root)): {
+                "sha256": "b" * 64,
+                "bytes": 7,
+            }
         }
         with mock.patch(
             "scripts.prepare_search_models.plan", return_value=files
         ) as plan:
-            with mock.patch("scripts.prepare_search_models.checked_file") as verify:
+            with mock.patch(
+                "scripts.prepare_search_models.checked_file"
+            ) as verify:
                 doctor._api_models(self.root, False)
                 verify.assert_not_called()
                 doctor._api_models(self.root, True)
@@ -378,7 +431,9 @@ class ModelPreflightTests(unittest.TestCase):
         code.write_bytes(b"code")
         pins = {"model.safetensors": "a" * 64, "custom.py": "b" * 64}
         with mock.patch("search.reranker.model.MODEL_HASHES", pins):
-            with mock.patch("scripts.prepare_search_models.checked_file") as verify:
+            with mock.patch(
+                "scripts.prepare_search_models.checked_file"
+            ) as verify:
                 doctor._reranker_model(self.root, False)
                 verify.assert_called_once_with(code, "b" * 64, 4)
                 verify.reset_mock()
@@ -397,7 +452,9 @@ class ModelPreflightTests(unittest.TestCase):
 
 
 class SourceIdentityTests(unittest.TestCase):
-    def test_clean_revision_includes_shared_helpers_and_untracked_sources(self):
+    def test_clean_revision_includes_shared_helpers_and_untracked_sources(
+        self,
+    ):
         runner = FakeRunner()
         self.assertEqual(
             require_clean_revision(Path("/not-read"), runner=runner), "a" * 40
@@ -439,7 +496,9 @@ class SourceIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source_unavailable"):
             require_clean_revision(Path("/not-read"), runner=runner)
         with self.assertRaisesRegex(ValueError, "source_unavailable"):
-            require_clean_revision(Path("/not-read"), runner=MockRunnerTimeout())
+            require_clean_revision(
+                Path("/not-read"), runner=MockRunnerTimeout()
+            )
 
 
 class MockRunnerTimeout:

@@ -1,15 +1,23 @@
-"""Render native APISIX counters; the adapter supplies validated request variables."""
+"""Render native APISIX counters; the adapter supplies validated request
+variables.
+"""
 
 from pathlib import Path
 
 
 def quota_response_lua():
-    return Path(__file__).with_name("quota_response.lua").read_text(encoding="utf-8")
+    return (
+        Path(__file__)
+        .with_name("quota_response.lua")
+        .read_text(encoding="utf-8")
+    )
 
 
 def render_counter(config, *, session=False):
     period = "session" if session else "quota"
-    suffix = f"$http_x_depositar_quota_bucket:$http_x_depositar_{period}_period"
+    suffix = (
+        f"$http_x_depositar_quota_bucket:$http_x_depositar_{period}_period"
+    )
     window = f"$http_x_depositar_{period}_ttl"
     rules = [
         {
@@ -17,7 +25,10 @@ def render_counter(config, *, session=False):
             if session
             else "$http_x_depositar_turn_limit",
             "time_window": window,
-            "key": "individual:$http_x_depositar_principal_kind:$http_x_depositar_subject:"
+            ("key"): (
+                "individual:$http_x_depositar_principal_kind:"
+                "$http_x_depositar_subject:"
+            )
             + suffix,
             "header_prefix": "Individual",
         }
@@ -54,7 +65,8 @@ def render_counter(config, *, session=False):
         "rejected_msg": "quota_exceeded",
         "show_limit_quota_header": True,
         # One common turn route gives both tiers one native global namespace.
-        # Rules count attempted admissions sequentially; they are not a transaction.
+        # Rules count attempted admissions sequentially; they are not a
+        # transaction.
         "rules": rules,
         "_meta": {"error_response": {"error": {"code": "quota_exceeded"}}},
     }

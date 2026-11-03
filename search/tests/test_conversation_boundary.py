@@ -15,7 +15,11 @@ from search.api.conversation.app import create_app
 from search.api.shared.config import Settings
 from search.api.shared.readiness import BackendReadiness
 from search.http.body import bounded_body
-from search.tests.fixtures import ConversationFixture, ConversationHTTPFixture, KEY
+from search.tests.fixtures import (
+    ConversationFixture,
+    ConversationHTTPFixture,
+    KEY,
+)
 
 
 class ConversationBoundaryTests(unittest.TestCase):
@@ -76,7 +80,12 @@ class ConversationBoundaryTests(unittest.TestCase):
             {"rerank": False},
             {"candidate_count": 20},
             {"state": {"bbox": [0, 0, 1, 1]}},
-            {"context": {"reference_time": "2026-09-17", "timezone": "Asia/Taipei"}},
+            {
+                "context": {
+                    "reference_time": "2026-09-17",
+                    "timezone": "Asia/Taipei",
+                }
+            },
             {
                 "context": {
                     "reference_time": "2026-09-17T03:00:00Z",
@@ -93,12 +102,16 @@ class ConversationBoundaryTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 422, response.text)
                 self.assertNotIn("private-override", response.text)
                 self.assertNotIn(KEY, response.text)
-                self.assertNotIn("access-control-allow-origin", response.headers)
+                self.assertNotIn(
+                    "access-control-allow-origin", response.headers
+                )
         for count in (0, 21, True, 1.0, "5", None):
             self.assertEqual(self.fixture.turn(top_k=count).status_code, 422)
         self.assertFalse(self.fixture.backend.calls)
 
-    def test_json_duplicates_nonfinite_values_and_excessive_depth_are_rejected(self):
+    def test_json_duplicates_nonfinite_values_and_excessive_depth_are_rejected(
+        self,
+    ):
         for raw in ('{"query":"x","query":"y"}', '{"query":NaN}', "[" * 1100):
             response = self.client.post(
                 "/v1/turn",
@@ -114,20 +127,33 @@ class ConversationBoundaryTests(unittest.TestCase):
             (b"{}", {}, 415),
             (
                 b"{}",
-                {"Content-Type": "application/json", "Content-Encoding": "gzip"},
+                {
+                    "Content-Type": "application/json",
+                    "Content-Encoding": "gzip",
+                },
                 415,
             ),
-            (b"{}", {"Content-Type": "application/json", "Content-Length": "3"}, 400),
+            (
+                b"{}",
+                {"Content-Type": "application/json", "Content-Length": "3"},
+                400,
+            ),
         ):
             response = self.client.post(
-                "/v1/turn", content=content, headers={**self.headers, **headers}
+                "/v1/turn",
+                content=content,
+                headers={**self.headers, **headers},
             )
             self.assertEqual(response.status_code, status, response.text)
             self.assertNotIn("4096", response.text)
         self.assertFalse(self.fixture.backend.calls)
 
-    def test_keys_in_query_string_are_rejected_and_responses_are_not_cached(self):
-        response = self.client.get("/v1/version?api_key=" + KEY, headers=self.headers)
+    def test_keys_in_query_string_are_rejected_and_responses_are_not_cached(
+        self,
+    ):
+        response = self.client.get(
+            "/v1/version?api_key=" + KEY, headers=self.headers
+        )
         self.assertEqual(response.status_code, 400)
         self.assertNotIn(KEY, response.text)
         response = self.fixture.turn()
@@ -143,7 +169,9 @@ class ConversationBoundaryTests(unittest.TestCase):
         self.assertEqual(self.fixture.turn().status_code, 503)
         self.assertFalse(self.fixture.backend.calls)
 
-    def test_invalid_scope_response_cannot_reach_planning_or_echo_model_data(self):
+    def test_invalid_scope_response_cannot_reach_planning_or_echo_model_data(
+        self,
+    ):
         for verdict in (
             None,
             [],
@@ -153,23 +181,30 @@ class ConversationBoundaryTests(unittest.TestCase):
         ):
             self.fixture.backend.calls.clear()
             self.fixture.backend.scope = verdict
-            with self.assertLogs("search.api.conversation.engine", level="WARNING"):
+            with self.assertLogs(
+                "search.api.conversation.engine", level="WARNING"
+            ):
                 response = self.fixture.turn(state={"topic": "河川"})
             self.assertEqual(response.status_code, 503)
             self.assertEqual(response.json()["state"]["topic"], "河川")
             self.assertNotIn("PRIVATE", response.text)
-            self.assertEqual([c[0] for c in self.fixture.backend.calls], ["scope"])
+            self.assertEqual(
+                [c[0] for c in self.fixture.backend.calls], ["scope"]
+            )
 
     def test_invalid_model_plan_never_reaches_retrieval_or_commits_state(self):
         self.fixture.backend.plan["model_data"] = "PRIVATE"
-        with self.assertLogs("search.api.conversation.engine", level="WARNING"):
+        with self.assertLogs(
+            "search.api.conversation.engine", level="WARNING"
+        ):
             response = self.fixture.turn(state={"topic": "河川"})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["state"]["topic"], "河川")
         self.assertIsNone(response.json()["search"])
         self.assertNotIn("PRIVATE", response.text)
         self.assertEqual(
-            [c[0] for c in self.fixture.backend.calls], ["scope", "conversation_plan"]
+            [c[0] for c in self.fixture.backend.calls],
+            ["scope", "conversation_plan"],
         )
 
     def test_only_canonical_paths_and_declared_methods_are_supported(self):
@@ -180,18 +215,26 @@ class ConversationBoundaryTests(unittest.TestCase):
             ("GET", "/v1/turn/"),
         ):
             response = self.client.request(method, path, headers=self.headers)
-            self.assertEqual(response.status_code, 404 if path.endswith("/") else 405)
+            self.assertEqual(
+                response.status_code, 404 if path.endswith("/") else 405
+            )
             self.assertEqual(response.headers["cache-control"], "no-store")
             if method != "HEAD":
                 self.assertEqual(
                     response.json()["error"]["code"],
-                    "not_found" if path.endswith("/") else "method_not_allowed",
+                    "not_found"
+                    if path.endswith("/")
+                    else "method_not_allowed",
                 )
         self.assertFalse(self.fixture.backend.calls)
 
-    def test_unexpected_backend_exception_has_no_diagnostic_or_secret_echo(self):
+    def test_unexpected_backend_exception_has_no_diagnostic_or_secret_echo(
+        self,
+    ):
         with patch.object(
-            self.fixture.backend, "call", side_effect=RuntimeError("PRIVATE " + KEY)
+            self.fixture.backend,
+            "call",
+            side_effect=RuntimeError("PRIVATE " + KEY),
         ):
             response = self.fixture.turn()
         self.assertEqual(response.status_code, 500)
@@ -208,7 +251,9 @@ class ConversationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "application/json")
-        self.assertEqual(response.json()["revision"], self.fixture.settings.revision)
+        self.assertEqual(
+            response.json()["revision"], self.fixture.settings.revision
+        )
 
     def test_exact_current_body_byte_limit_accepts_valid_json(self):
         body = b'{"query":"climate"}'
@@ -286,7 +331,9 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
     def response(self, messages):
         start = next(m for m in messages if m["type"] == "http.response.start")
         body = b"".join(
-            m.get("body", b"") for m in messages if m["type"] == "http.response.body"
+            m.get("body", b"")
+            for m in messages
+            if m["type"] == "http.response.body"
         )
         return (
             start["status"],
@@ -294,21 +341,33 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             json.loads(body),
         )
 
-    async def test_authentication_and_duplicate_critical_headers_never_read_body(self):
+    async def test_auth_and_duplicate_headers_reject_before_body(
+        self,
+    ):
         async def unread():
-            self.fail("Body read before rejecting authentication or ambiguous headers")
+            self.fail(
+                "Body read before rejecting authentication or "
+                "ambiguous headers"
+            )
 
         for headers, status in (
             ([(b"content-type", b"text/plain")], 401),
             ([(b"authorization", b"wrong")] * 2, 400),
             (self.scope()["headers"] + [(b"Content-Length", b"999")], 400),
-            (self.scope()["headers"] + [(b"Content-Type", b"text/plain")], 400),
+            (
+                self.scope()["headers"] + [(b"Content-Type", b"text/plain")],
+                400,
+            ),
         ):
             with self.subTest(headers=headers):
-                result = await self.exchange(self.scope(headers=headers), unread)
+                result = await self.exchange(
+                    self.scope(headers=headers), unread
+                )
                 code, response_headers, payload = self.response(result)
                 self.assertEqual(code, status)
-                self.assertEqual(response_headers[b"cache-control"], b"no-store")
+                self.assertEqual(
+                    response_headers[b"cache-control"], b"no-store"
+                )
                 self.assertNotIn(KEY, json.dumps(payload))
         self.assertFalse(self.backend.calls)
 
@@ -323,7 +382,9 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(self.response(result)[0], 401)
 
-    async def test_missing_and_invalid_content_lengths_fail_before_body_read(self):
+    async def test_missing_and_invalid_content_lengths_fail_before_body_read(
+        self,
+    ):
         async def unread():
             self.fail("Body read with an invalid declared length")
 
@@ -339,11 +400,21 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.response(result)[0], 411)
         self.assertFalse(self.backend.calls)
 
-    async def test_streamed_body_is_bounded_even_when_declared_size_is_small(self):
+    async def test_streamed_body_is_bounded_even_when_declared_size_is_small(
+        self,
+    ):
         chunks = iter(
             [
-                {"type": "http.request", "body": b"x" * 4096, "more_body": True},
-                {"type": "http.request", "body": b"x" * 4097, "more_body": True},
+                {
+                    "type": "http.request",
+                    "body": b"x" * 4096,
+                    "more_body": True,
+                },
+                {
+                    "type": "http.request",
+                    "body": b"x" * 4097,
+                    "more_body": True,
+                },
             ]
         )
 
@@ -367,7 +438,9 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(timeout, 5)
             return await bounded_body(receive, limit=limit, timeout=0.01)
 
-        with patch("search.api.shared.middleware.bounded_body", shortened_read):
+        with patch(
+            "search.api.shared.middleware.bounded_body", shortened_read
+        ):
             result = await self.exchange(self.scope(), receive)
         self.assertEqual(self.response(result)[0], 408)
         self.assertTrue(cancelled.is_set())
@@ -381,7 +454,11 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
                 nonlocal consumed
                 if not consumed:
                     consumed = True
-                    return {"type": "http.request", "body": b"", "more_body": False}
+                    return {
+                        "type": "http.request",
+                        "body": b"",
+                        "more_body": False,
+                    }
                 await asyncio.Future()
 
             with self.subTest(method=method):
@@ -408,13 +485,17 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.subTest(method=method, headers=headers):
                     result = await self.exchange(
-                        self.scope(method=method, path="/healthz", headers=headers),
+                        self.scope(
+                            method=method, path="/healthz", headers=headers
+                        ),
                         unread,
                     )
                     self.assertEqual(self.response(result)[0], 400)
         self.assertFalse(self.backend.calls)
 
-    async def test_non_post_streamed_body_cannot_bypass_a_missing_or_zero_length(self):
+    async def test_non_post_stream_rejects_missing_or_zero_length(
+        self,
+    ):
         async def receive():
             return {"type": "http.request", "body": b"x", "more_body": True}
 
@@ -422,7 +503,9 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             for headers in ([], [(b"content-length", b"0")]):
                 with self.subTest(method=method, headers=headers):
                     result = await self.exchange(
-                        self.scope(method=method, path="/healthz", headers=headers),
+                        self.scope(
+                            method=method, path="/healthz", headers=headers
+                        ),
                         receive,
                     )
                     self.assertEqual(self.response(result)[0], 400)
@@ -445,16 +528,21 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
 
             with (
                 self.subTest(method=method),
-                patch("search.api.shared.middleware.bounded_body", shortened_read),
+                patch(
+                    "search.api.shared.middleware.bounded_body", shortened_read
+                ),
             ):
                 result = await self.exchange(
-                    self.scope(method=method, path="/healthz", headers=[]), receive
+                    self.scope(method=method, path="/healthz", headers=[]),
+                    receive,
                 )
                 self.assertEqual(self.response(result)[0], 408)
                 self.assertTrue(cancelled.is_set())
         self.assertFalse(self.backend.calls)
 
-    async def test_disconnect_cancels_backend_and_releases_global_admission(self):
+    async def test_disconnect_cancels_backend_and_releases_global_admission(
+        self,
+    ):
         started, cancelled, disconnect = (asyncio.Event() for _ in range(3))
         original_call = self.backend.call
 
@@ -471,7 +559,11 @@ class ConversationASGITests(unittest.IsolatedAsyncioTestCase):
             nonlocal consumed
             if not consumed:
                 consumed = True
-                return {"type": "http.request", "body": self.body, "more_body": False}
+                return {
+                    "type": "http.request",
+                    "body": self.body,
+                    "more_body": False,
+                }
             await disconnect.wait()
             return {"type": "http.disconnect"}
 
@@ -528,7 +620,9 @@ class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
         key = Path(temporary.name) / "key"
         key.write_text(KEY + "\n")
         key.chmod(0o600)
-        settings = Settings("a" * 40, "b" * 64, Path("/catalog"), key, True, 20)
+        settings = Settings(
+            "a" * 40, "b" * 64, Path("/catalog"), key, True, 20
+        )
         self.backend = ConversationFixture()
         self.tick, self.hold, self.started = 0, None, []
         original_call = self.backend.call
@@ -548,7 +642,9 @@ class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
         def readiness(backend, **kwargs):
             return BackendReadiness(backend, clock=lambda: self.tick, **kwargs)
 
-        with patch.object(conversation_app, "BackendReadiness", side_effect=readiness):
+        with patch.object(
+            conversation_app, "BackendReadiness", side_effect=readiness
+        ):
             app = conversation_app.create_app(settings, self.backend)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -581,20 +677,28 @@ class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.entered.wait(), 2)
         return task
 
-    async def test_entire_turn_excludes_uncached_readiness_without_backend_work(self):
+    async def test_uncached_readiness_excludes_entire_turn(
+        self,
+    ):
         for stage in ("scope", "conversation_plan", "retrieve", "rerank"):
             with self.subTest(stage=stage):
                 self.tick += 30
                 task = await self.hold_owner(stage)
                 before = list(self.started)
                 try:
-                    response = await asyncio.wait_for(self.client.get("/readyz"), 2)
+                    response = await asyncio.wait_for(
+                        self.client.get("/readyz"), 2
+                    )
                     self.assertEqual(self.started, before)
                     self.assertEqual(response.status_code, 503)
-                    self.assertEqual(response.json()["error"]["code"], "unavailable")
+                    self.assertEqual(
+                        response.json()["error"]["code"], "unavailable"
+                    )
                 finally:
                     self.release.set()
-                    self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
+                    self.assertEqual(
+                        (await asyncio.wait_for(task, 2)).status_code, 200
+                    )
 
     async def test_turn_excludes_expired_readiness(self):
         self.assertEqual((await self.client.get("/readyz")).status_code, 200)
@@ -617,7 +721,9 @@ class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await asyncio.wait_for(task, 2)).status_code, 200)
         self.assertEqual((await self.turn()).status_code, 200)
 
-    async def test_cached_readiness_stays_cheap_and_does_not_renew_its_age(self):
+    async def test_cached_readiness_stays_cheap_and_does_not_renew_its_age(
+        self,
+    ):
         cached = await self.client.get("/readyz")
         self.assertEqual(cached.status_code, 200)
         self.tick = 29
@@ -640,7 +746,9 @@ class WorkflowAdmissionHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_turn_releases_capacity_for_readiness(self):
         self.backend.fail = "scope"
-        with self.assertLogs("search.api.conversation.engine", level="WARNING"):
+        with self.assertLogs(
+            "search.api.conversation.engine", level="WARNING"
+        ):
             self.assertEqual((await self.turn()).status_code, 503)
         self.backend.fail = None
         self.assertEqual((await self.client.get("/readyz")).status_code, 200)

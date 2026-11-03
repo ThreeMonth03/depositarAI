@@ -1,4 +1,6 @@
-"""Bounded RAM-only state, with monotonic absolute expiry and per-turn fencing."""
+"""Bounded RAM-only state, with monotonic
+absolute expiry and per-turn fencing.
+"""
 
 from dataclasses import dataclass, field
 import secrets

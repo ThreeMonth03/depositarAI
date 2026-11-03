@@ -17,20 +17,28 @@ MAX_INPUT_BYTES = 4096
 
 @contextmanager
 def captured_pipes(
-    process, *, timeout, max_bytes, timeout_error, output_error, input_bytes=None
+    process,
+    *,
+    timeout,
+    max_bytes,
+    timeout_error,
+    output_error,
+    input_bytes=None,
 ):
     """Yield remaining wait time and raw stdout/stderr chunk lists.
 
-    The process must have PIPE stdout/stderr and its own session. Error factories
-    retain caller diagnostics; final wait errors remain caller policy. No bytes
-    are decoded and the cap counts both output streams together. Optional input
-    is bounded and written concurrently, then its pipe closes to deliver EOF.
+    The process must have PIPE stdout/stderr and its own session. Error
+    factories retain caller diagnostics; final wait errors remain caller
+    policy. No bytes are decoded and the cap counts both output streams
+    together. Optional input is bounded and written concurrently, then its pipe
+    closes to deliver EOF.
     """
     selector = None
     chunks, size = {"stdout": [], "stderr": []}, 0
     try:
         if input_bytes is not None and (
-            type(input_bytes) is not bytes or len(input_bytes) > MAX_INPUT_BYTES
+            type(input_bytes) is not bytes
+            or len(input_bytes) > MAX_INPUT_BYTES
         ):
             raise ValueError("process_input_invalid")
         selector = selectors.DefaultSelector()
@@ -45,7 +53,9 @@ def captured_pipes(
                 raise ValueError("process_input_invalid")
             os.set_blocking(process.stdin.fileno(), False)
             if input_bytes:
-                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+                selector.register(
+                    process.stdin, selectors.EVENT_WRITE, "stdin"
+                )
             else:
                 process.stdin.close()
         while selector.get_map():
@@ -86,7 +96,8 @@ def captured_pipes(
                 selector.close()
         finally:
             # A child may retain the pipes after the leader exits. Address the
-            # original process group even when the leader has already completed.
+            # original process group even when the leader has already
+            # completed.
             try:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)

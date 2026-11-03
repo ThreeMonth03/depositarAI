@@ -29,7 +29,8 @@ _BIDI_CODEPOINTS = frozenset(
 )
 
 
-# Scrub each complete at-sign token; varied public text must not leak email-like addresses.
+# Scrub each complete at-sign token; varied public text must not leak
+# email-like addresses.
 _EMAIL_TOKEN_RE = re.compile(r"\S*@\S*")
 
 
@@ -49,7 +50,9 @@ class _TextExtractor(HTMLParser):
         self.parts: List[str] = []
         self._suppressed: List[str] = []
 
-    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(
+        self, tag: str, attrs: List[Tuple[str, Optional[str]]]
+    ) -> None:
         normalized = tag.casefold()
         if normalized in self._SUPPRESSED:
             self._suppressed.append(normalized)
@@ -81,7 +84,9 @@ class _TextExtractor(HTMLParser):
         self.parts.append(data)
 
 
-def _increment(counters: MutableMapping[str, Any], key: str, amount: int = 1) -> None:
+def _increment(
+    counters: MutableMapping[str, Any], key: str, amount: int = 1
+) -> None:
     counters[key] = int(counters.get(key, 0)) + amount
 
 
@@ -106,7 +111,9 @@ def _clean_text(
         parser.feed(value)
         parser.close()
     except Exception as exc:
-        raise policy.BundleError("%s contains malformed HTML" % field_name) from exc
+        raise policy.BundleError(
+            "%s contains malformed HTML" % field_name
+        ) from exc
     extracted = " ".join(parser.parts)
     if extracted != value:
         _increment(counters, "html_fields_cleaned")
@@ -135,7 +142,9 @@ def _clean_text(
     limit = policy.STRING_LIMITS[limit_name]
     if len(cleaned) > limit:
         if not truncate:
-            raise policy.BundleError("%s exceeds its character limit" % field_name)
+            raise policy.BundleError(
+                "%s exceeds its character limit" % field_name
+            )
         marker = "...[truncated]"
         cleaned = cleaned[: limit - len(marker)] + marker
         _increment(counters, "truncated_fields")
@@ -160,12 +169,16 @@ def _clean_string_list(
     if len(value) > policy.ARRAY_LIMITS[list_name]:
         raise policy.BundleError("%s exceeds its item limit" % list_name)
     items = [
-        _clean_text(item, "list_item", counters, "%s item" % list_name, required=True)
+        _clean_text(
+            item, "list_item", counters, "%s item" % list_name, required=True
+        )
         for item in value
     ]
     unique = {item.casefold(): item for item in items}
     if len(unique) != len(items):
-        _increment(counters, "duplicate_list_items_removed", len(items) - len(unique))
+        _increment(
+            counters, "duplicate_list_items_removed", len(items) - len(unique)
+        )
     return sorted(unique.values(), key=lambda item: (item.casefold(), item))
 
 
@@ -186,18 +199,29 @@ def _clean_named_list(
             candidate = item
         elif isinstance(item, dict):
             candidate = (
-                item.get("display_name") or item.get("title") or item.get("name") or ""
+                item.get("display_name")
+                or item.get("title")
+                or item.get("name")
+                or ""
             )
         else:
-            raise policy.BundleError("%s items must be strings or objects" % list_name)
+            raise policy.BundleError(
+                "%s items must be strings or objects" % list_name
+            )
         result.append(
             _clean_text(
-                candidate, "list_item", counters, "%s item" % list_name, required=True
+                candidate,
+                "list_item",
+                counters,
+                "%s item" % list_name,
+                required=True,
             )
         )
     unique = {item.casefold(): item for item in result}
     if len(unique) != len(result):
-        _increment(counters, "duplicate_list_items_removed", len(result) - len(unique))
+        _increment(
+            counters, "duplicate_list_items_removed", len(result) - len(unique)
+        )
     return sorted(unique.values(), key=lambda item: (item.casefold(), item))
 
 
@@ -205,7 +229,9 @@ def _parse_size(value: Any) -> Optional[float]:
     if value in (None, ""):
         return None
     if isinstance(value, bool):
-        raise policy.BundleError("resource size must be a non-negative finite number")
+        raise policy.BundleError(
+            "resource size must be a non-negative finite number"
+        )
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
@@ -213,7 +239,9 @@ def _parse_size(value: Any) -> Optional[float]:
             "resource size must be a non-negative finite number"
         ) from exc
     if not math.isfinite(parsed) or parsed < 0:
-        raise policy.BundleError("resource size must be a non-negative finite number")
+        raise policy.BundleError(
+            "resource size must be a non-negative finite number"
+        )
     if parsed.is_integer():
         return int(parsed)
     return parsed
@@ -225,7 +253,9 @@ def _parse_coordinate(value: Any) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
-        raise policy.BundleError("bbox coordinates must be finite numbers") from exc
+        raise policy.BundleError(
+            "bbox coordinates must be finite numbers"
+        ) from exc
     if not math.isfinite(parsed):
         raise policy.BundleError("bbox coordinates must be finite numbers")
     return 0.0 if parsed == 0 else parsed
@@ -258,7 +288,9 @@ def _normalize_bbox(package: Mapping[str, Any]) -> Dict[str, Any]:
                 "x_max": None,
                 "y_max": None,
             }
-        return dict(zip(("status",) + names, ("partial",) + tuple(coordinates)))
+        return dict(
+            zip(("status",) + names, ("partial",) + tuple(coordinates))
+        )
     try:
         coordinates_full = [_parse_coordinate(item) for item in raw]
     except policy.BundleError:
@@ -280,15 +312,21 @@ def _normalize_bbox(package: Mapping[str, Any]) -> Dict[str, Any]:
             "x_max": None,
             "y_max": None,
         }
-    return dict(zip(("status",) + names, ("complete",) + tuple(coordinates_full)))
+    return dict(
+        zip(("status",) + names, ("complete",) + tuple(coordinates_full))
+    )
 
 
 def _normalize_temporal(
     package: Mapping[str, Any], counters: MutableMapping[str, Any]
 ) -> Dict[str, Any]:
-    start = _clean_text(package.get("start_time"), "date", counters, "start_time")
+    start = _clean_text(
+        package.get("start_time"), "date", counters, "start_time"
+    )
     end = _clean_text(package.get("end_time"), "date", counters, "end_time")
-    created = _clean_text(package.get("created_time"), "date", counters, "created_time")
+    created = _clean_text(
+        package.get("created_time"), "date", counters, "created_time"
+    )
     if start and end:
         status = "complete"
     elif start or end:
@@ -309,7 +347,9 @@ def _normalize_resource(
     dataset_id: str,
 ) -> Dict[str, Any]:
     if not isinstance(resource, dict):
-        raise policy.BundleError("resources for %s must contain objects" % dataset_id)
+        raise policy.BundleError(
+            "resources for %s must contain objects" % dataset_id
+        )
     return {
         "id": _clean_text(
             resource.get("id"),
@@ -328,10 +368,16 @@ def _normalize_resource(
             "resource.description",
         ),
         "format": _clean_text(
-            resource.get("format"), "resource_format", counters, "resource.format"
+            resource.get("format"),
+            "resource_format",
+            counters,
+            "resource.format",
         ),
         "mimetype": _clean_text(
-            resource.get("mimetype"), "resource_mimetype", counters, "resource.mimetype"
+            resource.get("mimetype"),
+            "resource_mimetype",
+            counters,
+            "resource.mimetype",
         ),
         "url": _clean_text(
             resource.get("url"),
@@ -345,7 +391,10 @@ def _normalize_resource(
             resource.get("created"), "date", counters, "resource.created"
         ),
         "last_modified": _clean_text(
-            resource.get("last_modified"), "date", counters, "resource.last_modified"
+            resource.get("last_modified"),
+            "date",
+            counters,
+            "resource.last_modified",
         ),
     }
 
@@ -368,7 +417,9 @@ def normalize_package(
     try:
         dataset_id = str(uuid.UUID(raw_id))
     except (ValueError, AttributeError) as exc:
-        raise policy.BundleError("dataset id must be a canonical UUID string") from exc
+        raise policy.BundleError(
+            "dataset id must be a canonical UUID string"
+        ) from exc
     if raw_id.casefold() != dataset_id:
         raise policy.BundleError("dataset id must use canonical UUID spelling")
 
@@ -381,7 +432,9 @@ def normalize_package(
         truncate=False,
     )
     if "@" in slug:
-        raise policy.BundleError("dataset slug must not contain an at-sign token")
+        raise policy.BundleError(
+            "dataset slug must not contain an at-sign token"
+        )
     dataset_url = policy.DATASET_URL_PREFIX + quote(slug, safe="")
 
     resources_raw = package.get("resources")
@@ -390,14 +443,19 @@ def normalize_package(
     if not isinstance(resources_raw, list):
         raise policy.BundleError("resources must be an array")
     if len(resources_raw) > policy.MAX_RESOURCES:
-        raise policy.BundleError("dataset %s exceeds the resource limit" % dataset_id)
+        raise policy.BundleError(
+            "dataset %s exceeds the resource limit" % dataset_id
+        )
     resources = [
-        _normalize_resource(item, counters, dataset_id) for item in resources_raw
+        _normalize_resource(item, counters, dataset_id)
+        for item in resources_raw
     ]
     resources.sort(key=lambda item: (item["id"], item["url"], item["name"]))
     resource_ids = [item["id"] for item in resources if item["id"]]
     if len(set(resource_ids)) != len(resource_ids):
-        raise policy.BundleError("dataset %s has duplicate resource IDs" % dataset_id)
+        raise policy.BundleError(
+            "dataset %s has duplicate resource IDs" % dataset_id
+        )
 
     organization_raw = package.get("organization")
     if organization_raw is None:
@@ -406,10 +464,16 @@ def normalize_package(
         raise policy.BundleError("organization must be an object or null")
     organization = {
         "id": _clean_text(
-            organization_raw.get("id"), "organization", counters, "organization.id"
+            organization_raw.get("id"),
+            "organization",
+            counters,
+            "organization.id",
         ),
         "name": _clean_text(
-            organization_raw.get("name"), "organization", counters, "organization.name"
+            organization_raw.get("name"),
+            "organization",
+            counters,
+            "organization.name",
         ),
         "title": _clean_text(
             organization_raw.get("title"),
@@ -431,19 +495,30 @@ def normalize_package(
         "url": dataset_url,
         "title": _clean_text(package.get("title"), "title", counters, "title"),
         "notes": _clean_text(package.get("notes"), "notes", counters, "notes"),
-        "remarks": _clean_text(package.get("remarks"), "remarks", counters, "remarks"),
-        "process_step": _clean_text(
-            package.get("process_step"), "process_step", counters, "process_step"
+        "remarks": _clean_text(
+            package.get("remarks"), "remarks", counters, "remarks"
         ),
-        "author": _clean_text(package.get("author"), "person", counters, "author"),
+        "process_step": _clean_text(
+            package.get("process_step"),
+            "process_step",
+            counters,
+            "process_step",
+        ),
+        "author": _clean_text(
+            package.get("author"), "person", counters, "author"
+        ),
         "maintainer": _clean_text(
             package.get("maintainer"), "person", counters, "maintainer"
         ),
         "organization": organization,
         "tags": _clean_named_list(package.get("tags"), "tags", counters),
         "groups": _clean_named_list(package.get("groups"), "groups", counters),
-        "keywords": _clean_string_list(package.get("keywords"), "keywords", counters),
-        "language": _clean_string_list(package.get("language"), "language", counters),
+        "keywords": _clean_string_list(
+            package.get("keywords"), "keywords", counters
+        ),
+        "language": _clean_string_list(
+            package.get("language"), "language", counters
+        ),
         "data_type": _clean_string_list(
             package.get("data_type"), "data_type", counters
         ),
@@ -462,10 +537,16 @@ def normalize_package(
             key=lambda item: (item.casefold(), item),
         ),
         "metadata_created": _clean_text(
-            package.get("metadata_created"), "date", counters, "metadata_created"
+            package.get("metadata_created"),
+            "date",
+            counters,
+            "metadata_created",
         ),
         "metadata_modified": _clean_text(
-            package.get("metadata_modified"), "date", counters, "metadata_modified"
+            package.get("metadata_modified"),
+            "date",
+            counters,
+            "metadata_modified",
         ),
         "visibility": "public",
         "state": "active",
@@ -531,7 +612,8 @@ def resource_profile_content(
     text: str,
     counters: MutableMapping[str, Any],
 ) -> Dict[str, Any]:
-    """Return bounded public content; empty text lets callers skip unusable profiles."""
+    """Return bounded public content; empty text lets callers skip unusable
+    profiles."""
 
     if file_format not in ("CSV", "PDF") or not isinstance(columns, list):
         raise policy.BundleError("resource profile content is malformed")
@@ -543,7 +625,9 @@ def resource_profile_content(
             "fess_fields_truncated_after_redaction", 0
         )
         result = _redacted_fess_text(
-            _clean_text(value, limit_name, counters, field), limit_name, counters
+            _clean_text(value, limit_name, counters, field),
+            limit_name,
+            counters,
         )
         after = counters.get("truncated_fields", 0) + counters.get(
             "fess_fields_truncated_after_redaction", 0
@@ -551,7 +635,9 @@ def resource_profile_content(
         truncated = truncated or after != before
         return result
 
-    public_name = public_text(name, "resource_context_name", "resource context name")
+    public_name = public_text(
+        name, "resource_context_name", "resource context name"
+    )
     bounded_columns: List[str] = []
     remaining = resource_contract.MAX_COLUMN_TOTAL_CHARS
     for column in columns[: resource_contract.MAX_COLUMNS]:
@@ -589,7 +675,7 @@ def resource_enrichment(
     entries: Sequence[Mapping[str, Any]],
     counters: MutableMapping[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Clean selected profiles and bind them to normalized dataset resources."""
+    """Clean profiles and bind them to normalized dataset resources."""
 
     if not isinstance(entries, (list, tuple)):
         raise policy.BundleError("resource context must be an array")
@@ -629,7 +715,9 @@ def resource_enrichment(
     try:
         validated = resource_contract.validate_enrichment_resources(cleaned)
     except ValueError as exc:
-        raise policy.BundleError("resource enrichment is invalid: %s" % exc) from exc
+        raise policy.BundleError(
+            "resource enrichment is invalid: %s" % exc
+        ) from exc
     resources_by_id = {item["id"]: item for item in corpus["resources"]}
     for entry in validated:
         context = entry["context"]
@@ -638,7 +726,9 @@ def resource_enrichment(
             resource is None
             or resource["format"].upper() != context["format"]
             or context["url"]
-            != resource_contract.resource_url(corpus["url"], context["resource_id"])
+            != resource_contract.resource_url(
+                corpus["url"], context["resource_id"]
+            )
         ):
             raise policy.BundleError(
                 "resource context does not match its dataset resource"
@@ -686,7 +776,11 @@ def fess_document(
     # blank.  The lexical importance field remains separate for BM25 ranking.
     resource_parts = [
         "%s %s %s"
-        % (entry["context"]["name"], entry["context"]["format"], entry["index_text"])
+        % (
+            entry["context"]["name"],
+            entry["context"]["format"],
+            entry["index_text"],
+        )
         for entry in resource_context
     ]
     # Reserve the leading budget for resource text. Large resource/tag metadata
@@ -696,7 +790,9 @@ def fess_document(
         if resource_parts
         else list(important_parts)
     )
-    content_parts.extend([corpus["notes"], corpus["remarks"], corpus["process_step"]])
+    content_parts.extend(
+        [corpus["notes"], corpus["remarks"], corpus["process_step"]]
+    )
     content_parts.extend(item["description"] for item in resources)
 
     title = _redacted_fess_text(
@@ -716,7 +812,8 @@ def fess_document(
 
     def safe_list(values: Iterable[str]) -> List[str]:
         redacted = [
-            _redacted_fess_text(value, "list_item", counters) for value in values
+            _redacted_fess_text(value, "list_item", counters)
+            for value in values
         ]
         unique = {value.casefold(): value for value in redacted}
         if len(unique) != len(redacted):
@@ -725,7 +822,9 @@ def fess_document(
                 "fess_duplicate_list_items_removed_after_redaction",
                 len(redacted) - len(unique),
             )
-        return sorted(unique.values(), key=lambda item: (item.casefold(), item))
+        return sorted(
+            unique.values(), key=lambda item: (item.casefold(), item)
+        )
 
     document = {
         "url": corpus["url"],
@@ -754,7 +853,9 @@ def fess_document(
         "tags": safe_list(corpus["tags"]),
         "groups": safe_list(corpus["groups"]),
         "resource_formats": safe_list(corpus["resource_formats"]),
-        "license_id": _redacted_fess_text(corpus["license_id"], "license", counters),
+        "license_id": _redacted_fess_text(
+            corpus["license_id"], "license", counters
+        ),
         "license_title": _redacted_fess_text(
             corpus["license_title"], "license", counters
         ),
@@ -765,7 +866,9 @@ def fess_document(
             corpus["metadata_modified"], "date", counters
         ),
         "resource_count": corpus["resource_count"],
-        "resource_context": [dict(entry["context"]) for entry in resource_context],
+        "resource_context": [
+            dict(entry["context"]) for entry in resource_context
+        ],
     }
     if frozenset(document) != policy.FESS_FIELD_ALLOWLIST:
         raise AssertionError("Fess document escaped its field allowlist")

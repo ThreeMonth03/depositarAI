@@ -87,11 +87,17 @@ class BuiltBundle:
         self.temporary = tempfile.TemporaryDirectory()
         base = Path(self.temporary.name)
         source = base / "source.jsonl"
-        rows = [_record(index, "資料 集/%d" % index) for index in range(1, count + 1)]
+        rows = [
+            _record(index, "資料 集/%d" % index)
+            for index in range(1, count + 1)
+        ]
         source.write_bytes(
             b"".join(
                 json.dumps(
-                    row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                    row,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
                 ).encode("utf-8")
                 + b"\n"
                 for row in rows
@@ -103,13 +109,17 @@ class BuiltBundle:
         result = builder.build_bundle(source, output)
         self.path = Path(result["bundle_path"])
         manifest = self.path / MANIFEST_NAME
-        self.manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        self.manifest_sha256 = hashlib.sha256(
+            manifest.read_bytes()
+        ).hexdigest()
         self.bundle = CatalogBundle.load(
             self.path, expected_manifest_sha256=self.manifest_sha256
         )
 
     def reseal(self, *, artifact_mutations=None, manifest_mutation=None):
-        """Create a cryptographically self-consistent but semantically tampered bundle."""
+        """Create a cryptographically self-consistent but semantically
+        tampered bundle.
+        """
 
         artifact_mutations = artifact_mutations or {}
         os.chmod(self.path, 0o700)
@@ -135,7 +145,11 @@ class BuiltBundle:
             os.chmod(artifact_path, 0o600)
             with artifact_path.open("wb") as raw:
                 with gzip.GzipFile(
-                    filename="", mode="wb", compresslevel=9, fileobj=raw, mtime=0
+                    filename="",
+                    mode="wb",
+                    compresslevel=9,
+                    fileobj=raw,
+                    mtime=0,
                 ) as compressed:
                     compressed.write(expanded)
             os.chmod(artifact_path, 0o400)
@@ -228,10 +242,15 @@ class FakeTransport:
         return request.header("Authorization")
 
     def _require_token(self, request):
-        if self._authorization(request) != "Bearer " + TOKEN or not self.token_active:
+        if (
+            self._authorization(request) != "Bearer " + TOKEN
+            or not self.token_active
+        ):
             return False
         if request.header("Cookie") is not None:
-            raise AssertionError("bearer API request also carried an admin cookie")
+            raise AssertionError(
+                "bearer API request also carried an admin cookie"
+            )
         return True
 
     def send(self, request, *, timeout, max_bytes):
@@ -239,8 +258,13 @@ class FakeTransport:
         parsed = urllib.parse.urlsplit(request.url)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
-        if path.startswith("/admin/") and request.header("Accept-Language") != "en":
-            raise AssertionError("admin HTML request did not pin the English locale")
+        if (
+            path.startswith("/admin/")
+            and request.header("Accept-Language") != "en"
+        ):
+            raise AssertionError(
+                "admin HTML request did not pin the English locale"
+            )
         if path == "/api/v2/auth/login":
             payload = json.loads(request.body)
             if payload["password"] != PASSWORD:
@@ -252,7 +276,9 @@ class FakeTransport:
                     "user": {"admin": payload["username"] == "admin"},
                     "csrf_token": "c" * 43,
                 },
-                headers=(("Set-Cookie", "JSESSIONID=" + "s" * 32 + "; HttpOnly"),),
+                headers=(
+                    ("Set-Cookie", "JSESSIONID=" + "s" * 32 + "; HttpOnly"),
+                ),
             )
         if path == "/api/v2/auth/logout":
             if (
@@ -268,11 +294,16 @@ class FakeTransport:
                 b'<input type="hidden" name="crudMode" value="1">'
                 b'<input type="hidden" name="csrfNonce" value="safe"></form>',
             )
-        if path.startswith("/admin/accesstoken/list/") and request.method == "GET":
+        if (
+            path.startswith("/admin/accesstoken/list/")
+            and request.method == "GET"
+        ):
             page_number = int(path.rsplit("/", 1)[1])
             if self.token_listing_pages is None:
                 pages = [
-                    [] if not self.token_active else [(self.token_name, "token-id")]
+                    []
+                    if not self.token_active
+                    else [(self.token_name, "token-id")]
                 ]
             else:
                 pages = self.token_listing_pages
@@ -280,15 +311,18 @@ class FakeTransport:
             if 1 <= page_number <= len(pages):
                 for name, token_id in pages[page_number - 1]:
                     rows += (
-                        '<tr data-href="/admin/accesstoken/details/4/%s"><td>%s</td></tr>'
-                        % (token_id, name)
+                        '<tr data-href="/admin/accesstoken/details/4'
+                        '/%s"><td>%s</td></tr>' % (token_id, name)
                     ).encode("ascii")
             next_link = b""
             if page_number < len(pages):
                 next_link = (
-                    '<a href="/admin/accesstoken/list/%d">next</a>' % (page_number + 1)
+                    '<a href="/admin/accesstoken/list/%d">next</a>'
+                    % (page_number + 1)
                 ).encode("ascii")
-            return _response(request, b"<table>" + rows + b"</table>" + next_link)
+            return _response(
+                request, b"<table>" + rows + b"</table>" + next_link
+            )
         if path == "/admin/accesstoken/" and request.method == "POST":
             values = urllib.parse.parse_qs(
                 request.body.decode("ascii"), strict_parsing=True
@@ -318,13 +352,15 @@ class FakeTransport:
                 "<tr><th>Permissions</th><td>%s</td></tr>"
                 "<tr><th>Parameter Name</th><td></td></tr>"
                 "<tr><th>Expires</th><td>%s</td></tr>"
-                "<tr><th>Created Date</th><td>Sep 9, 2026, 12:00:00 PM</td></tr>"
+                "<tr><th>Created Date</th><td>Sep 9, 2026, 12:00:00 "
+                "PM</td></tr>"
                 "</table>"
                 % (
                     self.token_name,
                     TOKEN,
                     ADMIN_PERMISSION,
-                    self.token_expiry_override or self.created_token_expiries[-1],
+                    self.token_expiry_override
+                    or self.created_token_expiries[-1],
                 )
             ).encode("ascii")
             return _response(request, html)
@@ -332,13 +368,19 @@ class FakeTransport:
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
             if self.revoke_fails:
-                return _response(request, {"status": 9, "message": REMOTE_SECRET})
+                return _response(
+                    request, {"status": 9, "message": REMOTE_SECRET}
+                )
             self.token_active = False
             return _response(request, {"status": 0})
         if path == "/api/admin/systeminfo":
             if not self._require_token(request):
-                return _response(request, REMOTE_SECRET.encode("ascii"), status=401)
-            return _response(request, {"status": 0, "data": {"version": "15.8"}})
+                return _response(
+                    request, REMOTE_SECRET.encode("ascii"), status=401
+                )
+            return _response(
+                request, {"status": 0, "data": {"version": "15.8"}}
+            )
         if path == "/api/admin/searchlist/docs":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
@@ -476,7 +518,9 @@ class FakeTransport:
                         "script_data": VECTOR_SCRIPT_DATA,
                         "crawler": "false",
                         "job_logging": "true",
-                        "available": "true" if self.scheduler_available else "false",
+                        "available": "true"
+                        if self.scheduler_available
+                        else "false",
                         "sort_order": 14,
                         "running": running,
                     },
@@ -532,7 +576,9 @@ class FakeTransport:
         if path == "/api/admin/joblog/logs":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
-            self.assert_json_body(request, {"id": "new-job", "size": 2, "page": 1})
+            self.assert_json_body(
+                request, {"id": "new-job", "size": 2, "page": 1}
+            )
             logs = []
             if self.job_log_created:
                 logs = [
@@ -546,11 +592,15 @@ class FakeTransport:
                         "script_result": self.vector_script_result,
                         "start_time": "2026-09-09T12:00:00",
                         "end_time": (
-                            None if self.vector_job_running else "2026-09-09T12:00:01"
+                            None
+                            if self.vector_job_running
+                            else "2026-09-09T12:00:01"
                         ),
                     }
                 ]
-            return _response(request, {"status": 0, "logs": logs, "total": len(logs)})
+            return _response(
+                request, {"status": 0, "logs": logs, "total": len(logs)}
+            )
         if path == "/api/admin/scheduler/vector-scheduler/start":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
@@ -624,7 +674,9 @@ class ManualClock:
 
 
 class MemoryVectorJournal:
-    """Record events while preserving the real vector-pass identity contract."""
+    """Record events while preserving the real vector-pass identity
+    contract.
+    """
 
     def __init__(self, bundle):
         self.identity = {

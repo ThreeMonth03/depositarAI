@@ -40,7 +40,9 @@ class PythonLintGateTests(unittest.TestCase):
         (self.root / "deploy/docker").mkdir(parents=True)
         signatures = {
             "search/catalog/transport.py": "fp, message, new_url",
-            "search/operations/metadata/source.py": "req, fp, code, msg, newurl",
+            "search/operations/metadata/source.py": (
+                "req, fp, code, msg, newurl"
+            ),
             "search/reranker/server.py": "message, explain",
             "search/transport/http.py": "message, new_url",
             "tests/test_search_runtime_helpers.py": "exc_type, exc, traceback",
@@ -53,7 +55,9 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/cli.py", "")
         self.environment = {
             **os.environ,
-            "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
+            "PATH": str(Path(sys.executable).parent)
+            + os.pathsep
+            + os.environ["PATH"],
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         result = self.run_command("make", "format")
@@ -117,14 +121,17 @@ class PythonLintGateTests(unittest.TestCase):
         after = self.snapshot()
         changed = {name for name in before if before[name] != after[name]}
         self.assertEqual({"search/example.py"}, changed)
-        self.assertEqual("value = 1\n", (self.root / "search/example.py").read_text())
+        self.assertEqual(
+            "value = 1\n", (self.root / "search/example.py").read_text()
+        )
         self.assertNotIn("Python unused-code checks passed.", result.stdout)
 
     def test_complexity_debt_is_reported_and_new_domain_debt_fails(self):
         report = self.directory / "complexity.json"
         self.environment["COMPLEXITY_REPORT"] = str(report)
         source = "def choose(value):\n" + "".join(
-            f"    if value == {index}:\n        return {index}\n" for index in range(11)
+            f"    if value == {index}:\n        return {index}\n"
+            for index in range(11)
         )
         self.write("search/legacy.py", source + "    return -1\n")
         formatted = self.run_command("make", "format")
@@ -136,7 +143,8 @@ class PythonLintGateTests(unittest.TestCase):
         self.assertTrue(json.loads(report.read_text()))
 
         shutil.move(
-            self.root / "search/legacy.py", self.root / "search/planning/branch.py"
+            self.root / "search/legacy.py",
+            self.root / "search/planning/branch.py",
         )
         before = self.snapshot()
         result = self.run_command("make", "lint")
@@ -155,7 +163,9 @@ class PythonLintGateTests(unittest.TestCase):
                     source = re.sub(pattern, "", source)
                 else:
                     source = re.sub(
-                        rf"(?m)^({tool}==)[^ ;]+", rf"\g<1>{replacement}", source
+                        rf"(?m)^({tool}==)[^ ;]+",
+                        rf"\g<1>{replacement}",
+                        source,
                     )
                 self.write("search/api/requirements-test.lock", source)
                 before = self.snapshot()
@@ -183,7 +193,9 @@ class PythonLintGateTests(unittest.TestCase):
         ledger = self.directory / "pip.json"
         shim = shim_directory / "python3"
         interpreter = (
-            str(Path(sys.executable).resolve()) if base_python else sys.executable
+            str(Path(sys.executable).resolve())
+            if base_python
+            else sys.executable
         )
         shim.write_text(
             f"#!{sys.executable}\n"
@@ -192,7 +204,8 @@ class PythonLintGateTests(unittest.TestCase):
             "    arguments = sys.argv[3:]\n"
             "    path = pathlib.Path(arguments[arguments.index('-r') + 1])\n"
             f"    pathlib.Path({str(ledger)!r}).write_text(json.dumps(\n"
-            "        {'arguments': arguments, 'requirements': path.read_text(),\n"
+            "        {'arguments': arguments, 'requirements': "
+            "path.read_text(),\n"
             "         'temporary': str(path)}))\n"
             "    raise SystemExit(0)\n"
             f"os.execv({interpreter!r}, [{interpreter!r}, *sys.argv[1:]])\n",
@@ -204,19 +217,27 @@ class PythonLintGateTests(unittest.TestCase):
         )
         return ledger
 
-    def test_installer_selects_original_hashed_lines_without_api_packages(self):
+    def test_installer_selects_original_hashed_lines_without_api_packages(
+        self,
+    ):
         ledger = self.pip_capture()
         before = self.snapshot()
-        result = self.run_command("bash", "scripts/ci/python-lint.sh", "install")
+        result = self.run_command(
+            "bash", "scripts/ci/python-lint.sh", "install"
+        )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         captured = json.loads(ledger.read_text())
         self.assertIn("--no-deps", captured["arguments"])
         self.assertIn("--require-hashes", captured["arguments"])
         lock_lines = (
-            (ROOT / "search/api/requirements-test.lock").read_text().splitlines()
+            (ROOT / "search/api/requirements-test.lock")
+            .read_text()
+            .splitlines()
         )
         expected = [
-            line for line in lock_lines if re.match(r"(ruff|vulture|tomli)==", line)
+            line
+            for line in lock_lines
+            if re.match(r"(ruff|vulture|tomli)==", line)
         ]
         self.assertEqual(expected, captured["requirements"].splitlines())
         self.assertFalse(Path(captured["temporary"]).exists())
@@ -225,7 +246,9 @@ class PythonLintGateTests(unittest.TestCase):
     def test_installer_refuses_global_python_before_pip(self):
         ledger = self.pip_capture(base_python=True)
         before = self.snapshot()
-        result = self.run_command("bash", "scripts/ci/python-lint.sh", "install")
+        result = self.run_command(
+            "bash", "scripts/ci/python-lint.sh", "install"
+        )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("virtual environment", result.stderr)
         self.assertFalse(ledger.exists())
@@ -249,7 +272,9 @@ class PythonLintWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/ci/python-lint.sh install", lint)
         self.assertIn("tests.test_complexity", lint)
         self.assertIn("python-complexity-${{ github.sha }}", lint)
-        self.assertIn("path: ${{ runner.temp }}/depositar-complexity.json", lint)
+        self.assertIn(
+            "path: ${{ runner.temp }}/depositar-complexity.json", lint
+        )
         self.assertIn("persist-credentials: false", lint)
         self.assertIn("needs: [lint]", validate)
         self.assertIn("if: always()", validate)
@@ -277,7 +302,9 @@ class PythonLintWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(job, jobs)
 
-    def test_shell_entry_is_registered_with_existing_syntax_and_shellcheck(self):
+    def test_shell_entry_is_registered_with_existing_syntax_and_shellcheck(
+        self,
+    ):
         source = (ROOT / "scripts/search-ci.sh").read_text()
         shell_files = source.split("shell_files=(", 1)[1].split(")", 1)[0]
         self.assertIn("scripts/ci/python-lint.sh", shell_files)

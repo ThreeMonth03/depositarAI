@@ -25,12 +25,15 @@ class CLIStartupTests(unittest.TestCase):
             "class BlockImports(importlib.abc.MetaPathFinder):\n"
             "    def __init__(self, names): self.names = names\n"
             "    def find_spec(self, fullname, path=None, target=None):\n"
-            "        if any(fullname == name or fullname.startswith(name + '.') "
+            "        if any(fullname == name or "
+            "fullname.startswith(name + '.') "
             "for name in self.names):\n"
-            "            raise AssertionError('unexpected dependency: ' + fullname)\n"
-            + textwrap.dedent(body)
+            "            raise AssertionError('unexpected dependency: "
+            "' + fullname)\n" + textwrap.dedent(body)
         )
-        with tempfile.TemporaryDirectory(prefix="depositar-cli-startup-") as cwd:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-cli-startup-"
+        ) as cwd:
             result = subprocess.run(
                 [sys.executable, "-I", "-S", "-B", "-c", program],
                 cwd=cwd,
@@ -65,18 +68,27 @@ class CLIStartupTests(unittest.TestCase):
             (["recover-public-entry"], 2),
         ):
             with self.subTest(arguments=arguments):
-                report = self.run_isolated(f"""
+                report = self.run_isolated(
+                    (
+                        f"""
                     sys.argv = [launcher, *{arguments!r}]
-                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    with """
+                        f"""contextlib.redirect_stdout(output), """
+                        f"""contextlib.redirect_stderr(errors):
                         try:
                             runpy.run_path(launcher, run_name='__main__')
                         except SystemExit as error:
                             code = error.code
                     loaded = sorted(name for name in sys.modules
-                                    if name == 'search' or name.startswith('search.'))
-                    print(json.dumps({{'code': code, 'out': output.getvalue(),
-                                      'err': errors.getvalue(), 'loaded': loaded}}))
-                """)
+                                    if name == """
+                        f"""'search' or name.startswith('search.'))
+                    print(json.dumps({{'code': """
+                        f"""code, 'out': output.getvalue(),
+                                      'err': """
+                        f"""errors.getvalue(), 'loaded': loaded}}))
+                """
+                    )
+                )
                 self.assertEqual(expected_code, report["code"])
                 self.assertEqual(
                     ["search", "search.operations", "search.operations.cli"],
@@ -91,99 +103,148 @@ class CLIStartupTests(unittest.TestCase):
                     self.assertIn("usage: depositarai.py", report["err"])
 
     def test_importing_launcher_does_not_expose_a_second_cli_interface(self):
-        report = self.run_isolated("""
+        report = self.run_isolated(
+            (
+                """
             namespace = runpy.run_path(launcher, run_name='launcher_probe')
-            exposed = sorted(name for name in ('main', 'parser', 'load_config', 'lifecycle')
+            exposed = sorted(name for name in ('main', """
+                """'parser', 'load_config', 'lifecycle')
                              if name in namespace)
             loaded = sorted(name for name in sys.modules
-                            if name == 'search' or name.startswith('search.'))
+                            if name == 'search' or """
+                """name.startswith('search.'))
             print(json.dumps({'exposed': exposed, 'loaded': loaded}))
-        """)
+        """
+            )
+        )
         self.assertEqual({"exposed": [], "loaded": []}, report)
 
     def test_doctor_dispatch_avoids_lifecycle_and_deployment_imports(self):
-        report = self.run_isolated("""
-            sys.meta_path.insert(0, BlockImports(('search.operations.lifecycle',
-                'search.operations.deployment', 'search.operations.catalog', 'search.catalog',
+        report = self.run_isolated(
+            (
+                """
+            sys.meta_path.insert(0, """
+                """BlockImports(('search.operations.lifecycle',
+                'search.operations.deployment', """
+                """'search.operations.catalog', 'search.catalog',
                 'search.api', 'search.planning')))
             from search.operations import cli, config, doctor
             marker, calls = object(), []
             def load(path, *, repo_root):
-                assert path == Path('/unused/product.json') and repo_root == root
+                assert path == """
+                """Path('/unused/product.json') and repo_root == root
                 return marker
             def diagnose(value, *, repo_root, deep_verify):
-                assert value is marker and repo_root == root and deep_verify is True
+                assert value is marker and repo_root == """
+                """root and deep_verify is True
                 calls.append('doctor')
                 return {'status': 'ready'}
             config.load_config, doctor.run_doctor = load, diagnose
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                code = cli.main(['--config', '/unused/product.json', 'doctor', '--deep'])
-            print(json.dumps({'code': code, 'out': json.loads(output.getvalue()),
+            with contextlib.redirect_stdout(output), """
+                """contextlib.redirect_stderr(errors):
+                code = cli.main(['--config', """
+                """'/unused/product.json', 'doctor', '--deep'])
+            print(json.dumps({'code': code, 'out': """
+                """json.loads(output.getvalue()),
                               'err': errors.getvalue(), 'calls': calls}))
-        """)
+        """
+            )
+        )
         self.assertEqual(
-            {"code": 0, "out": {"status": "ready"}, "err": "", "calls": ["doctor"]},
+            {
+                "code": 0,
+                "out": {"status": "ready"},
+                "err": "",
+                "calls": ["doctor"],
+            },
             report,
         )
 
     def test_prepare_entry_does_not_load_update_or_restore_controllers(self):
-        report = self.run_isolated("""
-            sys.meta_path.insert(0, BlockImports(('search.operations.lifecycle',
+        report = self.run_isolated(
+            (
+                """
+            sys.meta_path.insert(0, """
+                """BlockImports(('search.operations.lifecycle',
                 'search.operations.deployment.public_entry.updates',
                 'search.operations.deployment.public_entry.preflight',
                 'search.operations.deployment.payload.restore',
-                'search.operations.catalog', 'search.catalog', 'search.api')))
+                'search.operations.catalog', """
+                """'search.catalog', 'search.api')))
             from search.operations import cli
             from search.operations.deployment.public_entry import host
             calls = []
             def prepare(config, release, image, frontend):
                 assert config == Path('/unused/entry.json')
-                assert release == Path('/unused/release.json') and image == 'image-fixture'
+                assert release == """
+                """Path('/unused/release.json') and image == 'image-fixture'
                 assert frontend == 'frontend-image-fixture'
                 calls.append('prepare')
                 return {'status': 'prepared'}
             host.prepare_public_entry = prepare
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                code = cli.main(['prepare-public-entry', '--entry-config', '/unused/entry.json',
-                    '--release-compose', '/unused/release.json', '--web-image', 'image-fixture',
+            with contextlib.redirect_stdout(output), """
+                """contextlib.redirect_stderr(errors):
+                code = cli.main(['prepare-public-entry', """
+                """'--entry-config', '/unused/entry.json',
+                    '--release-compose', """
+                """'/unused/release.json', '--web-image', 'image-fixture',
                     '--web-nginx-image', 'frontend-image-fixture'])
-            print(json.dumps({'code': code, 'out': json.loads(output.getvalue()),
+            print(json.dumps({'code': code, 'out': """
+                """json.loads(output.getvalue()),
                               'err': errors.getvalue(), 'calls': calls}))
-        """)
+        """
+            )
+        )
         self.assertEqual(
-            {"code": 0, "out": {"status": "prepared"}, "err": "", "calls": ["prepare"]},
+            {
+                "code": 0,
+                "out": {"status": "prepared"},
+                "err": "",
+                "calls": ["prepare"],
+            },
             report,
         )
 
     def test_up_private_forwards_staging_options_to_one_lifecycle_action(self):
-        report = self.run_isolated("""
-            sys.meta_path.insert(0, BlockImports(('search.operations.deployment',
+        report = self.run_isolated(
+            (
+                """
+            sys.meta_path.insert(0, """
+                """BlockImports(('search.operations.deployment',
                 'search.api', 'search.planning')))
             from search.operations import cli, config, lifecycle
             marker, calls = object(), []
             def load(path, *, repo_root):
-                assert path == Path('/unused/product.json') and repo_root == root
+                assert path == """
+                """Path('/unused/product.json') and repo_root == root
                 calls.append('config')
                 return marker
             def up(value, **kwargs):
                 assert value is marker
-                assert kwargs == {'snapshot': Path('/private/metadata.jsonl.gz'),
+                assert kwargs == {'snapshot': """
+                """Path('/private/metadata.jsonl.gz'),
                     'force': True, 'max_passes': 3, 'wall_seconds': 4800,
                     'catalog_revision': 'a' * 40}
                 calls.append('up-private')
                 return {'status': 'gateway_active', 'active_changed': True}
             def forbidden(*args, **kwargs):
-                raise AssertionError('CLI must not implement the deployment steps')
+                raise AssertionError('CLI must not """
+                """implement the deployment steps')
             config.load_config, lifecycle.up_private = load, up
             lifecycle.stage_catalog = forbidden
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                code = cli.main(['--config', '/unused/product.json', 'up-private',
+            with contextlib.redirect_stdout(output), """
+                """contextlib.redirect_stderr(errors):
+                code = cli.main(['--config', """
+                """'/unused/product.json', 'up-private',
                     '--snapshot', '/private/metadata.jsonl.gz', '--force',
                     '--max-passes', '3', '--wall-seconds', '4800',
                     '--catalog-revision', 'a' * 40])
-            print(json.dumps({'code': code, 'out': json.loads(output.getvalue()),
+            print(json.dumps({'code': code, 'out': """
+                """json.loads(output.getvalue()),
                               'err': errors.getvalue(), 'calls': calls}))
-        """)
+        """
+            )
+        )
         self.assertEqual(
             {
                 "code": 0,
@@ -195,7 +256,9 @@ class CLIStartupTests(unittest.TestCase):
         )
 
     def test_up_private_defaults_preserve_checkpoint_exit_code(self):
-        report = self.run_isolated("""
+        report = self.run_isolated(
+            (
+                """
             from search.operations import cli, config, lifecycle
             marker, calls = object(), []
             config.load_config = lambda *args, **kwargs: marker
@@ -207,11 +270,16 @@ class CLIStartupTests(unittest.TestCase):
                 return {'operation': 'up-private', 'status': 'checkpoint',
                     'active_changed': False, 'staging_only': True}
             lifecycle.up_private = up
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                code = cli.main(['--config', '/unused/product.json', 'up-private'])
-            print(json.dumps({'code': code, 'out': json.loads(output.getvalue()),
+            with contextlib.redirect_stdout(output), """
+                """contextlib.redirect_stderr(errors):
+                code = cli.main(['--config', """
+                """'/unused/product.json', 'up-private'])
+            print(json.dumps({'code': code, 'out': """
+                """json.loads(output.getvalue()),
                               'err': errors.getvalue(), 'calls': calls}))
-        """)
+        """
+            )
+        )
         self.assertEqual(2, report["code"])
         self.assertEqual("checkpoint", report["out"]["status"])
         self.assertFalse(report["out"]["active_changed"])
@@ -222,27 +290,42 @@ class CLIStartupTests(unittest.TestCase):
     def test_up_private_fixed_diagnostics_are_safe_and_command_scoped(self):
         for kind in ("allowed", "private", "subclass", "other_command"):
             with self.subTest(kind=kind):
-                report = self.run_isolated(f"""
-                    from search.operations import cli, config, doctor, lifecycle
+                report = self.run_isolated(
+                    (
+                        f"""
+                    from search.operations import """
+                        f"""cli, config, doctor, lifecycle
                     class Derived(lifecycle.UpPrivateError): pass
                     Derived.__module__ = lifecycle.UpPrivateError.__module__
                     exception = (Derived if {kind!r} == 'subclass'
                                  else lifecycle.UpPrivateError)
-                    detail = ('private-secret-fixture' if {kind!r} == 'private'
+                    detail = """
+                        f"""('private-secret-fixture' if {kind!r} == 'private'
                               else 'product_private_existing_activation')
                     config.load_config = lambda *args, **kwargs: object()
                     def fail(*args, **kwargs): raise exception(detail)
                     lifecycle.up_private = doctor.run_doctor = fail
-                    command = 'doctor' if {kind!r} == 'other_command' else 'up-private'
-                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                        code = cli.main(['--config', '/unused/product.json', command])
-                    print(json.dumps({{'code': code, 'out': output.getvalue(),
-                                      'err': json.loads(errors.getvalue())}}))
-                """)
+                    command = 'doctor' if """
+                        f"""{kind!r} == 'other_command' else 'up-private'
+                    with """
+                        f"""contextlib.redirect_stdout(output), """
+                        f"""contextlib.redirect_stderr(errors):
+                        code = """
+                        f"""cli.main(['--config', '/unused/product.json', """
+                        f"""command])
+                    print(json.dumps({{'code': """
+                        f"""code, 'out': output.getvalue(),
+                                      'err': """
+                        f"""json.loads(errors.getvalue())}}))
+                """
+                    )
+                )
                 self.assertEqual(1, report["code"])
                 self.assertEqual("", report["out"])
                 self.assertEqual("failed", report["err"]["status"])
-                self.assertEqual("product_operation_failed", report["err"]["code"])
+                self.assertEqual(
+                    "product_operation_failed", report["err"]["code"]
+                )
                 self.assertNotIn("private-secret-fixture", json.dumps(report))
                 self.assertFalse(report["err"]["active_changed"])
                 if kind == "allowed":
@@ -256,7 +339,9 @@ class CLIStartupTests(unittest.TestCase):
     def test_unhandled_errors_still_propagate_without_a_failure_report(self):
         for metadata in ("ordinary", "standard", "catalog", "raising"):
             with self.subTest(metadata=metadata):
-                report = self.run_isolated(f"""
+                report = self.run_isolated(
+                    (
+                        f"""
                     from search.operations import cli, config, doctor
                     from search.catalog.errors import CatalogError
                     reads = []
@@ -265,38 +350,58 @@ class CLIStartupTests(unittest.TestCase):
                         def __class__(self):
                             reads.append('class')
                             if {metadata!r} == 'raising':
-                                raise AssertionError('private-class-fixture')
-                            return {{'ordinary': Unhandled, 'standard': ValueError,
+                                raise """
+                        f"""AssertionError('private-class-fixture')
+                            return {{'ordinary': """
+                        f"""Unhandled, 'standard': ValueError,
                                      'catalog': CatalogError}}[{metadata!r}]
                     config.load_config = lambda *args, **kwargs: object()
-                    def fail(*args, **kwargs): raise Unhandled('private-error-fixture')
+                    def fail(*args, **kwargs): """
+                        f"""raise Unhandled('private-error-fixture')
                     doctor.run_doctor = fail
-                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    with """
+                        f"""contextlib.redirect_stdout(output), """
+                        f"""contextlib.redirect_stderr(errors):
                         try:
-                            cli.main(['--config', '/unused/product.json', 'doctor'])
+                            cli.main(['--config', """
+                        f"""'/unused/product.json', 'doctor'])
                         except Unhandled:
                             raised = True
                         else:
                             raised = False
-                    print(json.dumps({{'raised': raised, 'out': output.getvalue(),
-                                      'err': errors.getvalue(), 'metadata_reads': reads}}))
-                """)
+                    print(json.dumps({{'raised': """
+                        f"""raised, 'out': output.getvalue(),
+                                      'err': """
+                        f"""errors.getvalue(), 'metadata_reads': reads}}))
+                """
+                    )
+                )
                 self.assertEqual(
-                    {"raised": True, "out": "", "err": "", "metadata_reads": []},
+                    {
+                        "raised": True,
+                        "out": "",
+                        "err": "",
+                        "metadata_reads": [],
+                    },
                     report,
                 )
 
-    def test_foreign_error_metadata_cannot_break_or_forge_safe_diagnostics(self):
+    def test_foreign_error_metadata_cannot_break_or_forge_safe_diagnostics(
+        self,
+    ):
         for metadata in ("hostile", "list", "none", "forged"):
             with self.subTest(metadata=metadata):
-                report = self.run_isolated(f"""
+                report = self.run_isolated(
+                    (
+                        f"""
                     from search.operations import cli, config, doctor
                     class Metadata(str):
                         def __eq__(self, other):
                             raise AssertionError('private-metadata-fixture')
                     class Foreign(ValueError): pass
                     Foreign.__module__ = {{
-                        'hostile': Metadata('search.operations.catalog.policy'),
+                        'hostile': """
+                        f"""Metadata('search.operations.catalog.policy'),
                         'list': ['search.operations.catalog.policy'],
                         'none': None,
                         'forged': 'search.operations.catalog.policy',
@@ -305,11 +410,19 @@ class CLIStartupTests(unittest.TestCase):
                     def fail(*args, **kwargs):
                         raise Foreign('catalog_admin_authentication_failed')
                     doctor.run_doctor = fail
-                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                        code = cli.main(['--config', '/unused/product.json', 'doctor'])
-                    print(json.dumps({{'code': code, 'out': output.getvalue(),
-                                      'err': json.loads(errors.getvalue())}}))
-                """)
+                    with """
+                        f"""contextlib.redirect_stdout(output), """
+                        f"""contextlib.redirect_stderr(errors):
+                        code = """
+                        f"""cli.main(['--config', '/unused/product.json', """
+                        f"""'doctor'])
+                    print(json.dumps({{'code': """
+                        f"""code, 'out': output.getvalue(),
+                                      'err': """
+                        f"""json.loads(errors.getvalue())}}))
+                """
+                    )
+                )
                 self.assertEqual(
                     {
                         "code": 1,
@@ -345,8 +458,12 @@ class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
         return json.loads(errors.getvalue())
 
-    def test_fixed_release_diagnostics_are_reported_for_private_runtime_commands(self):
-        from search.operations.deployment.release.controller import ReleaseError
+    def test_private_runtime_commands_report_fixed_release_diagnostics(
+        self,
+    ):
+        from search.operations.deployment.release.controller import (
+            ReleaseError,
+        )
 
         for command in (
             "up-private",
@@ -373,12 +490,18 @@ class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
                         },
                     )
 
-    def test_release_diagnostics_reject_untrusted_errors_without_raw_arguments(self):
-        from search.operations.deployment.release.controller import ReleaseError
+    def test_release_diagnostics_reject_untrusted_errors_without_raw_arguments(
+        self,
+    ):
+        from search.operations.deployment.release.controller import (
+            ReleaseError,
+        )
 
         private = "private-release-detail-must-not-be-printed"
         similar = type(
-            "ReleaseError", (ValueError,), {"__module__": ReleaseError.__module__}
+            "ReleaseError",
+            (ValueError,),
+            {"__module__": ReleaseError.__module__},
         )
         subclass = type(
             "DerivedReleaseError",
@@ -387,9 +510,21 @@ class ReleaseDiagnosticBoundaryTests(unittest.TestCase):
         )
         for kind, command, error in (
             ("unknown", "start-release", ReleaseError(private)),
-            ("similar", "start-release", similar("release_acceptance_blocked")),
-            ("subclass", "start-release", subclass("release_acceptance_blocked")),
-            ("wrong-command", "doctor", ReleaseError("release_acceptance_blocked")),
+            (
+                "similar",
+                "start-release",
+                similar("release_acceptance_blocked"),
+            ),
+            (
+                "subclass",
+                "start-release",
+                subclass("release_acceptance_blocked"),
+            ),
+            (
+                "wrong-command",
+                "doctor",
+                ReleaseError("release_acceptance_blocked"),
+            ),
             (
                 "multiple-arguments",
                 "start-release",
@@ -441,18 +576,28 @@ class ActivationDiagnosticBoundaryTests(unittest.TestCase):
         )(active_changed=True)
         cases = [
             ("up-private", error)
-            for error in (wrong_arguments, wrong_flag, missing_flag, forged, subclass)
+            for error in (
+                wrong_arguments,
+                wrong_flag,
+                missing_flag,
+                forged,
+                subclass,
+            )
         ]
         cases.append(("sync", ActivationOutcomeError(active_changed=True)))
         for command, error in cases:
-            with self.subTest(command=command, error_type=type(error).__name__):
+            with self.subTest(
+                command=command, error_type=type(error).__name__
+            ):
                 output, errors = io.StringIO(), io.StringIO()
                 with (
                     patch.object(cli, "_runtime_report", side_effect=error),
                     redirect_stdout(output),
                     redirect_stderr(errors),
                 ):
-                    result = cli.main(["--config", "/unused/product.json", command])
+                    result = cli.main(
+                        ["--config", "/unused/product.json", command]
+                    )
                 self.assertEqual(result, 1)
                 self.assertEqual(output.getvalue(), "")
                 report = json.loads(errors.getvalue())
@@ -473,10 +618,17 @@ class ResourceBatchCLITests(unittest.TestCase):
         from search.operations import cli
         from search.operations.documents import batches, extractor, source
 
-        identities = {"getuid": 1001, "getgid": 1002, "geteuid": 1003, "getegid": 1004}
+        identities = {
+            "getuid": 1001,
+            "getgid": 1002,
+            "geteuid": 1003,
+            "getegid": 1004,
+        }
         for zero in (*identities, "all"):
             values = {
-                name: (lambda value=0 if zero in (name, "all") else value: value)
+                name: (
+                    lambda value=0 if zero in (name, "all") else value: value
+                )
                 for name, value in identities.items()
             }
             output, errors = io.StringIO(), io.StringIO()
@@ -511,7 +663,9 @@ class ResourceBatchCLITests(unittest.TestCase):
                     "code": "product_operation_failed",
                     "error_type": "ExtractorError",
                     "active_changed": False,
-                    "error_code": "document_extractor_operator_must_be_nonroot",
+                    "error_code": (
+                        "document_extractor_operator_must_be_nonroot"
+                    ),
                 },
                 json.loads(errors.getvalue()),
             )
@@ -519,7 +673,9 @@ class ResourceBatchCLITests(unittest.TestCase):
                 operation.assert_not_called()
             self.assertNotIn("/private/", errors.getvalue())
 
-    def test_extractor_diagnostic_is_limited_to_exact_type_command_and_code(self):
+    def test_extractor_diagnostic_is_limited_to_exact_type_command_and_code(
+        self,
+    ):
         from search.operations import cli
         from search.operations.documents import extractor
 
@@ -555,14 +711,18 @@ class ResourceBatchCLITests(unittest.TestCase):
         output = io.StringIO()
         with (
             patch.object(batches, action, return_value=result) as called,
-            patch.object(cli, "_runtime_report", side_effect=AssertionError("runtime")),
+            patch.object(
+                cli, "_runtime_report", side_effect=AssertionError("runtime")
+            ),
             redirect_stdout(output),
         ):
             code = cli.main(["profile-resources", *arguments])
         self.assertEqual(result, json.loads(output.getvalue()))
         return code, called
 
-    def test_prepare_is_config_free_and_forwards_explicit_selection_policy(self):
+    def test_prepare_is_config_free_and_forwards_explicit_selection_policy(
+        self,
+    ):
         from search.operations import cli
 
         code, called = self.invoke(
@@ -595,10 +755,16 @@ class ResourceBatchCLITests(unittest.TestCase):
             source_root=cli.ROOT,
         )
 
-    def test_run_distinguishes_checkpoint_completion_and_partial_outcomes(self):
+    def test_run_distinguishes_checkpoint_completion_and_partial_outcomes(
+        self,
+    ):
         from search.operations import cli
 
-        for status, expected in (("checkpoint", 2), ("completed", 0), ("partial", 1)):
+        for status, expected in (
+            ("checkpoint", 2),
+            ("completed", 0),
+            ("partial", 1),
+        ):
             with self.subTest(status=status):
                 code, called = self.invoke(
                     [
@@ -706,9 +872,16 @@ class OperatorErrorOwnerTests(unittest.TestCase):
     def owners(self):
         from search.operations import lifecycle
         from search.operations.catalog import access, policy, projection
-        from search.operations.deployment import inference_runtime, runtime_docker
+        from search.operations.deployment import (
+            inference_runtime,
+            runtime_docker,
+        )
         from search.operations.deployment.payload import restore
-        from search.operations.deployment.public_entry import preflight, remote, updates
+        from search.operations.deployment.public_entry import (
+            preflight,
+            remote,
+            updates,
+        )
         from search.operations.deployment.release import controller as release
         from search.operations.documents import (
             batches,
@@ -721,14 +894,26 @@ class OperatorErrorOwnerTests(unittest.TestCase):
         return (
             (policy.RuntimeError, "catalog_runtime_not_healthy", None),
             (access.AccessError, "catalog_access_binding_invalid", None),
-            (projection.ProjectionError, "catalog_projection_index_changed", None),
-            (runtime_docker.InferenceError, "inference_command_failed", "up-private"),
+            (
+                projection.ProjectionError,
+                "catalog_projection_index_changed",
+                None,
+            ),
+            (
+                runtime_docker.InferenceError,
+                "inference_command_failed",
+                "up-private",
+            ),
             (
                 inference_runtime.InferenceRuntimeError,
                 "inference_runtime_snapshot_invalid",
                 "start-inference",
             ),
-            (release.ReleaseError, "release_acceptance_invalid", "start-release"),
+            (
+                release.ReleaseError,
+                "release_acceptance_invalid",
+                "start-release",
+            ),
             (
                 lifecycle.UpPrivateError,
                 "product_private_existing_activation",
@@ -759,8 +944,16 @@ class OperatorErrorOwnerTests(unittest.TestCase):
                 "document_extractor_operator_must_be_nonroot",
                 "profile-resources",
             ),
-            (controller.ProfileError, "document_state_busy", "profile-resources"),
-            (batches.BatchError, "document_batch_plan_changed", "profile-resources"),
+            (
+                controller.ProfileError,
+                "document_state_busy",
+                "profile-resources",
+            ),
+            (
+                batches.BatchError,
+                "document_batch_plan_changed",
+                "profile-resources",
+            ),
             (sets.ProfileSetError, "document_profile_set_invalid", "sync"),
             (
                 enrichment.EnrichmentError,
@@ -776,14 +969,17 @@ class OperatorErrorOwnerTests(unittest.TestCase):
             with self.subTest(owner=error_type.__module__):
                 for allowed in (command,) if command else ("doctor", "sync"):
                     self.assertEqual(
-                        code, cli._operator_error_code(error_type(code), allowed)
+                        code,
+                        cli._operator_error_code(error_type(code), allowed),
                     )
                 if command:
                     self.assertIsNone(
                         cli._operator_error_code(error_type(code), "doctor")
                     )
 
-    def test_matching_module_and_name_or_inheritance_do_not_grant_ownership(self):
+    def test_matching_module_and_name_or_inheritance_do_not_grant_ownership(
+        self,
+    ):
         from search.operations import cli
 
         for error_type, code, command in self.owners():
@@ -795,9 +991,13 @@ class OperatorErrorOwnerTests(unittest.TestCase):
                 with self.subTest(
                     owner=error_type.__module__, base=base, claimed=owner
                 ):
-                    forged = type(error_type.__name__, (base,), {"__module__": owner})
+                    forged = type(
+                        error_type.__name__, (base,), {"__module__": owner}
+                    )
                     self.assertIsNone(
-                        cli._operator_error_code(forged(code), command or "doctor")
+                        cli._operator_error_code(
+                            forged(code), command or "doctor"
+                        )
                     )
 
     def test_only_one_exact_public_string_argument_can_be_a_diagnostic(self):
@@ -805,22 +1005,35 @@ class OperatorErrorOwnerTests(unittest.TestCase):
 
         class HostileText(str):
             def __eq__(self, other):
-                raise AssertionError("must not compare untrusted string subclasses")
+                raise AssertionError(
+                    "must not compare untrusted string subclasses"
+                )
 
             def __hash__(self):
-                raise AssertionError("must not hash untrusted string subclasses")
+                raise AssertionError(
+                    "must not hash untrusted string subclasses"
+                )
 
         private = "private-error-detail-fixture"
         for error_type, code, command in self.owners():
-            for arguments in ((), (private,), (HostileText(code),), (code, private)):
-                with self.subTest(owner=error_type.__module__, arity=len(arguments)):
+            for arguments in (
+                (),
+                (private,),
+                (HostileText(code),),
+                (code, private),
+            ):
+                with self.subTest(
+                    owner=error_type.__module__, arity=len(arguments)
+                ):
                     self.assertIsNone(
                         cli._operator_error_code(
                             error_type(*arguments), command or "doctor"
                         )
                     )
 
-    def test_unknown_or_nonexact_module_metadata_is_never_an_import_target(self):
+    def test_unknown_or_nonexact_module_metadata_is_never_an_import_target(
+        self,
+    ):
         import builtins
         import importlib
         from unittest.mock import patch
@@ -829,7 +1042,9 @@ class OperatorErrorOwnerTests(unittest.TestCase):
 
         class HostileOwner(str):
             def __eq__(self, other):
-                raise AssertionError("must not compare untrusted module metadata")
+                raise AssertionError(
+                    "must not compare untrusted module metadata"
+                )
 
             def __hash__(self):
                 raise AssertionError("must not hash untrusted module metadata")
@@ -842,7 +1057,9 @@ class OperatorErrorOwnerTests(unittest.TestCase):
             ["search.operations.catalog.policy"],
             HostileOwner("search.operations.catalog.policy"),
         ):
-            foreign = type("RuntimeError", (ValueError,), {"__module__": owner})
+            foreign = type(
+                "RuntimeError", (ValueError,), {"__module__": owner}
+            )
             error = foreign("catalog_runtime_not_healthy")
             with (
                 self.subTest(metadata_type=type(owner).__name__),

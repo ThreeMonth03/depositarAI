@@ -17,46 +17,64 @@ class ImageFixtureBoundaryTests(unittest.TestCase):
     def test_legacy_helpers_keep_the_same_canonical_objects(self):
         from tests.unit.deployment import test_source_bundle
         from tests.unit.deployment.images import test_build as test_image_build
-        from tests.unit.deployment.images import test_staging as test_image_staging
+        from tests.unit.deployment.images import (
+            test_staging as test_image_staging,
+        )
 
         for module, names in (
             (test_source_bundle, ("blob", "fixture_sources", "fixture_tree")),
-            (test_image_build, ("FakeDocker", "fixture_sources", "fixture_tree")),
-            (test_image_staging, ("FakeDocker", "fixture_sources", "fixture_tree")),
+            (
+                test_image_build,
+                ("FakeDocker", "fixture_sources", "fixture_tree"),
+            ),
+            (
+                test_image_staging,
+                ("FakeDocker", "fixture_sources", "fixture_tree"),
+            ),
         ):
             for name in names:
                 with self.subTest(module=module.__name__, name=name):
-                    self.assertIs(getattr(module, name), getattr(image_fixtures, name))
+                    self.assertIs(
+                        getattr(module, name), getattr(image_fixtures, name)
+                    )
 
-    def test_isolated_import_needs_no_test_cases_or_filesystem_and_process_io(self):
-        script = """
-import builtins
-import io
-import os
-from pathlib import Path
-import subprocess
-import sys
-import tempfile
-sys.path.insert(0, sys.argv[1])
-def forbidden(*args, **kwargs):
-    raise AssertionError("fixture import performed filesystem or process IO")
-subprocess.Popen = forbidden
-subprocess.run = forbidden
-tempfile.TemporaryDirectory = forbidden
-tempfile.mkdtemp = forbidden
-builtins.open = forbidden
-io.open = forbidden
-Path.open = forbidden
-Path.mkdir = forbidden
-os.open = forbidden
-os.mkdir = forbidden
-from tests.unit.deployment.images import fixtures as image_fixtures
-assert image_fixtures.ImageStagingFixture.__bases__ == (object,)
-for name in sys.modules:
-    assert name != "unittest" and not name.startswith("unittest."), name
-    if name.startswith("tests."):
-        assert not any(part.startswith("test_") for part in name.split(".")), name
-"""
+    def test_isolated_import_needs_no_test_cases_or_filesystem_and_process_io(
+        self,
+    ):
+        script = (
+            "\n"
+            "import builtins\n"
+            "import io\n"
+            "import os\n"
+            "from pathlib import Path\n"
+            "import subprocess\n"
+            "import sys\n"
+            "import tempfile\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "def forbidden(*args, **kwargs):\n"
+            '    raise AssertionError("fixture import performed filesystem '
+            'or process IO")\n'
+            "subprocess.Popen = forbidden\n"
+            "subprocess.run = forbidden\n"
+            "tempfile.TemporaryDirectory = forbidden\n"
+            "tempfile.mkdtemp = forbidden\n"
+            "builtins.open = forbidden\n"
+            "io.open = forbidden\n"
+            "Path.open = forbidden\n"
+            "Path.mkdir = forbidden\n"
+            "os.open = forbidden\n"
+            "os.mkdir = forbidden\n"
+            "from tests.unit.deployment.images import fixtures as "
+            "image_fixtures\n"
+            "assert image_fixtures.ImageStagingFixture.__bases__ == "
+            "(object,)\n"
+            "for name in sys.modules:\n"
+            '    assert name != "unittest" and not '
+            'name.startswith("unittest."), name\n'
+            '    if name.startswith("tests."):\n'
+            '        assert not any(part.startswith("test_") for part in '
+            'name.split(".")), name\n'
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(ROOT)],
             capture_output=True,
@@ -102,7 +120,9 @@ class ImageFixtureCleanupTests(unittest.TestCase):
         result = unittest.TestResult()
         with (
             mock.patch.object(
-                image_fixtures.tempfile, "TemporaryDirectory", side_effect=factory
+                image_fixtures.tempfile,
+                "TemporaryDirectory",
+                side_effect=factory,
             ),
             mock.patch.object(target, attribute, side_effect=failure),
         ):
@@ -116,7 +136,9 @@ class ImageFixtureCleanupTests(unittest.TestCase):
         self.assertFalse(Path(allocations[0].name).exists())
 
     def test_git_setup_failure_still_removes_the_parent_owned_temporary(self):
-        self.assert_failed_setup_is_cleaned(image_fixtures.ImageStagingFixture, "git")
+        self.assert_failed_setup_is_cleaned(
+            image_fixtures.ImageStagingFixture, "git"
+        )
 
     def test_plan_setup_failure_still_removes_the_parent_owned_temporary(self):
         self.assert_failed_setup_is_cleaned(

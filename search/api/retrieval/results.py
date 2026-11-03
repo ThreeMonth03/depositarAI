@@ -185,7 +185,9 @@ def validate_result(row: Any) -> dict[str, Any]:
         copied["temporal_coverage"] = validate_temporal_coverage(
             row["temporal_coverage"]
         )
-        copied["resource_context"] = validate_resource_context(row["resource_context"])
+        copied["resource_context"] = validate_resource_context(
+            row["resource_context"]
+        )
     except ValueError:
         raise ResultError("invalid catalog context") from None
     if any(
@@ -280,10 +282,14 @@ class ValidatedSearch:
         manifest_sha256: str,
         maximum: int = TOP_K,
     ) -> "ValidatedSearch":
-        digest = hashlib.sha256(normalize_query(query).encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(
+            normalize_query(query).encode("utf-8")
+        ).hexdigest()
         return cls(
             tuple(
-                _validated_rows(report, digest, conditions, manifest_sha256, maximum)
+                _validated_rows(
+                    report, digest, conditions, manifest_sha256, maximum
+                )
             ),
             digest,
         )

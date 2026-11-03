@@ -18,7 +18,10 @@ async def bounded_body(
         body = bytearray()
         while True:
             message = await receive()
-            if not isinstance(message, dict) or message.get("type") != "http.request":
+            if (
+                not isinstance(message, dict)
+                or message.get("type") != "http.request"
+            ):
                 raise ValueError("Invalid request body stream")
             chunk = message.get("body", b"")
             more_body = message.get("more_body", False)

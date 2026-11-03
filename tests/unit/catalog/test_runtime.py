@@ -1,4 +1,5 @@
-"""Offline proofs for isolated startup and non-retrying catalog administration."""
+"""Offline proofs for isolated startup and non-retrying catalog
+administration."""
 
 from __future__ import annotations
 
@@ -105,7 +106,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                 if tag.endswith("-" + name + ":1")
             )
             if service == self.build_failure_service:
-                return self.completed(argv, code=1, stderr="private build failure")
+                return self.completed(
+                    argv, code=1, stderr="private build failure"
+                )
             number = {
                 "fess-search": "1",
                 "opensearch-search": "2",
@@ -113,11 +116,18 @@ class CatalogRuntimeTests(unittest.TestCase):
             }[service]
             image_id = "sha256:" + number * 64
             iid = Path(argv[argv.index("--iidfile") + 1])
-            iid.unlink()  # Both real Docker builders remove the old iidfile first.
-            descriptor = os.open(iid, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-            os.fchmod(descriptor, 0o644)  # Observed builder mode, independent of umask.
+            # Both real Docker builders remove the old iidfile first.
+            iid.unlink()
+            descriptor = os.open(
+                iid, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644
+            )
+            os.fchmod(
+                descriptor, 0o644
+            )  # Observed builder mode, independent of umask.
             with os.fdopen(descriptor, "w") as stream:
-                stream.write(image_id)  # Actual Docker IID is 71 bytes without LF.
+                stream.write(
+                    image_id
+                )  # Actual Docker IID is 71 bytes without LF.
             labels = dict(
                 argv[number + 1].split("=", 1)
                 for number, argument in enumerate(argv)
@@ -152,7 +162,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         if argv[1] == "compose":
             if "config" in argv:
                 normalized = copy.deepcopy(self.compose)
-                overlay = json.loads((self.root / "image-lock.json").read_text())
+                overlay = json.loads(
+                    (self.root / "image-lock.json").read_text()
+                )
                 for name, entry in overlay["services"].items():
                     normalized["services"][name].update(entry)
                 return self.completed(argv, normalized)
@@ -199,7 +211,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.assertEqual(840 if operation == "import" else 420, timeout)
             report = {
                 "schema_version": 1,
-                "status": "imported" if operation == "import" else "reconciled-active",
+                "status": "imported"
+                if operation == "import"
+                else "reconciled-active",
                 "bundle_id": self.fixture.bundle["bundle_id"],
                 "manifest_sha256": self.plan["manifest_sha256"],
                 "document_count": 1,
@@ -250,7 +264,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                     "RW": not entry.get("read_only", False),
                     **(
                         {
-                            "Name": self.compose["volumes"][entry["source"]]["name"],
+                            "Name": self.compose["volumes"][entry["source"]][
+                                "name"
+                            ],
                             "Driver": "local",
                         }
                         if entry["type"] == "volume"
@@ -288,7 +304,8 @@ class CatalogRuntimeTests(unittest.TestCase):
                         "Test": expected["healthcheck"]["test"],
                         "Retries": expected["healthcheck"]["retries"],
                         # Docker inspection values are independent literal ns;
-                        # reusing the parser here previously hid serialization gaps.
+                        # reusing the parser here previously hid serialization
+                        # gaps.
                         "Interval": 20_000_000_000,
                         "Timeout": 10_000_000_000
                         if name == "ollama-embedding"
@@ -305,7 +322,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                     "Mounts": [
                         {
                             "Type": "volume",
-                            "Source": self.compose["volumes"][entry["source"]]["name"],
+                            "Source": self.compose["volumes"][entry["source"]][
+                                "name"
+                            ],
                             "Target": entry["target"],
                             "VolumeOptions": {"NoCopy": True},
                         }
@@ -331,7 +350,11 @@ class CatalogRuntimeTests(unittest.TestCase):
                         for entry in expected["tmpfs"]
                     },
                     "Ulimits": [
-                        {"Name": key, "Soft": entry["soft"], "Hard": entry["hard"]}
+                        {
+                            "Name": key,
+                            "Soft": entry["soft"],
+                            "Hard": entry["hard"],
+                        }
                         for key, entry in expected.get("ulimits", {}).items()
                     ],
                     "NetworkMode": "container:" + ids["fess-search"]
@@ -341,7 +364,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                 "Mounts": mounts,
                 "State": {"Running": True, "Health": {"Status": "healthy"}},
                 "NetworkSettings": {
-                    "Networks": {} if name == "ollama-embedding" else {network: {}}
+                    "Networks": {}
+                    if name == "ollama-embedding"
+                    else {network: {}}
                 },
             }
             self.containers.append(row)
@@ -363,7 +388,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             if argument == "--label"
         )
         image = next(
-            argument for argument in argv if runtime.IMAGE_ID.fullmatch(argument)
+            argument
+            for argument in argv
+            if runtime.IMAGE_ID.fullmatch(argument)
         )
         mounts = []
         for index, argument in enumerate(argv):
@@ -384,11 +411,15 @@ class CatalogRuntimeTests(unittest.TestCase):
         command = argv[argv.index(image) + 1 :]
         bundle_target = Path(command[command.index("--bundle") + 1])
         bundle_mount = next(
-            mount for mount in mounts if mount["Destination"] == str(bundle_target)
+            mount
+            for mount in mounts
+            if mount["Destination"] == str(bundle_target)
         )
         helper_roots = self.fixture.root / "helper-roots"
         helper_roots.mkdir(mode=0o700, exist_ok=True)
-        container_root = helper_roots / labels[runtime.LABEL_PREFIX + "admin-run"]
+        container_root = (
+            helper_roots / labels[runtime.LABEL_PREFIX + "admin-run"]
+        )
         container_root.mkdir(mode=0o700)
         mounted_bundle = container_root / bundle_target.relative_to("/")
         mounted_bundle.parent.mkdir(mode=0o700, exist_ok=True)
@@ -397,7 +428,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         # returning any canned import result. /catalog alone must not pass.
         loaded = CatalogBundle.load(
             mounted_bundle,
-            expected_manifest_sha256=command[command.index("--manifest-sha256") + 1],
+            expected_manifest_sha256=command[
+                command.index("--manifest-sha256") + 1
+            ],
         )
         self.helper_bundle_loads.append((bundle_target, bundle_mount, loaded))
         self.helpers["d" * 64] = {
@@ -405,7 +438,10 @@ class CatalogRuntimeTests(unittest.TestCase):
             "Image": image,
             "Config": {
                 "User": f"{os.geteuid()}:{os.getegid()}",
-                "Env": ["NVIDIA_VISIBLE_DEVICES=void", "CUDA_VISIBLE_DEVICES="],
+                "Env": [
+                    "NVIDIA_VISIBLE_DEVICES=void",
+                    "CUDA_VISIBLE_DEVICES=",
+                ],
                 "Labels": labels,
                 "Entrypoint": [
                     "python3",
@@ -432,7 +468,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                 "RestartPolicy": {"Name": "no"},
                 "LogConfig": {"Type": "none"},
                 "Ulimits": [{"Name": "nofile", "Soft": 1024, "Hard": 1024}],
-                "Tmpfs": {"/tmp": argv[argv.index("--tmpfs") + 1].split(":", 1)[1]},
+                "Tmpfs": {
+                    "/tmp": argv[argv.index("--tmpfs") + 1].split(":", 1)[1]
+                },
                 "NetworkMode": argv[argv.index("--network") + 1],
             },
             "Mounts": mounts,
@@ -445,7 +483,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             return
         context = {"plan": self.plan, "repo": ROOT, "runner": self.runner}
         sources = {
-            name: hashlib.sha256(execution.sealed_source(context, name)).hexdigest()
+            name: hashlib.sha256(
+                execution.sealed_source(context, name)
+            ).hexdigest()
             for name in runtime.administration.ADMIN_FILES
         }
         labels = execution.image_labels(
@@ -505,9 +545,8 @@ class CatalogRuntimeTests(unittest.TestCase):
                 runtime.LABEL_PREFIX + "project": self.plan["project"],
                 runtime.LABEL_PREFIX + "revision": REVISION,
                 runtime.LABEL_PREFIX + "service": name,
-                runtime.LABEL_PREFIX + "source-sha256": execution.digest_record(
-                    sources
-                ),
+                runtime.LABEL_PREFIX
+                + "source-sha256": execution.digest_record(sources),
                 runtime.LABEL_PREFIX + "base": base,
             }
             image_id = "sha256:" + number * 64
@@ -562,13 +601,15 @@ class CatalogRuntimeTests(unittest.TestCase):
             runner=self.runner,
         )
 
-    def test_cross_commit_context_and_start_keep_origin_runtime_and_admin_receipts(
+    def test_cross_commit_context_and_start_keep_origin_receipts(
         self,
     ):
         receipt = self.start()
         self.admin("import")
         before = {
-            path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()
+            path: path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
         }
         self.source_revision = "b" * 40
         context = execution.load_context(
@@ -592,7 +633,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertEqual(1, len(self.helper_bundle_loads))
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
 
-    def test_cross_commit_runtime_reuse_rejects_actual_resource_and_peer_drift(self):
+    def test_cross_commit_runtime_reuse_rejects_actual_resource_and_peer_drift(
+        self,
+    ):
         self.start()
         self.source_revision = "b" * 40
         containers, network = (
@@ -618,19 +661,28 @@ class CatalogRuntimeTests(unittest.TestCase):
                     self.start()
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
 
-    def test_cross_commit_context_rejects_source_drift_during_sealed_plan_load(self):
+    def test_cross_commit_context_rejects_source_drift_during_sealed_plan_load(
+        self,
+    ):
         self.start()
         before = {
-            path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()
+            path: path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
         }
         with patch.object(
-            execution, "require_clean_revision", side_effect=["b" * 40, "c" * 40]
+            execution,
+            "require_clean_revision",
+            side_effect=["b" * 40, "c" * 40],
         ):
             with self.assertRaisesRegex(
                 execution.RuntimeError, "source_revision_changed"
             ):
                 execution.load_context(
-                    self.fixture.config, self.plan, repo_root=ROOT, runner=self.runner
+                    self.fixture.config,
+                    self.plan,
+                    repo_root=ROOT,
+                    runner=self.runner,
                 )
         self.assertEqual(before, {path: path.read_bytes() for path in before})
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
@@ -646,10 +698,14 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.start()
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
 
-    def test_default_context_retains_runner_for_later_runtime_observations(self):
+    def test_default_context_retains_runner_for_later_runtime_observations(
+        self,
+    ):
         self.start()
         runner = self.runner
-        with patch.object(commands, "default_runner", return_value=runner) as factory:
+        with patch.object(
+            commands, "default_runner", return_value=runner
+        ) as factory:
             context = execution.load_context(
                 self.fixture.config, self.plan, repo_root=ROOT
             )
@@ -661,10 +717,17 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_start_and_import_share_default_context_runner(self):
         runner = self.runner
-        with patch.object(commands, "default_runner", return_value=runner) as factory:
-            started = runtime.start(self.fixture.config, self.plan, repo_root=ROOT)
+        with patch.object(
+            commands, "default_runner", return_value=runner
+        ) as factory:
+            started = runtime.start(
+                self.fixture.config, self.plan, repo_root=ROOT
+            )
             imported = runtime.admin(
-                self.fixture.config, self.plan, repo_root=ROOT, operation="import"
+                self.fixture.config,
+                self.plan,
+                repo_root=ROOT,
+                operation="import",
             )
         self.assertEqual(2, factory.call_count)
         self.assertEqual("running", started["status"])
@@ -706,14 +769,18 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertEqual("running", receipt["status"])
         self.assertFalse(receipt["active_changed"])
         self.assertEqual(runtime.SERVICES, set(receipt["image_ids"]))
-        self.assertFalse((self.fixture.config.state_root / "active.json").exists())
+        self.assertFalse(
+            (self.fixture.config.state_root / "active.json").exists()
+        )
         for row in self.containers:
             name = row["Config"]["Labels"]["com.docker.compose.service"]
             for actual, expected in (
                 ("Memory", "mem_limit"),
                 ("MemorySwap", "memswap_limit"),
             ):
-                self.assertIs(type(self.compose["services"][name][expected]), str)
+                self.assertIs(
+                    type(self.compose["services"][name][expected]), str
+                )
                 self.assertIs(type(row["HostConfig"][actual]), int)
                 self.assertEqual(
                     int(self.compose["services"][name][expected]),
@@ -723,12 +790,19 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
         self.assertEqual(
             1,
-            sum(argv[:3] == ["docker", "volume", "create"] for argv, _ in self.calls),
+            sum(
+                argv[:3] == ["docker", "volume", "create"]
+                for argv, _ in self.calls
+            ),
         )
         initialize = next(
-            index for index, (argv, _) in enumerate(self.calls) if "--cap-add" in argv
+            index
+            for index, (argv, _) in enumerate(self.calls)
+            if "--cap-add" in argv
         )
-        up = next(index for index, (argv, _) in enumerate(self.calls) if "up" in argv)
+        up = next(
+            index for index, (argv, _) in enumerate(self.calls) if "up" in argv
+        )
         self.assertLess(initialize, up)
         self.assertEqual(
             {"uid": os.geteuid(), "gid": os.getegid(), "mode": 0o700},
@@ -736,7 +810,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         )
         self.assertTrue((self.root / "volume.json").is_file())
 
-    def test_completed_runtime_health_failure_only_observes_existing_services(self):
+    def test_completed_runtime_health_failure_only_observes_existing_services(
+        self,
+    ):
         self.start()
         original = copy.deepcopy(self.containers)
         before = {
@@ -772,17 +848,22 @@ class CatalogRuntimeTests(unittest.TestCase):
             any(
                 argv[0] == "docker"
                 and (
-                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    argv[1]
+                    in {"build", "pull", "create", "start", "restart", "rm"}
                     or "up" in argv
                 )
                 for argv, _ in self.calls
             )
         )
 
-    def test_completed_catalog_runtime_does_not_seal_process_start_identity(self):
+    def test_completed_catalog_runtime_does_not_seal_process_start_identity(
+        self,
+    ):
         def initial_processes():
             for index, row in enumerate(self.containers):
-                row["State"].update(Pid=100 + index, StartedAt="2026-01-01T00:00:00Z")
+                row["State"].update(
+                    Pid=100 + index, StartedAt="2026-01-01T00:00:00Z"
+                )
                 row["RestartCount"] = 0
 
         self.startup_mutation = initial_processes
@@ -811,17 +892,22 @@ class CatalogRuntimeTests(unittest.TestCase):
             any(
                 argv[0] == "docker"
                 and (
-                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    argv[1]
+                    in {"build", "pull", "create", "start", "restart", "rm"}
                     or "up" in argv
                 )
                 for argv, _ in self.calls
             )
         )
 
-    def test_completed_runtime_rejects_replaced_container_or_network_identity(self):
+    def test_completed_runtime_rejects_replaced_container_or_network_identity(
+        self,
+    ):
         self.start()
         original = copy.deepcopy((self.containers, self.network))
-        before = {path: path.read_bytes() for path in self.root.rglob("*.json")}
+        before = {
+            path: path.read_bytes() for path in self.root.rglob("*.json")
+        }
         self.calls.clear()
         for identity in ("container", "network"):
             self.containers, self.network = copy.deepcopy(original)
@@ -834,12 +920,17 @@ class CatalogRuntimeTests(unittest.TestCase):
                 )
                 previous = fess["Id"]
                 fess["Id"] = "f" * 64
-                self.network["Containers"][fess["Id"]] = self.network["Containers"].pop(
-                    previous
-                )
+                self.network["Containers"][fess["Id"]] = self.network[
+                    "Containers"
+                ].pop(previous)
                 for row in self.containers:
-                    if row["HostConfig"]["NetworkMode"] == "container:" + previous:
-                        row["HostConfig"]["NetworkMode"] = "container:" + fess["Id"]
+                    if (
+                        row["HostConfig"]["NetworkMode"]
+                        == "container:" + previous
+                    ):
+                        row["HostConfig"]["NetworkMode"] = (
+                            "container:" + fess["Id"]
+                        )
             else:
                 self.network["Id"] = "f" * 64
             with self.subTest(identity=identity):
@@ -850,14 +941,18 @@ class CatalogRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     before,
-                    {path: path.read_bytes() for path in self.root.rglob("*.json")},
+                    {
+                        path: path.read_bytes()
+                        for path in self.root.rglob("*.json")
+                    },
                 )
         self.assertFalse((self.root / "start-failure.json").exists())
         self.assertFalse(
             any(
                 argv[0] == "docker"
                 and (
-                    argv[1] in {"build", "pull", "create", "start", "restart", "rm"}
+                    argv[1]
+                    in {"build", "pull", "create", "start", "restart", "rm"}
                     or "up" in argv
                 )
                 for argv, _ in self.calls
@@ -879,7 +974,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             )
         )
 
-    def test_failed_volume_initialization_quarantines_start_without_retry(self):
+    def test_failed_volume_initialization_quarantines_start_without_retry(
+        self,
+    ):
         self.volume.fail_initialize = True
         with self.assertRaises(commands.BackendError):
             self.start()
@@ -894,7 +991,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertFalse(self.volume.calls)
         self.assertFalse(self.containers)
 
-    def test_start_rejects_volume_metadata_drift_before_runtime_completion(self):
+    def test_start_rejects_volume_metadata_drift_before_runtime_completion(
+        self,
+    ):
         self.startup_mutation = lambda: self.volume.metadata.update(
             created_at="changed-after-compose-up"
         )
@@ -924,7 +1023,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         receipt = self.start(prebuilt_images=prebuilt)
         self.assertEqual("running", receipt["status"])
         self.assertFalse(receipt["active_changed"])
-        self.assertEqual(prebuilt, json.loads((self.root / "images.json").read_text()))
+        self.assertEqual(
+            prebuilt, json.loads((self.root / "images.json").read_text())
+        )
         self.assertEqual(receipt, self.start(prebuilt_images=prebuilt))
         self.assertEqual(receipt, self.start())
         self.assertEqual(original, prebuilt)
@@ -936,19 +1037,22 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertFalse(any(self.root.glob("build-*")))
         self.assertFalse(any(self.root.glob("image-*.iid")))
 
-    def test_prebuilt_missing_or_changed_admin_image_rejects_before_start_intent(self):
+    def test_invalid_prebuilt_admin_image_rejects_before_start_intent(
+        self,
+    ):
         prebuilt = self.prebuilt_receipt(admin_image=False)
         for changed in (False, True):
             with self.subTest(changed=changed):
                 if changed:
                     self.prebuilt_admin_image()
                     image = self.images["sha256:" + "3" * 64]
-                    image["Config"]["Labels"][runtime.LABEL_PREFIX + "revision"] = (
-                        "9" * 40
-                    )
+                    image["Config"]["Labels"][
+                        runtime.LABEL_PREFIX + "revision"
+                    ] = "9" * 40
                 self.calls.clear()
                 with self.assertRaisesRegex(
-                    ValueError, "admin_image_evidence_missing|source_labels_changed"
+                    ValueError,
+                    "admin_image_evidence_missing|source_labels_changed",
                 ):
                     self.start(prebuilt_images=prebuilt)
                 self.assertFalse((self.root / "start-started.json").exists())
@@ -957,18 +1061,23 @@ class CatalogRuntimeTests(unittest.TestCase):
                 self.assertFalse(self.volume.calls)
                 self.assertFalse(
                     any(
-                        argv[0] == "docker" and argv[1] in {"build", "pull", "compose"}
+                        argv[0] == "docker"
+                        and argv[1] in {"build", "pull", "compose"}
                         for argv, _ in self.calls
                     )
                 )
 
-    def test_image_stage_builds_and_reverifies_without_starting_or_switching(self):
+    def test_image_stage_builds_and_reverifies_without_starting_or_switching(
+        self,
+    ):
         result = self.stage_images()
         self.assertEqual("images_staged", result["status"])
         self.assertIs(result["services_started"], False)
         self.assertIs(result["active_changed"], False)
         self.assertEqual(runtime.SERVICES, set(result["images"]))
-        self.assertEqual("sha256:" + "3" * 64, result["admin_image"]["image_id"])
+        self.assertEqual(
+            "sha256:" + "3" * 64, result["admin_image"]["image_id"]
+        )
         self.assertEqual(
             result,
             json.loads((self.root / "image-stage-complete.json").read_text()),
@@ -992,19 +1101,24 @@ class CatalogRuntimeTests(unittest.TestCase):
         )
         self.assertEqual([], self.containers)
         self.assertFalse((self.root / "runtime.json").exists())
-        self.assertFalse((self.fixture.config.state_root / "active.json").exists())
+        self.assertFalse(
+            (self.fixture.config.state_root / "active.json").exists()
+        )
 
         self.calls.clear()
         self.assertEqual(result, self.stage_images())
         self.assertFalse(
             any(
-                argv[1] in {"build", "pull", "tag", "compose", "create", "start"}
+                argv[1]
+                in {"build", "pull", "tag", "compose", "create", "start"}
                 for argv, _ in self.calls
                 if argv[0] == "docker"
             )
         )
 
-    def test_image_stage_retains_default_runner_and_start_uses_staged_images(self):
+    def test_image_stage_retains_default_runner_and_start_uses_staged_images(
+        self,
+    ):
         with patch.object(
             commands, "default_runner", return_value=self.runner
         ) as factory:
@@ -1029,7 +1143,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         # services_started=False records the stage operation, even after start.
         self.assertIs(staged["services_started"], False)
 
-    def test_failed_admin_image_stage_cannot_retry_or_be_bypassed_by_start(self):
+    def test_failed_admin_image_stage_cannot_retry_or_be_bypassed_by_start(
+        self,
+    ):
         self.build_failure_service = "catalog-admin"
         with self.assertRaisesRegex(commands.BackendError, "command failed"):
             self.stage_images()
@@ -1048,7 +1164,8 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertFalse((self.root / "start-started.json").exists())
         self.assertFalse(
             any(
-                argv[1] in {"build", "pull", "compose", "create", "start", "rm"}
+                argv[1]
+                in {"build", "pull", "compose", "create", "start", "rm"}
                 for argv, _ in self.calls
                 if argv[0] == "docker"
             )
@@ -1075,7 +1192,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.stage_images()
         self.assertFalse((self.root / "image-stage-started.json").exists())
 
-    def test_image_stage_does_not_adopt_orphan_service_or_helper_containers(self):
+    def test_image_stage_does_not_adopt_orphan_service_or_helper_containers(
+        self,
+    ):
         for helper in (False, True):
             if helper:
                 self.helpers["d" * 64] = {}
@@ -1090,7 +1209,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.containers.clear()
             self.helpers.clear()
 
-    def test_image_stage_receipt_mutations_are_rejected_without_rebuilding(self):
+    def test_image_stage_receipt_mutations_are_rejected_without_rebuilding(
+        self,
+    ):
         result = self.stage_images()
         for mutation in (
             lambda value: value.update(schema_version=True),
@@ -1101,7 +1222,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             lambda value: value["images"]["fess-search"].update(
                 image_id="sha256:" + "9" * 64
             ),
-            lambda value: value["admin_image"].update(reference="unreviewed:1"),
+            lambda value: value["admin_image"].update(
+                reference="unreviewed:1"
+            ),
         ):
             changed = copy.deepcopy(result)
             mutation(changed)
@@ -1116,7 +1239,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         execution.write_record(
             self.root, "image-stage-complete.json", result, replace=True
         )
-        started = json.loads((self.root / "image-stage-started.json").read_text())
+        started = json.loads(
+            (self.root / "image-stage-started.json").read_text()
+        )
         started["schema_version"] = True
         execution.write_record(
             self.root, "image-stage-started.json", started, replace=True
@@ -1143,11 +1268,14 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.stage_images()
         image["Config"]["Labels"] = copy.deepcopy(admin["labels"])
         (self.root / "admin-image.json").unlink()
-        with self.assertRaisesRegex(ValueError, "admin_image_evidence_missing"):
+        with self.assertRaisesRegex(
+            ValueError, "admin_image_evidence_missing"
+        ):
             self.stage_images()
         self.assertFalse(
             any(
-                argv[1] in {"build", "pull", "tag", "compose", "create", "start"}
+                argv[1]
+                in {"build", "pull", "tag", "compose", "create", "start"}
                 for argv, _ in self.calls
                 if argv[0] == "docker"
             )
@@ -1161,15 +1289,23 @@ class CatalogRuntimeTests(unittest.TestCase):
             lambda value: value.update(schema_version=True),
             lambda value: value.update(extra=True),
             lambda value: value["images"].pop("fess-search"),
-            lambda value: value["images"]["fess-search"].update(image_id="mutable:tag"),
+            lambda value: value["images"]["fess-search"].update(
+                image_id="mutable:tag"
+            ),
             lambda value: value["images"]["fess-search"]["sources"].update(
-                {next(iter(value["images"]["fess-search"]["sources"])): "0" * 64}
+                {
+                    next(iter(value["images"]["fess-search"]["sources"])): "0"
+                    * 64
+                }
             ),
         )
         for mutation in mutations:
             supplied = copy.deepcopy(valid)
             mutation(supplied)
-            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaises(ValueError),
+            ):
                 self.start(prebuilt_images=supplied)
             self.assertFalse((self.root / "start-started.json").exists())
             self.assertFalse((self.root / "start-failure.json").exists())
@@ -1192,7 +1328,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             )
         )
 
-    def test_prebuilt_actual_source_labels_and_registry_digest_are_required(self):
+    def test_prebuilt_actual_source_labels_and_registry_digest_are_required(
+        self,
+    ):
         prebuilt = self.prebuilt_receipt()
         fess = self.images[prebuilt["images"]["fess-search"]["image_id"]]
         labels = copy.deepcopy(fess["Config"]["Labels"])
@@ -1202,13 +1340,19 @@ class CatalogRuntimeTests(unittest.TestCase):
         ):
             with self.subTest(label=key):
                 fess["Config"]["Labels"] = {**labels, key: "wrong"}
-                with self.assertRaisesRegex(ValueError, "source_labels_changed"):
+                with self.assertRaisesRegex(
+                    ValueError, "source_labels_changed"
+                ):
                     self.start(prebuilt_images=prebuilt)
                 self.assertFalse((self.root / "start-started.json").exists())
         fess["Config"]["Labels"] = labels
-        ollama = self.images[prebuilt["images"]["ollama-embedding"]["image_id"]]
+        ollama = self.images[
+            prebuilt["images"]["ollama-embedding"]["image_id"]
+        ]
         ollama["RepoDigests"] = ["ollama/ollama@sha256:" + "0" * 64]
-        with self.assertRaisesRegex(ValueError, "ollama_registry_digest_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "ollama_registry_digest_changed"
+        ):
             self.start(prebuilt_images=prebuilt)
         self.assertFalse((self.root / "start-started.json").exists())
 
@@ -1247,28 +1391,38 @@ class CatalogRuntimeTests(unittest.TestCase):
                     self.images[reference] = self.images[original]
 
         self.image_metadata_mutation = restore_original_tag
-        with self.assertRaisesRegex(ValueError, "prebuilt_images_differ_from_runtime"):
+        with self.assertRaisesRegex(
+            ValueError, "prebuilt_images_differ_from_runtime"
+        ):
             self.start(prebuilt_images=changed)
         self.assertEqual(1, sum("up" in argv for argv, _ in self.calls))
         self.assertFalse((self.root / "start-failure.json").exists())
         self.assertEqual(original, self.images[reference]["Id"])
 
-    def test_prebuilt_manifest_mutation_does_not_change_validated_selection(self):
+    def test_prebuilt_manifest_mutation_does_not_change_validated_selection(
+        self,
+    ):
         prebuilt = self.prebuilt_receipt()
         original = copy.deepcopy(prebuilt)
 
         def mutate_caller_manifest(image):
-            prebuilt["images"]["fess-search"]["image_id"] = "sha256:" + "9" * 64
+            prebuilt["images"]["fess-search"]["image_id"] = (
+                "sha256:" + "9" * 64
+            )
 
         self.image_metadata_mutation = mutate_caller_manifest
         receipt = self.start(prebuilt_images=prebuilt)
-        self.assertEqual(original, json.loads((self.root / "images.json").read_text()))
+        self.assertEqual(
+            original, json.loads((self.root / "images.json").read_text())
+        )
         self.assertEqual(
             original["images"]["fess-search"]["image_id"],
             receipt["image_ids"]["fess-search"],
         )
 
-    def test_memory_malformed_or_changed_values_are_rejected_for_every_service(self):
+    def test_memory_malformed_or_changed_values_are_rejected_for_every_service(
+        self,
+    ):
         self.start()
         images = json.loads((self.root / "images.json").read_text())["images"]
         for index, original in enumerate(self.containers):
@@ -1305,7 +1459,10 @@ class CatalogRuntimeTests(unittest.TestCase):
                             compose["services"][name][expected] = value
                         with (
                             self.subTest(
-                                service=name, field=actual, side=side, value=value
+                                service=name,
+                                field=actual,
+                                side=side,
+                                value=value,
                             ),
                             self.assertRaisesRegex(
                                 runtime.RuntimeError, "memory_bytes_invalid"
@@ -1315,7 +1472,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                                 self.plan, compose, images, rows, self.network
                             )
 
-    def test_shared_core_proof_makes_no_network_peer_or_runtime_receipt_claim(self):
+    def test_shared_core_proof_makes_no_network_peer_or_runtime_receipt_claim(
+        self,
+    ):
         self.create_services()
         images = {
             row["Config"]["Labels"]["com.docker.compose.service"]: {
@@ -1323,7 +1482,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             }
             for row in self.containers
         }
-        before = copy.deepcopy((self.plan, self.compose, images, self.containers))
+        before = copy.deepcopy(
+            (self.plan, self.compose, images, self.containers)
+        )
         result = validate_core_containers(
             self.plan, self.compose, images, self.containers
         )
@@ -1335,7 +1496,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             },
             result,
         )
-        self.assertEqual(before, (self.plan, self.compose, images, self.containers))
+        self.assertEqual(
+            before, (self.plan, self.compose, images, self.containers)
+        )
         self.assertNotIn("network_id", result)
         self.assertNotIn("status", result)
 
@@ -1347,18 +1510,27 @@ class CatalogRuntimeTests(unittest.TestCase):
             }
             for row in self.containers
         }
-        for rows in (self.containers[:-1], self.containers + [self.containers[0]]):
+        for rows in (
+            self.containers[:-1],
+            self.containers + [self.containers[0]],
+        ):
             with self.subTest(count=len(rows)):
                 with self.assertRaisesRegex(
                     runtime.RuntimeError, "exactly_three_services"
                 ):
-                    validate_core_containers(self.plan, self.compose, images, rows)
+                    validate_core_containers(
+                        self.plan, self.compose, images, rows
+                    )
         rows = copy.deepcopy(self.containers)
-        rows[0]["Config"]["Labels"]["com.docker.compose.service"] = "conversation-api"
+        rows[0]["Config"]["Labels"]["com.docker.compose.service"] = (
+            "conversation-api"
+        )
         with self.assertRaisesRegex(runtime.RuntimeError, "identity_changed"):
             validate_core_containers(self.plan, self.compose, images, rows)
 
-    def test_named_index_core_proof_uses_actual_volume_name_driver_and_nocopy(self):
+    def test_named_index_core_proof_uses_actual_volume_name_driver_and_nocopy(
+        self,
+    ):
         self.create_services()
         compose = self.compose
         rows = copy.deepcopy(self.containers)
@@ -1440,9 +1612,13 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.network["Containers"]["f" * 64] = {}
         self.assertEqual(
             expected["container_ids"],
-            validate_core_containers(self.plan, self.compose, images, self.containers),
+            validate_core_containers(
+                self.plan, self.compose, images, self.containers
+            ),
         )
-        with self.assertRaisesRegex(runtime.RuntimeError, "network_peers_changed"):
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "network_peers_changed"
+        ):
             validate_runtime(
                 self.plan, self.compose, images, self.containers, self.network
             )
@@ -1452,12 +1628,19 @@ class CatalogRuntimeTests(unittest.TestCase):
         images = json.loads((self.root / "images.json").read_text())["images"]
         for index, original in enumerate(self.containers):
             name = original["Config"]["Labels"]["com.docker.compose.service"]
-            for field in ("Interval", "Timeout", "StartPeriod", "StartInterval"):
+            for field in (
+                "Interval",
+                "Timeout",
+                "StartPeriod",
+                "StartInterval",
+            ):
                 rows = copy.deepcopy(self.containers)
                 rows[index]["Config"]["Healthcheck"][field] += 1
                 with (
                     self.subTest(service=name, field=field),
-                    self.assertRaisesRegex(runtime.RuntimeError, "healthcheck_changed"),
+                    self.assertRaisesRegex(
+                        runtime.RuntimeError, "healthcheck_changed"
+                    ),
                 ):
                     validate_runtime(
                         self.plan, self.compose, images, rows, self.network
@@ -1468,7 +1651,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         original = copy.deepcopy(self.containers)
         mutations = (
             lambda row: row["HostConfig"].update(Memory=1),
-            lambda row: row["HostConfig"].update(DeviceRequests=[{"Driver": "nvidia"}]),
+            lambda row: row["HostConfig"].update(
+                DeviceRequests=[{"Driver": "nvidia"}]
+            ),
             lambda row: row["HostConfig"].update(
                 PortBindings={"8080/tcp": [{"HostPort": "8080"}]}
             ),
@@ -1504,7 +1689,10 @@ class CatalogRuntimeTests(unittest.TestCase):
     def test_retagged_image_rejected_on_every_start(self):
         self.start()
         reference = self.plan["project"] + "-fess-search:1"
-        self.images[reference] = {**self.images[reference], "Id": "sha256:" + "5" * 64}
+        self.images[reference] = {
+            **self.images[reference],
+            "Id": "sha256:" + "5" * 64,
+        }
         with self.assertRaisesRegex(runtime.RuntimeError, "identity_changed"):
             self.start()
 
@@ -1527,13 +1715,17 @@ class CatalogRuntimeTests(unittest.TestCase):
         create = next(
             argv for argv, _ in self.calls if argv[:2] == ["docker", "create"]
         )
-        self.assertEqual("container:" + "a" * 64, create[create.index("--network") + 1])
+        self.assertEqual(
+            "container:" + "a" * 64, create[create.index("--network") + 1]
+        )
         self.assertIn("--read-only", create)
         self.assertNotIn("--privileged", create)
         self.assertEqual(2, create.count("--mount"))
         self.assertEqual("runc", create[create.index("--runtime") + 1])
 
-    def test_helper_mount_and_argv_keep_the_real_generated_bundle_loadable(self):
+    def test_helper_mount_and_argv_keep_the_real_generated_bundle_loadable(
+        self,
+    ):
         self.start()
         for operation in ("import", "reconcile"):
             self.admin(operation)
@@ -1545,52 +1737,76 @@ class CatalogRuntimeTests(unittest.TestCase):
                 self.assertEqual(source.name, target.name)
                 self.assertEqual(str(source), mount["Source"])
                 self.assertIs(mount["RW"], False)
-                self.assertEqual(self.fixture.bundle["bundle_id"], loaded.bundle_id)
-                self.assertEqual(self.plan["manifest_sha256"], loaded.manifest_sha256)
+                self.assertEqual(
+                    self.fixture.bundle["bundle_id"], loaded.bundle_id
+                )
+                self.assertEqual(
+                    self.plan["manifest_sha256"], loaded.manifest_sha256
+                )
         invalid_root = self.fixture.root / "old-helper-mount"
         invalid_root.mkdir(mode=0o700)
         invalid_bundle = invalid_root / "catalog"
         shutil.copytree(self.plan["bundle_path"], invalid_bundle)
-        with self.assertRaisesRegex(BundleError, "bundle manifest values are invalid"):
+        with self.assertRaisesRegex(
+            BundleError, "bundle manifest values are invalid"
+        ):
             CatalogBundle.load(
-                invalid_bundle, expected_manifest_sha256=self.plan["manifest_sha256"]
+                invalid_bundle,
+                expected_manifest_sha256=self.plan["manifest_sha256"],
             )
 
-    def test_exit_three_never_retries_import_and_requires_explicit_reconcile(self):
+    def test_exit_three_never_retries_import_and_requires_explicit_reconcile(
+        self,
+    ):
         self.start()
         self.helper_exit = 3
         with self.assertRaisesRegex(runtime.RuntimeError, "operation_failed"):
             self.admin("import")
-        count = sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
-        with self.assertRaisesRegex(runtime.RuntimeError, "readonly_reconcile"):
+        count = sum(
+            argv[1:3] == ["start", "--attach"] for argv, _ in self.calls
+        )
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "readonly_reconcile"
+        ):
             self.admin("import")
         self.assertEqual(
-            count, sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
+            count,
+            sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls),
         )
         self.helper_exit = 0
         receipt = self.admin("reconcile")
         self.assertEqual("reconciled-active", receipt["result"]["status"])
         self.assertEqual(
-            1, len(list((self.root / "admin-operations").glob("*-failure.json")))
+            1,
+            len(list((self.root / "admin-operations").glob("*-failure.json"))),
         )
         self.admin("import")
 
-    def test_unstructured_helper_failure_is_generic_without_changing_quarantine(self):
+    def test_unstructured_helper_failure_retains_quarantine(
+        self,
+    ):
         self.start()
         self.helper_exit = 3
 
         def failure(outcome):
             outcome.stdout = ""
-            outcome.stderr = "catalog-admin failed: InventoryConflict: private-response-not-for-output\n"
+            outcome.stderr = (
+                "catalog-admin failed: InventoryConflict: "
+                "private-response-not-for-output\n"
+            )
 
         self.helper_outcome_mutation = failure
         with self.assertRaises(runtime.RuntimeError) as caught:
             self.admin("import")
-        self.assertEqual(("catalog_admin_operation_failed",), caught.exception.args)
+        self.assertEqual(
+            ("catalog_admin_operation_failed",), caught.exception.args
+        )
         directory = self.root / "admin-operations"
         failure_path = next(directory.glob("*-failure.json"))
         failure_record = json.loads(failure_path.read_text())
-        started = json.loads(next(directory.glob("*-started.json")).read_text())
+        started = json.loads(
+            next(directory.glob("*-started.json")).read_text()
+        )
         self.assertEqual(
             {**started, "status": "quarantined", "error_type": "RuntimeError"},
             failure_record,
@@ -1598,11 +1814,16 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.assertNotIn("private-response", failure_path.read_text())
         self.assertFalse(list(directory.glob("*-complete.json")))
         self.assertFalse(self.helpers)
-        count = sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
-        with self.assertRaisesRegex(runtime.RuntimeError, "readonly_reconcile"):
+        count = sum(
+            argv[1:3] == ["start", "--attach"] for argv, _ in self.calls
+        )
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "readonly_reconcile"
+        ):
             self.admin("import")
         self.assertEqual(
-            count, sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
+            count,
+            sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls),
         )
         self.helper_exit = 0
         self.helper_outcome_mutation = None
@@ -1614,13 +1835,25 @@ class CatalogRuntimeTests(unittest.TestCase):
         known = "catalog-admin failed: InventoryConflict: private-value\n"
         cases = (
             ("", known.replace("InventoryConflict", "UnknownError"), 3, 3),
-            ("", known.replace("InventoryConflict", "InventoryConflictSubclass"), 3, 3),
+            (
+                "",
+                known.replace(
+                    "InventoryConflict", "InventoryConflictSubclass"
+                ),
+                3,
+                3,
+            ),
             ("", "prefix " + known, 3, 3),
             ("", known + "private-extra-line\n", 3, 3),
             ("", known + "\n", 3, 3),
             ("", known.replace("private-value", "private\rvalue"), 3, 3),
             ("", known.replace("private-value", "private\u2028value"), 3, 3),
-            ("", known.replace("private-value", "\x1b[31mprivate-value"), 3, 3),
+            (
+                "",
+                known.replace("private-value", "\x1b[31mprivate-value"),
+                3,
+                3,
+            ),
             ("", known + "x" * 4096, 3, 3),
             ("unexpected stdout", known, 3, 3),
             (None, known, 3, 3),
@@ -1631,7 +1864,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             ("", known, 0, 3),
             ("", known, 3, True),
         )
-        for position, (stdout, stderr, returncode, exitcode) in enumerate(cases):
+        for position, (stdout, stderr, returncode, exitcode) in enumerate(
+            cases
+        ):
             with self.subTest(position=position):
 
                 def failure(outcome):
@@ -1646,21 +1881,29 @@ class CatalogRuntimeTests(unittest.TestCase):
                     ("catalog_admin_operation_failed",), caught.exception.args
                 )
         self.assertFalse(self.helpers)
-        self.assertFalse(list((self.root / "admin-operations").glob("*-complete.json")))
+        self.assertFalse(
+            list((self.root / "admin-operations").glob("*-complete.json"))
+        )
 
-    def test_closed_helper_json_preserves_diagnostics_without_changing_quarantine(self):
+    def test_closed_helper_json_keeps_diagnostics_and_quarantine(
+        self,
+    ):
         self.start()
         primary = catalog._diagnosed(
             catalog.ImportFailed("private-value"),
             stage="bulk_dispatched",
             cause="http_503",
         )
-        cleanup = catalog.TokenCleanupError("private-value", possibly_polluted=True)
+        cleanup = catalog.TokenCleanupError(
+            "private-value", possibly_polluted=True
+        )
         cleanup.primary_diagnostic = catalog._failure_detail(primary)
         cleanup.cleanup_diagnostic = catalog._failure_detail(
             catalog.ProtocolError("private-value"), stage="token_cleanup"
         )
-        catalog._diagnosed(cleanup, stage="token_cleanup", cause="response_invalid")
+        catalog._diagnosed(
+            cleanup, stage="token_cleanup", cause="response_invalid"
+        )
         for position, (error, polluted) in enumerate(
             (
                 (catalog.TransportError("private-value"), False),
@@ -1687,21 +1930,32 @@ class CatalogRuntimeTests(unittest.TestCase):
         for path in directory.glob("*-failure.json"):
             failure_record = json.loads(path.read_text())
             started = json.loads(
-                path.with_name(path.name.replace("-failure", "-started")).read_text()
+                path.with_name(
+                    path.name.replace("-failure", "-started")
+                ).read_text()
             )
             self.assertEqual(
-                {**started, "status": "quarantined", "error_type": "RuntimeError"},
+                {
+                    **started,
+                    "status": "quarantined",
+                    "error_type": "RuntimeError",
+                },
                 failure_record,
             )
             self.assertNotIn("diagnostic", path.read_text())
             self.assertNotIn("private-value", path.read_text())
         self.assertFalse(self.helpers)
         self.assertFalse(list(directory.glob("*-complete.json")))
-        count = sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
-        with self.assertRaisesRegex(runtime.RuntimeError, "readonly_reconcile"):
+        count = sum(
+            argv[1:3] == ["start", "--attach"] for argv, _ in self.calls
+        )
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "readonly_reconcile"
+        ):
             self.admin("import")
         self.assertEqual(
-            count, sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
+            count,
+            sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls),
         )
 
     def test_malformed_helper_json_or_native_exit_is_generic(self):
@@ -1729,13 +1983,17 @@ class CatalogRuntimeTests(unittest.TestCase):
             bad = copy.deepcopy(record)
             mutate(bad)
             invalid.append(json.dumps(bad) + "\n")
-        cleanup = catalog.TokenCleanupError("private-value", possibly_polluted=True)
+        cleanup = catalog.TokenCleanupError(
+            "private-value", possibly_polluted=True
+        )
         cleanup.primary_diagnostic = catalog._failure_detail(error)
         cleanup.cleanup_diagnostic = catalog._failure_detail(
             catalog.TransportError("private-value"), stage="token_cleanup"
         )
         catalog._diagnosed(cleanup, stage="token_cleanup", cause="transport")
-        cleanup_record = catalog.failure_record(cleanup, possibly_polluted=True)
+        cleanup_record = catalog.failure_record(
+            cleanup, possibly_polluted=True
+        )
         for mutate in (
             lambda r: r.update(possibly_polluted=False),
             lambda r: r["diagnostic"].update(cause="http_503"),
@@ -1748,7 +2006,8 @@ class CatalogRuntimeTests(unittest.TestCase):
             good + "\n",
             good + "private-value\n",
             good.replace(
-                '"schema_version": 1', '"schema_version": 1,"schema_version": 1'
+                '"schema_version": 1',
+                '"schema_version": 1,"schema_version": 1',
             ),
             good.replace('"schema_version": 1', '"schema_version": NaN'),
             "[null]\n",
@@ -1767,9 +2026,13 @@ class CatalogRuntimeTests(unittest.TestCase):
         for original in (record, cleanup_record):
             bad = copy.deepcopy(original)
             bad["possibly_polluted"] = False
-            outcome = subprocess.CompletedProcess([], 3, "", json.dumps(bad) + "\n")
+            outcome = subprocess.CompletedProcess(
+                [], 3, "", json.dumps(bad) + "\n"
+            )
             self.assertIsNone(
-                _admin_failure_diagnostic(outcome, {"Status": "exited", "ExitCode": 3})
+                _admin_failure_diagnostic(
+                    outcome, {"Status": "exited", "ExitCode": 3}
+                )
             )
         for returned, native, status, stdout in (
             (3, 3, "exited", ""),
@@ -1783,7 +2046,9 @@ class CatalogRuntimeTests(unittest.TestCase):
             (4, 4, "exited", None),
         ):
             with self.subTest(returned=returned, native=native, status=status):
-                outcome = subprocess.CompletedProcess([], returned, stdout, good)
+                outcome = subprocess.CompletedProcess(
+                    [], returned, stdout, good
+                )
                 self.assertIsNone(
                     _admin_failure_diagnostic(
                         outcome, {"Status": status, "ExitCode": native}
@@ -1792,27 +2057,38 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_boolean_schema_or_wrong_count_is_not_a_success(self):
         self.start()
-        self.helper_report_mutation = lambda value: value.update(schema_version=True)
+        self.helper_report_mutation = lambda value: value.update(
+            schema_version=True
+        )
         with self.assertRaises(ValueError):
             self.admin("import")
-        self.assertFalse(list((self.root / "admin-operations").glob("*-complete.json")))
+        self.assertFalse(
+            list((self.root / "admin-operations").glob("*-complete.json"))
+        )
 
-    def test_running_timed_out_helper_is_not_killed_or_automatically_retried(self):
+    def test_running_timed_out_helper_is_not_killed_or_automatically_retried(
+        self,
+    ):
         self.start()
         self.helper_timeout = True
         with self.assertRaises(subprocess.TimeoutExpired):
             self.admin("import")
         self.assertTrue(self.helpers["d" * 64]["State"]["Running"])
-        self.assertFalse(any(argv[:2] == ["docker", "rm"] for argv, _ in self.calls))
+        self.assertFalse(
+            any(argv[:2] == ["docker", "rm"] for argv, _ in self.calls)
+        )
         with self.assertRaisesRegex(
             runtime.RuntimeError, "helper_requires_explicit_recovery"
         ):
             self.admin("reconcile")
         self.assertEqual(
-            1, sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
+            1,
+            sum(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls),
         )
 
-    def test_namespace_peer_sharing_and_nonrunc_are_rejected_for_every_service(self):
+    def test_namespace_peer_sharing_and_nonrunc_are_rejected_for_every_service(
+        self,
+    ):
         self.start()
         original = copy.deepcopy(self.containers)
         for index in range(3):
@@ -1831,26 +2107,36 @@ class CatalogRuntimeTests(unittest.TestCase):
             self.containers[index]["HostConfig"]["Runtime"] = "nvidia"
             with (
                 self.subTest(service=index),
-                self.assertRaisesRegex(runtime.RuntimeError, "resource_policy_changed"),
+                self.assertRaisesRegex(
+                    runtime.RuntimeError, "resource_policy_changed"
+                ),
             ):
                 self.start()
 
     def test_helper_changed_working_directory_is_rejected_before_start(self):
         self.start()
-        self.helper_mutation = lambda row: row["Config"].update(WorkingDir="/tmp")
-        with self.assertRaisesRegex(runtime.RuntimeError, "capabilities_changed"):
+        self.helper_mutation = lambda row: row["Config"].update(
+            WorkingDir="/tmp"
+        )
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "capabilities_changed"
+        ):
             self.admin("reconcile")
         self.assertFalse(
             any(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
         )
-        self.assertFalse(list((self.root / "admin-operations").glob("*-complete.json")))
+        self.assertFalse(
+            list((self.root / "admin-operations").glob("*-complete.json"))
+        )
 
     def test_helper_namespace_peer_sharing_is_rejected_before_start(self):
         self.start()
         self.helper_mutation = lambda row: row["HostConfig"].update(
             IpcMode="container:" + "f" * 64
         )
-        with self.assertRaisesRegex(runtime.RuntimeError, "capabilities_changed"):
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "capabilities_changed"
+        ):
             self.admin("import")
         self.assertFalse(
             any(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
@@ -1861,7 +2147,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.cleanup_timeout = True
         result = self.admin("import")
         self.assertEqual("completed", result["status"])
-        self.assertTrue(list((self.root / "admin-operations").glob("*-complete.json")))
+        self.assertTrue(
+            list((self.root / "admin-operations").glob("*-complete.json"))
+        )
         with self.assertRaisesRegex(
             runtime.RuntimeError, "helper_requires_explicit_recovery"
         ):
@@ -1873,7 +2161,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         self.cleanup_timeout = True
         with self.assertRaisesRegex(runtime.RuntimeError, "operation_failed"):
             self.admin("import")
-        self.assertTrue(list((self.root / "admin-operations").glob("*-failure.json")))
+        self.assertTrue(
+            list((self.root / "admin-operations").glob("*-failure.json"))
+        )
 
     def test_orphan_admin_receipt_is_not_ignored(self):
         self.start()
@@ -1894,10 +2184,14 @@ class CatalogRuntimeTests(unittest.TestCase):
         value = json.loads(path.read_text())
         value["run_id"] = "f" * 32
         path.write_text(json.dumps(value))
-        with self.assertRaisesRegex(runtime.RuntimeError, "failure_evidence_changed"):
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "failure_evidence_changed"
+        ):
             self.admin("reconcile")
 
-    def test_nonobject_admin_evidence_uses_fixed_errors_not_attribute_errors(self):
+    def test_nonobject_admin_evidence_uses_fixed_errors_not_attribute_errors(
+        self,
+    ):
         self.start()
         self.helper_exit = 3
         with self.assertRaises(runtime.RuntimeError):
@@ -1928,28 +2222,46 @@ class CatalogRuntimeTests(unittest.TestCase):
 
     def test_wrong_canonical_registry_digest_cannot_start_services(self):
         reference = self.compose["services"]["ollama-embedding"]["image"]
-        self.images[reference]["RepoDigests"] = ["ollama/ollama@sha256:" + "0" * 64]
-        with self.assertRaisesRegex(runtime.RuntimeError, "registry_digest_changed"):
+        self.images[reference]["RepoDigests"] = [
+            "ollama/ollama@sha256:" + "0" * 64
+        ]
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "registry_digest_changed"
+        ):
             self.start()
         self.assertFalse(self.containers)
 
     def test_secret_changed_during_build_prevents_compose_up(self):
-        secret = Path(self.plan["data_root"]) / "secrets/fess_initial_admin_password"
+        secret = (
+            Path(self.plan["data_root"])
+            / "secrets/fess_initial_admin_password"
+        )
         self.after_build_mutation = lambda: secret.write_text("f" * 64 + "\n")
-        with self.assertRaisesRegex(runtime.RuntimeError, "security_material_changed"):
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "security_material_changed"
+        ):
             self.start()
         self.assertFalse(any("up" in argv for argv, _ in self.calls))
         self.assertFalse((self.root / "runtime.json").exists())
 
     def test_secret_changed_during_admin_is_detected_before_completion(self):
         self.start()
-        secret = Path(self.plan["data_root"]) / "secrets/fess_initial_admin_password"
-        self.helper_report_mutation = lambda report: secret.write_text("f" * 64 + "\n")
+        secret = (
+            Path(self.plan["data_root"])
+            / "secrets/fess_initial_admin_password"
+        )
+        self.helper_report_mutation = lambda report: secret.write_text(
+            "f" * 64 + "\n"
+        )
         with self.assertRaisesRegex(runtime.RuntimeError, "secret_changed"):
             self.admin("import")
-        self.assertFalse(list((self.root / "admin-operations").glob("*-complete.json")))
+        self.assertFalse(
+            list((self.root / "admin-operations").glob("*-complete.json"))
+        )
 
-    def test_extra_secret_or_docker_socket_mount_blocks_helper_before_start(self):
+    def test_extra_secret_or_docker_socket_mount_blocks_helper_before_start(
+        self,
+    ):
         self.start()
         self.helper_mutation = lambda row: row["Mounts"].append(
             {
@@ -1959,7 +2271,9 @@ class CatalogRuntimeTests(unittest.TestCase):
                 "RW": True,
             }
         )
-        with self.assertRaisesRegex(runtime.RuntimeError, "capabilities_changed"):
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "capabilities_changed"
+        ):
             self.admin("import")
         self.assertFalse(
             any(argv[1:3] == ["start", "--attach"] for argv, _ in self.calls)
@@ -1987,7 +2301,9 @@ class CatalogRuntimeTests(unittest.TestCase):
         ):
             self.admin("import")
 
-    def test_runtime_receipt_bool_schema_or_image_proof_change_is_rejected(self):
+    def test_runtime_receipt_bool_schema_or_image_proof_change_is_rejected(
+        self,
+    ):
         self.start()
         path = self.root / "runtime.json"
         original = json.loads(path.read_text())
@@ -2001,16 +2317,24 @@ class CatalogRuntimeTests(unittest.TestCase):
             path.write_text(json.dumps(altered))
             with (
                 self.subTest(mutation=mutation),
-                self.assertRaisesRegex(runtime.RuntimeError, "receipt_changed"),
+                self.assertRaisesRegex(
+                    runtime.RuntimeError, "receipt_changed"
+                ),
             ):
                 self.start()
 
     def test_wrong_document_count_rejected_after_readonly_reconcile(self):
         self.start()
-        self.helper_report_mutation = lambda value: value.update(document_count=2)
-        with self.assertRaisesRegex(runtime.RuntimeError, "document_count_changed"):
+        self.helper_report_mutation = lambda value: value.update(
+            document_count=2
+        )
+        with self.assertRaisesRegex(
+            runtime.RuntimeError, "document_count_changed"
+        ):
             self.admin("reconcile")
-        self.assertFalse((self.root / "admin-operations/reconciled.json").exists())
+        self.assertFalse(
+            (self.root / "admin-operations/reconciled.json").exists()
+        )
 
     def test_vector_and_query_commands_are_out_of_scope(self):
         for operation in ("vectors", "query", "delete", "promote"):
@@ -2023,7 +2347,9 @@ class CatalogRuntimeTests(unittest.TestCase):
 
 
 class CatalogCanonicalResourceTests(unittest.TestCase):
-    def test_bundle_target_preserves_the_strict_content_addressed_basename(self):
+    def test_bundle_target_preserves_the_strict_content_addressed_basename(
+        self,
+    ):
         bundle_id = "a" * 64
         self.assertEqual(
             "/catalog/sha256-" + bundle_id, catalog_bundle_target(bundle_id)
@@ -2044,11 +2370,15 @@ class CatalogCanonicalResourceTests(unittest.TestCase):
         ):
             with (
                 self.subTest(value=value),
-                self.assertRaisesRegex(runtime.RuntimeError, "bundle_id_invalid"),
+                self.assertRaisesRegex(
+                    runtime.RuntimeError, "bundle_id_invalid"
+                ),
             ):
                 catalog_bundle_target(value)
 
-    def test_memory_bytes_accepts_positive_canonical_int_or_decimal_strings(self):
+    def test_memory_bytes_accepts_positive_canonical_int_or_decimal_strings(
+        self,
+    ):
         for number in (1, 8589934592, 2**63 - 1):
             for value in (number, str(number)):
                 with self.subTest(value=value):
@@ -2056,7 +2386,9 @@ class CatalogCanonicalResourceTests(unittest.TestCase):
                     self.assertIs(type(result), int)
                     self.assertEqual(number, result)
 
-    def test_memory_bytes_rejects_noncanonical_malformed_and_out_of_bounds(self):
+    def test_memory_bytes_rejects_noncanonical_malformed_and_out_of_bounds(
+        self,
+    ):
         for value in (
             0,
             -1,
@@ -2091,7 +2423,9 @@ class CatalogCanonicalResourceTests(unittest.TestCase):
         ):
             with (
                 self.subTest(value=value),
-                self.assertRaisesRegex(runtime.RuntimeError, "memory_bytes_invalid"),
+                self.assertRaisesRegex(
+                    runtime.RuntimeError, "memory_bytes_invalid"
+                ),
             ):
                 _memory_bytes(value)
 

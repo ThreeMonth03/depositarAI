@@ -1,4 +1,6 @@
-"""Compiler contracts, independent predicate oracle and safe query boundaries."""
+"""Compiler contracts, independent predicate oracle and safe query
+boundaries.
+"""
 
 from copy import deepcopy
 import itertools
@@ -51,8 +53,18 @@ class IndexFilterTests(unittest.TestCase):
         self.assertEqual(source, before)
         self.assertEqual(projected["schema"], index.VERSION)
 
-    def test_filter_retains_matches_and_unknowns_from_independent_reference(self):
-        dates = [None, "2019", "2020", "2020-06", "2020-06-15", "2025", "invalid"]
+    def test_filter_retains_matches_and_unknowns_from_independent_reference(
+        self,
+    ):
+        dates = [
+            None,
+            "2019",
+            "2020",
+            "2020-06",
+            "2020-06-15",
+            "2025",
+            "invalid",
+        ]
         conditions = [
             {},
             {"time": {"start": "2020", "end": "2020"}},
@@ -73,16 +85,23 @@ class IndexFilterTests(unittest.TestCase):
                 for k, v in index.metadata(doc, "a" * 64).items()
             }
             self.assertEqual(
-                evaluate(compiler.condition_filter(cond), flat), state != "outside"
+                evaluate(compiler.condition_filter(cond), flat),
+                state != "outside",
             )
 
     def test_missing_or_mismatched_schema_is_not_treated_as_unknown(self):
         for conditions, flat in itertools.product(
-            ({}, {"time": {"start": "2020", "end": None}}, {"formats": ["CSV"]}),
+            (
+                {},
+                {"time": {"start": "2020", "end": None}},
+                {"formats": ["CSV"]},
+            ),
             ({}, {index.FIELD + ".schema": "unsupported-schema"}),
         ):
             with self.subTest(conditions=conditions, flat=flat):
-                self.assertFalse(evaluate(compiler.condition_filter(conditions), flat))
+                self.assertFalse(
+                    evaluate(compiler.condition_filter(conditions), flat)
+                )
 
     def test_invalid_conditions_and_unimplemented_geo_fail_closed(self):
         for value in (
@@ -97,11 +116,15 @@ class IndexFilterTests(unittest.TestCase):
     def test_same_filter_in_lexical_vector_and_outer_boundary(self):
         args = ("去年水質 CSV", {"formats": ["CSV"]}, "a" * 64)
         lexical = compiler.retrieval_query(*args, branch="lexical")
-        vector = compiler.retrieval_query(*args, branch="vector", vector=[0.1] * 768)
+        vector = compiler.retrieval_query(
+            *args, branch="vector", vector=[0.1] * 768
+        )
         filt = lexical["query"]["bool"]["filter"][0]
         self.assertEqual(vector["query"]["bool"]["filter"], [filt])
         nested = vector["query"]["bool"]["must"][0]["nested"]
-        self.assertEqual(nested["query"]["knn"][index.VECTOR_FIELD]["filter"], filt)
+        self.assertEqual(
+            nested["query"]["knn"][index.VECTOR_FIELD]["filter"], filt
+        )
 
     def test_unsafe_limits_and_vectors_rejected(self):
         for size in (0, 21, True, "5"):
@@ -109,7 +132,13 @@ class IndexFilterTests(unittest.TestCase):
                 compiler.retrieval_query(
                     "水質", {}, "a" * 64, branch="lexical", top_k=size
                 )
-        for vec in (None, [1], [0.0] * 768, [float("nan")] * 768, [True] * 768):
+        for vec in (
+            None,
+            [1],
+            [0.0] * 768,
+            [float("nan")] * 768,
+            [True] * 768,
+        ):
             with self.assertRaises(ValueError):
                 compiler.retrieval_query(
                     "水質", {}, "a" * 64, branch="vector", vector=vec
@@ -131,9 +160,13 @@ class IndexFilterTests(unittest.TestCase):
             [{"term": {"role": "DRdepositar_catalog"}}],
         )
 
-    def test_bundle_identity_uses_explicit_keyword_not_fess_language_template(self):
+    def test_bundle_identity_uses_explicit_keyword_not_fess_language_template(
+        self,
+    ):
         self.assertEqual(
-            index.mapping()["properties"][index.FIELD]["properties"]["catalog"],
+            index.mapping()["properties"][index.FIELD]["properties"][
+                "catalog"
+            ],
             {"type": "keyword"},
         )
         self.assertEqual(

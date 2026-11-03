@@ -35,7 +35,9 @@ def dataset():
 
 class ProductLifecycleTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-product-lifecycle-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-product-lifecycle-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = ProductConfig(
@@ -52,24 +54,35 @@ class ProductLifecycleTests(unittest.TestCase):
 
     def fetch(self, start, rows, deadline):
         self.fetch_calls += 1
-        return {"count": len(self.rows), "results": self.rows[start : start + rows]}
+        return {
+            "count": len(self.rows),
+            "results": self.rows[start : start + rows],
+        }
 
     def sync(self, **options):
-        return lifecycle.sync_metadata(self.config, fetch=self.fetch, **options)
+        return lifecycle.sync_metadata(
+            self.config, fetch=self.fetch, **options
+        )
 
     def test_first_and_repeat_sync_do_not_invent_an_active_release(self):
-        self.assertEqual("not_initialized", lifecycle.status(self.config)["status"])
+        self.assertEqual(
+            "not_initialized", lifecycle.status(self.config)["status"]
+        )
         first, second = self.sync(), self.sync()
         self.assertEqual(4, self.fetch_calls)
         self.assertFalse(first["active_changed"])
         self.assertTrue(second["unchanged"])
-        self.assertEqual("previous_staged_metadata", second["comparison_baseline"])
+        self.assertEqual(
+            "previous_staged_metadata", second["comparison_baseline"]
+        )
         value = lifecycle.status(self.config)
         self.assertEqual("staged", value["status"])
         self.assertIsNone(value["active_release"])
         self.assertFalse(value["runtime_verified"])
         self.assertEqual(REVISION, value["candidate"]["source_revision"])
-        self.assertTrue(all(item["status"] == "staged" for item in value["operations"]))
+        self.assertTrue(
+            all(item["status"] == "staged" for item in value["operations"])
+        )
 
     def test_download_failure_keeps_previous_candidate(self):
         first = self.sync()
@@ -79,9 +92,13 @@ class ProductLifecycleTests(unittest.TestCase):
             )
         value = lifecycle.status(self.config)
         self.assertEqual(first["bundle_id"], value["candidate"]["bundle_id"])
-        self.assertIn("failed", {item["status"] for item in value["operations"]})
+        self.assertIn(
+            "failed", {item["status"] for item in value["operations"]}
+        )
 
-    def test_invalid_profile_set_keeps_previous_candidate_for_sync_and_stage(self):
+    def test_invalid_profile_set_keeps_previous_candidate_for_sync_and_stage(
+        self,
+    ):
         from search.operations.catalog import backend
         from search.operations.documents.sets import ProfileSetError
 
@@ -92,12 +109,16 @@ class ProductLifecycleTests(unittest.TestCase):
         for action in (self.sync, self.stage):
             with (
                 self.subTest(action=action.__name__),
-                patch.object(backend, "prepare", side_effect=AssertionError("runtime")),
+                patch.object(
+                    backend, "prepare", side_effect=AssertionError("runtime")
+                ),
                 self.assertRaises(ProfileSetError),
             ):
                 action(profile_set=invalid)
             value = lifecycle.status(self.config)
-            self.assertEqual(first["bundle_id"], value["candidate"]["bundle_id"])
+            self.assertEqual(
+                first["bundle_id"], value["candidate"]["bundle_id"]
+            )
             self.assertIsNone(value["active_release"])
 
     def test_config_identity_change_rejected_but_ttl_change_allowed(self):
@@ -108,7 +129,9 @@ class ProductLifecycleTests(unittest.TestCase):
             )
         self.assertEqual(
             "staged",
-            lifecycle.status(replace(self.config, cache_ttl_seconds=60))["status"],
+            lifecycle.status(replace(self.config, cache_ttl_seconds=60))[
+                "status"
+            ],
         )
 
     def test_unmarked_nonempty_directory_is_not_adopted(self):
@@ -136,7 +159,9 @@ class ProductLifecycleTests(unittest.TestCase):
                     "active_changed": False,
                 },
             )
-        self.assertEqual("recovery_required", lifecycle.status(self.config)["status"])
+        self.assertEqual(
+            "recovery_required", lifecycle.status(self.config)["status"]
+        )
         with self.assertRaisesRegex(ValueError, "recovery_required"):
             self.sync()
 
@@ -155,7 +180,9 @@ class ProductLifecycleTests(unittest.TestCase):
 
     def test_state_write_fsyncs_file_and_directory(self):
         with locked_state(self.config, create=True) as store:
-            with patch("search.operations.state.os.fsync", wraps=os.fsync) as fsync:
+            with patch(
+                "search.operations.state.os.fsync", wraps=os.fsync
+            ) as fsync:
                 store.write("test.json", {"value": 1})
             self.assertGreaterEqual(fsync.call_count, 2)
             self.assertEqual({"value": 1}, store.read("test.json"))
@@ -198,7 +225,9 @@ class ProductLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate_key"):
             lifecycle.status(self.config)
 
-    def test_private_state_json_uses_utf8_and_preserves_fixed_parse_errors(self):
+    def test_private_state_json_uses_utf8_and_preserves_fixed_parse_errors(
+        self,
+    ):
         with locked_state(self.config, create=True) as store:
             value = {"title": "海洋資料"}
             store.write("record.json", value)
@@ -228,7 +257,8 @@ class ProductLifecycleTests(unittest.TestCase):
             path.write_bytes(b'{"value":0}')
             with (
                 patch(
-                    "search.operations.state.strict_json", side_effect=RecursionError
+                    "search.operations.state.strict_json",
+                    side_effect=RecursionError,
                 ),
                 self.assertRaises(RecursionError),
             ):
@@ -238,7 +268,7 @@ class ProductLifecycleTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "file_size_invalid"):
                     store.read("record.json")
 
-    def test_unimplemented_operation_names_cannot_start_or_be_accepted_as_receipts(
+    def test_unimplemented_operations_cannot_start_or_form_receipts(
         self,
     ):
         from search.operations.state import operation_receipts
@@ -248,7 +278,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 before = set(os.listdir(store.fd))
                 with (
                     self.subTest(operation=name),
-                    self.assertRaisesRegex(ValueError, "^product_operation_invalid$"),
+                    self.assertRaisesRegex(
+                        ValueError, "^product_operation_invalid$"
+                    ),
                 ):
                     with operation(store, name, REVISION):
                         self.fail("unimplemented operation started")
@@ -279,14 +311,18 @@ class ProductLifecycleTests(unittest.TestCase):
                 with operation(store, "sync", REVISION):
                     raise ValueError("secret-value-do-not-log")
         raw = "".join(
-            path.read_text() for path in self.config.state_root.glob("op-*.json")
+            path.read_text()
+            for path in self.config.state_root.glob("op-*.json")
         )
         self.assertNotIn("secret-value", raw)
         self.assertEqual("failed", json.loads(raw)["status"])
 
     def test_cli_requires_baseline_path_and_manifest_pair(self):
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(lifecycle, "sync_metadata") as sync,
             patch("builtins.print"),
         ):
@@ -309,7 +345,9 @@ class ProductLifecycleTests(unittest.TestCase):
             cli.parser().parse_args(["--config", "/config.json", "install"])
 
     def test_image_builder_runs_inside_marked_product_lock_and_receipt(self):
-        from search.operations.deployment.images import staging as image_staging
+        from search.operations.deployment.images import (
+            staging as image_staging,
+        )
 
         def stage(config, store, source_revision, **options):
             self.assertIs(config, self.config)
@@ -327,11 +365,15 @@ class ProductLifecycleTests(unittest.TestCase):
                     self.fail("image build did not retain product lock")
             self.assertEqual(
                 "started",
-                json.loads(next(store.root.glob("op-*.json")).read_text())["status"],
+                json.loads(next(store.root.glob("op-*.json")).read_text())[
+                    "status"
+                ],
             )
             return {"status": "images_staged", "active_changed": False}
 
-        with patch.object(image_staging, "stage_product_images", side_effect=stage):
+        with patch.object(
+            image_staging, "stage_product_images", side_effect=stage
+        ):
             self.assertEqual(
                 "images_staged", lifecycle.build_images(self.config)["status"]
             )
@@ -340,12 +382,18 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual("build-images", state["operations"][0]["operation"])
         self.assertEqual("staged", state["operations"][0]["status"])
 
-    def test_prepare_secrets_creates_and_reuses_real_private_key_without_metadata(self):
+    def test_prepare_secrets_reuses_private_key_without_metadata(
+        self,
+    ):
         from search.operations.deployment import credentials
 
-        with patch.object(credentials, "require_clean_revision", return_value=REVISION):
+        with patch.object(
+            credentials, "require_clean_revision", return_value=REVISION
+        ):
             first = lifecycle.prepare_secrets(self.config)
-            original = (self.config.state_root / "secrets/api_key").read_bytes()
+            original = (
+                self.config.state_root / "secrets/api_key"
+            ).read_bytes()
             second = lifecycle.prepare_secrets(self.config)
         self.assertFalse(first["api_key_reused"])
         self.assertTrue(second["api_key_reused"])
@@ -358,7 +406,8 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual(2, len(state["operations"]))
         self.assertTrue(
             all(
-                row["operation"] == "prepare-secrets" and row["status"] == "staged"
+                row["operation"] == "prepare-secrets"
+                and row["status"] == "staged"
                 for row in state["operations"]
             )
         )
@@ -369,26 +418,35 @@ class ProductLifecycleTests(unittest.TestCase):
         def prepare(config, store, revision, **options):
             self.assertIs(config, self.config)
             self.assertEqual(REVISION, revision)
-            self.assertEqual({"repo_root": lifecycle.ROOT, "runner": None}, options)
+            self.assertEqual(
+                {"repo_root": lifecycle.ROOT, "runner": None}, options
+            )
             with self.assertRaisesRegex(ValueError, "busy"):
                 with locked_state(config):
                     self.fail("secret creation did not retain product lock")
             self.assertEqual(
                 "started",
-                json.loads(next(store.root.glob("op-*.json")).read_text())["status"],
+                json.loads(next(store.root.glob("op-*.json")).read_text())[
+                    "status"
+                ],
             )
             return {"status": "secrets-ready", "active_changed": False}
 
         with patch.object(credentials, "prepare_api_key", side_effect=prepare):
             self.assertEqual(
-                "secrets-ready", lifecycle.prepare_secrets(self.config)["status"]
+                "secrets-ready",
+                lifecycle.prepare_secrets(self.config)["status"],
             )
 
-    def test_prepare_secrets_failure_keeps_private_intent_and_failed_operation(self):
+    def test_prepare_secrets_failure_keeps_private_intent_and_failed_operation(
+        self,
+    ):
         from search.operations.deployment import credentials
 
         with (
-            patch.object(credentials, "require_clean_revision", return_value=REVISION),
+            patch.object(
+                credentials, "require_clean_revision", return_value=REVISION
+            ),
             patch.object(credentials.secrets, "token_hex", return_value="bad"),
             self.assertRaises(credentials.CredentialError),
         ):
@@ -397,15 +455,18 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual("failed", value["operations"][0]["status"])
         self.assertIsNone(value["active_release"])
         self.assertEqual(
-            {credentials.STARTED}, set(os.listdir(self.config.state_root / "secrets"))
+            {credentials.STARTED},
+            set(os.listdir(self.config.state_root / "secrets")),
         )
 
-    def test_success_history_prevents_key_regeneration_if_anchor_and_folder_are_lost(
+    def test_success_history_blocks_key_regeneration_after_anchor_loss(
         self,
     ):
         from search.operations.deployment import credentials
 
-        with patch.object(credentials, "require_clean_revision", return_value=REVISION):
+        with patch.object(
+            credentials, "require_clean_revision", return_value=REVISION
+        ):
             lifecycle.prepare_secrets(self.config)
             saved = self.root / "saved-secrets"
             (self.config.state_root / "secrets").rename(saved)
@@ -422,7 +483,10 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertFalse((self.config.state_root / "secrets").exists())
         self.assertEqual(
             {"staged", "failed"},
-            {row["status"] for row in lifecycle.status(self.config)["operations"]},
+            {
+                row["status"]
+                for row in lifecycle.status(self.config)["operations"]
+            },
         )
 
     def test_inference_start_retains_product_lock_and_durable_operation(self):
@@ -446,7 +510,8 @@ class ProductLifecycleTests(unittest.TestCase):
                 with locked_state(config):
                     self.fail("inference startup did not retain product lock")
             records = [
-                json.loads(path.read_text()) for path in store.root.glob("op-*.json")
+                json.loads(path.read_text())
+                for path in store.root.glob("op-*.json")
             ]
             self.assertEqual(
                 ["started"],
@@ -462,7 +527,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 "model_warmup_verified": False,
             }
 
-        with patch.object(inference, "start_private_inference", side_effect=start):
+        with patch.object(
+            inference, "start_private_inference", side_effect=start
+        ):
             report = lifecycle.start_inference(self.config)
         self.assertEqual("runtime_running", report["status"])
         self.assertFalse(report["model_warmup_verified"])
@@ -509,7 +576,9 @@ class ProductLifecycleTests(unittest.TestCase):
         def prepare(config, actual_plan, **options):
             self.assertIs(config, self.config)
             self.assertEqual(plan, actual_plan)
-            self.assertEqual({"repo_root": lifecycle.ROOT, "runner": None}, options)
+            self.assertEqual(
+                {"repo_root": lifecycle.ROOT, "runner": None}, options
+            )
             with self.assertRaisesRegex(ValueError, "busy"):
                 with locked_state(config):
                     self.fail("query preparation did not retain product lock")
@@ -524,15 +593,18 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertFalse(value["runtime_verified"])
         self.assertEqual(
             "query-ready",
-            json.loads((self.config.state_root / "query-candidate.json").read_text())[
-                "status"
-            ],
+            json.loads(
+                (self.config.state_root / "query-candidate.json").read_text()
+            )["status"],
         )
         self.assertIn(
-            "prepare-query", {item["operation"] for item in value["operations"]}
+            "prepare-query",
+            {item["operation"] for item in value["operations"]},
         )
 
-    def test_release_start_retains_lock_binds_candidate_and_passes_runners(self):
+    def test_release_start_retains_lock_binds_candidate_and_passes_runners(
+        self,
+    ):
         from search.operations.deployment.release import controller as release
 
         plan = self.stage_index_plan()
@@ -555,7 +627,8 @@ class ProductLifecycleTests(unittest.TestCase):
                 with locked_state(config):
                     self.fail("release startup did not retain product lock")
             receipts = [
-                json.loads(path.read_text()) for path in store.root.glob("op-*.json")
+                json.loads(path.read_text())
+                for path in store.root.glob("op-*.json")
             ]
             self.assertEqual(
                 ["started"],
@@ -579,7 +652,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIsNone(state["active_release"])
         self.assertFalse(state["runtime_verified"])
         receipt = next(
-            row for row in state["operations"] if row["operation"] == "start-release"
+            row
+            for row in state["operations"]
+            if row["operation"] == "start-release"
         )
         self.assertEqual("staged", receipt["status"])
         self.assertEqual(state["candidate"]["bundle_id"], receipt["bundle_id"])
@@ -602,7 +677,11 @@ class ProductLifecycleTests(unittest.TestCase):
                     "revision": REVISION,
                     **{
                         key: candidate[key]
-                        for key in ("bundle_path", "manifest_sha256", "document_count")
+                        for key in (
+                            "bundle_path",
+                            "manifest_sha256",
+                            "document_count",
+                        )
                     },
                 }
                 with locked_state(self.config) as store:
@@ -614,9 +693,13 @@ class ProductLifecycleTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         lifecycle.start_release(self.config)
                 start.assert_not_called()
-                self.assertIsNone(lifecycle.status(self.config)["active_release"])
+                self.assertIsNone(
+                    lifecycle.status(self.config)["active_release"]
+                )
 
-    def test_failed_release_start_leaves_failed_operation_and_no_activation(self):
+    def test_failed_release_start_leaves_failed_operation_and_no_activation(
+        self,
+    ):
         from search.operations.deployment.release import controller as release
 
         self.stage_index_plan()
@@ -651,7 +734,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 return_value={"status": "runtime_running"},
             ),
             patch.object(
-                lifecycle, "revision", side_effect=[REVISION, REVISION, "b" * 40]
+                lifecycle,
+                "revision",
+                side_effect=[REVISION, REVISION, "b" * 40],
             ),
             self.assertRaisesRegex(ValueError, "invocation_source_changed"),
         ):
@@ -665,7 +750,9 @@ class ProductLifecycleTests(unittest.TestCase):
             ],
         )
 
-    def test_gateway_prepare_retains_lock_and_only_stages_candidate_receipt(self):
+    def test_gateway_prepare_retains_lock_and_only_stages_candidate_receipt(
+        self,
+    ):
         from search.operations.deployment.gateway import preparation as gateway
 
         plan = self.stage_index_plan()
@@ -676,9 +763,12 @@ class ProductLifecycleTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "busy"):
                 with locked_state(config):
-                    self.fail("gateway preparation did not retain product lock")
+                    self.fail(
+                        "gateway preparation did not retain product lock"
+                    )
             rows = [
-                json.loads(path.read_bytes()) for path in store.root.glob("op-*.json")
+                json.loads(path.read_bytes())
+                for path in store.root.glob("op-*.json")
             ]
             self.assertEqual(
                 ["started"],
@@ -698,7 +788,9 @@ class ProductLifecycleTests(unittest.TestCase):
             result = lifecycle.prepare_gateway(self.config)
         self.assertFalse(result["activation_performed"])
         receipts = lifecycle.status(self.config)["operations"]
-        receipt = next(row for row in receipts if row["operation"] == "prepare-gateway")
+        receipt = next(
+            row for row in receipts if row["operation"] == "prepare-gateway"
+        )
         self.assertEqual("staged", receipt["status"])
         self.assertEqual(plan["manifest_sha256"], receipt["manifest_sha256"])
         self.assertFalse(receipt["active_changed"])
@@ -712,7 +804,9 @@ class ProductLifecycleTests(unittest.TestCase):
             candidate["source_revision"] = "b" * 40
             store.write("candidate.json", candidate, replace=True)
         with patch.object(gateway, "prepare_gateway") as prepare:
-            with self.assertRaisesRegex(ValueError, "gateway_candidate_source_changed"):
+            with self.assertRaisesRegex(
+                ValueError, "gateway_candidate_source_changed"
+            ):
                 lifecycle.prepare_gateway(self.config)
         prepare.assert_not_called()
         receipt = next(
@@ -722,7 +816,9 @@ class ProductLifecycleTests(unittest.TestCase):
         )
         self.assertEqual("failed", receipt["status"])
 
-    def test_gateway_activation_retains_product_lock_and_records_changed_pointer(self):
+    def test_gateway_activation_keeps_lock_and_records_pointer_change(
+        self,
+    ):
         from search.operations.deployment.gateway import (
             activation as gateway_activation,
         )
@@ -744,7 +840,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 "confers_runtime_authority": True,
             }
 
-        with patch.object(gateway_activation, "activate_gateway", side_effect=activate):
+        with patch.object(
+            gateway_activation, "activate_gateway", side_effect=activate
+        ):
             result = lifecycle.activate_gateway(self.config)
         self.assertTrue(result["active_changed"])
         receipt = next(
@@ -762,7 +860,9 @@ class ProductLifecycleTests(unittest.TestCase):
 
         self.stage_index_plan()
         with patch.object(
-            gateway_activation, "activate_gateway", side_effect=ValueError("blocked")
+            gateway_activation,
+            "activate_gateway",
+            side_effect=ValueError("blocked"),
         ):
             with self.assertRaises(ValueError):
                 lifecycle.activate_gateway(self.config)
@@ -775,7 +875,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertFalse(receipt["active_changed"])
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_gateway_activation_result_requires_exact_true_before_success_receipt(self):
+    def test_gateway_activation_requires_exact_true_for_success_receipt(
+        self,
+    ):
         from search.operations.deployment.gateway import (
             activation as gateway_activation,
         )
@@ -795,7 +897,9 @@ class ProductLifecycleTests(unittest.TestCase):
                     },
                 ),
             ):
-                with self.assertRaisesRegex(ValueError, "activation_result_invalid"):
+                with self.assertRaisesRegex(
+                    ValueError, "activation_result_invalid"
+                ):
                     lifecycle.activate_gateway(self.config)
         receipts = [
             row
@@ -823,15 +927,22 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_index_plan()
         with (
             patch.object(
-                query, "provision", side_effect=ValueError("query_not_verified")
+                query,
+                "provision",
+                side_effect=ValueError("query_not_verified"),
             ),
             self.assertRaises(ValueError),
         ):
             lifecycle.prepare_query(self.config)
-        self.assertFalse((self.config.state_root / "query-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "query-candidate.json").exists()
+        )
         self.assertIn(
             "failed",
-            {item["status"] for item in lifecycle.status(self.config)["operations"]},
+            {
+                item["status"]
+                for item in lifecycle.status(self.config)["operations"]
+            },
         )
 
     def test_new_cli_commands_dispatch_without_exposing_public_install(self):
@@ -847,13 +958,18 @@ class ProductLifecycleTests(unittest.TestCase):
         ):
             with (
                 self.subTest(command=command),
-                patch("search.operations.config.load_config", return_value=self.config),
+                patch(
+                    "search.operations.config.load_config",
+                    return_value=self.config,
+                ),
                 patch.object(
                     lifecycle, action, return_value={"status": "staged"}
                 ) as execute,
                 patch("builtins.print"),
             ):
-                self.assertEqual(0, cli.main(["--config", "/config.json", command]))
+                self.assertEqual(
+                    0, cli.main(["--config", "/config.json", command])
+                )
                 execute.assert_called_once_with(self.config)
 
     def test_prebuilt_start_cli_reads_only_a_private_receipt(self):
@@ -861,7 +977,10 @@ class ProductLifecycleTests(unittest.TestCase):
         receipt.write_text('{"schema_version":1}\n')
         receipt.chmod(0o600)
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(
                 lifecycle, "start_index", return_value={"status": "running"}
             ) as start,
@@ -888,7 +1007,8 @@ class ProductLifecycleTests(unittest.TestCase):
                     (self.root / "link.json").symlink_to(receipt)
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
                     patch.object(lifecycle, "start_index") as rejected,
                     patch("builtins.print"),
@@ -907,13 +1027,20 @@ class ProductLifecycleTests(unittest.TestCase):
                     )
                 rejected.assert_not_called()
 
-    def test_package_cli_bundles_models_by_default_and_allows_explicit_external(self):
+    def test_package_cli_defaults_to_models_and_allows_external(
+        self,
+    ):
         for flags, bundled in (([], True), (["--external-models"], False)):
             with (
                 self.subTest(flags=flags),
-                patch("search.operations.config.load_config", return_value=self.config),
+                patch(
+                    "search.operations.config.load_config",
+                    return_value=self.config,
+                ),
                 patch.object(
-                    lifecycle, "package_product", return_value={"status": "packaged"}
+                    lifecycle,
+                    "package_product",
+                    return_value={"status": "packaged"},
                 ) as package,
                 patch("builtins.print"),
             ):
@@ -944,7 +1071,10 @@ class ProductLifecycleTests(unittest.TestCase):
         receipt.write_text("[" * 2000 + "]" * 2000)
         receipt.chmod(0o600)
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(lifecycle, "start_index") as start,
             patch("builtins.print") as output,
         ):
@@ -962,7 +1092,8 @@ class ProductLifecycleTests(unittest.TestCase):
             )
         start.assert_not_called()
         self.assertEqual(
-            "product_operation_failed", json.loads(output.call_args.args[0])["code"]
+            "product_operation_failed",
+            json.loads(output.call_args.args[0])["code"],
         )
 
     def test_prebuilt_cli_rejects_nested_objects_and_nonobject_receipts(self):
@@ -978,7 +1109,8 @@ class ProductLifecycleTests(unittest.TestCase):
                 receipt.chmod(0o600)
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
                     patch.object(lifecycle, "start_index") as start,
                     patch("builtins.print") as output,
@@ -1002,11 +1134,16 @@ class ProductLifecycleTests(unittest.TestCase):
                     "product_operation_failed", json.loads(printed)["code"]
                 )
 
-    def test_cli_sanitizes_query_protocol_failures_without_traceback_or_body(self):
+    def test_cli_sanitizes_query_protocol_failures_without_traceback_or_body(
+        self,
+    ):
         from search.catalog.errors import ProtocolError
 
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(
                 lifecycle,
                 "prepare_query",
@@ -1014,14 +1151,22 @@ class ProductLifecycleTests(unittest.TestCase):
             ),
             patch("builtins.print") as output,
         ):
-            self.assertEqual(1, cli.main(["--config", "/config.json", "prepare-query"]))
+            self.assertEqual(
+                1, cli.main(["--config", "/config.json", "prepare-query"])
+            )
         printed = output.call_args.args[0]
         self.assertNotIn("private-response-not-for-output", printed)
-        self.assertEqual("product_operation_failed", json.loads(printed)["code"])
+        self.assertEqual(
+            "product_operation_failed", json.loads(printed)["code"]
+        )
 
-    def test_cli_reports_fixed_operator_error_codes_without_rendering_exceptions(self):
+    def test_cli_reports_fixed_codes_without_rendering_exceptions(
+        self,
+    ):
         from search.operations.catalog.access import AccessError
-        from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+        from search.operations.catalog.policy import (
+            RuntimeError as CatalogRuntimeError,
+        )
         from search.operations.catalog.projection import ProjectionError
 
         for error, code in (
@@ -1050,9 +1195,12 @@ class ProductLifecycleTests(unittest.TestCase):
             with self.subTest(error_type=type(error).__name__):
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
-                    patch.object(lifecycle, "prepare_query", side_effect=error),
+                    patch.object(
+                        lifecycle, "prepare_query", side_effect=error
+                    ),
                     patch.object(
                         type(error),
                         "__str__",
@@ -1064,7 +1212,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 ):
                     self.assertEqual(
                         1,
-                        cli.main(["--config", "/config.json", "prepare-query"]),
+                        cli.main(
+                            ["--config", "/config.json", "prepare-query"]
+                        ),
                     )
                 render.assert_not_called()
                 self.assertEqual(
@@ -1081,7 +1231,9 @@ class ProductLifecycleTests(unittest.TestCase):
                 self.assertIs(cli.sys.stderr, output.call_args.kwargs["file"])
 
     def test_cli_emits_only_revalidated_closed_catalog_failure_record(self):
-        from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+        from search.operations.catalog.policy import (
+            RuntimeError as CatalogRuntimeError,
+        )
 
         primary = catalog._diagnosed(
             catalog.ImportFailed("private-response-not-for-output"),
@@ -1101,7 +1253,10 @@ class ProductLifecycleTests(unittest.TestCase):
         error = CatalogRuntimeError("catalog_admin_diagnostic_failed")
         error.catalog_diagnostic = record
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(lifecycle, "prepare_query", side_effect=error),
             patch.object(
                 CatalogRuntimeError,
@@ -1110,15 +1265,21 @@ class ProductLifecycleTests(unittest.TestCase):
             ),
             patch("builtins.print") as output,
         ):
-            self.assertEqual(1, cli.main(["--config", "/config.json", "prepare-query"]))
+            self.assertEqual(
+                1, cli.main(["--config", "/config.json", "prepare-query"])
+            )
         printed = output.call_args.args[0]
         report = json.loads(printed)
-        self.assertEqual("catalog_admin_diagnostic_failed", report["error_code"])
+        self.assertEqual(
+            "catalog_admin_diagnostic_failed", report["error_code"]
+        )
         self.assertEqual(record, report["catalog_diagnostic"])
         self.assertNotIn("private-response-not-for-output", printed)
 
     def test_cli_rejects_forged_catalog_failure_attributes_and_downgrade(self):
-        from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+        from search.operations.catalog.policy import (
+            RuntimeError as CatalogRuntimeError,
+        )
 
         class RuntimeSubclass(CatalogRuntimeError):
             pass
@@ -1146,7 +1307,9 @@ class ProductLifecycleTests(unittest.TestCase):
             catalog.TransportError("private-value"), stage="token_cleanup"
         )
         catalog._diagnosed(cleanup, stage="token_cleanup", cause="transport")
-        cleanup_record = catalog.failure_record(cleanup, possibly_polluted=True)
+        cleanup_record = catalog.failure_record(
+            cleanup, possibly_polluted=True
+        )
         downgrade = json.loads(json.dumps(cleanup_record))
         downgrade["possibly_polluted"] = False
         contradictory = json.loads(json.dumps(cleanup_record))
@@ -1161,28 +1324,39 @@ class ProductLifecycleTests(unittest.TestCase):
             (RuntimeSubclass, record),
             (spoofed, record),
         ):
-            with self.subTest(kind=kind.__name__, detail_type=type(detail).__name__):
+            with self.subTest(
+                kind=kind.__name__, detail_type=type(detail).__name__
+            ):
                 error = kind("catalog_admin_diagnostic_failed")
                 error.catalog_diagnostic = detail
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
-                    patch.object(lifecycle, "prepare_query", side_effect=error),
+                    patch.object(
+                        lifecycle, "prepare_query", side_effect=error
+                    ),
                     patch("builtins.print") as output,
                 ):
                     self.assertEqual(
                         1,
-                        cli.main(["--config", "/config.json", "prepare-query"]),
+                        cli.main(
+                            ["--config", "/config.json", "prepare-query"]
+                        ),
                     )
                 report = json.loads(output.call_args.args[0])
                 self.assertNotIn("error_code", report)
                 self.assertNotIn("catalog_diagnostic", report)
                 self.assertEqual("product_operation_failed", report["code"])
 
-    def test_cli_rejects_spoofed_operator_diagnostics_without_rendering_values(self):
+    def test_cli_rejects_spoofed_operator_diagnostics_without_rendering_values(
+        self,
+    ):
         from search.operations.catalog.access import AccessError
-        from search.operations.catalog.policy import RuntimeError as CatalogRuntimeError
+        from search.operations.catalog.policy import (
+            RuntimeError as CatalogRuntimeError,
+        )
         from search.operations.catalog.projection import ProjectionError
 
         class AccessSubclass(AccessError):
@@ -1213,19 +1387,30 @@ class ProductLifecycleTests(unittest.TestCase):
             AccessSubclass("catalog_access_permissions_changed"),
             ProjectionSubclass("catalog_projection_mapping_changed"),
             AccessError("catalog_access_private-response-not-for-output"),
-            ProjectionError("catalog_projection_private-response-not-for-output"),
+            ProjectionError(
+                "catalog_projection_private-response-not-for-output"
+            ),
             AccessError(
-                "catalog_access_permissions_changed", "private-response-not-for-output"
+                "catalog_access_permissions_changed",
+                "private-response-not-for-output",
             ),
             ProjectionError(),
             AccessError(PrivateDiagnostic()),
-            ProjectionError(DiagnosticString("catalog_projection_mapping_changed")),
+            ProjectionError(
+                DiagnosticString("catalog_projection_mapping_changed")
+            ),
             ValueError("catalog_admin_inventory_conflict"),
             spoofed_runtime_error("catalog_admin_inventory_conflict"),
             CatalogRuntimeSubclass("catalog_admin_inventory_conflict"),
-            CatalogRuntimeError("catalog_admin_private-response-not-for-output"),
-            CatalogRuntimeError("catalog_admin_inventory_conflict", "private-value"),
-            CatalogRuntimeError(DiagnosticString("catalog_admin_inventory_conflict")),
+            CatalogRuntimeError(
+                "catalog_admin_private-response-not-for-output"
+            ),
+            CatalogRuntimeError(
+                "catalog_admin_inventory_conflict", "private-value"
+            ),
+            CatalogRuntimeError(
+                DiagnosticString("catalog_admin_inventory_conflict")
+            ),
             CatalogRuntimeError(PrivateDiagnostic()),
             CatalogRuntimeError(),
         )
@@ -1233,14 +1418,19 @@ class ProductLifecycleTests(unittest.TestCase):
             with self.subTest(position=position):
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
-                    patch.object(lifecycle, "prepare_query", side_effect=error),
+                    patch.object(
+                        lifecycle, "prepare_query", side_effect=error
+                    ),
                     patch("builtins.print") as output,
                 ):
                     self.assertEqual(
                         1,
-                        cli.main(["--config", "/config.json", "prepare-query"]),
+                        cli.main(
+                            ["--config", "/config.json", "prepare-query"]
+                        ),
                     )
                 printed = output.call_args.args[0]
                 self.assertNotIn("private-response-not-for-output", printed)
@@ -1257,7 +1447,10 @@ class ProductLifecycleTests(unittest.TestCase):
 
     def test_cli_sanitizes_release_failure_without_private_diagnostic(self):
         with (
-            patch("search.operations.config.load_config", return_value=self.config),
+            patch(
+                "search.operations.config.load_config",
+                return_value=self.config,
+            ),
             patch.object(
                 lifecycle,
                 "start_release",
@@ -1265,12 +1458,18 @@ class ProductLifecycleTests(unittest.TestCase):
             ),
             patch("builtins.print") as output,
         ):
-            self.assertEqual(1, cli.main(["--config", "/config.json", "start-release"]))
+            self.assertEqual(
+                1, cli.main(["--config", "/config.json", "start-release"])
+            )
         printed = output.call_args.args[0]
         self.assertNotIn("private-response-not-for-output", printed)
-        self.assertEqual("product_operation_failed", json.loads(printed)["code"])
+        self.assertEqual(
+            "product_operation_failed", json.loads(printed)["code"]
+        )
 
-    def test_cli_dispatches_vector_budget_and_checkpoint_has_nonzero_exit(self):
+    def test_cli_dispatches_vector_budget_and_checkpoint_has_nonzero_exit(
+        self,
+    ):
         for result_status, expected_exit in (
             ("checkpoint", 2),
             ("vectors-complete", 0),
@@ -1278,7 +1477,8 @@ class ProductLifecycleTests(unittest.TestCase):
             with self.subTest(status=result_status):
                 with (
                     patch(
-                        "search.operations.config.load_config", return_value=self.config
+                        "search.operations.config.load_config",
+                        return_value=self.config,
                     ),
                     patch.object(
                         lifecycle,
@@ -1321,7 +1521,9 @@ class ProductLifecycleTests(unittest.TestCase):
             store.write("index-candidate.json", plan)
         return plan
 
-    def test_index_commands_share_candidate_binding_and_keep_active_unchanged(self):
+    def test_index_commands_share_candidate_binding_and_keep_active_unchanged(
+        self,
+    ):
         from search.operations.catalog import runtime as catalog_runtime
 
         plan = self.stage_index_plan()
@@ -1347,14 +1549,16 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIsNone(value["active_release"])
         self.assertFalse(value["runtime_verified"])
         self.assertTrue(
-            all(item["active_changed"] is False for item in value["operations"])
+            all(
+                item["active_changed"] is False for item in value["operations"]
+            )
         )
         self.assertEqual(
             {"sync", "start-index", "import-index", "reconcile-index"},
             {item["operation"] for item in value["operations"]},
         )
 
-    def test_catalog_image_build_and_prebuilt_start_keep_candidate_and_product_lock(
+    def test_catalog_build_and_prebuilt_start_keep_candidate_and_lock(
         self,
     ):
         from search.operations.catalog import runtime as catalog_runtime
@@ -1387,7 +1591,9 @@ class ProductLifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(lifecycle.status(self.config)["active_release"])
 
-    def test_product_package_holds_lock_and_records_failure_without_activation(self):
+    def test_product_package_holds_lock_and_records_failure_without_activation(
+        self,
+    ):
         from search.operations.deployment.payload import collect as packaging
 
         plan = self.stage_index_plan()
@@ -1413,7 +1619,8 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIsNone(status["active_release"])
         self.assertTrue(
             any(
-                row["operation"] == "package-product" and row["status"] == "failed"
+                row["operation"] == "package-product"
+                and row["status"] == "failed"
                 for row in status["operations"]
             )
         )
@@ -1431,7 +1638,9 @@ class ProductLifecycleTests(unittest.TestCase):
             lifecycle.start_index(self.config)
         prepare.assert_not_called()
         start.assert_not_called()
-        self.assertFalse((self.config.state_root / "index-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "index-candidate.json").exists()
+        )
 
     def test_changed_or_untyped_plan_cannot_reach_docker(self):
         from search.operations.catalog import runtime as catalog_runtime
@@ -1447,7 +1656,9 @@ class ProductLifecycleTests(unittest.TestCase):
         for change in changes:
             with locked_state(self.config) as store:
                 store.write(
-                    "index-candidate.json", {**original, **change}, replace=True
+                    "index-candidate.json",
+                    {**original, **change},
+                    replace=True,
                 )
             with (
                 self.subTest(change=change),
@@ -1482,9 +1693,12 @@ class ProductLifecycleTests(unittest.TestCase):
         ):
             lifecycle.import_index(self.config)
         records = [
-            path.read_text() for path in self.config.state_root.glob("op-*.json")
+            path.read_text()
+            for path in self.config.state_root.glob("op-*.json")
         ]
-        self.assertTrue(any(json.loads(raw)["status"] == "failed" for raw in records))
+        self.assertTrue(
+            any(json.loads(raw)["status"] == "failed" for raw in records)
+        )
         self.assertTrue(all("private-key" not in raw for raw in records))
 
     def test_cli_dispatches_only_explicit_candidate_steps(self):
@@ -1496,11 +1710,17 @@ class ProductLifecycleTests(unittest.TestCase):
         ):
             with (
                 self.subTest(command=command),
-                patch("search.operations.config.load_config", return_value=self.config),
+                patch(
+                    "search.operations.config.load_config",
+                    return_value=self.config,
+                ),
                 patch.object(
                     lifecycle,
                     command.replace("-", "_"),
-                    return_value={"status": "completed", "active_changed": False},
+                    return_value={
+                        "status": "completed",
+                        "active_changed": False,
+                    },
                 ) as action,
                 patch("builtins.print"),
             ):
@@ -1510,7 +1730,8 @@ class ProductLifecycleTests(unittest.TestCase):
             action.assert_called_once_with(self.config)
 
     def fake_stage_backend(self, *, vector_status="vectors-complete"):
-        """Fake-only orchestration; these tests do not prove Docker/GPU health."""
+        """Fake-only orchestration; these tests do not prove Docker/GPU
+        health."""
         from search.catalog.bundle import CatalogBundle
         from search.operations.catalog import backend, runtime, vectors
 
@@ -1550,7 +1771,9 @@ class ProductLifecycleTests(unittest.TestCase):
             bundle = CatalogBundle.load(
                 bundle_path, expected_manifest_sha256=manifest_sha256
             )
-            work_root = config.state_root / ("catalog-" + bundle.bundle_id[:12])
+            work_root = config.state_root / (
+                "catalog-" + bundle.bundle_id[:12]
+            )
             work_root.mkdir(mode=0o700, exist_ok=True)
             return {
                 "schema_version": 1,
@@ -1609,15 +1832,22 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_prepare = patch.object(
             backend, "prepare", side_effect=prepare
         ).start()
-        self.stage_start = patch.object(runtime, "start", side_effect=start).start()
+        self.stage_start = patch.object(
+            runtime, "start", side_effect=start
+        ).start()
         self.stage_images = patch.object(
             runtime, "stage_images", side_effect=stage_images
         ).start()
-        self.stage_admin = patch.object(runtime, "admin", side_effect=admin).start()
-        self.stage_vectors = patch.object(vectors, "build", side_effect=build).start()
+        self.stage_admin = patch.object(
+            runtime, "admin", side_effect=admin
+        ).start()
+        self.stage_vectors = patch.object(
+            vectors, "build", side_effect=build
+        ).start()
 
     def retain_stage_catalog(self):
-        """Keep the sealed origin plan; only Git and host execution are fake."""
+        """Keep the sealed origin plan; only Git and host execution are
+        fake."""
         from search.operations.catalog import backend
 
         with locked_state(self.config) as store:
@@ -1646,13 +1876,19 @@ class ProductLifecycleTests(unittest.TestCase):
                     *backend.BUILD_FILES,
                     *backend.DATA_FILES,
                 )
-                return subprocess.CompletedProcess(argv, 0, "\0".join(paths) + "\0", "")
+                return subprocess.CompletedProcess(
+                    argv, 0, "\0".join(paths) + "\0", ""
+                )
             self.assertIn("show", argv)
             revision, relative = argv[-1].split(":", 1)
             self.assertIn(revision, {REVISION, self.stage_revision})
             self.assertIn(
                 relative,
-                (*backend.STAGED_FILES, *backend.BUILD_FILES, *backend.DATA_FILES),
+                (
+                    *backend.STAGED_FILES,
+                    *backend.BUILD_FILES,
+                    *backend.DATA_FILES,
+                ),
             )
             return subprocess.CompletedProcess(
                 argv, 0, (lifecycle.ROOT / relative).read_text(), ""
@@ -1665,7 +1901,8 @@ class ProductLifecycleTests(unittest.TestCase):
         return lifecycle.stage_catalog(self.config, fetch=fetch, **options)
 
     def stage_hint_paths(self):
-        """Only fake marker locations; actual runtime authority stays in start."""
+        """Only fake marker locations; actual runtime authority stays in
+        start."""
         with locked_state(self.config) as store:
             root = Path(store.read("index-candidate.json")["work_root"])
         return {
@@ -1677,13 +1914,18 @@ class ProductLifecycleTests(unittest.TestCase):
             )
         }
 
-    def test_stage_catalog_uses_single_lock_and_existing_granular_receipt_schema(self):
+    def test_stage_catalog_uses_single_lock_and_granular_receipts(
+        self,
+    ):
         self.fake_stage_backend()
-        with patch.object(lifecycle, "locked_state", wraps=locked_state) as lock:
+        with patch.object(
+            lifecycle, "locked_state", wraps=locked_state
+        ) as lock:
             result = self.stage(max_passes=2, wall_seconds=4800)
         lock.assert_called_once_with(self.config, create=True)
         self.assertEqual(
-            ["prepare", "images", "start", "import", "vectors"], self.stage_calls
+            ["prepare", "images", "start", "import", "vectors"],
+            self.stage_calls,
         )
         self.assertEqual("stage-catalog", result["operation"])
         self.assertEqual("vectors-complete", result["status"])
@@ -1736,7 +1978,7 @@ class ProductLifecycleTests(unittest.TestCase):
             self.assertEqual("staged", receipt["status"])
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_stage_clean_checkpoint_resumes_without_reimport_and_still_rechecks_vectors(
+    def test_stage_checkpoint_skips_reimport_and_rechecks_vectors(
         self,
     ):
         self.fake_stage_backend(vector_status="checkpoint")
@@ -1753,12 +1995,15 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual("skipped", second["steps"][4]["status"])
         self.assertEqual(2, self.stage_images.call_count)
 
-    def test_cross_commit_stage_keeps_origin_receipts_and_rechecks_host_gates(self):
+    def test_cross_commit_stage_keeps_origin_receipts_and_rechecks_host_gates(
+        self,
+    ):
         self.fake_stage_backend()
         first = self.stage()
         self.assertIs(first["catalog_reused"], False)
         origin_receipts = {
-            path: path.read_bytes() for path in self.config.state_root.glob("op-*.json")
+            path: path.read_bytes()
+            for path in self.config.state_root.glob("op-*.json")
         }
         runner = self.retain_stage_catalog()
         second = self.stage(runner=runner, catalog_revision=REVISION)
@@ -1775,12 +2020,16 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual(2, self.stage_start.call_count)
         self.assertEqual(2, self.stage_vectors.call_count)
         self.assertEqual(
-            origin_receipts, {path: path.read_bytes() for path in origin_receipts}
+            origin_receipts,
+            {path: path.read_bytes() for path in origin_receipts},
         )
         with locked_state(self.config) as store:
-            self.assertEqual(REVISION, store.read("index-candidate.json")["revision"])
             self.assertEqual(
-                self.stage_revision, store.read("candidate.json")["source_revision"]
+                REVISION, store.read("index-candidate.json")["revision"]
+            )
+            self.assertEqual(
+                self.stage_revision,
+                store.read("candidate.json")["source_revision"],
             )
         receipts = [
             json.loads(path.read_bytes())
@@ -1799,11 +2048,16 @@ class ProductLifecycleTests(unittest.TestCase):
             {row["operation"] for row in receipts},
         )
         self.assertTrue(
-            all(row["source_revision"] == self.stage_revision for row in receipts)
+            all(
+                row["source_revision"] == self.stage_revision
+                for row in receipts
+            )
         )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_cross_commit_stage_accepts_current_source_granular_import_receipt(self):
+    def test_cross_commit_stage_accepts_current_source_granular_import_receipt(
+        self,
+    ):
         self.fake_stage_backend()
         self.stage()
         origin_imports = [
@@ -1825,7 +2079,8 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIs(result["import_skipped"], True)
         self.assertEqual(2, self.stage_admin.call_count)
         self.assertEqual(
-            current_imports, {path: path.read_bytes() for path in current_imports}
+            current_imports,
+            {path: path.read_bytes() for path in current_imports},
         )
 
     def test_cross_commit_metadata_change_cannot_reuse_import_receipt(self):
@@ -1882,7 +2137,9 @@ class ProductLifecycleTests(unittest.TestCase):
         )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_stage_image_failure_stops_before_start_and_preserves_failed_step(self):
+    def test_stage_image_failure_stops_before_start_and_preserves_failed_step(
+        self,
+    ):
         self.fake_stage_backend()
         self.stage_failure = "images"
         with self.assertRaisesRegex(ValueError, "private-error"):
@@ -1893,12 +2150,15 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_vectors.assert_not_called()
         self.assertTrue(
             any(
-                row["operation"] == "build-catalog-images" and row["status"] == "failed"
+                row["operation"] == "build-catalog-images"
+                and row["status"] == "failed"
                 for row in lifecycle.status(self.config)["operations"]
             )
         )
 
-    def test_stage_completed_image_records_are_reverified_before_runtime_reuse(self):
+    def test_stage_completed_image_records_are_reverified_before_runtime_reuse(
+        self,
+    ):
         self.fake_stage_backend()
         self.stage()
         for path in self.stage_hint_paths().values():
@@ -1911,7 +2171,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual(1, self.stage_admin.call_count)
         self.assertEqual(1, self.stage_vectors.call_count)
 
-    def test_stage_legacy_runtime_only_skips_image_stage_and_still_calls_start(self):
+    def test_stage_legacy_runtime_only_skips_image_stage_and_still_calls_start(
+        self,
+    ):
         self.fake_stage_backend()
         self.sync()
         lifecycle.prepare_index(self.config)
@@ -1919,18 +2181,25 @@ class ProductLifecycleTests(unittest.TestCase):
         paths["runtime.json"].touch(mode=0o600)
         self.stage_calls.clear()
         result = self.stage()
-        self.assertEqual(["prepare", "start", "import", "vectors"], self.stage_calls)
+        self.assertEqual(
+            ["prepare", "start", "import", "vectors"], self.stage_calls
+        )
         self.stage_images.assert_not_called()
         self.stage_start.assert_called_once()
         self.assertIs(result["image_staging_skipped"], True)
         self.assertEqual(
-            {"operation": "build-catalog-images", "status": "skipped_existing_runtime"},
+            {
+                "operation": "build-catalog-images",
+                "status": "skipped_existing_runtime",
+            },
             result["steps"][2],
         )
         self.assertFalse(paths["image-stage-started.json"].exists())
         self.assertFalse(paths["image-stage-complete.json"].exists())
 
-    def test_stage_legacy_runtime_hint_cannot_bypass_failed_runtime_verification(self):
+    def test_stage_legacy_hint_cannot_bypass_failed_runtime_check(
+        self,
+    ):
         self.fake_stage_backend()
         self.sync()
         lifecycle.prepare_index(self.config)
@@ -1946,7 +2215,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertFalse(paths["image-stage-started.json"].exists())
         self.assertFalse(paths["image-stage-complete.json"].exists())
 
-    def test_stage_partial_image_marker_does_not_take_legacy_runtime_skip(self):
+    def test_stage_partial_image_marker_does_not_take_legacy_runtime_skip(
+        self,
+    ):
         self.fake_stage_backend()
         self.sync()
         lifecycle.prepare_index(self.config)
@@ -1961,7 +2232,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_admin.assert_not_called()
         self.stage_vectors.assert_not_called()
 
-    def test_stage_nonregular_or_linked_markers_fail_before_build_or_start(self):
+    def test_stage_nonregular_or_linked_markers_fail_before_build_or_start(
+        self,
+    ):
         self.fake_stage_backend()
         self.sync()
         lifecycle.prepare_index(self.config)
@@ -1977,7 +2250,9 @@ class ProductLifecycleTests(unittest.TestCase):
             if kind == "fifo":
                 os.mkfifo(path, mode=0o600)
             else:
-                target = self.root / ("missing" if kind == "dangling" else "regular")
+                target = self.root / (
+                    "missing" if kind == "dangling" else "regular"
+                )
                 if kind == "symlink":
                     target.touch(mode=0o600)
                 path.symlink_to(target)
@@ -1992,7 +2267,7 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_admin.assert_not_called()
         self.stage_vectors.assert_not_called()
 
-    def test_stage_same_source_complete_noop_does_not_skip_actual_runtime_or_journal_gate(
+    def test_stage_complete_noop_rechecks_runtime_and_journal(
         self,
     ):
         self.fake_stage_backend()
@@ -2013,7 +2288,9 @@ class ProductLifecycleTests(unittest.TestCase):
         )
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_stage_missing_successful_import_receipt_does_not_blindly_skip_import(self):
+    def test_stage_missing_import_receipt_does_not_skip_import(
+        self,
+    ):
         self.fake_stage_backend()
         self.sync()
         with locked_state(self.config) as store:
@@ -2033,7 +2310,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertIs(new["import_skipped"], False)
         self.assertEqual(2, self.stage_admin.call_count)
 
-    def test_stage_uncertain_import_stops_no_retry_reconcile_or_vector_work(self):
+    def test_stage_uncertain_import_stops_no_retry_reconcile_or_vector_work(
+        self,
+    ):
         self.fake_stage_backend()
         self.stage_failure = "import"
         for _ in range(2):
@@ -2041,7 +2320,10 @@ class ProductLifecycleTests(unittest.TestCase):
                 self.stage()
         self.assertEqual(
             ["import", "import"],
-            [call.kwargs["operation"] for call in self.stage_admin.call_args_list],
+            [
+                call.kwargs["operation"]
+                for call in self.stage_admin.call_args_list
+            ],
         )
         self.stage_vectors.assert_not_called()
         self.assertFalse((self.config.state_root / "active.json").exists())
@@ -2049,18 +2331,22 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual(
             2,
             sum(
-                receipt["operation"] == "import-index" and receipt["status"] == "failed"
+                receipt["operation"] == "import-index"
+                and receipt["status"] == "failed"
                 for receipt in receipts
             ),
         )
         self.assertNotIn(
             "private-error",
             "".join(
-                path.read_text() for path in self.config.state_root.glob("op-*.json")
+                path.read_text()
+                for path in self.config.state_root.glob("op-*.json")
             ),
         )
 
-    def test_stage_failure_stops_later_steps_and_never_records_activation(self):
+    def test_stage_failure_stops_later_steps_and_never_records_activation(
+        self,
+    ):
         self.fake_stage_backend()
         self.stage_failure = "start"
         with self.assertRaises(ValueError):
@@ -2069,7 +2355,7 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_vectors.assert_not_called()
         self.assertFalse((self.config.state_root / "active.json").exists())
 
-    def test_stage_sha_drift_during_prepare_refuses_next_step_and_plan_publication(
+    def test_stage_prepare_sha_drift_blocks_next_step_and_publication(
         self,
     ):
         self.fake_stage_backend()
@@ -2079,9 +2365,13 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_start.assert_not_called()
         self.stage_admin.assert_not_called()
         self.stage_vectors.assert_not_called()
-        self.assertFalse((self.config.state_root / "index-candidate.json").exists())
+        self.assertFalse(
+            (self.config.state_root / "index-candidate.json").exists()
+        )
 
-    def test_stage_sha_drift_during_sync_does_not_publish_candidate_or_prepare(self):
+    def test_stage_sha_drift_during_sync_does_not_publish_candidate_or_prepare(
+        self,
+    ):
         self.fake_stage_backend()
         original_fetch = self.fetch
 
@@ -2095,7 +2385,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_prepare.assert_not_called()
         self.assertFalse((self.config.state_root / "candidate.json").exists())
 
-    def test_stage_started_operation_crash_receipt_blocks_before_any_step(self):
+    def test_stage_started_operation_crash_receipt_blocks_before_any_step(
+        self,
+    ):
         self.fake_stage_backend()
         with locked_state(self.config, create=True) as store:
             store.write(
@@ -2116,7 +2408,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.stage_admin.assert_not_called()
         self.stage_vectors.assert_not_called()
 
-    def test_stage_invalid_budget_refuses_before_state_or_network_mutation(self):
+    def test_stage_invalid_budget_refuses_before_state_or_network_mutation(
+        self,
+    ):
         self.fake_stage_backend()
         for options in (
             {"max_passes": True},
@@ -2143,7 +2437,9 @@ class ProductLifecycleTests(unittest.TestCase):
         self.assertEqual("vectors-complete", result["status"])
         self.assertEqual(0, self.fetch_calls)
 
-    def test_stage_rejects_unverified_complete_result_before_successful_receipt(self):
+    def test_stage_rejects_unverified_completion_before_success_receipt(
+        self,
+    ):
         self.fake_stage_backend()
         build = self.stage_vectors.side_effect
         self.stage_vectors.side_effect = lambda *args, **kwargs: {
@@ -2154,7 +2450,9 @@ class ProductLifecycleTests(unittest.TestCase):
             self.stage()
         receipts = lifecycle.status(self.config)["operations"]
         vector_receipts = [
-            receipt for receipt in receipts if receipt["operation"] == "build-vectors"
+            receipt
+            for receipt in receipts
+            if receipt["operation"] == "build-vectors"
         ]
         self.assertEqual(1, len(vector_receipts))
         self.assertEqual("failed", vector_receipts[0]["status"])
@@ -2171,7 +2469,10 @@ class ProductLifecycleTests(unittest.TestCase):
         for command in ("prepare-index", "stage-catalog"):
             with (
                 self.subTest(command=command),
-                patch("search.operations.config.load_config", return_value=self.config),
+                patch(
+                    "search.operations.config.load_config",
+                    return_value=self.config,
+                ),
                 patch.object(
                     lifecycle,
                     command.replace("-", "_"),
@@ -2193,9 +2494,13 @@ class ProductLifecycleTests(unittest.TestCase):
                 )
             action.assert_called_once()
             self.assertEqual((self.config,), action.call_args.args)
-            self.assertEqual(REVISION, action.call_args.kwargs["catalog_revision"])
+            self.assertEqual(
+                REVISION, action.call_args.kwargs["catalog_revision"]
+            )
 
-    def test_cli_stage_catalog_dispatch_budget_and_checkpoint_or_complete_exit(self):
+    def test_cli_stage_catalog_dispatch_budget_and_checkpoint_or_complete_exit(
+        self,
+    ):
         for status, exit_code in (
             ("checkpoint", 2),
             ("vectors-complete", 0),
@@ -2203,7 +2508,10 @@ class ProductLifecycleTests(unittest.TestCase):
         ):
             with (
                 self.subTest(status=status),
-                patch("search.operations.config.load_config", return_value=self.config),
+                patch(
+                    "search.operations.config.load_config",
+                    return_value=self.config,
+                ),
                 patch.object(
                     lifecycle,
                     "stage_catalog",

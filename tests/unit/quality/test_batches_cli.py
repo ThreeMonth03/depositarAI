@@ -93,7 +93,9 @@ class BatchCLITests(unittest.TestCase):
         for number in (0, 1):
             with self.subTest(batch_count=number):
                 self.output = self.root / f"missing-{number}.json"
-                code, summary, _ = self.run_cli(batchargs=self.batchargs[: 3 * number])
+                code, summary, _ = self.run_cli(
+                    batchargs=self.batchargs[: 3 * number]
+                )
                 self.assertEqual(1, code)
                 self.assertEqual("incomplete", summary["status"])
                 self.assertEqual(4, summary["summary"]["turn_count"])
@@ -105,9 +107,9 @@ class BatchCLITests(unittest.TestCase):
 
     def test_failed_quality_assertions_return_one_with_complete_evidence(self):
         captured = json.loads(self.records[0]["files"]["capture.json"])
-        captured["cases"][0]["turns"][1]["response"]["result"]["state"]["topic"] = (
-            "different"
-        )
+        captured["cases"][0]["turns"][1]["response"]["result"]["state"][
+            "topic"
+        ] = "different"
         record = make_record(captured)
         for name, raw in record["files"].items():
             self.write(self.batchdirs[0] / name, raw)
@@ -117,7 +119,9 @@ class BatchCLITests(unittest.TestCase):
         self.assertEqual(0, summary["summary"]["evidence_missing_turn_count"])
         self.assertEqual(1, summary["summary"]["quality_failed_turn_count"])
 
-    def test_public_summary_omits_queries_titles_case_ids_and_unknown_tokens(self):
+    def test_public_summary_omits_queries_titles_case_ids_and_unknown_tokens(
+        self,
+    ):
         captured = json.loads(self.records[0]["files"]["capture.json"])
         case = captured["cases"][0]
         case["id"] = "PRIVATE_CASE"
@@ -142,7 +146,9 @@ class BatchCLITests(unittest.TestCase):
         baselinefile = self.root / "baseline.json"
         baseline = json.loads(self.records[0]["files"]["run.json"])["identity"]
         self.write(baselinefile, baseline)
-        code, summary, _ = self.run_cli(extra=("--baseline", str(baselinefile)))
+        code, summary, _ = self.run_cli(
+            extra=("--baseline", str(baselinefile))
+        )
         self.assertEqual(0, code)
         self.assertEqual("passed", summary["status"])
         self.output = self.root / "mismatched-baseline.json"
@@ -169,7 +175,9 @@ class BatchCLITests(unittest.TestCase):
     def test_unknown_temporal_oracle_is_rejected_before_writing_a_report(self):
         plan, records = unsupported_time_oracle()
         self.write(self.planfile, plan)
-        for subplan, directory, record in zip(self.subplans, self.batchdirs, records):
+        for subplan, directory, record in zip(
+            self.subplans, self.batchdirs, records
+        ):
             self.write(subplan, record["plan"])
             for name, raw in record["files"].items():
                 self.write(directory / name, raw)
@@ -182,7 +190,11 @@ class BatchCLITests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_input_file_permissions_must_be_owner_only(self):
-        for path in (self.planfile, self.subplans[0], self.batchdirs[0] / "run.json"):
+        for path in (
+            self.planfile,
+            self.subplans[0],
+            self.batchdirs[0] / "run.json",
+        ):
             for mode in (0o644, 0o660):
                 with self.subTest(name=path.name, mode=oct(mode)):
                     path.chmod(mode)
@@ -218,7 +230,9 @@ class BatchCLITests(unittest.TestCase):
     def test_symlink_capture_directory_is_rejected(self):
         linked = self.root / "linked-batch"
         linked.symlink_to(self.batchdirs[0], target_is_directory=True)
-        self.rejected(batchargs=["--batch", str(self.subplans[0]), str(linked)])
+        self.rejected(
+            batchargs=["--batch", str(self.subplans[0]), str(linked)]
+        )
         self.assertFalse(self.output.exists())
 
     def test_fifo_input_is_rejected_without_waiting_for_a_writer(self):
@@ -282,7 +296,9 @@ class BatchCLITests(unittest.TestCase):
                     },
                     json.loads(output.getvalue()),
                 )
-                self.assertNotIn("PRIVATE_", output.getvalue() + error.getvalue())
+                self.assertNotIn(
+                    "PRIVATE_", output.getvalue() + error.getvalue()
+                )
 
 
 if __name__ == "__main__":

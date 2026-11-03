@@ -1,4 +1,5 @@
-"""Apply an attested CPU frontend release using the existing deployment checker.
+"""Apply an attested CPU frontend release using the existing deployment
+checker.
 
 Only this frontend Compose project is managed. Downloads precede admission
 changes; a bounded intent retains enough identity to recover an interrupted
@@ -51,14 +52,20 @@ def require(condition, code):
 
 def _path(value):
     require(
-        type(value) is str and value.isascii() and not any(ord(c) < 32 for c in value),
+        type(value) is str
+        and value.isascii()
+        and not any(ord(c) < 32 for c in value),
         "config_invalid",
     )
     path = Path(value)
     try:
-        require(path.is_absolute() and path.resolve() == path, "config_invalid")
+        require(
+            path.is_absolute() and path.resolve() == path, "config_invalid"
+        )
     except RuntimeError:
-        raise FrontendDeliveryError("frontend_delivery_config_invalid") from None
+        raise FrontendDeliveryError(
+            "frontend_delivery_config_invalid"
+        ) from None
     return path
 
 
@@ -75,7 +82,9 @@ def _read_json(path, *, maximum=MAX_RECORD):
 def load_config(path):
     config_path = _path(str(path))
     value = _read_json(config_path, maximum=16384)
-    require(type(value) is dict and set(value) == CONFIG_FIELDS, "config_invalid")
+    require(
+        type(value) is dict and set(value) == CONFIG_FIELDS, "config_invalid"
+    )
     require(
         type(value["schema_version"]) is int
         and value["schema_version"] == 1
@@ -84,17 +93,28 @@ def load_config(path):
         and 0 < value["repository_id"] < 2**63,
         "config_invalid",
     )
-    for key in ("state_root", "frontend_check_file", "gh_binary", "monitor_lock_file"):
+    for key in (
+        "state_root",
+        "frontend_check_file",
+        "gh_binary",
+        "monitor_lock_file",
+    ):
         value[key] = _path(value[key])
     root = value["state_root"]
     require(
-        not any((parent / ".git").exists() for parent in (root, *root.parents)),
+        not any(
+            (parent / ".git").exists() for parent in (root, *root.parents)
+        ),
         "state_inside_git",
     )
     require(
         all(
             root not in p.parents and p != root
-            for p in (config_path, value["frontend_check_file"], value["gh_binary"])
+            for p in (
+                config_path,
+                value["frontend_check_file"],
+                value["gh_binary"],
+            )
         ),
         "state_overlaps_inputs",
     )
@@ -108,7 +128,9 @@ def load_config(path):
             check.load_config(value["frontend_check_file"])
             _read_json(value["frontend_check_file"], maximum=16384)
     except FrontendArtifactError:
-        raise FrontendDeliveryError("frontend_delivery_gh_binary_unsafe") from None
+        raise FrontendDeliveryError(
+            "frontend_delivery_gh_binary_unsafe"
+        ) from None
     return value
 
 
@@ -116,7 +138,10 @@ def load_config(path):
 def _lock(parent_fd, name, *, create=False, wait=0):
     fd = os.open(
         name,
-        os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_CREAT if create else 0),
+        os.O_RDWR
+        | os.O_NOFOLLOW
+        | os.O_NONBLOCK
+        | (os.O_CREAT if create else 0),
         0o600,
         dir_fd=parent_fd,
     )
@@ -156,14 +181,18 @@ class State:
         private_io.verify_directory(self.fd, self.root)
         try:
             return strict_json(
-                private_io.read_file(self.fd, name, mode=0o600, max_bytes=MAX_RECORD)
+                private_io.read_file(
+                    self.fd, name, mode=0o600, max_bytes=MAX_RECORD
+                )
             )
         except FileNotFoundError:
             return None
 
     def write(self, name, value):
         private_io.verify_directory(self.fd, self.root)
-        private_io.write_json(self.fd, name, value, replace=True, max_bytes=MAX_RECORD)
+        private_io.write_json(
+            self.fd, name, value, replace=True, max_bytes=MAX_RECORD
+        )
         return self.root / name
 
     def remove(self, name):
@@ -187,12 +216,18 @@ class State:
 
 
 def _manifest_key(role):
-    return "web_platform_manifest" if role == "web" else "web_nginx_platform_manifest"
+    return (
+        "web_platform_manifest"
+        if role == "web"
+        else "web_nginx_platform_manifest"
+    )
 
 
 def _locator(revision, role):
     return (
-        "depositar-search-web:" if role == "web" else "depositar-search-web-nginx:"
+        "depositar-search-web:"
+        if role == "web"
+        else "depositar-search-web-nginx:"
     ) + revision
 
 
@@ -204,7 +239,9 @@ def _native(composition, profile, nonce):
         service["image"] = _locator(profile["frontend_revision"], role)
         if nonce is not None:
             service.setdefault("labels", {})[TRANSACTION_LABEL] = nonce
-    policy.validate(value, intranet=profile["deployment_mode"] == "intranet-http")
+    policy.validate(
+        value, intranet=profile["deployment_mode"] == "intranet-http"
+    )
     return value
 
 
@@ -238,7 +275,9 @@ class Delivery:
         return check.load_config(self.config["frontend_check_file"])
 
     def render(self, profile):
-        self.docker.environment["SOURCE_REVISION"] = profile["frontend_revision"]
+        self.docker.environment["SOURCE_REVISION"] = profile[
+            "frontend_revision"
+        ]
         return check._compose(self.docker, profile)
 
     def record(self, value):
@@ -264,7 +303,8 @@ class Delivery:
         )
         runtime = value["runtime"]
         require(
-            runtime is None or (type(runtime) is dict and set(runtime) == set(ROLES)),
+            runtime is None
+            or (type(runtime) is dict and set(runtime) == set(ROLES)),
             "state_invalid",
         )
         if runtime is not None:
@@ -273,12 +313,17 @@ class Delivery:
                 require(
                     type(row) is dict
                     and set(row)
-                    == {"container_id", "container_image_index", "platform_manifest"}
+                    == {
+                        "container_id",
+                        "container_image_index",
+                        "platform_manifest",
+                    }
                     and type(row["container_id"]) is str
                     and check.HEX64.fullmatch(row["container_id"])
                     and type(row["container_image_index"]) is str
                     and check.IMAGE.fullmatch(row["container_image_index"])
-                    and row["platform_manifest"] == profile[_manifest_key(role)],
+                    and row["platform_manifest"]
+                    == profile[_manifest_key(role)],
                     "state_invalid",
                 )
         return value
@@ -342,7 +387,9 @@ class Delivery:
         for spec in record["composition"]["networks"].values():
             name = spec["name"]
             row = strict_json(
-                self.docker.call(["network", "inspect", "--format", "{{json .}}", name])
+                self.docker.call(
+                    ["network", "inspect", "--format", "{{json .}}", name]
+                )
             )
             require(
                 row["Labels"].get("com.docker.compose.project") == project
@@ -353,7 +400,10 @@ class Delivery:
         return ids
 
     def guard(self, intent):
-        before, candidate = intent["before_state"]["current"], intent["candidate"]
+        before, candidate = (
+            intent["before_state"]["current"],
+            intent["candidate"],
+        )
         project = before["composition"]["name"]
         require(
             self.canonical() in (before["profile"], candidate["profile"]),
@@ -380,7 +430,9 @@ class Delivery:
         roles = set()
         for identifier in identifiers:
             row = strict_json(
-                self.docker.call(["inspect", "--format", check.INSPECT, identifier])
+                self.docker.call(
+                    ["inspect", "--format", check.INSPECT, identifier]
+                )
             )
             labels = row["Config"]["Labels"]
             role = labels.get("com.docker.compose.service")
@@ -417,7 +469,9 @@ class Delivery:
             )
         for name, expected_id in intent["network_ids"].items():
             row = strict_json(
-                self.docker.call(["network", "inspect", "--format", "{{json .}}", name])
+                self.docker.call(
+                    ["network", "inspect", "--format", "{{json .}}", name]
+                )
             )
             require(
                 row["Id"] == expected_id
@@ -428,11 +482,14 @@ class Delivery:
 
     def apply(self, target, intent):
         # The immutable snapshot has no build recipe and names only this
-        # already-checked frontend project. Admission closes before BFF changes.
+        # already-checked frontend project. Admission closes before BFF
+        # changes.
         require(
             target["composition"]
             == _native(
-                self.render(target["profile"]), target["profile"], target["nonce"]
+                self.render(target["profile"]),
+                target["profile"],
+                target["nonce"],
             ),
             "composition_changed",
         )
@@ -450,7 +507,9 @@ class Delivery:
             target["composition"],
             intranet=target["profile"]["deployment_mode"] == "intranet-http",
         )
-        self.docker.call([*prefix, "stop", "--timeout", "10", "web-nginx"], timeout=20)
+        self.docker.call(
+            [*prefix, "stop", "--timeout", "10", "web-nginx"], timeout=20
+        )
         self.guard(intent)
         self.verify_images(target)
         policy.validate(
@@ -481,7 +540,9 @@ class Delivery:
         path = self.config["frontend_check_file"]
         fd = private_io.open_directory(path.parent)
         try:
-            private_io.write_json(fd, path.name, profile, replace=True, max_bytes=16384)
+            private_io.write_json(
+                fd, path.name, profile, replace=True, max_bytes=16384
+            )
         finally:
             os.close(fd)
 
@@ -489,7 +550,13 @@ class Delivery:
         require(
             type(value) is dict
             and set(value)
-            == {"schema_version", "before_state", "candidate", "nonce", "network_ids"}
+            == {
+                "schema_version",
+                "before_state",
+                "candidate",
+                "nonce",
+                "network_ids",
+            }
             and type(value["schema_version"]) is int
             and value["schema_version"] == 1,
             "intent_invalid",
@@ -544,7 +611,8 @@ class Delivery:
         )
         self.apply(target, intent)
         self.publish(
-            target["profile"], (target["profile"], intent["candidate"]["profile"])
+            target["profile"],
+            (target["profile"], intent["candidate"]["profile"]),
         )
         self.state.write("state.json", before)
         self.state.remove("intent.json")
@@ -573,7 +641,9 @@ class Delivery:
             self.state.write("intent.json", intent)
             try:
                 self.apply(candidate, intent)
-                self.publish(candidate["profile"], (before["current"]["profile"],))
+                self.publish(
+                    candidate["profile"], (before["current"]["profile"],)
+                )
                 result = {
                     "schema_version": 1,
                     "current": candidate,
@@ -635,7 +705,9 @@ class Delivery:
                 **before["current"]["profile"],
                 "frontend_revision": revision,
                 **{
-                    _manifest_key(role): manifest["images"][role]["platform_manifest"]
+                    _manifest_key(role): manifest["images"][role][
+                        "platform_manifest"
+                    ]
                     for role in ROLES
                 },
             }
@@ -648,7 +720,9 @@ class Delivery:
             for role in ROLES:
                 entry = manifest["images"][role]
                 archive = destination / entry["archive"]
-                self.docker.call(["load", "--input", str(archive)], timeout=180)
+                self.docker.call(
+                    ["load", "--input", str(archive)], timeout=180
+                )
                 check.inspect_frontend_image(
                     self.docker,
                     _locator(revision, role),
@@ -686,7 +760,9 @@ def operate(config_path, operation, revision=None, *, runner=None):
                 if pending is not None:
                     delivery.intent(pending)
                     if operation == "status":
-                        return _summary("recovery_required", pending["before_state"])
+                        return _summary(
+                            "recovery_required", pending["before_state"]
+                        )
                     require(operation == "rollback", "recovery_required")
                     with delivery.monitor_lock():
                         restored = delivery.restore(pending)
@@ -718,7 +794,9 @@ def main(argv=None):
     commands.add_parser("status")
     args = parser.parse_args(argv)
     try:
-        result = operate(args.config, args.operation, getattr(args, "revision", None))
+        result = operate(
+            args.config, args.operation, getattr(args, "revision", None)
+        )
     except KeyboardInterrupt:
         print('{"error":"frontend_delivery_interrupted"}')
         return 130

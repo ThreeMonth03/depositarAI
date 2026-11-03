@@ -83,7 +83,8 @@ def native_files(root, profile):
         fd = private_io.open_directory(filename.parent)
         try:
             require(
-                set(os.listdir(fd)) == {"run.json", "capture.json", "outcomes.json"},
+                set(os.listdir(fd))
+                == {"run.json", "capture.json", "outcomes.json"},
                 "native_evidence_files_invalid",
             )
             files[name] = private_io.read_file(
@@ -116,10 +117,13 @@ def _resource(value, code, profile):
         )
         and value["attempted_count"] <= 20
         and value["pending_count"] <= value["selected_count"]
-        and value["profile_count"] <= value["selected_count"] - value["pending_count"]
-        and value["failed_count"] <= value["selected_count"] - value["pending_count"]
+        and value["profile_count"]
+        <= value["selected_count"] - value["pending_count"]
+        and value["failed_count"]
+        <= value["selected_count"] - value["pending_count"]
         and value["retryable_count"] <= value["failed_count"]
-        and code == {"completed": 0, "partial": 1, "checkpoint": 2}[value["status"]]
+        and code
+        == {"completed": 0, "partial": 1, "checkpoint": 2}[value["status"]]
         and (value["status"] == "checkpoint") == bool(value["pending_count"])
         and (value["status"] != "completed" or value["failed_count"] == 0)
         and (value["status"] != "partial" or value["failed_count"] > 0),
@@ -139,7 +143,8 @@ def _quality(value, code, root, request, files):
         and run.get("operator_revision") == request["revision"]
         and type(run.get("identity")) is dict
         and run["identity"].get("operator_revision") == request["revision"]
-        and run["identity"].get("candidate_revision") == profile["candidate_revision"]
+        and run["identity"].get("candidate_revision")
+        == profile["candidate_revision"]
         and hashlib.sha256(private_io.canonical(run["identity"])).hexdigest()
         == profile["expected_identity_sha256"]
         and private_io.canonical(value)
@@ -148,7 +153,9 @@ def _quality(value, code, root, request, files):
         ),
         "operation_result_unverified",
     )
-    plan = strict_json(profiles.read_frozen(root, profile)["quality-cases.json"])
+    plan = strict_json(
+        profiles.read_frozen(root, profile)["quality-cases.json"]
+    )
     # The established verifier keeps the complete plan denominator. Quality
     # assertions may fail while trusted observation collection is complete.
     report = batches.aggregate(
@@ -156,11 +163,16 @@ def _quality(value, code, root, request, files):
         [
             {
                 "plan": plan,
-                "files": {name.split("/")[-1]: raw for name, raw in files.items()},
+                "files": {
+                    name.split("/")[-1]: raw for name, raw in files.items()
+                },
             }
         ],
     )
-    require(report["evidence"]["status"] == "complete", "operation_result_unverified")
+    require(
+        report["evidence"]["status"] == "complete",
+        "operation_result_unverified",
+    )
     return "completed"
 
 
@@ -232,7 +244,8 @@ def _vector(value, code, profile):
             and pending is None
             and value["completed_passes"] == 0
         )
-        and value["host_cleanup_verified"] is bool(value["passes_this_invocation"])
+        and value["host_cleanup_verified"]
+        is bool(value["passes_this_invocation"])
         and (value["passes_this_invocation"] == 0 or counted),
         "operation_result_unverified",
     )
@@ -241,22 +254,30 @@ def _vector(value, code, profile):
 
 
 def verify(value, code, root, request):
-    """Return a normalized state only after verifying native completion evidence."""
+    """Return a normalized state only after verifying native completion
+    evidence.
+    """
     profile = request["profile_definition"]
     profiles.verify_source(profile, request["revision"])
     profiles.read_frozen(root, profile)
     if profile["type"] == "quality-batch":
-        return _quality(value, code, root, request, native_files(root, profile))
+        return _quality(
+            value, code, root, request, native_files(root, profile)
+        )
     if profile["type"] == "vector-pass":
         return _vector(value, code, profile)
     return _resource(value, code, profile)
 
 
 def expected_code(value, profile):
-    """Recover the required native exit status when rechecking a stored result."""
+    """Recover the required native exit status when rechecking a stored
+    result.
+    """
     require(type(value) is dict, "operation_result_unverified")
     if profile["type"] == "quality-batch":
         return 0
     if profile["type"] == "vector-pass":
         return 2 if value.get("status") == "checkpoint" else 0
-    return {"completed": 0, "partial": 1, "checkpoint": 2}.get(value.get("status"), -1)
+    return {"completed": 0, "partial": 1, "checkpoint": 2}.get(
+        value.get("status"), -1
+    )

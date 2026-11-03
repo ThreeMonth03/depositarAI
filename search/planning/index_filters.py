@@ -13,9 +13,12 @@ FIELD = "depositar_conditions"
 VERSION = "time-format-v2"
 VECTOR_PATH = "content_chunk_vector"
 VECTOR_FIELD = VECTOR_PATH + ".vector"
-BOOLEAN_FIELDS = ("record", "start_known", "end_known", "formats_known") + tuple(
-    "format_" + f for f in FORMATS
-)
+BOOLEAN_FIELDS = (
+    "record",
+    "start_known",
+    "end_known",
+    "formats_known",
+) + tuple("format_" + f for f in FORMATS)
 INTEGER_FIELDS = ("start_lo", "start_hi", "end_lo", "end_hi")
 KEYWORD_FIELDS = ("time_status", "start_precision", "end_precision")
 FIELDS = BOOLEAN_FIELDS + INTEGER_FIELDS + KEYWORD_FIELDS
@@ -31,7 +34,11 @@ def mapping():
     }
     return {
         "properties": {
-            FIELD: {"type": "object", "dynamic": "strict", "properties": properties}
+            FIELD: {
+                "type": "object",
+                "dynamic": "strict",
+                "properties": properties,
+            }
         }
     }
 
@@ -47,5 +54,7 @@ def metadata(document, bundle_id):
 
 
 def validate_bundle_id(bundle_id):
-    if not isinstance(bundle_id, str) or not re.fullmatch(r"[0-9a-f]{64}", bundle_id):
+    if not isinstance(bundle_id, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", bundle_id
+    ):
         raise ValueError("verified bundle identity required")

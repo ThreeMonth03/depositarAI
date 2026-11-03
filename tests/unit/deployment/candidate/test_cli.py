@@ -20,32 +20,39 @@ from search.operations.deployment.candidate import controller
 
 ROOT = Path(__file__).resolve().parents[4]
 ARGUMENTS = ["--config", "/fixture/product.json", "query", "--stdin"]
-CHILD = r"""
-import hashlib
-import os
-from pathlib import Path
-import runpy
-import sys
-
-root = Path(sys.argv[1])
-sys.path.insert(0, str(root))
-from search.operations.deployment.candidate import controller
-
-controller.QUERY_INPUT_SECONDS = 0.2
-
-def checked(config, operation, *, source, text, batch_identity):
-    assert config == '/fixture/product.json'
-    assert operation == 'query' and source is None and batch_identity is False
-    assert text not in '\0'.join(sys.argv)
-    assert all(text not in item for pair in os.environ.items() for item in pair)
-    return {'status': 'accepted',
-            'query_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()}
-
-controller.operate = checked
-launcher = root / 'scripts/share_search_backend.py'
-sys.argv = [str(launcher), '--config', '/fixture/product.json', 'query', '--stdin']
-runpy.run_path(str(launcher), run_name='__main__')
-"""
+CHILD = (
+    "\n"
+    "import hashlib\n"
+    "import os\n"
+    "from pathlib import Path\n"
+    "import runpy\n"
+    "import sys\n"
+    "\n"
+    "root = Path(sys.argv[1])\n"
+    "sys.path.insert(0, str(root))\n"
+    "from search.operations.deployment.candidate import "
+    "controller\n"
+    "\n"
+    "controller.QUERY_INPUT_SECONDS = 0.2\n"
+    "\n"
+    "def checked(config, operation, *, source, text, "
+    "batch_identity):\n"
+    "    assert config == '/fixture/product.json'\n"
+    "    assert operation == 'query' and source is None and "
+    "batch_identity is False\n"
+    "    assert text not in '\\0'.join(sys.argv)\n"
+    "    assert all(text not in item for pair in "
+    "os.environ.items() for item in pair)\n"
+    "    return {'status': 'accepted',\n"
+    "            'query_sha256': "
+    "hashlib.sha256(text.encode('utf-8')).hexdigest()}\n"
+    "\n"
+    "controller.operate = checked\n"
+    "launcher = root / 'scripts/share_search_backend.py'\n"
+    "sys.argv = [str(launcher), '--config', "
+    "'/fixture/product.json', 'query', '--stdin']\n"
+    "runpy.run_path(str(launcher), run_name='__main__')\n"
+)
 REJECTED_CHILD = r"""
 from pathlib import Path
 import runpy
@@ -115,7 +122,9 @@ class CandidateCLIInputTests(unittest.TestCase):
             with self.subTest(bytes=len(raw)):
                 code, report, operate = self.invoke(raw)
                 self.assertEqual(code, 1)
-                self.assertEqual(report, {"error": "shared_backend_query_invalid"})
+                self.assertEqual(
+                    report, {"error": "shared_backend_query_invalid"}
+                )
                 operate.assert_not_called()
 
     def test_invalid_or_oversized_input_never_reaches_runtime(self):
@@ -131,7 +140,9 @@ class CandidateCLIInputTests(unittest.TestCase):
             with self.subTest(bytes=len(raw)):
                 code, report, operate = self.invoke(raw)
                 self.assertEqual(code, 1)
-                self.assertEqual(report, {"error": "shared_backend_query_invalid"})
+                self.assertEqual(
+                    report, {"error": "shared_backend_query_invalid"}
+                )
                 operate.assert_not_called()
 
     def test_terminal_input_is_rejected_without_reading_or_echoing(self):
@@ -147,7 +158,9 @@ class CandidateCLIInputTests(unittest.TestCase):
 
     def test_unreadable_input_uses_a_fixed_diagnostic(self):
         with patch.object(
-            controller.select, "select", side_effect=OSError("PRIVATE_SENTINEL")
+            controller.select,
+            "select",
+            side_effect=OSError("PRIVATE_SENTINEL"),
         ):
             code, report, operate = self.invoke(b"synthetic private query")
         self.assertEqual(code, 1)
@@ -156,7 +169,9 @@ class CandidateCLIInputTests(unittest.TestCase):
 
     def test_nonquery_commands_do_not_read_stdin(self):
         with patch.object(
-            controller, "_query_stdin", side_effect=AssertionError("unexpected read")
+            controller,
+            "_query_stdin",
+            side_effect=AssertionError("unexpected read"),
         ):
             code, report, operate = self.invoke(
                 b"", arguments=["--config", "/fixture/product.json", "status"]
@@ -168,7 +183,13 @@ class CandidateCLIInputTests(unittest.TestCase):
         sentinel = "synthetic-private-argument-" + uuid.uuid4().hex
         for arguments in (
             ["--config", "/fixture/product.json", "query"],
-            ["--config", "/fixture/product.json", "query", "--query", sentinel],
+            [
+                "--config",
+                "/fixture/product.json",
+                "query",
+                "--query",
+                sentinel,
+            ],
             [*ARGUMENTS, sentinel],
             ["--config", "/fixture/product.json", sentinel],
             [
@@ -231,10 +252,18 @@ class CandidateCLIProcessTests(unittest.TestCase):
         self.assertNotIn(sentinel, "\0".join(result.args))
         self.assertNotIn(sentinel.encode(), result.stdout + result.stderr)
 
-    def test_real_launcher_does_not_repeat_rejected_legacy_or_unknown_arguments(self):
+    def test_launcher_never_echoes_rejected_legacy_or_unknown_arguments(
+        self,
+    ):
         sentinel = "synthetic-rejected-argument-" + uuid.uuid4().hex
         for arguments in (
-            ["--config", "/fixture/product.json", "query", "--query", sentinel],
+            [
+                "--config",
+                "/fixture/product.json",
+                "query",
+                "--query",
+                sentinel,
+            ],
             [*ARGUMENTS, "--unknown", sentinel],
         ):
             with self.subTest(arguments_count=len(arguments)):
@@ -265,7 +294,9 @@ class CandidateCLIProcessTests(unittest.TestCase):
                     json.loads(result.stderr),
                     {"error": "shared_backend_arguments_invalid"},
                 )
-                self.assertNotIn(sentinel.encode(), result.stdout + result.stderr)
+                self.assertNotIn(
+                    sentinel.encode(), result.stdout + result.stderr
+                )
 
     def assert_timeout(self, *, trickle):
         process = subprocess.Popen(

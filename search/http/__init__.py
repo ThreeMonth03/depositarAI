@@ -1,1 +1,3 @@
-"""Shared Django/DRF HTTP platform; applications own their request boundaries."""
+"""Shared Django/DRF HTTP platform;
+applications own their request boundaries.
+"""

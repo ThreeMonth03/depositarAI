@@ -49,7 +49,8 @@ def load_binding(path, bundle):
         os.close(fd)
     if (
         type(value) is not dict
-        or set(value) != {"index", "manifest_sha256", "bundle_id", "projection_schema"}
+        or set(value)
+        != {"index", "manifest_sha256", "bundle_id", "projection_schema"}
         or type(value["index"]) is not str
         or not INDEX_RE.fullmatch(value["index"])
         or value["manifest_sha256"] != bundle.manifest_sha256
@@ -105,7 +106,9 @@ class IndexClient:
             self.embedding_transport, self.embedding_origin + "/api/tags"
         )
         if [
-            m.get("digest") for m in tags.get("models", []) if m.get("name") == MODEL
+            m.get("digest")
+            for m in tags.get("models", [])
+            if m.get("name") == MODEL
         ] != [MODEL_DIGEST]:
             raise ValueError("embedding identity mismatch")
         data = self.json_request(
@@ -125,7 +128,11 @@ class IndexClient:
 
     def retrieve(self, query, conditions, branch, vector):
         body = retrieval_query(
-            query, conditions, self.bundle.bundle_id, branch=branch, vector=vector
+            query,
+            conditions,
+            self.bundle.bundle_id,
+            branch=branch,
+            vector=vector,
         )
         body["_source"] = [
             "dataset_id",
@@ -140,7 +147,9 @@ class IndexClient:
         password = read_secret(Path("/run/secrets/index_query_password"))
         auth = (
             "Basic "
-            + base64.b64encode(("depositar_filtered:" + password).encode()).decode()
+            + base64.b64encode(
+                ("depositar_filtered:" + password).encode()
+            ).decode()
         )
         response = self.json_request(
             self.transport,
@@ -148,7 +157,9 @@ class IndexClient:
             body,
             authorization=auth,
         )
-        return validate_hits(response, self.bundle, self.binding["index"], conditions)
+        return validate_hits(
+            response, self.bundle, self.binding["index"], conditions
+        )
 
 
 def validate_hits(response, bundle, index, conditions):
@@ -166,7 +177,9 @@ def validate_hits(response, bundle, index, conditions):
     if type(hits) is not list or len(hits) > 20:
         raise ValueError("invalid index hits")
     by_id = {r["dataset_id"]: r for r in bundle.documents}
-    hashes = {url: digest for url, _, digest in bundle.expected_inventory_entries}
+    hashes = {
+        url: digest for url, _, digest in bundle.expected_inventory_entries
+    }
     seen, result = set(), []
     for hit in hits:
         source = hit["_source"]
@@ -181,14 +194,17 @@ def validate_hits(response, bundle, index, conditions):
             hit["_index"] != index
             or identifier in seen
             or source.get("url") != document["url"]
-            or source.get("depositar_document_sha256") != hashes[document["url"]]
+            or source.get("depositar_document_sha256")
+            != hashes[document["url"]]
             or context != _json_wire_copy(document["resource_context"])
             or source.get(filters.FIELD) != expected
             or any(
                 source.get(k) != list(document[k])
                 for k in ("role", "label", "virtual_host")
             )
-            or classify(project(bundle.condition_metadata[identifier]), conditions)
+            or classify(
+                project(bundle.condition_metadata[identifier]), conditions
+            )
             == "outside"
             or type(score) not in (int, float)
             or not math.isfinite(score)
@@ -200,7 +216,11 @@ def validate_hits(response, bundle, index, conditions):
 
 
 def search(payload, settings):
-    if type(payload) is not dict or set(payload) != {"query", "top_k", "conditions"}:
+    if type(payload) is not dict or set(payload) != {
+        "query",
+        "top_k",
+        "conditions",
+    }:
         raise ValueError("index request shape")
     query = normalize_query(payload["query"])
     if type(payload["top_k"]) is not int or not 1 <= payload["top_k"] <= 20:
@@ -224,7 +244,9 @@ def search(payload, settings):
         row = {k: _json_wire_copy(by_id[hit.id][k]) for k in METADATA_FIELDS}
         metadata = bundle.condition_metadata[hit.id]
         row.update(
-            resource_context=_json_wire_copy(by_id[hit.id]["resource_context"]),
+            resource_context=_json_wire_copy(
+                by_id[hit.id]["resource_context"]
+            ),
             temporal_coverage={
                 "start": metadata["temporal"]["start"],
                 "end": metadata["temporal"]["end"],

@@ -1,4 +1,6 @@
-"""Product collection binds real metadata to verified same-source authorities."""
+"""Product collection binds real metadata to verified same-source
+authorities.
+"""
 
 from contextlib import nullcontext
 import copy
@@ -25,7 +27,9 @@ def digest(value):
 
 class ProductPackagingTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-product-collection-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-product-collection-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.repo = self.root / "repo"
@@ -39,7 +43,10 @@ class ProductPackagingTests(unittest.TestCase):
             GPUConfig("GPU-a", ("GPU-b", "GPU-c"), "GPU-d"),
         )
         self.catalog = {
-            "project": "depositar-ai-catalog-" + BUNDLE[:12] + "-" + REVISION[:12],
+            "project": "depositar-ai-catalog-"
+            + BUNDLE[:12]
+            + "-"
+            + REVISION[:12],
             "revision": REVISION,
             "bundle_path": str(self.root / "bundle"),
             "manifest_sha256": "c" * 64,
@@ -47,7 +54,9 @@ class ProductPackagingTests(unittest.TestCase):
             "compose_sha256": "d" * 64,
             "source_sha256": {
                 name: "e" * 64
-                for name in packaging.execution.service_sources("opensearch-search")
+                for name in packaging.execution.service_sources(
+                    "opensearch-search"
+                )
             },
         }
         self.context = {
@@ -105,7 +114,9 @@ class ProductPackagingTests(unittest.TestCase):
         with (
             patch.object(packaging, "_source"),
             patch.object(
-                packaging.source_bundle, "committed_source_plan", return_value={}
+                packaging.source_bundle,
+                "committed_source_plan",
+                return_value={},
             ),
             patch.object(
                 packaging.image_evidence,
@@ -127,7 +138,9 @@ class ProductPackagingTests(unittest.TestCase):
                 self.subTest(stage=failing),
                 patch.object(packaging, "_source"),
                 patch.object(
-                    packaging.source_bundle, "committed_source_plan", return_value={}
+                    packaging.source_bundle,
+                    "committed_source_plan",
+                    return_value={},
                 ),
                 patch.object(
                     packaging.image_evidence,
@@ -135,10 +148,14 @@ class ProductPackagingTests(unittest.TestCase):
                     return_value={"images": {}},
                 ),
                 patch.object(
-                    packaging.execution, "load_context", return_value=self.context
+                    packaging.execution,
+                    "load_context",
+                    return_value=self.context,
                 ),
                 patch.object(
-                    packaging.execution, "operation_lock", return_value=nullcontext()
+                    packaging.execution,
+                    "operation_lock",
+                    return_value=nullcontext(),
                 ),
                 patch.object(packaging, "_catalog_images", return_value={}),
                 patch.object(packaging.source_artifact, "package"),
@@ -148,18 +165,22 @@ class ProductPackagingTests(unittest.TestCase):
                     failing,
                     side_effect=ValueError("source_rejected"),
                 ),
-                patch.object(product_package, "export_product_package") as export,
+                patch.object(
+                    product_package, "export_product_package"
+                ) as export,
                 self.assertRaisesRegex(ValueError, "source_rejected"),
             ):
                 self.package()
             export.assert_not_called()
 
-    def test_collection_roundtrips_source_and_rechecks_authority_before_completion(
+    def test_collection_roundtrips_source_and_rechecks_authority(
         self,
     ):
         self.collect()
 
-    def test_collection_preserves_origin_images_and_current_application_source(self):
+    def test_collection_preserves_origin_images_and_current_application_source(
+        self,
+    ):
         self.collect(catalog_revision="1" * 40)
 
     def collect(self, *, catalog_revision=REVISION):
@@ -225,10 +246,14 @@ class ProductPackagingTests(unittest.TestCase):
         def export(plan, destination, **options):
             self.assertEqual(REVISION, plan["revision"])
             self.assertEqual(catalog_revision, plan["catalog"]["revision"])
-            self.assertEqual(self.catalog["project"], plan["catalog"]["project"])
+            self.assertEqual(
+                self.catalog["project"], plan["catalog"]["project"]
+            )
             self.assertTrue(plan["models"]["delivery"] == "bundled")
             self.assertFalse(plan["install_complete"])
-            self.assertEqual(set(product_package.IMAGE_ROLES), set(plan["images"]))
+            self.assertEqual(
+                set(product_package.IMAGE_ROLES), set(plan["images"])
+            )
             for role in product_package.BUILT_ROLES:
                 self.assertEqual(
                     catalog_revision
@@ -243,7 +268,9 @@ class ProductPackagingTests(unittest.TestCase):
         with (
             patch.object(packaging, "_source") as source_check,
             patch.object(
-                packaging.source_bundle, "committed_source_plan", return_value={}
+                packaging.source_bundle,
+                "committed_source_plan",
+                return_value={},
             ),
             patch.object(
                 packaging.image_evidence,
@@ -254,22 +281,32 @@ class ProductPackagingTests(unittest.TestCase):
                 packaging.execution, "load_context", return_value=self.context
             ),
             patch.object(
-                packaging.execution, "operation_lock", return_value=nullcontext()
+                packaging.execution,
+                "operation_lock",
+                return_value=nullcontext(),
             ),
             patch.object(
                 packaging, "_catalog_images", return_value=images
             ) as catalog_check,
             patch.object(
-                packaging.source_artifact, "package", side_effect=source_package
+                packaging.source_artifact,
+                "package",
+                side_effect=source_package,
             ),
             patch.object(packaging.source_artifact, "restore") as restore,
             patch.object(
-                packaging, "_models", return_value=(models, {"approved": "paths"})
+                packaging,
+                "_models",
+                return_value=(models, {"approved": "paths"}),
             ),
             patch.object(
-                packaging.execution, "read_record", return_value={"verified": "images"}
+                packaging.execution,
+                "read_record",
+                return_value={"verified": "images"},
             ),
-            patch.object(product_package, "export_product_package", side_effect=export),
+            patch.object(
+                product_package, "export_product_package", side_effect=export
+            ),
         ):
             self.assertEqual("packaged", self.package()["status"])
         restore.assert_called_once()
@@ -280,7 +317,13 @@ class ProductPackagingTests(unittest.TestCase):
     def catalog_images(self, mutation=None):
         entries = {}
         for index, role in enumerate(
-            ("fess-search", "opensearch-search", "catalog-admin", "ollama-embedding"), 1
+            (
+                "fess-search",
+                "opensearch-search",
+                "catalog-admin",
+                "ollama-embedding",
+            ),
+            1,
         ):
             entries[role] = {
                 "image_id": "sha256:" + str(index) * 64,
@@ -293,7 +336,10 @@ class ProductPackagingTests(unittest.TestCase):
             mutation(helper)
 
         def inspected(_context, reference, image_id=None, labels=None):
-            return {"Id": image_id or reference, "Config": {"Env": ["PATH=/usr/bin"]}}
+            return {
+                "Id": image_id or reference,
+                "Config": {"Env": ["PATH=/usr/bin"]},
+            }
 
         with (
             patch.object(
@@ -304,11 +350,15 @@ class ProductPackagingTests(unittest.TestCase):
                     "admin_image": entries["catalog-admin"],
                 },
             ),
-            patch.object(packaging.execution, "read_record", return_value=helper),
+            patch.object(
+                packaging.execution, "read_record", return_value=helper
+            ),
             patch.object(
                 packaging.execution, "verify_image", side_effect=inspected
             ) as verify,
-            patch.object(packaging.execution, "inspect_image", side_effect=inspected),
+            patch.object(
+                packaging.execution, "inspect_image", side_effect=inspected
+            ),
         ):
             result = packaging._catalog_images(self.context)
         self.assertEqual(4, verify.call_count)
@@ -327,7 +377,8 @@ class ProductPackagingTests(unittest.TestCase):
             set(result),
         )
         self.assertEqual(
-            digest(self.helper["sources"]), result["opensearch-hash"]["source_sha256"]
+            digest(self.helper["sources"]),
+            result["opensearch-hash"]["source_sha256"],
         )
         self.assertEqual(REVISION, result["opensearch-hash"]["revision"])
         self.assertEqual(
@@ -346,7 +397,9 @@ class ProductPackagingTests(unittest.TestCase):
         for mutation in mutations:
             with (
                 self.subTest(mutation=mutation),
-                self.assertRaisesRegex(ValueError, "hash_image_receipt_changed"),
+                self.assertRaisesRegex(
+                    ValueError, "hash_image_receipt_changed"
+                ),
             ):
                 self.catalog_images(mutation)
 

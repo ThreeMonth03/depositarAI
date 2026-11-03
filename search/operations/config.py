@@ -153,7 +153,11 @@ def validate_config(
     if type(ttl) is not int or not 0 <= ttl <= 3600:
         raise ValueError("product_cache_ttl_invalid")
     raw_gpus = value["gpus"]
-    if type(raw_gpus) is not dict or set(raw_gpus) != {"scope", "planner", "reranker"}:
+    if type(raw_gpus) is not dict or set(raw_gpus) != {
+        "scope",
+        "planner",
+        "reranker",
+    }:
         raise ValueError("product_gpu_fields")
     planner = raw_gpus["planner"]
     if type(planner) is not list or len(planner) != 2:
@@ -175,7 +179,9 @@ def validate_config(
         )
     }
     for index, path in enumerate(roots.values()):
-        if any(_overlaps(path, other) for other in list(roots.values())[:index]):
+        if any(
+            _overlaps(path, other) for other in list(roots.values())[:index]
+        ):
             raise ValueError("product_roots_overlap")
     state = roots["state_root"]
     if state.exists():
@@ -183,7 +189,11 @@ def validate_config(
     else:
         # Only the final component may be absent. No implicit broad mkdir -p.
         _directory(state.parent, uid, private=True)
-    for name in ("api_model_root", "embedding_model_root", "reranker_model_root"):
+    for name in (
+        "api_model_root",
+        "embedding_model_root",
+        "reranker_model_root",
+    ):
         _directory(roots[name], uid, private=False)
     return ProductConfig(
         schema,
@@ -205,7 +215,9 @@ def load_config(
     uid = os.geteuid() if uid is None else uid
     path = Path(path).absolute()
     _no_symlinks(path)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    fd = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    )
     try:
         before = os.fstat(fd)
         if (

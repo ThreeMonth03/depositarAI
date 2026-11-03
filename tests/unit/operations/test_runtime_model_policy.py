@@ -37,7 +37,9 @@ class RuntimeModelPolicyTests(unittest.TestCase):
             body,
         )
 
-    def test_default_preserves_exact_historical_body_even_noncanonical_json(self):
+    def test_default_preserves_exact_historical_body_even_noncanonical_json(
+        self,
+    ):
         transport = self.transport()
         body = b'{ "options": { "num_ctx": 16384 }, "keep_alive": "10m" }\n'
         request = self.request(body)
@@ -63,7 +65,9 @@ class RuntimeModelPolicyTests(unittest.TestCase):
             },
             "keep_alive": "10m",
         }
-        request = self.request(json.dumps(payload, ensure_ascii=False).encode())
+        request = self.request(
+            json.dumps(payload, ensure_ascii=False).encode()
+        )
         transport.send(request, timeout=12, max_bytes=4096)
         sent = transport.transport.send.call_args.args[0]
         expected = {**payload, "keep_alive": -1}
@@ -108,8 +112,12 @@ class RuntimeModelPolicyTests(unittest.TestCase):
                 transport.send(self.request(body), timeout=5, max_bytes=1024)
         transport.transport.send.assert_not_called()
 
-    def test_only_explicit_negative_one_is_allowed_without_dns_on_failure(self):
-        with patch("search.api.shared.model_transport.service_address") as resolve:
+    def test_only_explicit_negative_one_is_allowed_without_dns_on_failure(
+        self,
+    ):
+        with patch(
+            "search.api.shared.model_transport.service_address"
+        ) as resolve:
             for value in (True, False, "-1", "10m", 0, 120, -2):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     ModelTransport("scope", keep_alive=value)
@@ -117,14 +125,17 @@ class RuntimeModelPolicyTests(unittest.TestCase):
 
     def test_production_scope_worker_explicitly_requests_residency(self):
         with patch("search.api.worker.ModelTransport") as transport:
-            with patch("search.api.worker.OllamaScopeClassifier") as classifier:
+            with patch(
+                "search.api.worker.OllamaScopeClassifier"
+            ) as classifier:
                 classifier.return_value.classify.return_value = "search"
                 self.assertEqual(
-                    run("scope", {"query": "降雨"}, None), {"decision": "search"}
+                    run("scope", {"query": "降雨"}, None),
+                    {"decision": "search"},
                 )
         transport.assert_called_once_with("scope", keep_alive=-1)
 
-    def test_conversation_planner_requests_residency_without_changing_default_adapters(
+    def test_planner_requests_residency_and_keeps_default_adapters(
         self,
     ):
         for relative in ("search/api/conversation/worker.py",):
@@ -138,7 +149,8 @@ class RuntimeModelPolicyTests(unittest.TestCase):
             (ROOT / "search/scope.py").read_text(),
         )
         self.assertIn(
-            '"keep_alive": "10m"', (ROOT / "search/planning/model.py").read_text()
+            '"keep_alive": "10m"',
+            (ROOT / "search/planning/model.py").read_text(),
         )
 
 

@@ -12,7 +12,8 @@ from search.web.origin import validate_origin
 
 
 PRIVATE_NETWORKS = tuple(
-    IPv4Network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    IPv4Network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 ACCESS_TARGET = "/etc/nginx/intranet-allow.conf"
 MAX_POLICY_BYTES = 4096
@@ -24,7 +25,9 @@ def intranet_settings(config):
     environment = services["web"]["environment"]
     if environment.get("WEB_ACCESS_MODE") != "intranet-http":
         raise ValueError("explicit intranet HTTP mode required")
-    origin = validate_origin(environment["WEB_ORIGIN"], access_mode="intranet-http")
+    origin = validate_origin(
+        environment["WEB_ORIGIN"], access_mode="intranet-http"
+    )
     raw = services["web-nginx"].get("environment", {}).get("WEB_ALLOWED_CIDRS")
     if not isinstance(raw, str) or not raw or len(raw) > 2048:
         raise ValueError("explicit intranet client CIDRs required")
@@ -51,7 +54,9 @@ def intranet_settings(config):
     path = Path(mounts[0]["source"])
     if not path.is_absolute() or path.name != "intranet-allow.conf":
         raise ValueError("absolute intranet-allow.conf path required")
-    rules = "# Direct TCP peers only. Loopback is for container health checks.\n"
+    rules = (
+        "# Direct TCP peers only. Loopback is for container health checks.\n"
+    )
     rules += "allow 127.0.0.1;\nallow ::1;\n"
     rules += "".join(f"allow {network};\n" for network in networks)
     rules += "deny all;\n"
@@ -120,7 +125,9 @@ def _verify_file(parent, path, encoded):
     actual = _read_file(parent, path.name)
     private_io.verify_directory(parent, path.parent)
     if actual != encoded:
-        raise ValueError("admission file differs from the approved client CIDRs")
+        raise ValueError(
+            "admission file differs from the approved client CIDRs"
+        )
 
 
 def verify_access(config):

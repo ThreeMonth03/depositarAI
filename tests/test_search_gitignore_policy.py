@@ -44,7 +44,9 @@ class SearchGitIgnorePolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = check_ignore(path)
                 self.assertIn(result.returncode, (0, 1), result.stderr)
-                self.assertEqual(0, result.returncode, f"must be ignored: {path}")
+                self.assertEqual(
+                    0, result.returncode, f"must be ignored: {path}"
+                )
 
     def test_reviewable_search_inputs_are_not_ignored(self):
         paths = (

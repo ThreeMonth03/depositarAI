@@ -1,4 +1,5 @@
-"""Metadata record policy through real files, independent of sync orchestration."""
+"""Metadata record policy through real files, independent of sync
+orchestration."""
 
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ from search.operations.shared import private_io
 
 class MetadataStorageTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="depositar-metadata-storage-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="depositar-metadata-storage-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.fd = private_io.open_directory(self.root)
@@ -45,7 +48,8 @@ class MetadataStorageTests(unittest.TestCase):
             "'search.operations.catalog', 'search.operations.lifecycle', "
             "'search.operations.deployment'):\n"
             "    assert not any(name == namespace or "
-            "name.startswith(namespace + '.') for name in sys.modules), namespace\n"
+            "name.startswith(namespace + '.') "
+            "for name in sys.modules), namespace\n"
             "print('metadata storage imports independently')\n"
         )
         completed = subprocess.run(
@@ -55,7 +59,9 @@ class MetadataStorageTests(unittest.TestCase):
             timeout=10,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("metadata storage imports independently\n", completed.stdout)
+        self.assertEqual(
+            "metadata storage imports independently\n", completed.stdout
+        )
 
     def test_valid_unicode_and_exact_json_depth_and_number_limits(self):
         nested = 0
@@ -69,7 +75,9 @@ class MetadataStorageTests(unittest.TestCase):
         ):
             with self.subTest(size=len(raw)):
                 self.record(raw)
-                self.assertEqual(expected, storage.read_record(self.fd, "record.json"))
+                self.assertEqual(
+                    expected, storage.read_record(self.fd, "record.json")
+                )
 
     def test_strict_json_errors_are_not_replaced_with_sync_errors(self):
         for raw, exception in (
@@ -98,7 +106,8 @@ class MetadataStorageTests(unittest.TestCase):
         self.assertEqual({}, storage.read_record(self.fd, "record.json"))
         self.record(raw + b" ")
         with self.assertRaisesRegex(
-            storage.SyncError, "^cache file ownership, mode, links or size are unsafe$"
+            storage.SyncError,
+            "^cache file ownership, mode, links or size are unsafe$",
         ) as caught:
             storage.read_record(self.fd, "record.json")
         self.assertIsInstance(caught.exception.__cause__, ValueError)
@@ -106,10 +115,13 @@ class MetadataStorageTests(unittest.TestCase):
     def test_unsafe_file_mode_retains_cache_error_and_private_io_cause(self):
         self.record(b"{}", mode=0o644)
         with self.assertRaisesRegex(
-            storage.SyncError, "^cache file ownership, mode, links or size are unsafe$"
+            storage.SyncError,
+            "^cache file ownership, mode, links or size are unsafe$",
         ) as caught:
             storage.read_record(self.fd, "record.json")
-        self.assertEqual("private_io_file_unsafe", str(caught.exception.__cause__))
+        self.assertEqual(
+            "private_io_file_unsafe", str(caught.exception.__cause__)
+        )
 
     def test_missing_and_symlink_files_propagate_os_errors(self):
         with self.assertRaises(FileNotFoundError):
@@ -120,29 +132,44 @@ class MetadataStorageTests(unittest.TestCase):
             storage.read_record(self.fd, "symlink.json")
         self.assertEqual(errno.ELOOP, caught.exception.errno)
 
-    def test_record_publication_preserves_no_clobber_and_explicit_replace(self):
+    def test_record_publication_preserves_no_clobber_and_explicit_replace(
+        self,
+    ):
         storage.write_record(self.fd, "record.json", {"topic": "水質"})
-        self.assertEqual(0o600, (self.root / "record.json").stat().st_mode & 0o777)
+        self.assertEqual(
+            0o600, (self.root / "record.json").stat().st_mode & 0o777
+        )
         with self.assertRaises(FileExistsError):
             storage.write_record(self.fd, "record.json", {"topic": "降雨"})
-        self.assertEqual({"topic": "水質"}, storage.read_record(self.fd, "record.json"))
-        storage.write_record(self.fd, "record.json", {"topic": "降雨"}, replace=True)
-        self.assertEqual({"topic": "降雨"}, storage.read_record(self.fd, "record.json"))
+        self.assertEqual(
+            {"topic": "水質"}, storage.read_record(self.fd, "record.json")
+        )
+        storage.write_record(
+            self.fd, "record.json", {"topic": "降雨"}, replace=True
+        )
+        self.assertEqual(
+            {"topic": "降雨"}, storage.read_record(self.fd, "record.json")
+        )
 
-    def test_invalid_and_oversized_writes_keep_error_cause_and_publish_nothing(self):
+    def test_invalid_and_oversized_writes_keep_error_cause_and_publish_nothing(
+        self,
+    ):
         for value in (
             {"value": float("nan")},
             {"value": "x" * storage.MAX_RECORD_BYTES},
         ):
             with self.subTest(value_type=type(value["value"]).__name__):
                 with self.assertRaisesRegex(
-                    storage.SyncError, "^cache record publication invariant failed$"
+                    storage.SyncError,
+                    "^cache record publication invariant failed$",
                 ) as caught:
                     storage.write_record(self.fd, "invalid.json", value)
                 self.assertIsInstance(caught.exception.__cause__, ValueError)
                 self.assertFalse((self.root / "invalid.json").exists())
 
-    def test_private_directory_preserves_mode_cause_and_existing_path_error(self):
+    def test_private_directory_preserves_mode_cause_and_existing_path_error(
+        self,
+    ):
         descriptor = storage.private_directory(self.fd, "child", create=True)
         os.close(descriptor)
         self.assertEqual(0o700, (self.root / "child").stat().st_mode & 0o777)
@@ -150,10 +177,13 @@ class MetadataStorageTests(unittest.TestCase):
             storage.private_directory(self.fd, "child", create=True)
         (self.root / "child").chmod(0o755)
         with self.assertRaisesRegex(
-            storage.SyncError, "^cache directory must remain operator-owned mode 0700$"
+            storage.SyncError,
+            "^cache directory must remain operator-owned mode 0700$",
         ) as caught:
             storage.private_directory(self.fd, "child")
-        self.assertEqual("private_io_directory_unsafe", str(caught.exception.__cause__))
+        self.assertEqual(
+            "private_io_directory_unsafe", str(caught.exception.__cause__)
+        )
 
     def test_underlying_io_errors_pass_through_without_wrapping(self):
         for name, invoke in (
@@ -163,7 +193,10 @@ class MetadataStorageTests(unittest.TestCase):
                     self.fd, "record.json", mode=0o600, limit=64
                 ),
             ),
-            ("write_json", lambda: storage.write_record(self.fd, "record.json", {})),
+            (
+                "write_json",
+                lambda: storage.write_record(self.fd, "record.json", {}),
+            ),
             (
                 "open_child_directory",
                 lambda: storage.private_directory(self.fd, "child"),
@@ -184,7 +217,10 @@ class MetadataStorageTests(unittest.TestCase):
         link = self.root / "symlink"
         link.symlink_to(path)
         for unsafe in (Path("relative.json"), link):
-            with self.subTest(path=unsafe), self.assertRaises(storage.SyncError):
+            with (
+                self.subTest(path=unsafe),
+                self.assertRaises(storage.SyncError),
+            ):
                 storage.real_path(unsafe)
         before = path.stat()
         self.assertTrue(storage.same_file(before, path.stat()))

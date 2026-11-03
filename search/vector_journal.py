@@ -27,7 +27,13 @@ RUN_ID = re.compile(r"[0-9a-f]{32}\Z")
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,1000}\Z")
 TOKEN_NAME = re.compile(r"depositar-import-[0-9a-f]{12}\Z")
 IDENTITY_KEYS = frozenset(
-    {"schema_version", "run_id", "bundle_id", "manifest_sha256", "recipe_sha256"}
+    {
+        "schema_version",
+        "run_id",
+        "bundle_id",
+        "manifest_sha256",
+        "recipe_sha256",
+    }
 )
 RECORD_KEYS = IDENTITY_KEYS | {
     "sequence",
@@ -123,7 +129,9 @@ REPORT_KEYS = frozenset(
 
 
 class JournalError(ValueError):
-    """Fixed errors intentionally omit file paths, secrets and supplied values."""
+    """Fixed errors intentionally omit file
+    paths, secrets and supplied values.
+    """
 
 
 def _sha(value):
@@ -191,7 +199,10 @@ def _entries(value):
 
 def validate_state(value):
     _keys(value, {"document_count", "done_entries", "pending_entries"})
-    done, pending = _entries(value["done_entries"]), _entries(value["pending_entries"])
+    done, pending = (
+        _entries(value["done_entries"]),
+        _entries(value["pending_entries"]),
+    )
     if (
         not _integer(value["document_count"], 1, MAX_DOCUMENTS)
         or len(done) + len(pending) != value["document_count"]
@@ -233,8 +244,10 @@ def validate_report(value):
                 "progress_count",
             )
         )
-        or value["done_count"] + value["pending_count"] != value["document_count"]
-        or value["done_count"] - value["before_done_count"] != value["progress_count"]
+        or value["done_count"] + value["pending_count"]
+        != value["document_count"]
+        or value["done_count"] - value["before_done_count"]
+        != value["progress_count"]
         or value["progress_count"] > MAX_PASS_DOCUMENTS
         or type(value["no_op"]) is not bool
         or not _id(value["scheduler_id"])
@@ -291,7 +304,9 @@ def _payload(event, value):
         "token-created",
     }:
         expected = (
-            {"token_name", "token_id"} if event == "token-created" else {"token_name"}
+            {"token_name", "token_id"}
+            if event == "token-created"
+            else {"token_name"}
         )
         _keys(value, expected)
         if (
@@ -310,7 +325,11 @@ def _payload(event, value):
             or value["running"] is not False
         ):
             raise JournalError("vector_journal_scheduler_not_stopped")
-    elif event in {"scheduler-enable-intent", "scheduler-enabled", "job-start-intent"}:
+    elif event in {
+        "scheduler-enable-intent",
+        "scheduler-enabled",
+        "job-start-intent",
+    }:
         _keys(value, {"scheduler_id"})
         if not _id(value["scheduler_id"]):
             raise JournalError("vector_journal_scheduler_invalid")
@@ -332,15 +351,24 @@ def _complete(records, identity):
     if names != (NOOP_EVENTS if report["no_op"] else NORMAL_EVENTS):
         raise JournalError("vector_journal_clean_sequence_invalid")
     payloads = {row["event"]: row["payload"] for row in records}
-    if any(report[key] != identity[key] for key in IDENTITY_KEYS - {"schema_version"}):
+    if any(
+        report[key] != identity[key]
+        for key in IDENTITY_KEYS - {"schema_version"}
+    ):
         raise JournalError("vector_journal_report_identity_changed")
     token_names = {
-        value["token_name"] for value in payloads.values() if "token_name" in value
+        value["token_name"]
+        for value in payloads.values()
+        if "token_name" in value
     }
     scheduler_ids = {
-        value["scheduler_id"] for value in payloads.values() if "scheduler_id" in value
+        value["scheduler_id"]
+        for value in payloads.values()
+        if "scheduler_id" in value
     }
-    job_ids = {value["job_id"] for value in payloads.values() if "job_id" in value}
+    job_ids = {
+        value["job_id"] for value in payloads.values() if "job_id" in value
+    }
     if (
         len(token_names) != 1
         or scheduler_ids != {report["scheduler_id"]}
@@ -351,8 +379,12 @@ def _complete(records, identity):
     before_done, before_pending = validate_state(before)
     after_done, after_pending = validate_state(after)
     if (
-        set(before_done) | set(before_pending) != set(after_done) | set(after_pending)
-        or any(row[1] != identity["bundle_id"] for row in before_done + before_pending)
+        set(before_done) | set(before_pending)
+        != set(after_done) | set(after_pending)
+        or any(
+            row[1] != identity["bundle_id"]
+            for row in before_done + before_pending
+        )
         or not set(before_done) <= set(after_done)
         or not set(after_pending) <= set(before_pending)
         or before["document_count"] != report["document_count"]
@@ -367,11 +399,15 @@ def _complete(records, identity):
 
 
 def validate_all(events, expected_identity=None, *, require_result=False):
-    """Validate a bounded diagnostic prefix, or demand a complete clean chain."""
+    """Validate a bounded diagnostic prefix,
+    or demand a complete clean chain.
+    """
     if type(events) not in (tuple, list) or len(events) > MAX_EVENTS:
         raise JournalError("vector_journal_event_limit")
     expected = (
-        validate_identity(expected_identity) if expected_identity is not None else None
+        validate_identity(expected_identity)
+        if expected_identity is not None
+        else None
     )
     previous, total, identity = "0" * 64, 0, expected
     records = []
@@ -426,16 +462,20 @@ def _read_events(fd, path, expected_identity):
         raise JournalError("vector_journal_event_limit")
     records, total = [], 0
     for number, name in enumerate(names, 1):
-        if re.fullmatch(r"[0-9]{4}-[a-z-]+\.json", name) is None or not name.startswith(
-            f"{number:04d}-"
-        ):
+        if re.fullmatch(
+            r"[0-9]{4}-[a-z-]+\.json", name
+        ) is None or not name.startswith(f"{number:04d}-"):
             raise JournalError("vector_journal_file_identity_invalid")
-        raw = private_io.read_file(fd, name, mode=0o600, max_bytes=MAX_RECORD_BYTES)
+        raw = private_io.read_file(
+            fd, name, mode=0o600, max_bytes=MAX_RECORD_BYTES
+        )
         total += len(raw)
         if total > MAX_TOTAL_BYTES:
             raise JournalError("vector_journal_byte_limit")
         try:
-            record = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_object)
+            record = json.loads(
+                raw.decode("utf-8"), object_pairs_hook=_strict_object
+            )
         except (UnicodeError, json.JSONDecodeError, RecursionError):
             raise JournalError("vector_journal_json_invalid") from None
         if (
@@ -506,7 +546,9 @@ class DurableVectorJournal:
             "sha256": hashlib.sha256(private_io.canonical(body)).hexdigest(),
         }
         validated = validate_all(
-            [*current, record], self.identity, require_result=event == "pass-result"
+            [*current, record],
+            self.identity,
+            require_result=event == "pass-result",
         )
         private_io.write_json(
             self.fd,

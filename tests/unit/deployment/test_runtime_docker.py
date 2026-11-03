@@ -17,9 +17,13 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class RuntimeDockerTests(unittest.TestCase):
-    def test_optional_input_is_forwarded_without_arguments_or_environment_changes(self):
+    def test_optional_input_preserves_arguments_and_environment(
+        self,
+    ):
         payload = b"PRIVATE_STDIN_SENTINEL"
-        runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, b"ok", b""))
+        runner = mock.Mock(
+            return_value=subprocess.CompletedProcess([], 0, b"ok", b"")
+        )
         client = runtime_docker.Docker("/private-client", runner)
         environment = dict(client.environment)
         self.assertEqual(
@@ -34,7 +38,12 @@ class RuntimeDockerTests(unittest.TestCase):
     def test_invalid_input_never_starts_a_process_or_consumes_the_budget(self):
         runner = mock.Mock()
         client = runtime_docker.Docker("/private-client", runner)
-        for payload in ("PRIVATE_STDIN_SENTINEL", bytearray(b"x"), b"x" * 4097, True):
+        for payload in (
+            "PRIVATE_STDIN_SENTINEL",
+            bytearray(b"x"),
+            b"x" * 4097,
+            True,
+        ):
             with self.subTest(kind=type(payload).__name__):
                 with self.assertRaisesRegex(
                     runtime_docker.InferenceError, "^inference_input_invalid$"
@@ -43,18 +52,22 @@ class RuntimeDockerTests(unittest.TestCase):
         runner.assert_not_called()
         self.assertEqual(client.calls, 0)
 
-    def test_query_bytes_reach_a_real_child_through_the_runtime_bridge_only(self):
+    def test_query_bytes_reach_a_real_child_through_the_runtime_bridge_only(
+        self,
+    ):
         sentinel = "PRIVATE_STDIN_SENTINEL_測試"
         revision = "b" * 40
-        program = """
-import hashlib, json, os, sys
-payload = json.loads(sys.stdin.buffer.read(4097))
-text = payload['query']
-assert text not in repr(sys.argv)
-assert text not in repr(dict(os.environ))
-print(json.dumps({'result': {'revision': payload['revision'],
-    'input_sha256': hashlib.sha256(text.encode()).hexdigest()}, 'context_used': {}}))
-"""
+        program = (
+            "\n"
+            "import hashlib, json, os, sys\n"
+            "payload = json.loads(sys.stdin.buffer.read(4097))\n"
+            "text = payload['query']\n"
+            "assert text not in repr(sys.argv)\n"
+            "assert text not in repr(dict(os.environ))\n"
+            "print(json.dumps({'result': {'revision': payload['revision'],\n"
+            "    'input_sha256': hashlib.sha256(text.encode()).hexdigest()}, "
+            "'context_used': {}}))\n"
+        )
         calls = []
 
         def runner(arguments, *, timeout, environment, input_bytes):
@@ -95,7 +108,9 @@ print(json.dumps({'result': {'revision': payload['revision'],
 
     def test_explicit_platform_inspection_preserves_default_call_shape(self):
         runner = mock.Mock(
-            return_value=subprocess.CompletedProcess([], 0, b'{"Id":"fixture"}', b"")
+            return_value=subprocess.CompletedProcess(
+                [], 0, b'{"Id":"fixture"}', b""
+            )
         )
         client = runtime_docker.Docker("/private-client", runner)
         client.inspect("fixture-tag", platform="linux/amd64")
@@ -121,10 +136,14 @@ print(json.dumps({'result': {'revision': payload['revision'],
 
     def test_runtime_client_owns_error_and_build_client_stays_separate(self):
         self.assertIs(inference.InferenceError, runtime_docker.InferenceError)
-        self.assertEqual("InferenceError", runtime_docker.InferenceError.__name__)
+        self.assertEqual(
+            "InferenceError", runtime_docker.InferenceError.__name__
+        )
         self.assertIsNot(runtime_docker.Docker, image_build._Docker)
 
-    def test_runner_timeouts_keep_the_closed_timeout_code_without_diagnostics(self):
+    def test_runner_timeouts_keep_the_closed_timeout_code_without_diagnostics(
+        self,
+    ):
         for error, code in (
             (
                 subprocess.TimeoutExpired("PRIVATE_SENTINEL", 130),
@@ -138,7 +157,10 @@ print(json.dumps({'result': {'revision': payload['revision'],
                 image_build.ImageBuildError("image_build_output_limit"),
                 "inference_command_failed",
             ),
-            (ValueError("image_build_command_timeout"), "inference_command_failed"),
+            (
+                ValueError("image_build_command_timeout"),
+                "inference_command_failed",
+            ),
             (OSError("PRIVATE_SENTINEL"), "inference_command_failed"),
         ):
             with self.subTest(error=type(error).__name__, code=code):
@@ -151,35 +173,43 @@ print(json.dumps({'result': {'revision': payload['revision'],
                 self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
                 self.assertEqual(runner.call_count, 1)
 
-    def test_fresh_import_does_not_load_controllers_or_model_dependencies(self):
-        script = """
-import subprocess
-import sys
-sys.path.insert(0, sys.argv[1])
-def forbidden_process(*args, **kwargs):
-    raise AssertionError("runtime client import started a process")
-subprocess.Popen = forbidden_process
-from search.operations.deployment import runtime_docker
-client = runtime_docker.Docker(
-    "/private-client",
-    lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, b"", b""),
-)
-assert runtime_docker.project_inventory(client, "private-project") == ([], set())
-for name in (
-    "search.operations.deployment.inference",
-    "search.operations.deployment.release",
-    "search.operations.deployment.gateway",
-    "search.operations.deployment.gateway.activation",
-    "search.operations.deployment.inference_runtime",
-    "search.operations.deployment.gpu_ownership",
-    "scripts.prepare_search_models",
-    "torch", "fastapi", "django", "rest_framework", "adrf", "pydantic",
-):
-    assert not any(
-        loaded == name or loaded.startswith(name + ".") for loaded in sys.modules
-    ), name
-assert runtime_docker.MAX_COMMANDS == 64
-"""
+    def test_fresh_import_does_not_load_controllers_or_model_dependencies(
+        self,
+    ):
+        script = (
+            "\n"
+            "import subprocess\n"
+            "import sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "def forbidden_process(*args, **kwargs):\n"
+            '    raise AssertionError("runtime client import started a '
+            'process")\n'
+            "subprocess.Popen = forbidden_process\n"
+            "from search.operations.deployment import runtime_docker\n"
+            "client = runtime_docker.Docker(\n"
+            '    "/private-client",\n'
+            "    lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "
+            'b"", b""),\n'
+            ")\n"
+            "assert runtime_docker.project_inventory(client, "
+            '"private-project") == ([], set())\n'
+            "for name in (\n"
+            '    "search.operations.deployment.inference",\n'
+            '    "search.operations.deployment.release",\n'
+            '    "search.operations.deployment.gateway",\n'
+            '    "search.operations.deployment.gateway.activation",\n'
+            '    "search.operations.deployment.inference_runtime",\n'
+            '    "search.operations.deployment.gpu_ownership",\n'
+            '    "scripts.prepare_search_models",\n'
+            '    "torch", "fastapi", "django", "rest_framework", '
+            '"adrf", "pydantic",\n'
+            "):\n"
+            "    assert not any(\n"
+            '        loaded == name or loaded.startswith(name + ".") for '
+            "loaded in sys.modules\n"
+            "    ), name\n"
+            "assert runtime_docker.MAX_COMMANDS == 64\n"
+        )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(ROOT)],
             capture_output=True,
@@ -250,11 +280,19 @@ assert runtime_docker.MAX_COMMANDS == 64
             ),
         ):
             with self.subTest(raw=raw):
-                runner.return_value = subprocess.CompletedProcess([], 0, raw, b"")
+                runner.return_value = subprocess.CompletedProcess(
+                    [], 0, raw, b""
+                )
                 with self.assertRaisesRegex(expected, "^" + code + "$"):
                     client.inspect("private-reference")
                 self.assertEqual(
-                    ["image", "inspect", "--format", "{{json .}}", "private-reference"],
+                    [
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .}}",
+                        "private-reference",
+                    ],
                     runner.call_args.args[0][5:],
                 )
 
@@ -268,15 +306,23 @@ class ProjectInventoryTests(unittest.TestCase):
             ]
         )
         return (
-            runtime_docker.Docker("/private-client", runner, max_commands=max_commands),
+            runtime_docker.Docker(
+                "/private-client", runner, max_commands=max_commands
+            ),
             runner,
         )
 
-    def test_inventory_uses_only_filtered_read_commands_and_shared_budget(self):
+    def test_inventory_uses_only_filtered_read_commands_and_shared_budget(
+        self,
+    ):
         ids = [letter * 64 for letter in "abc"]
         names = ["private-project_first", "private-project_second"]
-        networks = b"\n".join(json.dumps({"Name": name}).encode() for name in names)
-        client, runner = self.client(("\n".join(ids) + "\n").encode(), networks)
+        networks = b"\n".join(
+            json.dumps({"Name": name}).encode() for name in names
+        )
+        client, runner = self.client(
+            ("\n".join(ids) + "\n").encode(), networks
+        )
         self.assertEqual(
             runtime_docker.project_inventory(client, "private-project"),
             (ids, set(names)),
@@ -338,7 +384,9 @@ class ProjectInventoryTests(unittest.TestCase):
         ]
         for values in cases:
             with self.subTest(values=values):
-                raw = b"\n".join(json.dumps(value).encode() for value in values)
+                raw = b"\n".join(
+                    json.dumps(value).encode() for value in values
+                )
                 client, runner = self.client(b"", raw)
                 with self.assertRaisesRegex(
                     runtime_docker.InferenceError,

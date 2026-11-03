@@ -1,4 +1,6 @@
-"""Ordered BFF cases use fake HTTP/socket channels; no Docker or live services."""
+"""Ordered BFF cases use fake HTTP/socket channels; no Docker or live
+services.
+"""
 
 from contextlib import redirect_stderr, redirect_stdout
 import copy
@@ -118,7 +120,9 @@ class FakeHTTP:
                     if type(payload) is bytes
                     else json.dumps(payload, ensure_ascii=False).encode()
                 )
-                self.sock = None  # Connection: close detaches the response channel.
+                self.sock = (
+                    None  # Connection: close detaches the response channel.
+                )
 
                 class Response:
                     def __init__(self):
@@ -163,7 +167,9 @@ class FakeHTTP:
 
 
 class ConversationTests(unittest.TestCase):
-    def test_raw_whitespace_and_fullwidth_query_are_sent_exactly_after_validation(self):
+    def test_validated_query_preserves_raw_whitespace_and_fullwidth_text(
+        self,
+    ):
         queries = ["  找　氣候 ＣＳＶ 資料  ", "\t我要２０２４年的\n"]
         original = list(queries)
         http = FakeHTTP(
@@ -177,7 +183,9 @@ class ConversationTests(unittest.TestCase):
         report = http.run(queries)
         self.assertEqual(report["status"], "complete")
         turns = [row for row in http.calls if row["path"] == "/api/turn"]
-        self.assertEqual([json.loads(row["body"])["query"] for row in turns], original)
+        self.assertEqual(
+            [json.loads(row["body"])["query"] for row in turns], original
+        )
         self.assertEqual(queries, original)
         self.assertTrue(report["session_reset"])
 
@@ -186,7 +194,9 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(report["error"], "shared_batch_input_invalid")
         self.assertEqual(invalid.calls, [])
 
-    def test_ordered_turns_preserve_actual_context_timing_cards_and_versions(self):
+    def test_ordered_turns_preserve_actual_context_timing_cards_and_versions(
+        self,
+    ):
         values = [response(index) for index in range(1, 4)]
         events = []
         http = FakeHTTP(
@@ -201,11 +211,15 @@ class ConversationTests(unittest.TestCase):
             ["找氣候資料", "只要CSV", "我要2024年的"],
             checkpoint=lambda: events.append("checkpoint"),
         )
-        self.assertEqual(set(report), {"status", "turns", "error", "session_reset"})
+        self.assertEqual(
+            set(report), {"status", "turns", "error", "session_reset"}
+        )
         self.assertEqual(report["status"], "complete")
         self.assertIsNone(report["error"])
         self.assertIs(report["session_reset"], True)
-        self.assertEqual([turn["response"] for turn in report["turns"]], values)
+        self.assertEqual(
+            [turn["response"] for turn in report["turns"]], values
+        )
         self.assertEqual(
             events,
             [
@@ -226,7 +240,9 @@ class ConversationTests(unittest.TestCase):
         for row in http.calls:
             self.assertEqual(row["endpoint"], ENDPOINT)
             self.assertEqual(row["headers"]["Host"], "127.0.0.1:18083")
-            self.assertEqual(row["headers"]["Origin"], "http://127.0.0.1:18083")
+            self.assertEqual(
+                row["headers"]["Origin"], "http://127.0.0.1:18083"
+            )
         self.assertNotIn("Authorization", http.calls[0]["headers"])
         self.assertTrue(
             all(
@@ -234,9 +250,14 @@ class ConversationTests(unittest.TestCase):
                 for row in http.calls[1:]
             )
         )
-        self.assertTrue(all(json.loads(row["body"])["top_k"] == 5 for row in turns))
         self.assertTrue(
-            all(json.loads(row["body"])["timezone"] == "Asia/Taipei" for row in turns)
+            all(json.loads(row["body"])["top_k"] == 5 for row in turns)
+        )
+        self.assertTrue(
+            all(
+                json.loads(row["body"])["timezone"] == "Asia/Taipei"
+                for row in turns
+            )
         )
         self.assertTrue(
             all(
@@ -248,11 +269,16 @@ class ConversationTests(unittest.TestCase):
         )
         self.assertNotIn(TOKEN, repr(report))
         self.assertTrue(
-            all(connection.finish.call_count == 1 for connection in http.connections)
+            all(
+                connection.finish.call_count == 1
+                for connection in http.connections
+            )
         )
-        self.assertTrue(all(timer.cancel.call_count == 1 for timer in http.timers))
+        self.assertTrue(
+            all(timer.cancel.call_count == 1 for timer in http.timers)
+        )
 
-    def test_rejection_and_clarification_are_valid_responses_with_continuous_versions(
+    def test_rejection_and_clarification_preserve_continuous_versions(
         self,
     ):
         values = [
@@ -269,7 +295,9 @@ class ConversationTests(unittest.TestCase):
         )
         report = http.run(["問題一", "問題二", "問題三"])
         self.assertEqual(report["status"], "complete")
-        self.assertTrue(all(turn["status"] == "ok" for turn in report["turns"]))
+        self.assertTrue(
+            all(turn["status"] == "ok" for turn in report["turns"])
+        )
         self.assertEqual(
             [turn["response"]["result"]["status"] for turn in report["turns"]],
             ["rejected", "clarification_required", "ok"],
@@ -290,13 +318,17 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(http.run(["第一個案例"])["status"], "complete")
         self.assertEqual(http.run(["另一個案例"])["status"], "complete")
         turns = [row for row in http.calls if row["path"] == "/api/turn"]
-        self.assertEqual([json.loads(row["body"])["version"] for row in turns], [0, 0])
+        self.assertEqual(
+            [json.loads(row["body"])["version"] for row in turns], [0, 0]
+        )
         self.assertEqual(
             [row["headers"]["Authorization"] for row in turns],
             ["Bearer " + TOKEN, "Bearer " + second_token],
         )
 
-    def test_busy_timeout_and_http_fail_fast_keep_completed_turn_and_reset(self):
+    def test_busy_timeout_and_http_fail_fast_keep_completed_turn_and_reset(
+        self,
+    ):
         for failure, code in (
             ((429, PRIVATE.encode()), "busy"),
             (socket.timeout(PRIVATE), "timeout"),
@@ -316,7 +348,8 @@ class ConversationTests(unittest.TestCase):
                 self.assertEqual(report["status"], "failed")
                 self.assertEqual(report["error"], "shared_batch_" + code)
                 self.assertEqual(
-                    [turn["status"] for turn in report["turns"]], ["ok", "failed"]
+                    [turn["status"] for turn in report["turns"]],
+                    ["ok", "failed"],
                 )
                 self.assertEqual(report["turns"][0]["response"], response())
                 self.assertTrue(report["session_reset"])
@@ -325,7 +358,9 @@ class ConversationTests(unittest.TestCase):
                 self.assertNotIn(PRIVATE, repr(report))
                 self.assertNotIn(TOKEN, repr(report))
 
-    def test_checkpoint_failure_and_keyboard_interrupt_reset_without_next_turn(self):
+    def test_checkpoint_failure_and_keyboard_interrupt_reset_without_next_turn(
+        self,
+    ):
         for failure, code in (
             (ValueError(PRIVATE), "checkpoint_failed"),
             (KeyboardInterrupt(PRIVATE), "interrupted"),
@@ -334,7 +369,11 @@ class ConversationTests(unittest.TestCase):
             with self.subTest(code=code):
                 checkpoint = Mock(side_effect=[None, failure])
                 http = FakeHTTP(
-                    [(200, session()), (200, response()), (200, {"status": "cleared"})]
+                    [
+                        (200, session()),
+                        (200, response()),
+                        (200, {"status": "cleared"}),
+                    ]
                 )
                 report = http.run(["第一問", "第二問"], checkpoint=checkpoint)
                 self.assertEqual(report["error"], "shared_batch_" + code)
@@ -347,15 +386,21 @@ class ConversationTests(unittest.TestCase):
 
     def test_keyboard_interrupt_during_http_still_resets_session(self):
         http = FakeHTTP(
-            [(200, session()), KeyboardInterrupt(PRIVATE), (200, {"status": "cleared"})]
+            [
+                (200, session()),
+                KeyboardInterrupt(PRIVATE),
+                (200, {"status": "cleared"}),
+            ]
         )
         report = http.run(["問題"])
         self.assertEqual(report["error"], "shared_batch_interrupted")
-        self.assertEqual(report["turns"][0]["error"], "shared_batch_interrupted")
+        self.assertEqual(
+            report["turns"][0]["error"], "shared_batch_interrupted"
+        )
         self.assertTrue(report["session_reset"])
         self.assertEqual(http.calls[-1]["method"], "DELETE")
 
-    def test_turn_request_time_is_separate_from_checkpoint_wall_and_backend_timing(
+    def test_request_timing_excludes_checkpoint_wall_and_backend_timing(
         self,
     ):
         clock = [100.0]
@@ -368,16 +413,23 @@ class ConversationTests(unittest.TestCase):
             clock[0] += 2
 
         http = FakeHTTP(
-            [(200, session()), (200, response()), (200, {"status": "cleared"})],
+            [
+                (200, session()),
+                (200, response()),
+                (200, {"status": "cleared"}),
+            ],
             hook=hook,
         )
-        with patch.object(probe.time, "monotonic", side_effect=lambda: clock[0]):
+        with patch.object(
+            probe.time, "monotonic", side_effect=lambda: clock[0]
+        ):
             report = http.run(["問題"], checkpoint=checkpoint)
         self.assertEqual(report["status"], "complete")
         self.assertEqual(report["turns"][0]["wall_seconds"], 5.0)
         self.assertEqual(report["turns"][0]["request_seconds"], 3.0)
         self.assertEqual(
-            report["turns"][0]["response"]["result"]["timing_ms"], {"total": 4.125}
+            report["turns"][0]["response"]["result"]["timing_ms"],
+            {"total": 4.125},
         )
 
     def test_session_identity_drift_is_reset_before_any_turn(self):
@@ -388,9 +440,13 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(report["error"], "shared_batch_identity_changed")
         self.assertEqual(report["turns"], [])
         self.assertTrue(report["session_reset"])
-        self.assertEqual([row["method"] for row in http.calls], ["POST", "DELETE"])
+        self.assertEqual(
+            [row["method"] for row in http.calls], ["POST", "DELETE"]
+        )
 
-    def test_response_identity_schema_context_and_secret_echo_are_rejected(self):
+    def test_response_identity_schema_context_and_secret_echo_are_rejected(
+        self,
+    ):
         for mutation in (
             "revision",
             "search-revision",
@@ -417,7 +473,11 @@ class ConversationTests(unittest.TestCase):
                 value["result"]["message"] = TOKEN
             with self.subTest(mutation=mutation):
                 http = FakeHTTP(
-                    [(200, session()), (200, value), (200, {"status": "cleared"})]
+                    [
+                        (200, session()),
+                        (200, value),
+                        (200, {"status": "cleared"}),
+                    ]
                 )
                 report = http.run(["問題"])
                 self.assertEqual(report["status"], "failed")
@@ -427,7 +487,9 @@ class ConversationTests(unittest.TestCase):
                 self.assertNotIn(TOKEN, repr(report))
 
     def test_reset_failure_fails_case_and_preserves_completed_metadata(self):
-        http = FakeHTTP([(200, session()), (200, response()), (503, PRIVATE.encode())])
+        http = FakeHTTP(
+            [(200, session()), (200, response()), (503, PRIVATE.encode())]
+        )
         report = http.run(["問題"])
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["error"], "shared_batch_reset_failed")
@@ -435,25 +497,33 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(report["turns"][0]["response"], response())
         self.assertNotIn(TOKEN, repr(report))
 
-    def test_overlong_and_duplicate_json_fail_with_no_response_body_in_report(self):
+    def test_overlong_and_duplicate_json_fail_with_no_response_body_in_report(
+        self,
+    ):
         for raw in (
             b"x" * (probe.MAX_RESPONSE_BYTES + 1),
             b'{"version":1,"version":2}',
         ):
             with self.subTest(raw_bytes=len(raw)):
                 http = FakeHTTP(
-                    [(200, session()), (200, raw), (200, {"status": "cleared"})]
+                    [
+                        (200, session()),
+                        (200, raw),
+                        (200, {"status": "cleared"}),
+                    ]
                 )
                 report = http.run(["問題"])
                 self.assertEqual(report["status"], "failed")
                 self.assertTrue(report["session_reset"])
                 self.assertLess(len(json.dumps(report)), 1024)
 
-    def test_expired_deadline_sends_nothing_and_checkpoint_overrun_sends_only_reset(
+    def test_expiry_sends_nothing_and_checkpoint_overrun_only_resets(
         self,
     ):
         clock = [100.0]
-        with patch.object(probe.time, "monotonic", side_effect=lambda: clock[0]):
+        with patch.object(
+            probe.time, "monotonic", side_effect=lambda: clock[0]
+        ):
             http = FakeHTTP([])
             report = http.run(["問題"], deadline=99)
             self.assertEqual(report["error"], "shared_batch_timeout")
@@ -464,10 +534,13 @@ class ConversationTests(unittest.TestCase):
                 clock[0] = 116.0
 
             report = http.run(["問題"], checkpoint=checkpoint, deadline=120)
-            self.assertEqual(report["turns"][0]["error"], "shared_batch_timeout")
+            self.assertEqual(
+                report["turns"][0]["error"], "shared_batch_timeout"
+            )
             self.assertTrue(report["session_reset"])
             self.assertEqual(
-                [row["path"] for row in http.calls], ["/api/session", "/api/session"]
+                [row["path"] for row in http.calls],
+                ["/api/session", "/api/session"],
             )
             self.assertTrue(all(timer.delay <= 5 for timer in http.timers))
 
@@ -478,7 +551,11 @@ class ConversationTests(unittest.TestCase):
                 raise OSError(PRIVATE)
 
         http = FakeHTTP(
-            [(200, session()), (200, response()), (200, {"status": "cleared"})],
+            [
+                (200, session()),
+                (200, response()),
+                (200, {"status": "cleared"}),
+            ],
             hook=hook,
         )
         report = http.run(["問題"])
@@ -487,7 +564,9 @@ class ConversationTests(unittest.TestCase):
         http.connections[1].abort.assert_called_once_with()
         self.assertTrue(all(timer.delay <= 125 for timer in http.timers))
 
-    def test_invalid_endpoint_queries_identity_or_deadline_never_open_connection(self):
+    def test_invalid_endpoint_query_identity_or_deadline_never_connects(
+        self,
+    ):
         cases = [
             (dict(endpoint=value), ["問題"])
             for value in (
@@ -528,7 +607,9 @@ class ConversationTests(unittest.TestCase):
             )
         ]
         for options, queries in cases:
-            with self.subTest(options=options, queries_type=type(queries).__name__):
+            with self.subTest(
+                options=options, queries_type=type(queries).__name__
+            ):
                 http = FakeHTTP([])
                 report = http.run(queries, **options)
                 self.assertEqual(report["status"], "failed")
@@ -550,16 +631,20 @@ class ConversationTests(unittest.TestCase):
                 report = http.run(["問題"] * 8, endpoint=endpoint)
                 self.assertEqual(report["status"], "complete")
                 self.assertEqual(len(report["turns"]), 8)
-                self.assertLess(len(json.dumps(report).encode()), 3 * 1024 * 1024)
+                self.assertLess(
+                    len(json.dumps(report).encode()), 3 * 1024 * 1024
+                )
 
 
 class NumericConnectionTests(unittest.TestCase):
-    def test_transport_uses_only_numeric_ipv4_port_8000_and_retains_detached_channel(
+    def test_numeric_ipv4_port_8000_transport_retains_detached_channel(
         self,
     ):
         channel = Mock()
         with (
-            patch.object(probe.socket, "socket", return_value=channel) as create,
+            patch.object(
+                probe.socket, "socket", return_value=channel
+            ) as create,
             patch.object(
                 probe.socket, "getaddrinfo", side_effect=AssertionError("DNS")
             ),

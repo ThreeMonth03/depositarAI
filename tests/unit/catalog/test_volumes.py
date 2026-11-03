@@ -10,7 +10,12 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from search.operations.catalog import commands, execution, volume_policy, volumes
+from search.operations.catalog import (
+    commands,
+    execution,
+    volume_policy,
+    volumes,
+)
 from tests.unit.catalog import volume_fixtures
 from tests.unit.catalog.volume_fixtures import IMAGE, CatalogVolumeFixture
 
@@ -19,13 +24,17 @@ class CatalogVolumeTests(unittest.TestCase):
     def setUp(self):
         self.fixture = CatalogVolumeFixture(self)
 
-    def test_ensure_requires_durable_start_intent_before_docker_or_image_build(self):
+    def test_ensure_requires_durable_start_intent_before_docker_or_image_build(
+        self,
+    ):
         with self.assertRaises(FileNotFoundError):
             volumes.ensure(self.fixture.context)
         self.assertEqual([], self.fixture.calls)
         self.fixture.image.assert_not_called()
 
-    def test_new_volume_is_bounded_sealed_and_reused_without_root_mutation(self):
+    def test_new_volume_is_bounded_sealed_and_reused_without_root_mutation(
+        self,
+    ):
         self.fixture.start_intent()
         receipt = volumes.ensure(self.fixture.context)
         self.assertEqual("ready", receipt["status"])
@@ -38,8 +47,14 @@ class CatalogVolumeTests(unittest.TestCase):
             receipt, execution.read_record(self.fixture.root, "volume.json")
         )
         for name in ("volume-started.json", "volume.json"):
-            self.assertEqual(0o600, (self.fixture.root / name).stat().st_mode & 0o777)
-        runs = [argv for argv in self.fixture.calls if argv[:2] == ["docker", "run"]]
+            self.assertEqual(
+                0o600, (self.fixture.root / name).stat().st_mode & 0o777
+            )
+        runs = [
+            argv
+            for argv in self.fixture.calls
+            if argv[:2] == ["docker", "run"]
+        ]
         self.assertEqual(2, len(runs))
         for argv in runs:
             self.assertEqual("never", argv[argv.index("--pull") + 1])
@@ -87,7 +102,9 @@ class CatalogVolumeTests(unittest.TestCase):
             any(argv[:2] == ["docker", "run"] for argv in self.fixture.calls)
         )
 
-    def test_failed_initialization_preserves_intent_and_never_retries_or_deletes(self):
+    def test_failed_initialization_keeps_intent_without_retry_or_delete(
+        self,
+    ):
         self.fixture.start_intent()
         self.fixture.fail_initialize = True
         with self.assertRaises(commands.BackendError):
@@ -101,7 +118,7 @@ class CatalogVolumeTests(unittest.TestCase):
             volumes.require(self.fixture.context)
         self.assertEqual([], self.fixture.calls)
 
-    def test_driver_options_scope_labels_and_recreated_volume_identity_are_rejected(
+    def test_invalid_driver_scope_labels_and_volume_identity_fail(
         self,
     ):
         self.fixture.start_intent()
@@ -119,11 +136,16 @@ class CatalogVolumeTests(unittest.TestCase):
             self.fixture.calls.clear()
             with (
                 self.subTest(key=key),
-                self.assertRaisesRegex(ValueError, "(metadata|receipt)_changed"),
+                self.assertRaisesRegex(
+                    ValueError, "(metadata|receipt)_changed"
+                ),
             ):
                 volumes.require(self.fixture.context)
             self.assertFalse(
-                any(argv[:2] == ["docker", "run"] for argv in self.fixture.calls)
+                any(
+                    argv[:2] == ["docker", "run"]
+                    for argv in self.fixture.calls
+                )
             )
 
     def test_bad_created_volume_is_rejected_before_root_helper(self):
@@ -143,14 +165,18 @@ class CatalogVolumeTests(unittest.TestCase):
         self.fixture.calls.clear()
         with self.assertRaisesRegex(ValueError, "ownership_changed"):
             volumes.require(self.fixture.context)
-        self.assertFalse(any("--cap-add" in argv for argv in self.fixture.calls))
+        self.assertFalse(
+            any("--cap-add" in argv for argv in self.fixture.calls)
+        )
 
     def test_tampered_receipts_and_extra_image_volumes_fail_closed(self):
         self.fixture.start_intent()
         volumes.ensure(self.fixture.context)
         receipt = execution.read_record(self.fixture.root, "volume.json")
         receipt["schema_version"] = True
-        execution.write_record(self.fixture.root, "volume.json", receipt, replace=True)
+        execution.write_record(
+            self.fixture.root, "volume.json", receipt, replace=True
+        )
         with self.assertRaisesRegex(ValueError, "receipt_changed"):
             volumes.require(self.fixture.context)
         self.fixture.inspect_image.return_value["Config"]["Volumes"] = {
@@ -186,7 +212,11 @@ class CatalogVolumeTests(unittest.TestCase):
             mount = compose["services"]["opensearch-search"]["volumes"][0]
             change(compose, mount)
             self.fixture.context["compose"] = compose
-            for verify in (volumes.ensure, volumes.require, execution.require_storage):
+            for verify in (
+                volumes.ensure,
+                volumes.require,
+                execution.require_storage,
+            ):
                 with self.subTest(compose=compose, verify=verify.__name__):
                     with self.assertRaisesRegex(ValueError, "profile_changed"):
                         verify(self.fixture.context)
@@ -210,7 +240,9 @@ class CatalogVolumeTests(unittest.TestCase):
 
     def test_security_failure_precedes_all_volume_commands(self):
         self.fixture.start_intent()
-        self.fixture.security.side_effect = ValueError("changed security material")
+        self.fixture.security.side_effect = ValueError(
+            "changed security material"
+        )
         with self.assertRaisesRegex(ValueError, "changed security material"):
             volumes.ensure(self.fixture.context)
         self.assertEqual([], self.fixture.calls)
@@ -220,13 +252,17 @@ class CatalogVolumeTests(unittest.TestCase):
             with patch.object(volumes.os, name, return_value=0):
                 with (
                     self.subTest(name=name),
-                    self.assertRaisesRegex(ValueError, "operator_must_be_nonroot"),
+                    self.assertRaisesRegex(
+                        ValueError, "operator_must_be_nonroot"
+                    ),
                 ):
                     volumes.ensure(self.fixture.context)
         self.assertEqual([], self.fixture.calls)
         self.fixture.image.assert_not_called()
 
-    def test_pure_projection_matches_sealed_lifecycle_receipts_without_execution(self):
+    def test_pure_projection_matches_sealed_receipts_without_execution(
+        self,
+    ):
         self.fixture.start_intent()
         receipt = volumes.ensure(self.fixture.context)
         self.fixture.calls.clear()
@@ -252,7 +288,9 @@ class CatalogVolumeTests(unittest.TestCase):
             execution.read_record(self.fixture.root, "volume-started.json"),
             volume_policy.started(identity, IMAGE),
         )
-        metadata = volume_policy.inspect_metadata(self.fixture.metadata, identity)
+        metadata = volume_policy.inspect_metadata(
+            self.fixture.metadata, identity
+        )
         self.assertEqual(
             receipt, volume_policy.expected_receipt(identity, IMAGE, metadata)
         )
@@ -281,7 +319,9 @@ class CatalogVolumeTests(unittest.TestCase):
             },
         )
 
-    def test_pure_identity_and_helper_reject_boolean_numeric_and_mutable_inputs(self):
+    def test_identity_and_helper_reject_bool_numeric_and_mutable_inputs(
+        self,
+    ):
         kwargs = {
             "compose": self.fixture.context["compose"],
             "work_root": self.fixture.root,
@@ -304,7 +344,9 @@ class CatalogVolumeTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "helper_image_invalid"),
             ):
                 volume_policy.started(identity, value)
-        self.fixture.context["compose"]["volumes"][volume_policy.ALIAS]["external"] = 1
+        self.fixture.context["compose"]["volumes"][volume_policy.ALIAS][
+            "external"
+        ] = 1
         with self.assertRaisesRegex(ValueError, "profile_changed"):
             volume_policy.identity(catalog, **kwargs)
 
@@ -352,7 +394,9 @@ class CatalogVolumeFixtureTests(unittest.TestCase):
         result = unittest.TestResult()
         with (
             patch.object(
-                volume_fixtures.tempfile, "TemporaryDirectory", side_effect=factory
+                volume_fixtures.tempfile,
+                "TemporaryDirectory",
+                side_effect=factory,
             ),
             patch.object(volume_fixtures.Path, "mkdir", side_effect=failure),
         ):
@@ -377,7 +421,9 @@ class CatalogVolumeFixtureTests(unittest.TestCase):
         result = unittest.TestResult()
         with (
             patch.object(
-                volume_fixtures.tempfile, "TemporaryDirectory", side_effect=factory
+                volume_fixtures.tempfile,
+                "TemporaryDirectory",
+                side_effect=factory,
             ),
             patch.object(
                 CatalogVolumeFixture,

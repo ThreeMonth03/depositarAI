@@ -173,7 +173,9 @@ class PublicIdentityHTTPTests(unittest.TestCase):
 
     def test_missing_bad_and_duplicate_identity_never_allocate_or_infer(self):
         identity = {
-            name: value for name, value in self.headers.items() if name != "Origin"
+            name: value
+            for name, value in self.headers.items()
+            if name != "Origin"
         }
         invalid = [{}]
         for name in identity:
@@ -207,7 +209,8 @@ class PublicIdentityHTTPTests(unittest.TestCase):
                     response = self.client.post(path, json={}, headers=headers)
                     self.assertEqual(response.status_code, 401, response.text)
                     self.assertEqual(
-                        response.json()["error"]["code"], "authentication_required"
+                        response.json()["error"]["code"],
+                        "authentication_required",
                     )
         self.assertEqual(self.store.items, {})
         self.assertEqual(self.upstream.calls, [])
@@ -215,7 +218,11 @@ class PublicIdentityHTTPTests(unittest.TestCase):
     def test_access_has_no_session_or_model_side_effect(self):
         for headers in (
             self.headers,
-            {key: value for key, value in self.headers.items() if key != "Origin"},
+            {
+                key: value
+                for key, value in self.headers.items()
+                if key != "Origin"
+            },
         ):
             response = self.client.get("/api/access", headers=headers)
             self.assertEqual(response.status_code, 200)
@@ -252,7 +259,9 @@ class PublicIdentityHTTPTests(unittest.TestCase):
         self.assertNotEqual(self.client.get("/").status_code, 401)
 
     def test_same_session_token_is_not_usable_by_another_owner(self):
-        response = self.client.post("/api/session", json={}, headers=self.headers)
+        response = self.client.post(
+            "/api/session", json={}, headers=self.headers
+        )
         self.assertEqual(response.status_code, 200)
         token = response.json()["token"]
         bob = {
@@ -277,12 +286,16 @@ class PublicIdentityHTTPTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.store.get(token, "user:" + ALICE).version, 1)
 
-    def test_mixed_access_reports_guest_or_user_without_allocating_session(self):
+    def test_mixed_access_reports_guest_or_user_without_allocating_session(
+        self,
+    ):
         for kind in ("guest", "user"):
             headers = public_headers(kind=kind, mode="mixed")
             response = self.client.get("/api/access", headers=headers)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), access_payload(kind=kind, mode="mixed"))
+            self.assertEqual(
+                response.json(), access_payload(kind=kind, mode="mixed")
+            )
         self.assertEqual(self.store.items, {})
         self.assertEqual(self.upstream.calls, [])
 
@@ -296,16 +309,21 @@ class PublicIdentityHTTPTests(unittest.TestCase):
             response = self.client.get("/api/access", headers=headers)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(
-                response.json()["limits"], {"turns": turns, "window_seconds": window}
+                response.json()["limits"],
+                {"turns": turns, "window_seconds": window},
             )
             self.assertTrue(response.json()["can_search"])
         self.assertEqual(self.store.items, {})
         self.assertEqual(self.upstream.calls, [])
 
-    def test_login_logout_or_account_switch_cannot_rebind_an_existing_session(self):
+    def test_login_logout_or_account_switch_cannot_rebind_an_existing_session(
+        self,
+    ):
         for kind in ("guest", "user"):
             original = public_headers(kind=kind, mode="mixed")
-            response = self.client.post("/api/session", json={}, headers=original)
+            response = self.client.post(
+                "/api/session", json={}, headers=original
+            )
             self.assertEqual(response.status_code, 200)
             token = response.json()["token"]
             for next_kind, subject in (
@@ -314,18 +332,27 @@ class PublicIdentityHTTPTests(unittest.TestCase):
                 ("user" if kind == "guest" else "guest", ALICE),
             ):
                 headers = {
-                    **public_headers(kind=next_kind, subject=subject, mode="mixed"),
+                    **public_headers(
+                        kind=next_kind, subject=subject, mode="mixed"
+                    ),
                     "Authorization": "Bearer " + token,
                 }
                 response = self.client.post(
-                    "/api/turn", json={"query": "氣候", "version": 0}, headers=headers
+                    "/api/turn",
+                    json={"query": "氣候", "version": 0},
+                    headers=headers,
                 )
                 self.assertEqual(response.status_code, 410)
                 self.assertEqual(
-                    self.client.delete("/api/session", headers=headers).status_code, 200
+                    self.client.delete(
+                        "/api/session", headers=headers
+                    ).status_code,
+                    200,
                 )
                 self.assertIn(token, self.store.items)
-            self.assertEqual(self.store.get(token, f"{kind}:" + ALICE).version, 0)
+            self.assertEqual(
+                self.store.get(token, f"{kind}:" + ALICE).version, 0
+            )
         self.assertEqual(self.upstream.calls, [])
 
     def test_guest_capacity_and_reset_do_not_affect_other_guest(self):
@@ -333,11 +360,13 @@ class PublicIdentityHTTPTests(unittest.TestCase):
             public_headers(kind="guest", subject=subject, mode="mixed")
             for subject in (ALICE, BOB)
         )
-        bob_token = self.client.post("/api/session", json={}, headers=bob).json()[
-            "token"
-        ]
+        bob_token = self.client.post(
+            "/api/session", json={}, headers=bob
+        ).json()["token"]
         tokens = [
-            self.client.post("/api/session", json={}, headers=alice).json()["token"]
+            self.client.post("/api/session", json={}, headers=alice).json()[
+                "token"
+            ]
             for _ in range(2)
         ]
         response = self.client.post("/api/session", json={}, headers=alice)
@@ -352,13 +381,16 @@ class PublicIdentityHTTPTests(unittest.TestCase):
         )
         self.assertIn(bob_token, self.store.items)
         self.client.delete(
-            "/api/session", headers={**alice, "Authorization": "Bearer " + tokens[0]}
+            "/api/session",
+            headers={**alice, "Authorization": "Bearer " + tokens[0]},
         )
-        replacement = self.client.post("/api/session", json={}, headers=alice).json()[
-            "token"
-        ]
+        replacement = self.client.post(
+            "/api/session", json={}, headers=alice
+        ).json()["token"]
         self.assertNotEqual(replacement, tokens[0])
-        self.assertEqual(self.store.get(replacement, "guest:" + ALICE).state.topic, "")
+        self.assertEqual(
+            self.store.get(replacement, "guest:" + ALICE).state.topic, ""
+        )
         self.assertIsNotNone(self.store.get(bob_token, "guest:" + BOB))
         self.assertEqual(self.upstream.calls, [])
 
@@ -370,7 +402,9 @@ class PublicIdentityHTTPTests(unittest.TestCase):
                 ).status_code,
                 200,
             )
-        response = self.client.post("/api/session", json={}, headers=self.headers)
+        response = self.client.post(
+            "/api/session", json={}, headers=self.headers
+        )
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.json()["error"]["code"], "session_capacity")
         self.assertEqual(self.upstream.calls, [])
@@ -383,7 +417,9 @@ class PublicIdentityHTTPTests(unittest.TestCase):
             else:
                 headers["Origin"] = origin
             self.assertEqual(
-                self.client.post("/api/session", json={}, headers=headers).status_code,
+                self.client.post(
+                    "/api/session", json={}, headers=headers
+                ).status_code,
                 403,
             )
         self.assertEqual(self.store.items, {})
@@ -415,23 +451,37 @@ class IdentityConfigurationTests(unittest.TestCase):
             hardlink = root / "hardlink"
             hardlink.hardlink_to(secret)
             for path in (link, hardlink, root):
-                with self.subTest(path=path), self.assertRaises((ValueError, OSError)):
-                    create_app(replace(SETTINGS, edge_secret_file=path), FakeUpstream())
+                with (
+                    self.subTest(path=path),
+                    self.assertRaises((ValueError, OSError)),
+                ):
+                    create_app(
+                        replace(SETTINGS, edge_secret_file=path),
+                        FakeUpstream(),
+                    )
             hardlink.unlink()
             secret.chmod(0o644)
             with self.assertRaises(ValueError):
-                create_app(replace(SETTINGS, edge_secret_file=secret), FakeUpstream())
+                create_app(
+                    replace(SETTINGS, edge_secret_file=secret), FakeUpstream()
+                )
             secret.chmod(0o600)
             for value in ("z" * 64, "A" * 64, "a" * 63, "a" * 4096):
                 secret.write_text(value)
-                with self.subTest(value=value[:8]), self.assertRaises(ValueError):
+                with (
+                    self.subTest(value=value[:8]),
+                    self.assertRaises(ValueError),
+                ):
                     create_app(
-                        replace(SETTINGS, edge_secret_file=secret), FakeUpstream()
+                        replace(SETTINGS, edge_secret_file=secret),
+                        FakeUpstream(),
                     )
 
     def test_private_mode_ignores_unverified_caller_identity(self):
         store = Sessions()
-        with ASGITestClient(create_app(SETTINGS, FakeUpstream(), store)) as client:
+        with ASGITestClient(
+            create_app(SETTINGS, FakeUpstream(), store)
+        ) as client:
             response = client.post(
                 "/api/session",
                 json={},

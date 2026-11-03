@@ -47,7 +47,9 @@ CI_GATES = {
 
 class RuntimeImportGateTests(unittest.TestCase):
     def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="runtime-import-gate-test-")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="runtime-import-gate-test-"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.bin = self.root / "bin"
@@ -57,10 +59,12 @@ class RuntimeImportGateTests(unittest.TestCase):
         fake_docker.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
-            "with open(os.environ['DEPOSITAR_IMPORT_GATE_CALL_LOG'], 'a') as log:\n"
+            "with open(os.environ['DEPOSITAR_IMPORT_GATE_CALL_LOG'], "
+            "'a') as log:\n"
             "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
             "print('fake Docker: imports accepted')\n"
-            "sys.exit(int(os.environ.get('DEPOSITAR_IMPORT_GATE_EXIT_CODE', '0')))\n",
+            "sys.exit(int(os.environ.get("
+            "'DEPOSITAR_IMPORT_GATE_EXIT_CODE', '0')))\n",
             encoding="utf-8",
         )
         fake_docker.chmod(0o700)
@@ -83,7 +87,9 @@ class RuntimeImportGateTests(unittest.TestCase):
     def calls(self) -> list[list[str]]:
         if not self.call_log.exists():
             return []
-        return [json.loads(line) for line in self.call_log.read_text().splitlines()]
+        return [
+            json.loads(line) for line in self.call_log.read_text().splitlines()
+        ]
 
     def option(self, arguments: list[str], name: str) -> str:
         self.assertEqual(1, arguments.count(name), arguments)
@@ -122,7 +128,8 @@ class RuntimeImportGateTests(unittest.TestCase):
                     "no-new-privileges", self.option(options, "--security-opt")
                 )
                 self.assertEqual(
-                    f"{os.geteuid()}:{os.getegid()}", self.option(options, "--user")
+                    f"{os.geteuid()}:{os.getegid()}",
+                    self.option(options, "--user"),
                 )
                 self.assertEqual("2", self.option(options, "--cpus"))
                 self.assertEqual("2g", self.option(options, "--memory"))
@@ -158,10 +165,15 @@ class RuntimeImportGateTests(unittest.TestCase):
                     "-e",
                 }
                 self.assertFalse(
-                    any(option.split("=", 1)[0] in forbidden for option in options)
+                    any(
+                        option.split("=", 1)[0] in forbidden
+                        for option in options
+                    )
                 )
                 self.assertNotIn("/app/search", options)
-                self.assertFalse(any("docker.sock" in option for option in options))
+                self.assertFalse(
+                    any("docker.sock" in option for option in options)
+                )
 
     def test_missing_extra_invalid_role_or_option_image_stops_before_docker(
         self,
@@ -189,7 +201,9 @@ class RuntimeImportGateTests(unittest.TestCase):
             with self.subTest(exit_code=code):
                 previous_calls = len(self.calls())
                 result = self.run_gate(
-                    IMAGE, "conversation", DEPOSITAR_IMPORT_GATE_EXIT_CODE=str(code)
+                    IMAGE,
+                    "conversation",
+                    DEPOSITAR_IMPORT_GATE_EXIT_CODE=str(code),
                 )
                 self.assertEqual(code, result.returncode)
                 self.assertEqual(previous_calls + 1, len(self.calls()))
@@ -205,7 +219,9 @@ class RuntimeImportGateTests(unittest.TestCase):
             and isinstance(statement.iter, ast.Tuple)
         )
         program = compile(
-            ast.Module(body=[guard], type_ignores=[]), "runtime-import-policy", "exec"
+            ast.Module(body=[guard], type_ignores=[]),
+            "runtime-import-policy",
+            "exec",
         )
         search_root = self.root / "image/search"
         search_root.mkdir(parents=True)
@@ -214,14 +230,18 @@ class RuntimeImportGateTests(unittest.TestCase):
             path.mkdir(parents=True)
             with (
                 self.subTest(relative=relative),
-                self.assertRaisesRegex(AssertionError, "offline code in runtime image"),
+                self.assertRaisesRegex(
+                    AssertionError, "offline code in runtime image"
+                ),
             ):
                 exec(program, {"search_root": search_root})
             path.rmdir()
         (search_root / "operations/shared").mkdir()
         exec(program, {"search_root": search_root})
 
-    def test_loaded_resource_batching_is_rejected_but_shared_probe_is_allowed(self):
+    def test_loaded_resource_batching_is_rejected_but_shared_probe_is_allowed(
+        self,
+    ):
         _, tree = self.payload("conversation")
         guard = next(
             node
@@ -232,7 +252,9 @@ class RuntimeImportGateTests(unittest.TestCase):
             and node.msg.left.value == "offline implementation loaded: "
         )
         program = compile(
-            ast.Module(body=[guard], type_ignores=[]), "runtime-import-policy", "exec"
+            ast.Module(body=[guard], type_ignores=[]),
+            "runtime-import-policy",
+            "exec",
         )
         for relative in (
             "operations/documents/__init__.py",
@@ -245,9 +267,14 @@ class RuntimeImportGateTests(unittest.TestCase):
         ):
             with (
                 self.subTest(relative=relative),
-                self.assertRaisesRegex(AssertionError, "offline implementation loaded"),
+                self.assertRaisesRegex(
+                    AssertionError, "offline implementation loaded"
+                ),
             ):
-                exec(program, {"relative": relative, "name": "resource_batching"})
+                exec(
+                    program,
+                    {"relative": relative, "name": "resource_batching"},
+                )
         exec(
             program,
             {
@@ -256,7 +283,7 @@ class RuntimeImportGateTests(unittest.TestCase):
             },
         )
 
-    def test_embedded_python_has_exact_roles_fixed_package_roots_and_no_startup_calls(
+    def test_embedded_python_fixes_roles_roots_and_forbids_startup(
         self,
     ) -> None:
         _, tree = self.payload("conversation")
@@ -284,7 +311,8 @@ class RuntimeImportGateTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(inserts))
         self.assertEqual(
-            ["0", "package_root"], [ast.unparse(arg) for arg in inserts[0].args]
+            ["0", "package_root"],
+            [ast.unparse(arg) for arg in inserts[0].args],
         )
         root_values = [
             statement.value
@@ -299,7 +327,10 @@ class RuntimeImportGateTests(unittest.TestCase):
         self.assertEqual(
             ast.dump(
                 ast.parse(
-                    '"/opt/depositar-search" if role == "catalog-admin" else "/app"',
+                    (
+                        '"/opt/depositar-search" if role == '
+                        '"catalog-admin" else "/app"'
+                    ),
                     mode="eval",
                 ).body
             ),

@@ -1,4 +1,6 @@
-"""Private case inputs and transactional JSON capture, without running queries."""
+"""Private case inputs and transactional JSON capture, without running
+queries.
+"""
 
 from contextlib import contextmanager
 import copy
@@ -20,7 +22,9 @@ OUTPUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,94}\.json\Z")
 
 
 class SharedBatchCaptureError(ValueError):
-    """Closed diagnostics, never raw queries, responses, paths or child errors."""
+    """Closed diagnostics, never raw queries, responses, paths or child
+    errors.
+    """
 
 
 def _require(condition, code):
@@ -45,7 +49,9 @@ def _directory_identity(info):
 
 
 class _Directories:
-    """Pin every ancestor, including names, rather than only the last directory."""
+    """
+    Pin every ancestor, including names, rather than only the last directory.
+    """
 
     def __init__(self, path):
         self.path = _path(path)
@@ -61,7 +67,12 @@ class _Directories:
                 )
                 self.fds.append(child)
                 self.links.append(
-                    (fd, component, child, _directory_identity(os.fstat(child)))
+                    (
+                        fd,
+                        component,
+                        child,
+                        _directory_identity(os.fstat(child)),
+                    )
                 )
                 fd = child
             self.fd = fd
@@ -102,7 +113,9 @@ def _outside_git(fds):
     for fd in fds:
         _require(
             not _exists(fd, ".git")
-            and not all(_exists(fd, name) for name in ("HEAD", "objects", "refs")),
+            and not all(
+                _exists(fd, name) for name in ("HEAD", "objects", "refs")
+            ),
             "inside_git",
         )
 
@@ -135,7 +148,9 @@ def load_cases(path):
     except SharedBatchCaptureError:
         raise
     except (OSError, ValueError, TypeError, RuntimeError):
-        raise SharedBatchCaptureError("shared_batch_capture_cases_invalid") from None
+        raise SharedBatchCaptureError(
+            "shared_batch_capture_cases_invalid"
+        ) from None
     finally:
         if directories is not None:
             directories.close()
@@ -151,7 +166,8 @@ class _Capture:
         for value in excluded:
             other = Path(value)
             _require(
-                other.is_absolute() and ".." not in other.parts, "excluded_invalid"
+                other.is_absolute() and ".." not in other.parts,
+                "excluded_invalid",
             )
             other = other.resolve()
             _require(
@@ -187,7 +203,9 @@ class _Capture:
             records = {
                 entry["temporary"]: entry for entry in self.pending.values()
             } | self.published
-            _require(set(os.listdir(self._fd)) == set(records), "output_changed")
+            _require(
+                set(os.listdir(self._fd)) == set(records), "output_changed"
+            )
             for name, entry in records.items():
                 info = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
                 _require(
@@ -215,7 +233,9 @@ class _Capture:
             self.parents.verify()
             private_io.verify_directory(self._fd, self.destination)
             _outside_git([*self.parents.fds, self._fd])
-            _require(set(os.listdir(self._fd)) == set(records), "output_changed")
+            _require(
+                set(os.listdir(self._fd)) == set(records), "output_changed"
+            )
         except SharedBatchCaptureError:
             raise
         except (OSError, ValueError, TypeError):
@@ -224,21 +244,29 @@ class _Capture:
             ) from None
 
     def write_json(self, name, value, *, max_bytes=MAX_OUTPUT_BYTES):
-        """Stage no-clobber JSON; final names become visible only on context exit."""
+        """
+        Stage no-clobber JSON; final names become visible only on context exit.
+        """
         try:
-            _require(type(name) is str and OUTPUT_NAME.fullmatch(name), "name_invalid")
+            _require(
+                type(name) is str and OUTPUT_NAME.fullmatch(name),
+                "name_invalid",
+            )
             _require(
                 type(max_bytes) is int and 1 <= max_bytes <= MAX_OUTPUT_BYTES,
                 "size_invalid",
             )
             _require(
-                name not in self.pending and name not in self.published, "output_exists"
+                name not in self.pending and name not in self.published,
+                "output_exists",
             )
             self.verify()
             raw = private_io.canonical(value)
             _require(1 <= len(raw) <= max_bytes, "size_invalid")
             temporary = ".capture-" + uuid.uuid4().hex + ".json"
-            private_io.write_file(self._fd, temporary, raw, max_bytes=max_bytes)
+            private_io.write_file(
+                self._fd, temporary, raw, max_bytes=max_bytes
+            )
             info = os.stat(temporary, dir_fd=self._fd, follow_symlinks=False)
             entry = {
                 "temporary": temporary,
@@ -249,11 +277,15 @@ class _Capture:
             }
             self.pending[name] = entry
             self.verify()
-            return {key: entry[key] for key in ("sha256", "bytes")} | {"name": name}
+            return {key: entry[key] for key in ("sha256", "bytes")} | {
+                "name": name
+            }
         except SharedBatchCaptureError:
             raise
         except (OSError, ValueError, TypeError, RecursionError):
-            raise SharedBatchCaptureError("shared_batch_capture_write_failed") from None
+            raise SharedBatchCaptureError(
+                "shared_batch_capture_write_failed"
+            ) from None
 
     def publish(self):
         self.verify()
@@ -274,7 +306,8 @@ class _Capture:
                 dst_dir_fd=self._fd,
                 follow_symlinks=False,
             )
-            # Track the link before fsync/verification so failure can revoke it.
+            # Track the link before fsync/verification so failure can revoke
+            # it.
             self.published[name] = entry
             os.unlink(temporary, dir_fd=self._fd)
             del self.pending[name]
@@ -282,7 +315,9 @@ class _Capture:
                 os.stat(name, dir_fd=self._fd, follow_symlinks=False)
             )
             # Linking changes ctime; pin it before reading the final content.
-            _require(final_identity[:-1] == entry["identity"][:-1], "output_changed")
+            _require(
+                final_identity[:-1] == entry["identity"][:-1], "output_changed"
+            )
             entry["identity"] = final_identity
             final = private_io.read_file(
                 self._fd, name, mode=0o600, max_bytes=entry["maximum"]
@@ -338,10 +373,11 @@ class _Capture:
 def capture_run(destination, *, excluded=()):
     """Publish staged JSON only after body, pinned paths and final checks pass.
 
-    The caller supplies all private input/operator/native/model roots to exclude.
-    Runtime/query failures may be recorded as data inside the context; unexpected
-    body or filesystem failures publish no completed capture. Only this run's
-    inode-identified files are revoked, preserving foreign files on collisions.
+    The caller supplies all private input/operator/native/model roots to
+    exclude. Runtime/query failures may be recorded as data inside the context;
+    unexpected body or filesystem failures publish no completed capture. Only
+    this run's inode-identified files are revoked, preserving foreign files on
+    collisions.
     """
     capture = None
     try:

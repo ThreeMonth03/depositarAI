@@ -31,9 +31,9 @@ def response(url, value, *, status=200, content_type="application/json"):
     body = (
         value
         if isinstance(value, bytes)
-        else json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        else json.dumps(
+            value, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
     )
     return HTTPResponse(
         status=status,
@@ -173,7 +173,9 @@ class ScopeAdapterTests(unittest.TestCase):
 
     def test_wrong_digest_fails_before_chat(self):
         transport = FakeTransport(tags(SCOPE_MODEL, "0" * 64))
-        with self.assertRaisesRegex(OllamaAdapterError, "model_digest_mismatch"):
+        with self.assertRaisesRegex(
+            OllamaAdapterError, "model_digest_mismatch"
+        ):
             OllamaScopeClassifier(transport=transport).classify("找水質資料")
         self.assertEqual(1, len(transport.requests))
 
@@ -192,19 +194,26 @@ class ScopeAdapterTests(unittest.TestCase):
         for content in bad_contents:
             with self.subTest(content=content):
                 transport = FakeTransport(
-                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST), chat(SCOPE_MODEL, content)
+                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
+                    chat(SCOPE_MODEL, content),
                 )
                 with self.assertRaises(OllamaAdapterError):
-                    OllamaScopeClassifier(transport=transport).classify("找資料")
+                    OllamaScopeClassifier(transport=transport).classify(
+                        "找資料"
+                    )
 
         transport = FakeTransport(
             tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
             chat(SCOPE_MODEL, '{"decision":"search"}', done_reason="length"),
         )
-        with self.assertRaisesRegex(OllamaAdapterError, "incomplete_upstream_response"):
+        with self.assertRaisesRegex(
+            OllamaAdapterError, "incomplete_upstream_response"
+        ):
             OllamaScopeClassifier(transport=transport).classify("找資料")
 
-    def test_provider_json_rejects_non_utf8_duplicate_keys_and_nonfinite_values(self):
+    def test_provider_json_rejects_encoding_duplicates_and_nonfinite(
+        self,
+    ):
         for body in (
             b"\xff",
             b'{"models":[],"models":[]}',
@@ -214,11 +223,15 @@ class ScopeAdapterTests(unittest.TestCase):
             b'{"models":[],"extra":-Infinity}',
         ):
             with self.subTest(body=body):
-                transport = FakeTransport(response(OLLAMA_BASE_URL + "/api/tags", body))
+                transport = FakeTransport(
+                    response(OLLAMA_BASE_URL + "/api/tags", body)
+                )
                 with self.assertRaisesRegex(
                     OllamaAdapterError, "invalid_upstream_response"
                 ):
-                    OllamaScopeClassifier(transport=transport).classify("找資料")
+                    OllamaScopeClassifier(transport=transport).classify(
+                        "找資料"
+                    )
                 self.assertEqual(len(transport.requests), 1)
 
     def test_query_bounds_fail_before_any_transport_call(self):
@@ -253,7 +266,9 @@ class ScopeAdapterTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(OllamaAdapterError, "invalid_upstream_response"):
+        with self.assertRaisesRegex(
+            OllamaAdapterError, "invalid_upstream_response"
+        ):
             OllamaScopeClassifier(transport=transport).classify("找水質資料")
 
     def test_transport_and_upstream_body_are_sanitized(self):
@@ -303,10 +318,14 @@ class ScopeAdapterTests(unittest.TestCase):
                 response(OLLAMA_BASE_URL + "/api/chat", oversized),
             )
         )
-        with self.assertRaisesRegex(OllamaAdapterError, "upstream_response_too_large"):
+        with self.assertRaisesRegex(
+            OllamaAdapterError, "upstream_response_too_large"
+        ):
             selector.classify("找資料")
 
-    def test_provider_prompt_count_must_be_exact_and_leave_context_reserve(self):
+    def test_provider_prompt_count_must_be_exact_and_leave_context_reserve(
+        self,
+    ):
         invalid_counts = (True, 0, SCOPE_NUM_CTX - SCOPE_NUM_PREDICT - 511)
         for prompt_count in invalid_counts:
             with self.subTest(prompt_count=prompt_count):
@@ -329,7 +348,11 @@ class ScopeAdapterTests(unittest.TestCase):
         classifier = OllamaScopeClassifier(
             transport=FakeTransport(
                 tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
-                chat(SCOPE_MODEL, '{"decision":"search"}', thinking=UPSTREAM_SECRET),
+                chat(
+                    SCOPE_MODEL,
+                    '{"decision":"search"}',
+                    thinking=UPSTREAM_SECRET,
+                ),
             )
         )
         result = classifier.classify("找資料")

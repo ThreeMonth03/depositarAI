@@ -32,7 +32,8 @@ class ASGITestClient:
         try:
             self._client = httpx.AsyncClient(
                 transport=httpx.ASGITransport(
-                    app=self._lifespan.app, raise_app_exceptions=raise_app_exceptions
+                    app=self._lifespan.app,
+                    raise_app_exceptions=raise_app_exceptions,
                 ),
                 base_url="http://testserver",
             )
@@ -41,7 +42,9 @@ class ASGITestClient:
             raise
 
     def request(self, method, url, **kwargs):
-        return self._portal.call(partial(self._client.request, method, url, **kwargs))
+        return self._portal.call(
+            partial(self._client.request, method, url, **kwargs)
+        )
 
     def get(self, url, **kwargs):
         return self.request("GET", url, **kwargs)

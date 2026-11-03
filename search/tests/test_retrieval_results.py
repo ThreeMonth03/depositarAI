@@ -16,7 +16,9 @@ from search.tests.fixtures import IDS, report, result
 
 
 class RetrievalResultTests(unittest.TestCase):
-    def test_shared_fixture_import_needs_no_test_suites_or_http_dependencies(self):
+    def test_shared_fixture_import_needs_no_test_suites_or_http_dependencies(
+        self,
+    ):
         from search.tests import fixtures
 
         self.assertIs(IDS, fixtures.IDS)
@@ -29,9 +31,11 @@ class RetrievalResultTests(unittest.TestCase):
             "import search.tests.fixtures\n"
             "assert not any(name.startswith('search.tests.test_') "
             "for name in sys.modules), 'test suite imported by fixtures'\n"
-            "for package in ('fastapi', 'django', 'rest_framework', 'adrf', 'starlette', 'httpx', 'pydantic'):\n"
+            "for package in ('fastapi', 'django', 'rest_framework', "
+            "'adrf', 'starlette', 'httpx', 'pydantic'):\n"
             "    assert not any(name.partition('.')[0] == package "
-            "for name in sys.modules), 'HTTP dependency imported by fixtures'\n"
+            "for name in sys.modules), 'HTTP dependency imported by "
+            "fixtures'\n"
             "print('shared fixtures import independently')\n"
         )
         completed = subprocess.run(
@@ -45,7 +49,9 @@ class RetrievalResultTests(unittest.TestCase):
             completed.stdout.strip(), "shared fixtures import independently"
         )
 
-    def test_cards_expose_only_server_validated_fields_and_bound_snippets(self):
+    def test_cards_expose_only_server_validated_fields_and_bound_snippets(
+        self,
+    ):
         query = "ＥＲＡ５／WRF？"
         source = report(query)
         source["results"][0]["notes"] = "資料" * 2000
@@ -107,7 +113,8 @@ class RetrievalResultTests(unittest.TestCase):
             [
                 {
                     **context,
-                    "url": "https://data.depositar.io/dataset/other/resource/" + IDS[1],
+                    "url": "https://data.depositar.io/dataset/other/resource/"
+                    + IDS[1],
                 }
             ],
         ):
@@ -153,7 +160,9 @@ class RetrievalResultTests(unittest.TestCase):
             invalid_score["results"][0]["rank_fusion_score"] = score
             mutations.append(invalid_score)
         duplicate = copy.deepcopy(baseline)
-        duplicate["results"][1]["dataset_id"] = duplicate["results"][0]["dataset_id"]
+        duplicate["results"][1]["dataset_id"] = duplicate["results"][0][
+            "dataset_id"
+        ]
         mutations.append(duplicate)
         unordered = copy.deepcopy(baseline)
         unordered["results"][1]["rank_fusion_score"] = 2.0
@@ -170,7 +179,10 @@ class RetrievalResultTests(unittest.TestCase):
             unsafe_origin["results"][0]["url"] = unsafe_url
             mutations.append(unsafe_origin)
         for malformed in mutations:
-            with self.subTest(keys=tuple(malformed)), self.assertRaises(ResultError):
+            with (
+                self.subTest(keys=tuple(malformed)),
+                self.assertRaises(ResultError),
+            ):
                 ValidatedSearch.from_report(
                     query, malformed, conditions={}, manifest_sha256="b" * 64
                 )
@@ -181,13 +193,16 @@ class RetrievalResultTests(unittest.TestCase):
         slug = "臺灣 資料"
         boundary["results"][0]["name"] = slug
         boundary["results"][0]["url"] = (
-            "https://data.depositar.io/dataset/" + urllib.parse.quote(slug, safe="")
+            "https://data.depositar.io/dataset/"
+            + urllib.parse.quote(slug, safe="")
         )
         boundary["results"][0]["resource_count"] = 100_000
         found = ValidatedSearch.from_report(
             query, boundary, conditions={}, manifest_sha256="b" * 64
         )
-        self.assertEqual(found.cards()[0]["url"], boundary["results"][0]["url"])
+        self.assertEqual(
+            found.cards()[0]["url"], boundary["results"][0]["url"]
+        )
         too_large = copy.deepcopy(boundary)
         too_large["results"][0]["resource_count"] = 100_001
         with self.assertRaises(ResultError):
@@ -216,13 +231,17 @@ class RetrievalResultTests(unittest.TestCase):
 
         query = "臺灣資料"
         six_rows = report(query)
-        six_rows["results"] = LyingList([result(i, 1.0 / i) for i in range(1, 7)])
+        six_rows["results"] = LyingList(
+            [result(i, 1.0 / i) for i in range(1, 7)]
+        )
         with self.assertRaises(ResultError):
             ValidatedSearch.from_report(
                 query, six_rows, conditions={}, manifest_sha256="b" * 64
             )
         evil_scalar = report(query)
-        evil_scalar["results"][0]["notes"] = EvilString("private scalar detail")
+        evil_scalar["results"][0]["notes"] = EvilString(
+            "private scalar detail"
+        )
         with self.assertRaises(ResultError) as caught:
             ValidatedSearch.from_report(
                 query, evil_scalar, conditions={}, manifest_sha256="b" * 64
@@ -273,7 +292,10 @@ class RetrievalResultTests(unittest.TestCase):
         query = "資料"
         self.assertEqual(
             ValidatedSearch.from_report(
-                query, report(query, count=0), conditions={}, manifest_sha256="b" * 64
+                query,
+                report(query, count=0),
+                conditions={},
+                manifest_sha256="b" * 64,
             ).cards(),
             [],
         )
@@ -300,7 +322,9 @@ class RetrievalResultTests(unittest.TestCase):
                     manifest_sha256="b" * 64,
                 )
 
-    def test_validated_nested_collections_do_not_alias_the_report_or_cards(self):
+    def test_validated_nested_collections_do_not_alias_the_report_or_cards(
+        self,
+    ):
         query = "氣候資料"
         source = report(query)
         found = ValidatedSearch.from_report(
@@ -309,14 +333,18 @@ class RetrievalResultTests(unittest.TestCase):
         source["results"][0]["resource_formats"].clear()
         source["results"][0]["temporal_coverage"]["start"] = "1900"
         self.assertEqual(found.cards()[0]["resource_formats"], ["CSV", "PDF"])
-        self.assertEqual(found.cards()[0]["temporal_coverage"]["start"], "2020")
+        self.assertEqual(
+            found.cards()[0]["temporal_coverage"]["start"], "2020"
+        )
         cards = found.cards()
         cards[0]["resource_formats"].clear()
         cards[0]["temporal_coverage"]["end"] = "2099"
         self.assertEqual(found.cards()[0]["resource_formats"], ["CSV", "PDF"])
         self.assertEqual(found.cards()[0]["temporal_coverage"]["end"], "2025")
 
-    def test_temporal_coverage_preserves_precision_and_exposes_all_statuses(self):
+    def test_temporal_coverage_preserves_precision_and_exposes_all_statuses(
+        self,
+    ):
         for start, end, status in (
             ("2024", "2025", "complete"),
             ("2024-2", "2024-02-29", "complete"),
@@ -335,7 +363,9 @@ class RetrievalResultTests(unittest.TestCase):
                     "氣候", source, conditions={}, manifest_sha256="b" * 64
                 ).cards()[0]
                 self.assertEqual(card["temporal_coverage"], coverage)
-                self.assertEqual(card["metadata_modified"], "2026-09-10T00:00:00")
+                self.assertEqual(
+                    card["metadata_modified"], "2026-09-10T00:00:00"
+                )
 
     def test_malformed_or_inconsistent_temporal_coverage_fails_closed(self):
         class StringSubclass(str):
@@ -382,7 +412,9 @@ class RetrievalResultTests(unittest.TestCase):
                 "氣候", source, conditions={}, manifest_sha256="b" * 64
             )
 
-    def test_empty_time_and_format_requests_bind_the_same_exact_report_contract(self):
+    def test_empty_conditions_bind_the_same_report_contract(
+        self,
+    ):
         for conditions in (
             {},
             {"time": {"start": "2025-01-01", "end": None}},
@@ -391,13 +423,19 @@ class RetrievalResultTests(unittest.TestCase):
             with self.subTest(conditions=conditions):
                 source = report("水質", conditions=conditions)
                 found = ValidatedSearch.from_report(
-                    "水質", source, conditions=conditions, manifest_sha256="b" * 64
+                    "水質",
+                    source,
+                    conditions=conditions,
+                    manifest_sha256="b" * 64,
                 )
                 self.assertEqual(len(found.cards()), TOP_K)
                 different = {"formats": ["ZIP"]}
                 with self.assertRaises(ResultError):
                     ValidatedSearch.from_report(
-                        "水質", source, conditions=different, manifest_sha256="b" * 64
+                        "水質",
+                        source,
+                        conditions=different,
+                        manifest_sha256="b" * 64,
                     )
 
 

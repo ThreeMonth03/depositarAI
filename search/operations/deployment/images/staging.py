@@ -24,12 +24,15 @@ from . import build
 MAX_SOURCE_SLOTS = 16
 SLOT = re.compile(r"source-[0-9a-f]{40}\Z")
 RECORD = re.compile(
-    r"source-[0-9a-f]{40}\.(stage-started|stage-complete|image-complete)\.json\Z"
+    "source-[0-9a-f]{40}\\.(stage-started|stage-complete|image-complete)\\.jso"
+    "n\\Z"
 )
 
 
 class ImageStagingError(ValueError):
-    """Fixed error codes without credentials, source bytes or command output."""
+    """Fixed error codes without credentials, source bytes or command
+    output.
+    """
 
 
 def _digest(value):
@@ -220,7 +223,9 @@ def stage_product_images(
         _clean_revision(repo_root, source_revision, source_runner)
         store._check_directory()
         parent_fd = private_io.open_child_directory(
-            store.fd, "image-builds", create="image-builds" not in os.listdir(store.fd)
+            store.fd,
+            "image-builds",
+            create="image-builds" not in os.listdir(store.fd),
         )
         slot, identity, reused = _source_stage(
             parent_fd,
@@ -261,11 +266,15 @@ def stage_product_images(
             )
         else:
             private_io.write_json(
-                parent_fd, complete, candidate, max_bytes=build.MAX_RECORD_BYTES
+                parent_fd,
+                complete,
+                candidate,
+                max_bytes=build.MAX_RECORD_BYTES,
             )
         private_io.verify_directory(parent_fd, parent)
         # Recheck persisted source and image receipts before publishing the
-        # product pointer; a later role/runner must not silently alter evidence.
+        # product pointer; a later role/runner must not silently alter
+        # evidence.
         _equal(
             build._record(parent_fd, slot.name + ".stage-started.json"),
             identity,
@@ -285,7 +294,11 @@ def stage_product_images(
         store._check_directory()
         store.write("image-candidate.json", candidate, replace=True)
         store._check_directory()
-        return {**candidate, "source_staging_reused": reused, "runtime_verified": False}
+        return {
+            **candidate,
+            "source_staging_reused": reused,
+            "runtime_verified": False,
+        }
     except (OSError, ValueError) as error:
         if isinstance(
             error,

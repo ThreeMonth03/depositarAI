@@ -34,7 +34,9 @@ def _canonical_json(value: Any) -> bytes:
         raise ProtocolError("cannot encode a bounded request") from None
 
 
-def _exact_int(value: Any, *, minimum: int = 0, maximum: Optional[int] = None) -> bool:
+def _exact_int(
+    value: Any, *, minimum: int = 0, maximum: Optional[int] = None
+) -> bool:
     return (
         type(value) is int
         and value >= minimum

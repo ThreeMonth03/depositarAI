@@ -1,4 +1,6 @@
-"""Pinned planner identity, request bounds and completion checks without network."""
+"""Pinned planner identity, request bounds and completion checks without
+network.
+"""
 
 import json
 import unittest
@@ -31,7 +33,9 @@ class PlanningTransportTests(unittest.TestCase):
                         "done": True,
                         "done_reason": done_reason,
                         "message": {
-                            "content": '{"action":"clarify","time":null,"place":null,"formats":[],"reason":"ambiguous_time"}',
+                            "content": '{"action":"clarify","time":null,'
+                            '"place":null,"formats":[],"reason":'
+                            '"ambiguous_time"}',
                             "thinking": "PRIVATE-THINKING",
                         },
                         "prompt_eval_count": 1000,
@@ -43,7 +47,9 @@ class PlanningTransportTests(unittest.TestCase):
         ]
         return transport
 
-    def test_generate_uses_caller_contract_with_fixed_budgets_and_no_tools(self):
+    def test_generate_uses_caller_contract_with_fixed_budgets_and_no_tools(
+        self,
+    ):
         transport = self.transport()
         schema = {"type": "object", "required": ["action"]}
         prompt = "Plan a dataset search with the supplied schema."
@@ -58,10 +64,14 @@ class PlanningTransportTests(unittest.TestCase):
         self.assertEqual(body["format"], schema)
         self.assertEqual(body["options"], OPTIONS)
         self.assertEqual(body["think"], "low")
-        self.assertEqual(chat_call.kwargs, {"timeout": 90, "max_bytes": 128 * 1024})
+        self.assertEqual(
+            chat_call.kwargs, {"timeout": 90, "max_bytes": 128 * 1024}
+        )
         self.assertNotIn("tools", body)
         self.assertNotIn("PRIVATE-THINKING", json.dumps(result))
-        self.assertEqual(result["thinking_characters"], len("PRIVATE-THINKING"))
+        self.assertEqual(
+            result["thinking_characters"], len("PRIVATE-THINKING")
+        )
 
     def test_wrong_model_digest_stops_before_chat(self):
         transport = self.transport(digest="wrong")
@@ -72,7 +82,9 @@ class PlanningTransportTests(unittest.TestCase):
     def test_truncation_and_unknown_stop_reason_are_incomplete(self):
         for reason in ("length", None, "unknown"):
             transport = self.transport(done_reason=reason)
-            result = LocalPlanner(transport).generate("prompt", "找去年水質資料", {})
+            result = LocalPlanner(transport).generate(
+                "prompt", "找去年水質資料", {}
+            )
             self.assertEqual(result["status"], "incomplete")
 
 

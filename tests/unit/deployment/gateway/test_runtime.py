@@ -1,4 +1,6 @@
-"""Offline gateway capability and unfiltered peer regressions; no runtime IO."""
+"""Offline gateway capability and unfiltered peer regressions; no runtime
+IO.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +14,9 @@ from search.operations.deployment import composition
 from search.operations.deployment.gateway import runtime as gateway_runtime
 from search.operations.deployment.release import runtime as release_runtime
 from tests.unit.deployment.test_composition import catalog, product
-from tests.unit.deployment.release.test_runtime import evidence as release_evidence
+from tests.unit.deployment.release.test_runtime import (
+    evidence as release_evidence,
+)
 
 
 GATEWAY_ID = "a" * 64
@@ -36,7 +40,10 @@ def evidence():
     service = gateway["services"]["web-nginx"]
     labels = release_runtime._labels(values["lease"], "web-nginx", "c" * 64)
     service.update(image="sha256:" + "d" * 64, labels=labels)
-    environment = {"PATH": "/usr/local/sbin:/usr/bin", "NGINX_VERSION": "1.30.4"}
+    environment = {
+        "PATH": "/usr/local/sbin:/usr/bin",
+        "NGINX_VERSION": "1.30.4",
+    }
     image = {
         "Id": service["image"],
         "Config": {
@@ -60,7 +67,9 @@ def evidence():
     }
     row = copy.deepcopy(values["containers"][1])
     row.update(
-        Id=GATEWAY_ID, Image=image["Id"], Name="/depositar-ai-gateway-web-nginx-1"
+        Id=GATEWAY_ID,
+        Image=image["Id"],
+        Name="/depositar-ai-gateway-web-nginx-1",
     )
     row["State"]["Pid"] = 2001
     row["Config"].update(
@@ -139,7 +148,10 @@ def evidence():
     row["NetworkSettings"] = {
         "Ports": {"80/tcp": None, "8080/tcp": binding},
         "Networks": {
-            website["Name"]: {"NetworkID": website["Id"], "EndpointID": "f" * 64},
+            website["Name"]: {
+                "NetworkID": website["Id"],
+                "EndpointID": "f" * 64,
+            },
             ingress_name: {"NetworkID": INGRESS_ID, "EndpointID": "e" * 64},
         },
     }
@@ -169,10 +181,18 @@ class GatewayRuntimeTests(unittest.TestCase):
         values = evidence()
         before = copy.deepcopy(values)
         with (
-            mock.patch("builtins.open", side_effect=AssertionError("no files")),
-            mock.patch("pathlib.Path.stat", side_effect=AssertionError("no stats")),
-            mock.patch("subprocess.run", side_effect=AssertionError("no processes")),
-            mock.patch("socket.socket", side_effect=AssertionError("no network")),
+            mock.patch(
+                "builtins.open", side_effect=AssertionError("no files")
+            ),
+            mock.patch(
+                "pathlib.Path.stat", side_effect=AssertionError("no stats")
+            ),
+            mock.patch(
+                "subprocess.run", side_effect=AssertionError("no processes")
+            ),
+            mock.patch(
+                "socket.socket", side_effect=AssertionError("no network")
+            ),
         ):
             first = gateway_runtime.validate_runtime(**values)
             self.assertEqual(first, gateway_runtime.validate_runtime(**values))
@@ -189,7 +209,8 @@ class GatewayRuntimeTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            set(first["container_ids"]), release_runtime.SERVICES | {"web-nginx"}
+            set(first["container_ids"]),
+            release_runtime.SERVICES | {"web-nginx"},
         )
         self.assertEqual(first["container_ids"]["web-nginx"], GATEWAY_ID)
         self.assertEqual(
@@ -204,7 +225,8 @@ class GatewayRuntimeTests(unittest.TestCase):
         values = release_evidence()
         values["networks"][0]["Containers"][GATEWAY_ID] = {}
         with self.assertRaisesRegex(
-            release_runtime.ReleaseRuntimeError, "release_runtime_website_peers_changed"
+            release_runtime.ReleaseRuntimeError,
+            "release_runtime_website_peers_changed",
         ):
             release_runtime.validate_runtime(**values)
 
@@ -219,11 +241,14 @@ class GatewayRuntimeTests(unittest.TestCase):
             checker.call_args.kwargs["api_container"], values["containers"][0]
         )
         self.assertIs(
-            checker.call_args.kwargs["catalog_network"], values["catalog_network"]
+            checker.call_args.kwargs["catalog_network"],
+            values["catalog_network"],
         )
 
     def test_native_primary_network_may_be_either_exact_attachment(self):
-        for name in evidence()["containers"][-1]["NetworkSettings"]["Networks"]:
+        for name in evidence()["containers"][-1]["NetworkSettings"][
+            "Networks"
+        ]:
             with self.subTest(name=name):
                 values = evidence()
                 values["containers"][-1]["HostConfig"]["NetworkMode"] = name
@@ -238,9 +263,9 @@ class GatewayRuntimeTests(unittest.TestCase):
         ):
             with self.subTest(options=options):
                 values = evidence()
-                values["containers"][-1]["HostConfig"]["Mounts"][0]["BindOptions"] = (
-                    options
-                )
+                values["containers"][-1]["HostConfig"]["Mounts"][0][
+                    "BindOptions"
+                ] = options
                 gateway_runtime.validate_runtime(**values)
 
     def test_gateway_inventory_requires_one_pinned_full_id(self):
@@ -255,17 +280,23 @@ class GatewayRuntimeTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 values = evidence()
                 if kind == "extra":
-                    values["containers"].append(copy.deepcopy(values["containers"][-1]))
+                    values["containers"].append(
+                        copy.deepcopy(values["containers"][-1])
+                    )
                 elif kind == "missing":
                     values["containers"].pop()
                 elif kind == "duplicate":
-                    values["containers"][1] = copy.deepcopy(values["containers"][-1])
+                    values["containers"][1] = copy.deepcopy(
+                        values["containers"][-1]
+                    )
                 elif kind == "replacement":
                     values["containers"][-1]["Id"] = "c" * 64
                 elif kind == "short":
                     values["gateway_container_id"] = GATEWAY_ID[:12]
                 else:
-                    values["gateway_container_id"] = values["containers"][0]["Id"]
+                    values["gateway_container_id"] = values["containers"][0][
+                        "Id"
+                    ]
                 self.reject(values)
 
     def test_exact_unfiltered_website_and_ingress_peers(self):
@@ -318,11 +349,15 @@ class GatewayRuntimeTests(unittest.TestCase):
                     elif kind == "pid":
                         row["State"]["Pid"] += 1
                     elif kind == "gpu":
-                        row["HostConfig"]["DeviceRequests"] = [{"Driver": "nvidia"}]
+                        row["HostConfig"]["DeviceRequests"] = [
+                            {"Driver": "nvidia"}
+                        ]
                     elif kind == "writable":
                         row["HostConfig"]["ReadonlyRootfs"] = False
                     else:
-                        row["Config"]["Env"].append("UNAPPROVED_SECRET=private-value")
+                        row["Config"]["Env"].append(
+                            "UNAPPROVED_SECRET=private-value"
+                        )
                     self.reject(values)
 
     def test_catalog_extra_peer_is_not_filtered_or_reauthorized(self):
@@ -330,7 +365,9 @@ class GatewayRuntimeTests(unittest.TestCase):
         values["catalog_network"]["Containers"][GATEWAY_ID] = {}
         self.reject(values)
 
-    def test_only_exact_ipv4_loopback_binding_accepted_in_both_native_views(self):
+    def test_only_exact_ipv4_loopback_binding_accepted_in_both_native_views(
+        self,
+    ):
         for native in ("host", "effective"):
             for kind in (
                 "wildcard",
@@ -369,9 +406,11 @@ class GatewayRuntimeTests(unittest.TestCase):
                     elif kind == "wrong_host_port":
                         bindings[0]["HostPort"] = "18084"
                     elif kind in {"wrong_target", "udp"}:
-                        ports["8000/tcp" if kind == "wrong_target" else "8080/udp"] = (
-                            ports.pop("8080/tcp")
-                        )
+                        ports[
+                            "8000/tcp"
+                            if kind == "wrong_target"
+                            else "8080/udp"
+                        ] = ports.pop("8080/tcp")
                     elif kind == "extra_key":
                         bindings[0]["Private"] = "private-value"
                     elif kind == "missing":
@@ -397,9 +436,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                     self.reject(values)
             for label in ("project", "network"):
                 values = evidence()
-                values["networks"][index]["Labels"]["com.docker.compose." + label] = (
-                    "substitute"
-                )
+                values["networks"][index]["Labels"][
+                    "com.docker.compose." + label
+                ] = "substitute"
                 self.reject(values)
         for kind in (
             "extra_network",
@@ -414,15 +453,19 @@ class GatewayRuntimeTests(unittest.TestCase):
                 values = evidence()
                 row = values["containers"][-1]
                 if kind == "extra_network":
-                    values["networks"].append(copy.deepcopy(values["catalog_network"]))
+                    values["networks"].append(
+                        copy.deepcopy(values["catalog_network"])
+                    )
                 elif kind == "missing_network":
                     values["networks"].pop()
                 elif kind == "duplicate":
-                    values["networks"][1] = copy.deepcopy(values["networks"][0])
-                elif kind == "endpoint":
-                    values["networks"][0]["Containers"][GATEWAY_ID]["EndpointID"] = (
-                        "c" * 64
+                    values["networks"][1] = copy.deepcopy(
+                        values["networks"][0]
                     )
+                elif kind == "endpoint":
+                    values["networks"][0]["Containers"][GATEWAY_ID][
+                        "EndpointID"
+                    ] = "c" * 64
                 elif kind == "attachment_id":
                     next(iter(row["NetworkSettings"]["Networks"].values()))[
                         "NetworkID"
@@ -435,7 +478,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                     row["HostConfig"]["NetworkMode"] = "host"
                 self.reject(values)
 
-    def test_gateway_source_image_command_identity_and_environment_closed(self):
+    def test_gateway_source_image_command_identity_and_environment_closed(
+        self,
+    ):
         for kind in (
             "image_id",
             "source_label",
@@ -465,7 +510,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                         if kind == "source_label"
                         else values["gateway_image"]["Config"]
                     )
-                    config["Labels"]["io.depositar.ai.source.sha256"] = "f" * 64
+                    config["Labels"]["io.depositar.ai.source.sha256"] = (
+                        "f" * 64
+                    )
                 elif kind == "revision":
                     values["gateway_image_proof"]["revision"] = "e" * 40
                 elif kind in {"entrypoint", "command", "user", "stop_signal"}:
@@ -535,7 +582,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                 row["Config"]["Healthcheck"]["Test"] = ["CMD", "true"]
             self.reject(values)
 
-    def test_gateway_mounts_cannot_gain_secrets_write_or_new_bind_semantics(self):
+    def test_gateway_mounts_cannot_gain_secrets_write_or_new_bind_semantics(
+        self,
+    ):
         for kind in (
             "secret",
             "writable",
@@ -562,7 +611,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                 elif kind == "source":
                     effective["Source"] = "/srv/private/secret"
                 elif kind == "binds":
-                    row["HostConfig"]["Binds"] = ["/srv/private/secret:/secret:ro"]
+                    row["HostConfig"]["Binds"] = [
+                        "/srv/private/secret:/secret:ro"
+                    ]
                 elif kind == "request_write":
                     requested["ReadOnly"] = False
                 elif kind == "request_bool_spoof":
@@ -583,7 +634,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                     row["Mounts"].append(copy.deepcopy(effective))
                 self.reject(values)
 
-    def test_malformed_snapshot_and_unapproved_image_exposed_ports_are_closed(self):
+    def test_malformed_snapshot_and_unapproved_image_exposed_ports_are_closed(
+        self,
+    ):
         for kind in (
             "containers",
             "networks",
@@ -605,9 +658,11 @@ class GatewayRuntimeTests(unittest.TestCase):
                     values[kind] = None
                 elif kind in {"config", "host", "state"}:
                     row[
-                        {"config": "Config", "host": "HostConfig", "state": "State"}[
-                            kind
-                        ]
+                        {
+                            "config": "Config",
+                            "host": "HostConfig",
+                            "state": "State",
+                        }[kind]
                     ] = None
                 elif kind == "attachments":
                     row["NetworkSettings"]["Networks"] = None
@@ -615,7 +670,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                     row["Config"]["Labels"] = []
                 elif kind in {"image", "proof"}:
                     values[
-                        "gateway_image" if kind == "image" else "gateway_image_proof"
+                        "gateway_image"
+                        if kind == "image"
+                        else "gateway_image_proof"
                     ] = None
                 elif kind == "environment":
                     row["Config"]["Env"].append("PATH=duplicate-private-value")
@@ -652,7 +709,9 @@ class GatewayRuntimeTests(unittest.TestCase):
                 elif kind == "image_tag":
                     service["image"] = "nginx:latest"
                 elif kind == "route":
-                    gateway["x-depositar-plan"]["approved_upstream"] = "foreign:8000"
+                    gateway["x-depositar-plan"]["approved_upstream"] = (
+                        "foreign:8000"
+                    )
                 elif kind == "mount":
                     service["volumes"][0]["source"] = "/srv/private/secret"
                 elif kind == "resource":

@@ -1,4 +1,6 @@
-"""Resident metadata reuse retains the original model-content and FD authority."""
+"""Resident metadata reuse retains the original model-content and FD
+authority.
+"""
 
 import hashlib
 import os
@@ -37,7 +39,9 @@ class ResidentModelFilesTests(unittest.TestCase):
         for name in ("fixture-scope:tiny", "fixture-planner:tiny"):
             pins[name] = self.ollama(self.config.api_model_root, name)
         embedding = "fixture-embedding:tiny"
-        embedding_digest = self.ollama(self.config.embedding_model_root, embedding)
+        embedding_digest = self.ollama(
+            self.config.embedding_model_root, embedding
+        )
         reranker = {}
         for name, raw in (
             ("model.safetensors", b"reranker-data" * 1024),
@@ -54,7 +58,9 @@ class ResidentModelFilesTests(unittest.TestCase):
             mock.patch.object(inference.prepare_search_models, "PINS", pins),
             mock.patch("search.reranker.model.MODEL_HASHES", reranker),
             mock.patch("search.catalog.embedding.MODEL", embedding),
-            mock.patch("search.catalog.embedding.MODEL_DIGEST", embedding_digest),
+            mock.patch(
+                "search.catalog.embedding.MODEL_DIGEST", embedding_digest
+            ),
             mock.patch.object(inference, "RESIDENT_METADATA_BYTES", 1024),
         ):
             patch.start()
@@ -83,7 +89,9 @@ class ResidentModelFilesTests(unittest.TestCase):
             {"schemaVersion": 2, "config": layers[0], "layers": layers[1:]}
         )
         self.write(
-            root / "manifests/registry.ollama.ai/library" / name.replace(":", "/"),
+            root
+            / "manifests/registry.ollama.ai/library"
+            / name.replace(":", "/"),
             manifest,
         )
         return hashlib.sha256(manifest).hexdigest()
@@ -99,7 +107,9 @@ class ResidentModelFilesTests(unittest.TestCase):
     def cached(self, stamp, **options):
         return inference._resident_models(self.config, stamp, **options)
 
-    def test_deep_reads_all_weights_and_resident_reuse_skips_only_large_data(self):
+    def test_deep_reads_all_weights_and_resident_reuse_skips_only_large_data(
+        self,
+    ):
         original = os.read
         reads = []
 
@@ -113,15 +123,21 @@ class ResidentModelFilesTests(unittest.TestCase):
         reads.clear()
 
         def metadata_read(fd, size):
-            self.assertNotIn(Path(os.readlink(f"/proc/self/fd/{fd}")), self.large)
+            self.assertNotIn(
+                Path(os.readlink(f"/proc/self/fd/{fd}")), self.large
+            )
             return read(fd, size)
 
-        with mock.patch.object(inference.os, "read", side_effect=metadata_read):
+        with mock.patch.object(
+            inference.os, "read", side_effect=metadata_read
+        ):
             with self.cached(stamp) as (cached_plans, verify):
                 self.assertEqual(cached_plans, plans)
                 self.assertEqual(verify.file_identity_sha256, stamp)
                 verify()
-        self.assertTrue(reads, "small config/tokenizer artifacts still need hashing")
+        self.assertTrue(
+            reads, "small config/tokenizer artifacts still need hashing"
+        )
 
     def test_original_deep_default_never_reuses_a_cached_weight_digest(self):
         self.deep()
@@ -129,7 +145,9 @@ class ResidentModelFilesTests(unittest.TestCase):
         target.chmod(0o600)
         target.write_bytes(b"x" * target.stat().st_size)
         target.chmod(0o400)
-        with self.assertRaisesRegex(inference.InferenceError, "model_digest_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "model_digest_changed"
+        ):
             self.deep()
 
     def test_same_size_write_with_original_mtime_still_invalidates_ctime(self):
@@ -144,7 +162,9 @@ class ResidentModelFilesTests(unittest.TestCase):
         self.assertEqual(target.stat().st_size, before.st_size)
         self.assertEqual(target.stat().st_mtime_ns, before.st_mtime_ns)
         self.assertNotEqual(target.stat().st_ctime_ns, before.st_ctime_ns)
-        with self.assertRaisesRegex(inference.InferenceError, "file_identity_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "file_identity_changed"
+        ):
             with self.cached(stamp):
                 self.fail("changed weights reused")
 
@@ -154,7 +174,9 @@ class ResidentModelFilesTests(unittest.TestCase):
         replacement = target.with_name(target.name + ".replacement")
         self.write(replacement, target.read_bytes())
         replacement.replace(target)
-        with self.assertRaisesRegex(inference.InferenceError, "file_identity_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "file_identity_changed"
+        ):
             with self.cached(stamp):
                 self.fail("replaced inode reused")
 
@@ -170,8 +192,12 @@ class ResidentModelFilesTests(unittest.TestCase):
 
     def test_pinned_manifest_is_rehashed_before_cache_admission(self):
         _, stamp = self.deep()
-        changed = {name: "f" * 64 for name in inference.prepare_search_models.PINS}
-        with mock.patch.object(inference.prepare_search_models, "PINS", changed):
+        changed = {
+            name: "f" * 64 for name in inference.prepare_search_models.PINS
+        }
+        with mock.patch.object(
+            inference.prepare_search_models, "PINS", changed
+        ):
             with self.assertRaisesRegex(ValueError, "digest mismatch"):
                 with self.cached(stamp):
                     self.fail("changed manifest pin accepted")
@@ -182,14 +208,18 @@ class ResidentModelFilesTests(unittest.TestCase):
         target.chmod(0o600)
         target.write_bytes(b"[]")
         target.chmod(0o400)
-        with self.assertRaisesRegex(inference.InferenceError, "model_digest_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "model_digest_changed"
+        ):
             with self.cached(stamp):
                 self.fail("small changed metadata was not hashed")
 
     def test_retained_file_and_named_path_are_checked_on_context_exit(self):
         _, stamp = self.deep()
         target = next(iter(self.large))
-        with self.assertRaisesRegex(inference.InferenceError, "model_file_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "model_file_changed"
+        ):
             with self.cached(stamp):
                 replacement = target.with_name(target.name + ".replacement")
                 self.write(replacement, target.read_bytes())
@@ -210,14 +240,18 @@ class ResidentModelFilesTests(unittest.TestCase):
             return original(name, flags, *args, dir_fd=dir_fd)
 
         with mock.patch.object(inference.os, "open", side_effect=racing_open):
-            with self.assertRaisesRegex(inference.InferenceError, "model_file_changed"):
+            with self.assertRaisesRegex(
+                inference.InferenceError, "model_file_changed"
+            ):
                 with self.cached(stamp):
                     self.fail("file replacement while opening was accepted")
         self.assertTrue(swapped)
 
     def test_parent_ancestry_remains_pinned_during_cached_context(self):
         _, stamp = self.deep()
-        with self.assertRaisesRegex(ValueError, "model_source_directory_changed"):
+        with self.assertRaisesRegex(
+            ValueError, "model_source_directory_changed"
+        ):
             with self.cached(stamp):
                 root = self.config.api_model_root
                 root.rename(root.with_name("previous-api"))
@@ -225,7 +259,9 @@ class ResidentModelFilesTests(unittest.TestCase):
 
     def test_cache_does_not_weaken_modes_or_widen_model_roles(self):
         _, stamp = self.deep(include_embedding=False)
-        with self.assertRaisesRegex(inference.InferenceError, "file_identity_changed"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "file_identity_changed"
+        ):
             with self.cached(stamp):
                 self.fail("embedding authority was added to a smaller cache")
         _, stamp = self.deep()
@@ -249,13 +285,17 @@ class ResidentModelFilesTests(unittest.TestCase):
                 )
 
         with mock.patch.object(
-            inference.os, "fstat", side_effect=lambda fd: AtimeChanged(original(fd))
+            inference.os,
+            "fstat",
+            side_effect=lambda fd: AtimeChanged(original(fd)),
         ):
             self.assertEqual(self.deep()[1], stamp)
             with self.cached(stamp) as (_, verify):
                 self.assertEqual(verify.file_identity_sha256, stamp)
 
-    def test_cached_deadline_and_invalid_fingerprint_fail_before_admission(self):
+    def test_cached_deadline_and_invalid_fingerprint_fail_before_admission(
+        self,
+    ):
         _, stamp = self.deep()
         for value in (None, True, "", "f" * 63, "g" * 64):
             with (
@@ -266,10 +306,14 @@ class ResidentModelFilesTests(unittest.TestCase):
             ):
                 with self.cached(value):
                     self.fail("invalid cache fingerprint accepted")
-        with self.assertRaisesRegex(inference.InferenceError, "verification_deadline"):
+        with self.assertRaisesRegex(
+            inference.InferenceError, "verification_deadline"
+        ):
             with self.cached(stamp, deadline=time.monotonic() - 1):
                 self.fail("expired deadline accepted")
-        with mock.patch.object(inference.time, "monotonic", return_value=10) as clock:
+        with mock.patch.object(
+            inference.time, "monotonic", return_value=10
+        ) as clock:
             with self.assertRaisesRegex(
                 inference.InferenceError, "verification_deadline"
             ):

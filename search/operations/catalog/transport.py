@@ -2,7 +2,8 @@
 
 The host orchestrator must bind the IP and CA to sealed Docker/catalog evidence
 before constructing this client. This component does not discover Docker peers,
-grant deployment authority, accept a caller URL, or expose administrator output.
+grant deployment authority, accept a caller URL, or expose administrator
+output.
 TLS still verifies the fixed OpenSearch hostname; connecting to its IP does not
 disable certificate verification. There are no redirects, proxies or retries.
 Payloads must come from the sealed projection/access builders, never an HTTP
@@ -44,7 +45,8 @@ class TransportError(ValueError):
 
 
 def _response_depth(value):
-    """Bound nesting explicitly; decoder recursion limits vary by Python version."""
+    """Bound nesting explicitly; decoder recursion limits vary by Python
+    version."""
     try:
         if bounded_json.decoded_depth(value) > MAX_JSON_DEPTH:
             raise TransportError("catalog_transport_response_invalid")
@@ -119,7 +121,9 @@ def _credential_operation(username, method, path):
             or method in {"GET", "PUT"}
             and re.fullmatch("/" + INDEX + "/_mapping", path)
         ):
-            raise TransportError("catalog_transport_credentials_operation_invalid")
+            raise TransportError(
+                "catalog_transport_credentials_operation_invalid"
+            )
     elif probe:
         raise TransportError("catalog_transport_credentials_operation_invalid")
 
@@ -185,7 +189,11 @@ class OpenSearchClient:
 
     def _remaining(self):
         tick = self._clock()
-        if not math.isfinite(tick) or tick < self._last_tick or tick >= self._deadline:
+        if (
+            not math.isfinite(tick)
+            or tick < self._last_tick
+            or tick >= self._deadline
+        ):
             raise TransportError("catalog_transport_deadline_exceeded")
         self._last_tick = tick
         return min(REQUEST_SECONDS, self._deadline - tick)
@@ -222,8 +230,16 @@ class OpenSearchClient:
             else:
                 if payload is not None and type(payload) is not dict:
                     raise TransportError("catalog_transport_payload_invalid")
-                body = None if payload is None else private_io.canonical(payload)
-        except (ValueError, TypeError, OverflowError, UnicodeError, RecursionError):
+                body = (
+                    None if payload is None else private_io.canonical(payload)
+                )
+        except (
+            ValueError,
+            TypeError,
+            OverflowError,
+            UnicodeError,
+            RecursionError,
+        ):
             raise TransportError("catalog_transport_payload_invalid") from None
         if (
             body is not None
@@ -272,7 +288,8 @@ class OpenSearchClient:
                 type(response.status) is not int
                 or not 200 <= response.status <= 599
                 or 300 <= response.status <= 399
-                or response.getheader("Content-Encoding", "identity") != "identity"
+                or response.getheader("Content-Encoding", "identity")
+                != "identity"
             ):
                 raise TransportError("catalog_transport_response_invalid")
             declared = response.getheader("Content-Length")
@@ -283,7 +300,9 @@ class OpenSearchClient:
             data = bytearray()
             while not response.isclosed():
                 channel.settimeout(self._remaining())
-                chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - len(data)))
+                chunk = response.read1(
+                    min(65536, MAX_RESPONSE_BYTES + 1 - len(data))
+                )
                 if not chunk:
                     break
                 data.extend(chunk)

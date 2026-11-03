@@ -1,4 +1,6 @@
-"""Exercise frozen inputs and durable failure guards without a daemon or Docker."""
+"""Exercise frozen inputs and durable failure guards without a daemon or
+Docker.
+"""
 
 from copy import deepcopy
 import hashlib
@@ -35,7 +37,10 @@ class FakePueue:
                 "tasks": self.tasks,
                 "groups": {
                     "default": {"status": "Running", "parallel_tasks": 1},
-                    "heavy": {"status": self.group_status, "parallel_tasks": 1},
+                    "heavy": {
+                        "status": self.group_status,
+                        "parallel_tasks": 1,
+                    },
                 },
             }
         )
@@ -80,7 +85,12 @@ class QueueTests(unittest.TestCase):
         self.root = self.directory / "queue"
         self.source = self.directory / "source"
         self.state_root = self.directory / "profiles"
-        for path in (self.root, self.source, self.source / "scripts", self.state_root):
+        for path in (
+            self.root,
+            self.source,
+            self.source / "scripts",
+            self.state_root,
+        ):
             path.mkdir(mode=0o700)
         self.plan = {"catalog_manifest_sha256": "b" * 64, "resources": []}
         queue.write(self.state_root / "plan.json", self.plan)
@@ -128,7 +138,9 @@ class QueueTests(unittest.TestCase):
         patch.object(queue, "host_identity", return_value="c" * 64).start()
         patch.object(queue, "revision", return_value="a" * 40).start()
         patch.object(
-            queue, "common_directory", return_value=self.directory / "common.git"
+            queue,
+            "common_directory",
+            return_value=self.directory / "common.git",
         ).start()
         patch.object(queue, "command", side_effect=self.dispatch).start()
 
@@ -138,7 +150,9 @@ class QueueTests(unittest.TestCase):
                 return subprocess.CompletedProcess(
                     argv,
                     0,
-                    b"100644 blob " + b"d" * 40 + b"\tscripts/depositarai.py\0",
+                    b"100644 blob "
+                    + b"d" * 40
+                    + b"\tscripts/depositarai.py\0",
                     b"",
                 )
             self.assertIn("--lock", argv)
@@ -161,15 +175,17 @@ class QueueTests(unittest.TestCase):
 
     def start(self, identifier):
         task_id = str(
-            queue.read(queue.job_root(self.registry, identifier) / "queue.json")[
-                "task_id"
-            ]
+            queue.read(
+                queue.job_root(self.registry, identifier) / "queue.json"
+            )["task_id"]
         )
         self.transport.tasks[task_id]["status"] = {"Running": {}}
 
     def typed_profiles(self):
         config = self.directory / "native-config.json"
-        queue.write(config, {"state_root": str(self.directory / "native-state")})
+        queue.write(
+            config, {"state_root": str(self.directory / "native-state")}
+        )
         config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
         record = make_record(capture(turn(None)))
         run = json.loads(record["files"]["run.json"])
@@ -232,7 +248,9 @@ class QueueTests(unittest.TestCase):
 
     def test_snapshot_survives_caller_edit_and_checkpoint_is_clean(self):
         identifier = self.submit()
-        self.program.write_text("raise RuntimeError('caller changed after enqueue')\n")
+        self.program.write_text(
+            "raise RuntimeError('caller changed after enqueue')\n"
+        )
         self.start(identifier)
         result = queue.execute(self.registry, identifier)
         self.assertEqual(result["status"], "checkpoint")
@@ -272,7 +290,9 @@ class QueueTests(unittest.TestCase):
                     self.root,
                     {"revision": "a" * 40, "profile_definition": self.profile},
                 )
-        with self.assertRaisesRegex(pueue.JobError, "operation_result_unverified"):
+        with self.assertRaisesRegex(
+            pueue.JobError, "operation_result_unverified"
+        ):
             execution.verify(
                 self.report,
                 0,
@@ -284,11 +304,15 @@ class QueueTests(unittest.TestCase):
         identifier = self.submit()
         self.start(identifier)
         queue.write(
-            self.state_root / "plan.json", {**self.plan, "changed": True}, replace=True
+            self.state_root / "plan.json",
+            {**self.plan, "changed": True},
+            replace=True,
         )
         with self.assertRaisesRegex(pueue.JobError, "job_blocked"):
             queue.execute(self.registry, identifier)
-        self.assertEqual(queue.status(self.registry, identifier)["status"], "blocked")
+        self.assertEqual(
+            queue.status(self.registry, identifier)["status"], "blocked"
+        )
         self.assertFalse((self.root / "active.json").exists())
 
     def test_uncertain_job_blocks_next_state_and_preserves_evidence(self):
@@ -297,7 +321,9 @@ class QueueTests(unittest.TestCase):
         with patch.object(
             queue, "command", side_effect=pueue.JobError("job_command_timeout")
         ):
-            with self.assertRaisesRegex(pueue.JobError, "job_recovery_required"):
+            with self.assertRaisesRegex(
+                pueue.JobError, "job_recovery_required"
+            ):
                 queue.execute(self.registry, first)
         first_root = queue.job_root(self.registry, first)
         receipt = queue.read(first_root / "result.json")
@@ -327,8 +353,12 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(proof, private_io.identity(named.lstat()))
             named.rename(retained)
             queue.write(named, {"replacement": True})
-            self.assertNotEqual(proof[:2], private_io.identity(named.lstat())[:2])
-            self.assertEqual(proof[:2], private_io.identity(retained.lstat())[:2])
+            self.assertNotEqual(
+                proof[:2], private_io.identity(named.lstat())[:2]
+            )
+            self.assertEqual(
+                proof[:2], private_io.identity(retained.lstat())[:2]
+            )
             fd = os.open(retained, os.O_RDWR | os.O_NOFOLLOW)
             try:
                 with self.assertRaises(BlockingIOError):
@@ -336,12 +366,17 @@ class QueueTests(unittest.TestCase):
             finally:
                 os.close(fd)
 
-    def test_archive_intent_refuses_submit_and_execute_without_clearing_it(self):
+    def test_archive_intent_refuses_submit_and_execute_without_clearing_it(
+        self,
+    ):
         identifier = self.submit()
         self.start(identifier)
         intent = self.root / "archive-intent.json"
         intent.symlink_to(self.directory / "missing-intent")
-        for action in (self.submit, lambda: queue.execute(self.registry, identifier)):
+        for action in (
+            self.submit,
+            lambda: queue.execute(self.registry, identifier),
+        ):
             with self.assertRaisesRegex(
                 pueue.JobError, "job_archive_recovery_required"
             ):
@@ -358,11 +393,14 @@ class QueueTests(unittest.TestCase):
             self.submit_profile("vector"),
         ]
         original = queue.read(
-            queue.job_root(self.registry, identifiers[1]) / "quality-cases.json",
+            queue.job_root(self.registry, identifiers[1])
+            / "quality-cases.json",
             raw=True,
         )
         Path(quality["cases"]).unlink()
-        Path(quality["cases"]).symlink_to(self.directory / "missing-caller-cases")
+        Path(quality["cases"]).symlink_to(
+            self.directory / "missing-caller-cases"
+        )
         Path(quality["config"]).write_bytes(b"caller replaced config\n")
 
         def native(argv, **options):
@@ -372,7 +410,9 @@ class QueueTests(unittest.TestCase):
                 fd = private_io.open_directory(destination)
                 try:
                     for name, raw in record["files"].items():
-                        private_io.write_file(fd, name, raw, max_bytes=8 * 1024**2)
+                        private_io.write_file(
+                            fd, name, raw, max_bytes=8 * 1024**2
+                        )
                 finally:
                     os.close(fd)
                 value = {
@@ -407,10 +447,13 @@ class QueueTests(unittest.TestCase):
                     queue.read(self.root / "active.json"),
                     {"job_id": identifier, "status": "clean"},
                 )
-                self.assertTrue(queue.verified_evidence(self.registry, identifier))
+                self.assertTrue(
+                    queue.verified_evidence(self.registry, identifier)
+                )
                 task_id = str(
                     queue.read(
-                        queue.job_root(self.registry, identifier) / "queue.json"
+                        queue.job_root(self.registry, identifier)
+                        / "queue.json"
                     )["task_id"]
                 )
                 self.transport.tasks[task_id]["status"] = {
@@ -430,13 +473,15 @@ class QueueTests(unittest.TestCase):
         self.assertFalse(any(name.startswith("source/") for name in inventory))
         self.assertEqual(
             queue.read(
-                queue.job_root(self.registry, identifiers[1]) / "quality-cases.json",
+                queue.job_root(self.registry, identifiers[1])
+                / "quality-cases.json",
                 raw=True,
             ),
             original,
         )
         operation = (
-            queue.job_root(self.registry, identifiers[1]) / "capture/outcomes.json"
+            queue.job_root(self.registry, identifiers[1])
+            / "capture/outcomes.json"
         )
         operation.write_bytes(b"{}\n")
         with self.assertRaises(ValueError):
@@ -450,11 +495,15 @@ class QueueTests(unittest.TestCase):
                     **profile,
                     "source_revision": "c" * 40,
                 }
-                with self.assertRaisesRegex(pueue.JobError, "profile_source_changed"):
+                with self.assertRaisesRegex(
+                    pueue.JobError, "profile_source_changed"
+                ):
                     self.submit_profile("wrong-source")
                 self.assertEqual(self.transport.calls, [])
 
-    def test_native_timeout_and_interrupt_keep_uncertainty_for_each_typed_job(self):
+    def test_native_timeout_and_interrupt_keep_uncertainty_for_each_typed_job(
+        self,
+    ):
         quality, vector, _, _ = self.typed_profiles()
         for profile, error in (
             (quality, pueue.JobError("job_command_timeout")),
@@ -481,12 +530,16 @@ class QueueTests(unittest.TestCase):
                     queue.result(self.registry, identifier)["status"],
                     "recovery_required",
                 )
-                with self.assertRaisesRegex(pueue.JobError, "result_unverified"):
+                with self.assertRaisesRegex(
+                    pueue.JobError, "result_unverified"
+                ):
                     queue.verified_evidence(self.registry, identifier)
 
     def test_cancel_only_queued_and_never_sends_signal(self):
         first, second = self.submit(), self.submit()
-        self.assertEqual(queue.cancel(self.registry, first)["status"], "cancelled")
+        self.assertEqual(
+            queue.cancel(self.registry, first)["status"], "cancelled"
+        )
         self.start(second)
         with self.assertRaisesRegex(pueue.JobError, "job_not_queued"):
             queue.cancel(self.registry, second)
@@ -496,7 +549,9 @@ class QueueTests(unittest.TestCase):
                 for call in self.transport.calls
             )
         )
-        self.assertEqual(queue.status(self.registry, first)["status"], "cancelled")
+        self.assertEqual(
+            queue.status(self.registry, first)["status"], "cancelled"
+        )
 
     def test_unknown_queue_peer_and_modified_launcher_are_refused(self):
         identifier = self.submit()
@@ -513,7 +568,9 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.transport.tasks["0"]["envs"], pueue.ENVIRONMENT)
         self.assertEqual(self.transport.calls[-1], ("enqueue", "0"))
         self.transport.tasks["0"]["envs"]["UNEXPECTED"] = "synthetic"
-        with self.assertRaisesRegex(pueue.JobError, "task_environment_changed"):
+        with self.assertRaisesRegex(
+            pueue.JobError, "task_environment_changed"
+        ):
             queue.status(self.registry, identifier)
         self.transport.tasks["0"]["label"] = "unknown-peer"
         with self.assertRaisesRegex(pueue.JobError, "queue_peer_invalid"):
@@ -549,7 +606,9 @@ class QueueTests(unittest.TestCase):
                 try:
                     with (
                         patch.object(
-                            self.transport, "seal_environment", side_effect=seal
+                            self.transport,
+                            "seal_environment",
+                            side_effect=seal,
                         ),
                         self.assertRaises(pueue.JobError),
                     ):
@@ -581,7 +640,9 @@ class QueueTests(unittest.TestCase):
                     self.assertFalse((root / "result.json").exists())
                 finally:
                     if changed:
-                        self.transport.tasks[changed["task_id"]] = changed["original"]
+                        self.transport.tasks[changed["task_id"]] = changed[
+                            "original"
+                        ]
 
     def test_other_repository_and_arbitrary_payload_are_refused(self):
         specification = {
@@ -604,9 +665,14 @@ class QueueTests(unittest.TestCase):
         with patch.object(
             queue,
             "common_directory",
-            side_effect=[self.directory / "other.git", self.directory / "trusted.git"],
+            side_effect=[
+                self.directory / "other.git",
+                self.directory / "trusted.git",
+            ],
         ):
-            with self.assertRaisesRegex(pueue.JobError, "source_repository_changed"):
+            with self.assertRaisesRegex(
+                pueue.JobError, "source_repository_changed"
+            ):
                 queue.submit(self.registry, specification)
 
     def test_result_refuses_changed_operation_or_raw_bytes(self):
@@ -615,7 +681,9 @@ class QueueTests(unittest.TestCase):
         queue.execute(self.registry, identifier)
         root = queue.job_root(self.registry, identifier)
         encoded = (root / "stdout.bin").read_bytes()
-        (root / "stdout.bin").write_bytes(encoded.replace(b"checkpoint", b"unexpected"))
+        (root / "stdout.bin").write_bytes(
+            encoded.replace(b"checkpoint", b"unexpected")
+        )
         with self.assertRaisesRegex(pueue.JobError, "artifact_changed"):
             queue.result(self.registry, identifier)
 
@@ -642,7 +710,8 @@ class QueueTests(unittest.TestCase):
         )
         root = queue.job_root(self.registry, identifier)
         self.assertEqual(
-            queue.read(root / "request.json")["profile_definition"], self.profile
+            queue.read(root / "request.json")["profile_definition"],
+            self.profile,
         )
 
     def test_unresolved_active_intent_overrides_completed_summary(self):
@@ -655,7 +724,8 @@ class QueueTests(unittest.TestCase):
             replace=True,
         )
         self.assertEqual(
-            queue.status(self.registry, identifier)["status"], "recovery_required"
+            queue.status(self.registry, identifier)["status"],
+            "recovery_required",
         )
 
     def test_pending_result_and_paused_queue_are_visible(self):
@@ -680,16 +750,22 @@ class QueueTests(unittest.TestCase):
             with self.assertRaisesRegex(pueue.JobError, "profile_invalid"):
                 queue.load_registry(filename)
         queue.write(
-            filename, {**self.registry, "machine_id_sha256": "0" * 64}, replace=True
+            filename,
+            {**self.registry, "machine_id_sha256": "0" * 64},
+            replace=True,
         )
         with self.assertRaisesRegex(pueue.JobError, "host_changed"):
             queue.load_registry(filename)
 
-    def test_registry_namespace_is_checked_before_read_or_source_commands(self):
+    def test_registry_namespace_is_checked_before_read_or_source_commands(
+        self,
+    ):
         public = self.directory / "public"
         public.mkdir(mode=0o755)
         with patch.object(queue, "read") as read:
-            with self.assertRaisesRegex(NamespaceError, "namespace_private_directory"):
+            with self.assertRaisesRegex(
+                NamespaceError, "namespace_private_directory"
+            ):
                 queue.load_registry(public / "registry.json")
             read.assert_not_called()
 
@@ -777,9 +853,12 @@ class TransportTests(unittest.TestCase):
                         "--json",
                     ],
                 )
-                self.assertEqual(os.pread(pass_fds[0], 4096, 0), binary.read_bytes())
                 self.assertEqual(
-                    os.pread(pass_fds[1], 16384, 0), pueue.configuration(registry)
+                    os.pread(pass_fds[0], 4096, 0), binary.read_bytes()
+                )
+                self.assertEqual(
+                    os.pread(pass_fds[1], 16384, 0),
+                    pueue.configuration(registry),
                 )
                 return result
 
@@ -789,7 +868,9 @@ class TransportTests(unittest.TestCase):
                     "BINARY_SHA256",
                     hashlib.sha256(binary.read_bytes()).hexdigest(),
                 ),
-                patch.object(pueue, "command", side_effect=captured) as execute,
+                patch.object(
+                    pueue, "command", side_effect=captured
+                ) as execute,
             ):
                 self.assertEqual(
                     pueue.Pueue(registry).call("status", "--json"), b"fixture"
@@ -820,7 +901,9 @@ class TransportTests(unittest.TestCase):
             patch.object(pueue, "MAX_OUTPUT", 64),
             self.assertRaisesRegex(pueue.JobError, "output_limit"),
         ):
-            pueue.command([sys.executable, "-I", "-S", "-B", "-c", "print('x'*1000)"])
+            pueue.command(
+                [sys.executable, "-I", "-S", "-B", "-c", "print('x'*1000)"]
+            )
 
     def test_closed_pipes_timeout_stays_a_fixed_error(self):
         with self.assertRaisesRegex(pueue.JobError, "job_command_failed"):
@@ -865,7 +948,10 @@ class TransportTests(unittest.TestCase):
                 ):
                     transport.state()
         changed = deepcopy(value)
-        changed["groups"]["another-queue"] = {"status": "Running", "parallel_tasks": 1}
+        changed["groups"]["another-queue"] = {
+            "status": "Running",
+            "parallel_tasks": 1,
+        }
         with patch.object(
             transport, "call", return_value=private_io.canonical(changed)
         ):

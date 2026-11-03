@@ -61,13 +61,17 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
             self.assertEqual(2, self.module.main())
 
     def test_ca_verified_security_plugin_up_is_healthy(self) -> None:
-        response = FakeResponse(b'{"message":null,"mode":"strict","status":"UP"}')
+        response = FakeResponse(
+            b'{"message":null,"mode":"strict","status":"UP"}'
+        )
         with (
             mock.patch.object(
                 self.module.sys, "argv", ["check", "https://127.0.0.1:9200"]
             ),
             mock.patch.object(
-                self.module.ssl, "create_default_context", return_value=object()
+                self.module.ssl,
+                "create_default_context",
+                return_value=object(),
             ) as create_context,
             mock.patch.object(
                 self.module.urllib.request,
@@ -83,7 +87,9 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
         self.assertEqual(self.module.HEALTH_URL, request.full_url)
         self.assertTrue(response.closed)
 
-    def test_unauthorized_cluster_response_is_never_treated_as_ready(self) -> None:
+    def test_unauthorized_cluster_response_is_never_treated_as_ready(
+        self,
+    ) -> None:
         for status in (401, 403):
             with self.subTest(status=status):
                 error = urllib.error.HTTPError(
@@ -100,7 +106,9 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
                         ["check", "https://127.0.0.1:9200"],
                     ),
                     mock.patch.object(
-                        self.module.ssl, "create_default_context", return_value=object()
+                        self.module.ssl,
+                        "create_default_context",
+                        return_value=object(),
                     ),
                     mock.patch.object(
                         self.module.urllib.request,
@@ -110,7 +118,9 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
                 ):
                     self.assertEqual(1, self.module.main())
 
-    def test_malformed_down_redirected_or_oversized_response_is_unhealthy(self) -> None:
+    def test_malformed_down_redirected_or_oversized_response_is_unhealthy(
+        self,
+    ) -> None:
         responses = (
             FakeResponse(b"{}"),
             FakeResponse(b'{"status":"DOWN"}'),
@@ -118,7 +128,9 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
             FakeResponse(b'{"status":"UP","status":"DOWN"}'),
             FakeResponse(b'["UP"]'),
             FakeResponse(b'{"status":"UP"}', status=201),
-            FakeResponse(b'{"status":"UP"}', url="https://127.0.0.1:9200/redirected"),
+            FakeResponse(
+                b'{"status":"UP"}', url="https://127.0.0.1:9200/redirected"
+            ),
             FakeResponse(b"x" * (4096 + 1)),
         )
         for response in responses:
@@ -130,10 +142,14 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
                     ["check", "https://127.0.0.1:9200"],
                 ),
                 mock.patch.object(
-                    self.module.ssl, "create_default_context", return_value=object()
+                    self.module.ssl,
+                    "create_default_context",
+                    return_value=object(),
                 ),
                 mock.patch.object(
-                    self.module.urllib.request, "urlopen", return_value=response
+                    self.module.urllib.request,
+                    "urlopen",
+                    return_value=response,
                 ),
             ):
                 self.assertEqual(1, self.module.main())
@@ -158,7 +174,9 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
                     ["check", "https://127.0.0.1:9200"],
                 ),
                 mock.patch.object(
-                    self.module.ssl, "create_default_context", return_value=object()
+                    self.module.ssl,
+                    "create_default_context",
+                    return_value=object(),
                 ),
                 mock.patch.object(
                     self.module.urllib.request, "urlopen", side_effect=error
@@ -168,8 +186,12 @@ class OpenSearchHealthcheckTests(unittest.TestCase):
 
 
 class SearchRuntimeStaticTests(unittest.TestCase):
-    def test_authenticated_queries_receive_only_the_shared_catalog_role(self) -> None:
-        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(encoding="utf-8")
+    def test_authenticated_queries_receive_only_the_shared_catalog_role(
+        self,
+    ) -> None:
+        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertEqual(
             1,
             script.count(
@@ -197,13 +219,16 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         )
         self.assertEqual(1, compose.count("-Dfess.config.paging.page.size=25"))
         self.assertEqual(1, compose.count("-Duser.timezone=UTC"))
-        self.assertIn("Fess JVM timezone property must appear exactly once", script)
+        self.assertIn(
+            "Fess JVM timezone property must appear exactly once", script
+        )
         self.assertIn("conflicting Fess JVM timezone property", script)
         self.assertNotIn(
             "query.additional.api.response.fields=depositar_bundle_id", script
         )
         self.assertNotIn(
-            "query.additional.api.response.fields=depositar_document_sha256", script
+            "query.additional.api.response.fields=depositar_document_sha256",
+            script,
         )
         self.assertEqual(
             1,
@@ -216,12 +241,17 @@ class SearchRuntimeStaticTests(unittest.TestCase):
             1,
             script.count(
                 'set_property "$override_dir/fess_config.properties" '
-                "virtual.host.headers 'X-Depositar-Catalog:catalog=depositar_catalog'"
+                "virtual.host.headers 'X-Depositar-Catalog:"
+                "catalog=depositar_catalog'"
             ),
         )
 
-    def test_fess_secrets_are_read_from_files_not_argv_or_environment(self) -> None:
-        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(encoding="utf-8")
+    def test_fess_secrets_are_read_from_files_not_argv_or_environment(
+        self,
+    ) -> None:
+        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
         for name in (
             "fess_opensearch_password",
             "fess_app_cipher_key",
@@ -237,7 +267,8 @@ class SearchRuntimeStaticTests(unittest.TestCase):
     ) -> None:
         template_dir = ROOT / "deploy/config/opensearch"
         rendered = "\n".join(
-            path.read_text(encoding="utf-8") for path in sorted(template_dir.iterdir())
+            path.read_text(encoding="utf-8")
+            for path in sorted(template_dir.iterdir())
         ).lower()
         self.assertNotIn("admin/admin", rendered)
         self.assertNotIn("plugins.security.disabled", rendered)
@@ -246,7 +277,9 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         self.assertIn("__fess_hash__", rendered)
         self.assertIn("plugins.security.ssl.http.enabled: true", rendered)
 
-    def test_security_rest_api_is_enabled_only_for_the_operator_role(self) -> None:
+    def test_security_rest_api_is_enabled_only_for_the_operator_role(
+        self,
+    ) -> None:
         template_dir = ROOT / "deploy/config/opensearch"
         config = (template_dir / "opensearch.yml").read_text(encoding="utf-8")
         key = "plugins.security.restapi.roles_enabled"
@@ -257,23 +290,33 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         self.assertNotIn("plugins.security.restapi.admin.enabled", config)
         roles = (template_dir / "roles.yml").read_text(encoding="utf-8")
         self.assertNotIn("restapi:admin", roles)
-        mapping = (template_dir / "roles_mapping.yml").read_text(encoding="utf-8")
+        mapping = (template_dir / "roles_mapping.yml").read_text(
+            encoding="utf-8"
+        )
         for role, backend in (
             ("all_access", "admin"),
             ("fess_backend", "fess_backend"),
         ):
             with self.subTest(role=role):
-                blocks = re.findall(rf"(?ms)^{role}:\n(.*?)(?=^\S|\Z)", mapping)
+                blocks = re.findall(
+                    rf"(?ms)^{role}:\n(.*?)(?=^\S|\Z)", mapping
+                )
                 self.assertEqual(1, len(blocks))
                 self.assertEqual(
-                    ["  reserved: false", "  backend_roles:", "    - " + backend],
+                    [
+                        "  reserved: false",
+                        "  backend_roles:",
+                        "    - " + backend,
+                    ],
                     [line for line in blocks[0].splitlines() if line],
                 )
 
-    def test_fess_identity_cannot_inherit_the_operator_backend_role(self) -> None:
-        users = (ROOT / "deploy/config/opensearch/internal_users.yml.in").read_text(
-            encoding="utf-8"
-        )
+    def test_fess_identity_cannot_inherit_the_operator_backend_role(
+        self,
+    ) -> None:
+        users = (
+            ROOT / "deploy/config/opensearch/internal_users.yml.in"
+        ).read_text(encoding="utf-8")
         self.assertNotIn("opendistro_security_roles", users)
         for user, backend in (("admin", "admin"), ("fess", "fess_backend")):
             with self.subTest(user=user):
@@ -286,9 +329,9 @@ class SearchRuntimeStaticTests(unittest.TestCase):
 
     def test_configsync_dictionary_path_index_and_role_are_exact(self) -> None:
         dictionary_path = "/usr/share/opensearch/config/dictionary/"
-        opensearch = (ROOT / "deploy/config/opensearch/opensearch.yml").read_text(
-            encoding="utf-8"
-        )
+        opensearch = (
+            ROOT / "deploy/config/opensearch/opensearch.yml"
+        ).read_text(encoding="utf-8")
         roles = (ROOT / "deploy/config/opensearch/roles.yml").read_text(
             encoding="utf-8"
         )
@@ -310,7 +353,9 @@ class SearchRuntimeStaticTests(unittest.TestCase):
             "indices:data/read/scroll/clear",
         ):
             self.assertEqual(1, roles.count(f'- "{composite_permission}"'))
-        self.assertRegex(roles, re.compile(r'^\s*- "configsync"$', re.MULTILINE))
+        self.assertRegex(
+            roles, re.compile(r'^\s*- "configsync"$', re.MULTILINE)
+        )
         self.assertNotRegex(
             roles,
             re.compile(r'^\s*- ["\']?\.configsync["\']?$', re.MULTILINE),
@@ -352,7 +397,9 @@ class SearchRuntimeStaticTests(unittest.TestCase):
             action = json.loads(lines[offset])
             document = json.loads(lines[offset + 1])
             self.assertEqual({"index"}, set(action))
-            self.assertEqual("fess_config.scheduled_job", action["index"]["_index"])
+            self.assertEqual(
+                "fess_config.scheduled_job", action["index"]["_index"]
+            )
             ids.add(action["index"]["_id"])
             self.assertIs(document["available"], False)
             self.assertEqual("", document["cronExpression"])
@@ -370,8 +417,12 @@ class SearchRuntimeStaticTests(unittest.TestCase):
             dockerfile,
         )
 
-    def test_existing_scheduler_guard_is_authenticated_and_fail_closed(self) -> None:
-        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(encoding="utf-8")
+    def test_existing_scheduler_guard_is_authenticated_and_fail_closed(
+        self,
+    ) -> None:
+        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("FESS_SCHEDULER_ENABLED", script)
         self.assertIn("fess_config.scheduled_job", script)
         self.assertIn("/_update_by_query?", script)
@@ -380,13 +431,17 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         self.assertIn("for attempt in {1..12}; do", script)
         self.assertIn("opensearch_post_json_status", script)
         self.assertIn("429 | 502 | 503 | 504", script)
-        self.assertIn("unexpected OpenSearch scheduler-update HTTP status", script)
+        self.assertIn(
+            "unexpected OpenSearch scheduler-update HTTP status", script
+        )
         self.assertIn(
             "OpenSearch scheduler primary shard did not become readable",
             script,
         )
         self.assertLess(
-            script.index("OpenSearch scheduler primary shard did not become readable"),
+            script.index(
+                "OpenSearch scheduler primary shard did not become readable"
+            ),
             script.index("/_update_by_query?"),
         )
         self.assertIn("--cacert /run/opensearch-ca/root-ca.pem", script)
@@ -396,22 +451,27 @@ class SearchRuntimeStaticTests(unittest.TestCase):
         self.assertRegex(
             script,
             re.compile(
-                r"disable_existing_scheduled_jobs\s*\n\s*\n\s*fess_pid=", re.MULTILINE
+                r"disable_existing_scheduled_jobs\s*\n\s*\n\s*fess_pid=",
+                re.MULTILINE,
             ),
         )
         self.assertIn(
-            'set_property "$override_dir/fess_config.properties" job.max.crawler.processes 1',
+            'set_property "$override_dir/fess_config.properties" '
+            "job.max.crawler.processes 1",
             script,
         )
         self.assertIn(
-            'set_property "$override_dir/fess_config.properties" crawler.http.thread_pool.size 1',
+            'set_property "$override_dir/fess_config.properties" '
+            "crawler.http.thread_pool.size 1",
             script,
         )
         self.assertNotIn("job.max.crawler.processes 0", script)
         self.assertNotIn("crawler.http.thread_pool.size 0", script)
 
     def test_scheduler_readiness_json_regex_is_executable_bash(self) -> None:
-        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(encoding="utf-8")
+        script = (ROOT / "deploy/docker/fess/entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
         match = re.search(
             r"local ready_response_regex='([^']+)'",
             script,

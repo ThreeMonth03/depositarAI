@@ -90,11 +90,18 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
                         }
                     )
             diagnostic = str(error) + "\n" + logs + "\n" + json.dumps(health)
-            for secret in ("fixture-oidc-client-secret", *(c * 64 for c in "abcdef")):
-                diagnostic = diagnostic.replace(secret, "[fixture-secret-redacted]")
+            for secret in (
+                "fixture-oidc-client-secret",
+                *(c * 64 for c in "abcdef"),
+            ):
+                diagnostic = diagnostic.replace(
+                    secret, "[fixture-secret-redacted]"
+                )
             raise AssertionError(diagnostic) from None
 
-    def test_anonymous_and_oidc_admission_use_challenge_gate_and_durable_quotas(self):
+    def test_guest_and_oidc_challenges_preserve_durable_quotas(
+        self,
+    ):
         self.compose("up", "--detach", "--wait", "antibot", timeout=45)
         self.assertEqual(self.probe("access", "guest")["status"], 200)
         denied = self.probe("session", "guest")
@@ -108,12 +115,16 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         self.assertEqual(self.probe("verify", "guest")["status"], 200)
         self.assertEqual(self.probe("session", "guest")["status"], 200)
         self.assertEqual(
-            self.probe("turn", "guest", {"query": "氣候", "version": 0})["status"],
+            self.probe("turn", "guest", {"query": "氣候", "version": 0})[
+                "status"
+            ],
             200,
         )
         self.assertEqual(self.calls(), 1)
         self.assertEqual(
-            self.probe("turn", "guest", {"query": "氣候", "version": 1})["status"],
+            self.probe("turn", "guest", {"query": "氣候", "version": 1})[
+                "status"
+            ],
             429,
         )
         self.assertEqual(self.calls(), 1)
@@ -125,7 +136,9 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         self.assertEqual(identity["value"]["principal"]["kind"], "user")
         self.assertEqual(self.probe("session", "alice")["status"], 200)
         self.assertEqual(
-            self.probe("turn", "alice", {"query": "氣候", "version": 0})["status"],
+            self.probe("turn", "alice", {"query": "氣候", "version": 0})[
+                "status"
+            ],
             200,
         )
         self.assertEqual(self.calls(), 2)
@@ -155,20 +168,28 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
 
         time.sleep(1)
         self.compose("stop", "--timeout", "2", "antibot", timeout=15)
-        unavailable = self.probe("turn", "alice", {"query": "氣候", "version": 1})
+        unavailable = self.probe(
+            "turn", "alice", {"query": "氣候", "version": 1}
+        )
         self.assertEqual(unavailable["status"], 503)
-        self.assertEqual(unavailable["value"]["error"]["code"], "service_unavailable")
+        self.assertEqual(
+            unavailable["value"]["error"]["code"], "service_unavailable"
+        )
         self.assertEqual(self.calls(), 2)
         self.compose("up", "--detach", "--wait", "antibot", timeout=45)
 
         self.compose("stop", "--timeout", "2", "quota-redis", timeout=15)
-        quota_down = self.probe("turn", "alice", {"query": "氣候", "version": 1})
+        quota_down = self.probe(
+            "turn", "alice", {"query": "氣候", "version": 1}
+        )
         self.assertIn(quota_down["status"], (500, 503))
         self.assertEqual(self.calls(), 2)
         self.compose("start", "quota-redis", timeout=15)
         time.sleep(1)
         self.assertEqual(
-            self.probe("turn", "alice", {"query": "氣候", "version": 1})["status"],
+            self.probe("turn", "alice", {"query": "氣候", "version": 1})[
+                "status"
+            ],
             200,
         )
         self.assertEqual(self.calls(), 3)

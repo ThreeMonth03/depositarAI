@@ -75,7 +75,9 @@ def _require_local_state(store):
         RecursionError,
         OverflowError,
     ):
-        raise FirstActivationError("product_private_recovery_required") from None
+        raise FirstActivationError(
+            "product_private_recovery_required"
+        ) from None
     if any(receipt["status"] in {"started", "failed"} for receipt in receipts):
         raise FirstActivationError("product_private_recovery_required")
     if names & {"active.json", "gateway"} or any(
@@ -91,10 +93,14 @@ def _require_local_state(store):
 
 
 def require_first_activation(store, *, docker_runner=None):
-    """Require clean local state and an absent gateway before expensive work."""
+    """Require clean local state and an absent gateway before expensive
+    work.
+    """
     _require_local_state(store)
     try:
-        with tempfile.TemporaryDirectory(prefix="depositar-first-activation-") as raw:
+        with tempfile.TemporaryDirectory(
+            prefix="depositar-first-activation-"
+        ) as raw:
             client = Path(raw)
             descriptor = private_io.open_directory(client)
             try:
@@ -115,7 +121,9 @@ def require_first_activation(store, *, docker_runner=None):
                     docker, composition.GATEWAY_PROJECT
                 )
                 if containers or networks:
-                    raise FirstActivationError("product_private_existing_activation")
+                    raise FirstActivationError(
+                        "product_private_existing_activation"
+                    )
                 verify_client()
             finally:
                 os.close(descriptor)

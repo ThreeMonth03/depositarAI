@@ -1,4 +1,6 @@
-"""Validate ordered quality cases and bind their unchanged query/expectation data."""
+"""Validate ordered quality cases and bind
+their unchanged query/expectation data.
+"""
 
 import hashlib
 import json
@@ -23,7 +25,9 @@ OUTCOMES = {
 
 
 def conditions(value):
-    """Use production predicates to compare date meaning, not string padding."""
+    """Use production predicates to compare
+    date meaning, not string padding.
+    """
     if type(value) is not dict or not {"time", "formats"} <= set(value):
         raise ValueError("condition fields missing")
     if value.get("place") is not None or type(value["formats"]) is not list:
@@ -50,7 +54,9 @@ def conditions(value):
 
 
 def normalized(value):
-    """Compare supported time bounds and format sets using production predicates."""
+    """Compare supported time bounds and format
+    sets using production predicates.
+    """
     result = validate_conditions(conditions(value))
     if "formats" in result:
         result["formats"] = tuple(sorted(result["formats"]))
@@ -58,7 +64,9 @@ def normalized(value):
 
 
 def validate_cases(value, *, captured=False, allow_empty=False):
-    """Validate the shared ordered case contract before inspecting any reply."""
+    """Validate the shared ordered case
+    contract before inspecting any reply.
+    """
     if (
         type(value) is not dict
         or set(value) != {"schema_version", "cases"}
@@ -129,17 +137,23 @@ def validate_cases(value, *, captured=False, allow_empty=False):
 def plan_digest(plan):
     """Bind expectations and query order independently of JSON whitespace."""
     validate_cases(plan)
-    raw = json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    raw = json.dumps(
+        plan, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def bind_plan(capture, plan):
-    """Reject changed expectations while retaining missing turns in the denominator."""
+    """Reject changed expectations while retaining
+    missing turns in the denominator.
+    """
     validate_cases(plan)
     planned = {case["id"]: case for case in plan["cases"]}
     for case in capture["cases"]:
         expected_case = planned.get(case["id"])
-        if expected_case is None or len(case["turns"]) > len(expected_case["turns"]):
+        if expected_case is None or len(case["turns"]) > len(
+            expected_case["turns"]
+        ):
             raise ValueError("unplanned case or turn")
         for actual, expected in zip(case["turns"], expected_case["turns"]):
             if {key: actual[key] for key in ("query", "expected")} != expected:

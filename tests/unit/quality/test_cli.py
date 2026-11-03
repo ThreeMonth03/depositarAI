@@ -1,4 +1,6 @@
-"""Verify the thin quality CLI preserves its structured output and exit codes."""
+"""Verify the thin quality CLI preserves its structured output and exit
+codes.
+"""
 
 from contextlib import redirect_stdout
 import io
@@ -13,13 +15,18 @@ from tests.unit.quality.fixtures import capture, plan_for, turn
 
 
 class QualityCLITests(unittest.TestCase):
-    def test_unknown_temporal_oracle_returns_fixed_invalid_input_diagnostics(self):
+    def test_unknown_temporal_oracle_returns_fixed_invalid_input_diagnostics(
+        self,
+    ):
         value = capture(turn({"start": "2024", "end": "2024"}))
         expected = value["cases"][0]["turns"][0]["expected"]
         expected["time"] = expected["time"] | {"calendar": "PRIVATE_ORACLE"}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
-            for option, payload in (("--plan", plan_for(value)), ("--input", value)):
+            for option, payload in (
+                ("--plan", plan_for(value)),
+                ("--input", value),
+            ):
                 with self.subTest(option=option):
                     path.write_text(json.dumps(payload))
                     output = io.StringIO()
@@ -27,17 +34,27 @@ class QualityCLITests(unittest.TestCase):
                         code = cli.main([option, str(path)])
                     self.assertEqual(2, code)
                     self.assertEqual(
-                        {"status": "invalid_input", "error": "quality_capture_invalid"},
+                        {
+                            "status": "invalid_input",
+                            "error": "quality_capture_invalid",
+                        },
                         json.loads(output.getvalue()),
                     )
                     self.assertNotIn("PRIVATE_ORACLE", output.getvalue())
 
     def test_domain_functions_are_not_forwarded_through_the_cli(self):
-        for name in ("validate_cases", "plan_digest", "evaluate", "normalized"):
+        for name in (
+            "validate_cases",
+            "plan_digest",
+            "evaluate",
+            "normalized",
+        ):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(cli, name))
 
-    def test_cli_returns_structured_exit_codes_without_echoing_unselected_data(self):
+    def test_cli_returns_structured_exit_codes_without_echoing_unselected_data(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "capture.json"
             value = capture(turn({"start": "2024", "end": "2024"}))
@@ -46,9 +63,9 @@ class QualityCLITests(unittest.TestCase):
             )
             for status in ("passed", "failed", "invalid_input"):
                 if status == "failed":
-                    value["cases"][0]["turns"][0]["response"]["result"]["state"][
-                        "topic"
-                    ] = ""
+                    value["cases"][0]["turns"][0]["response"]["result"][
+                        "state"
+                    ]["topic"] = ""
                 path.write_text(
                     json.dumps(value)
                     if status != "invalid_input"
@@ -58,28 +75,42 @@ class QualityCLITests(unittest.TestCase):
                 with redirect_stdout(output):
                     code = cli.main(["--input", str(path)])
                 self.assertEqual(
-                    code, {"passed": 0, "failed": 1, "invalid_input": 2}[status]
+                    code,
+                    {"passed": 0, "failed": 1, "invalid_input": 2}[status],
                 )
-                self.assertEqual(json.loads(output.getvalue())["status"], status)
-                self.assertNotIn("private-token-do-not-print", output.getvalue())
+                self.assertEqual(
+                    json.loads(output.getvalue())["status"], status
+                )
+                self.assertNotIn(
+                    "private-token-do-not-print", output.getvalue()
+                )
 
-    def test_cli_plan_validation_and_bound_capture_have_distinct_failure_codes(self):
+    def test_cli_plan_validation_and_bound_capture_have_distinct_failure_codes(
+        self,
+    ):
         value = capture(turn(None))
         value["cases"][0]["turns"][0]["query"] = "找氣候資料，勿輸出測試字串"
         plan = plan_for(value)
         with tempfile.TemporaryDirectory() as directory:
             plan_path, capture_path = (
-                Path(directory) / name for name in ("plan.json", "capture.json")
+                Path(directory) / name
+                for name in ("plan.json", "capture.json")
             )
-            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2))
+            plan_path.write_text(
+                json.dumps(plan, ensure_ascii=False, indent=2)
+            )
             output = io.StringIO()
             with redirect_stdout(output):
                 code = cli.main(["--plan", str(plan_path)])
             summary = json.loads(output.getvalue())
             self.assertEqual(0, code)
             self.assertEqual("plan_valid", summary["status"])
-            self.assertEqual((1, 1), (summary["case_count"], summary["turn_count"]))
-            self.assertEqual(contract.plan_digest(plan), summary["plan_sha256"])
+            self.assertEqual(
+                (1, 1), (summary["case_count"], summary["turn_count"])
+            )
+            self.assertEqual(
+                contract.plan_digest(plan), summary["plan_sha256"]
+            )
             self.assertNotIn("勿輸出測試字串", output.getvalue())
             for expected_code, captured in (
                 (0, value),
@@ -87,11 +118,18 @@ class QualityCLITests(unittest.TestCase):
                 (2, capture(turn(None))),
             ):
                 with self.subTest(expected_code=expected_code):
-                    capture_path.write_text(json.dumps(captured, ensure_ascii=False))
+                    capture_path.write_text(
+                        json.dumps(captured, ensure_ascii=False)
+                    )
                     output = io.StringIO()
                     with redirect_stdout(output):
                         code = cli.main(
-                            ["--input", str(capture_path), "--plan", str(plan_path)]
+                            [
+                                "--input",
+                                str(capture_path),
+                                "--plan",
+                                str(plan_path),
+                            ]
                         )
                     self.assertEqual(expected_code, code)
                     self.assertEqual(

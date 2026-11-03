@@ -1,4 +1,6 @@
-"""Tiny offline model fixtures exercise persistence without downloading weights."""
+"""Tiny offline model fixtures exercise persistence without downloading
+weights.
+"""
 
 from contextlib import contextmanager
 import hashlib
@@ -26,18 +28,25 @@ class ModelStoreTests(unittest.TestCase):
         self.blob = self.source / "blobs" / ("sha256-" + self.digest)
         self.blob.parent.mkdir()
         self.blob.write_bytes(blob)
-        self.manifest = self.source / "manifests/registry.ollama.ai/library/example/one"
+        self.manifest = (
+            self.source / "manifests/registry.ollama.ai/library/example/one"
+        )
         self.manifest.parent.mkdir(parents=True)
         self.manifest.write_text(
             json.dumps(
                 {
-                    "config": {"digest": "sha256:" + self.digest, "size": len(blob)},
+                    "config": {
+                        "digest": "sha256:" + self.digest,
+                        "size": len(blob),
+                    },
                     "layers": [],
                 }
             )
         )
         self.pins = {
-            "example:one": hashlib.sha256(self.manifest.read_bytes()).hexdigest()
+            "example:one": hashlib.sha256(
+                self.manifest.read_bytes()
+            ).hexdigest()
         }
         self.patch = patch.object(models, "PINS", self.pins)
         self.patch.start()
@@ -51,7 +60,9 @@ class ModelStoreTests(unittest.TestCase):
             self.blob.read_bytes(),
             (self.dest / self.blob.relative_to(self.source)).read_bytes(),
         )
-        self.assertEqual((self.dest / models.RECEIPT).stat().st_mode & 0o777, 0o400)
+        self.assertEqual(
+            (self.dest / models.RECEIPT).stat().st_mode & 0o777, 0o400
+        )
 
     def test_existing_destination_is_not_overwritten(self):
         self.dest.mkdir()
@@ -112,7 +123,9 @@ class ModelStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             models.plan(alias)
 
-    def test_copy_under_group_writable_umask_creates_every_private_parent(self):
+    def test_copy_under_group_writable_umask_creates_every_private_parent(
+        self,
+    ):
         previous = os.umask(0o002)
         try:
             receipt = models.prepare(self.source, self.dest)
@@ -122,11 +135,17 @@ class ModelStoreTests(unittest.TestCase):
         for directory, subdirectories, files in os.walk(self.dest):
             self.assertEqual(Path(directory).stat().st_mode & 0o777, 0o700)
             for name in subdirectories:
-                self.assertEqual((Path(directory) / name).stat().st_mode & 0o777, 0o700)
+                self.assertEqual(
+                    (Path(directory) / name).stat().st_mode & 0o777, 0o700
+                )
             for name in files:
-                self.assertEqual((Path(directory) / name).stat().st_mode & 0o777, 0o400)
+                self.assertEqual(
+                    (Path(directory) / name).stat().st_mode & 0o777, 0o400
+                )
 
-    def test_existing_unsafe_or_symlink_parent_is_not_repaired_or_followed(self):
+    def test_existing_unsafe_or_symlink_parent_is_not_repaired_or_followed(
+        self,
+    ):
         create = models.search_model_source.create_private_root
         outside = self.root / "outside"
         outside.mkdir(mode=0o700)
@@ -142,20 +161,26 @@ class ModelStoreTests(unittest.TestCase):
                             intermediate.mkdir(mode=0o775)
                             intermediate.chmod(0o775)
                         else:
-                            intermediate.symlink_to(outside, target_is_directory=True)
+                            intermediate.symlink_to(
+                                outside, target_is_directory=True
+                            )
                         yield root
 
                 checked = models.checked_file
                 copied = []
 
                 def counted(path, digest, size=None, output=None):
-                    if output is not None and not isinstance(output, io.BytesIO):
+                    if output is not None and not isinstance(
+                        output, io.BytesIO
+                    ):
                         copied.append(path)
                     return checked(path, digest, size, output)
 
                 with (
                     patch.object(
-                        models.search_model_source, "create_private_root", injected
+                        models.search_model_source,
+                        "create_private_root",
+                        injected,
                     ),
                     patch.object(models, "checked_file", side_effect=counted),
                     self.assertRaises((ValueError, OSError)),
@@ -165,7 +190,8 @@ class ModelStoreTests(unittest.TestCase):
                 self.assertFalse((destination / models.RECEIPT).exists())
                 if case == "group-writable":
                     self.assertEqual(
-                        (destination / "manifests").stat().st_mode & 0o777, 0o775
+                        (destination / "manifests").stat().st_mode & 0o777,
+                        0o775,
                     )
                 else:
                     self.assertTrue((destination / "manifests").is_symlink())
@@ -195,7 +221,9 @@ class ModelStoreTests(unittest.TestCase):
                 else:
                     extra.unlink()
 
-    def test_verify_rejects_link_fifo_or_oversize_receipt_without_blocking(self):
+    def test_verify_rejects_link_fifo_or_oversize_receipt_without_blocking(
+        self,
+    ):
         models.prepare(self.source, self.dest)
         receipt = self.dest / models.RECEIPT
         saved = self.root / "saved-receipt"
@@ -240,7 +268,9 @@ class ModelStoreTests(unittest.TestCase):
         ):
             models.prepare(self.source, destination)
         self.assertEqual(list(parent.iterdir()), [])
-        self.assertFalse((self.root / "publish-saved/copy" / models.RECEIPT).exists())
+        self.assertFalse(
+            (self.root / "publish-saved/copy" / models.RECEIPT).exists()
+        )
 
     def test_existing_artifact_is_never_overwritten(self):
         create = models.search_model_source.create_private_root
@@ -253,18 +283,25 @@ class ModelStoreTests(unittest.TestCase):
                     "blobs/sha256-" + self.digest, private=True, create=True
                 )
                 fd = os.open(
-                    leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400, dir_fd=parent_fd
+                    leaf,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o400,
+                    dir_fd=parent_fd,
                 )
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(sentinel)
                 yield root
 
         with (
-            patch.object(models.search_model_source, "create_private_root", injected),
+            patch.object(
+                models.search_model_source, "create_private_root", injected
+            ),
             self.assertRaises(FileExistsError),
         ):
             models.prepare(self.source, self.dest)
-        self.assertEqual((self.dest / "blobs" / self.blob.name).read_bytes(), sentinel)
+        self.assertEqual(
+            (self.dest / "blobs" / self.blob.name).read_bytes(), sentinel
+        )
         self.assertFalse((self.dest / models.RECEIPT).exists())
 
     def test_receipt_leaf_replacement_before_success_is_rejected(self):
@@ -277,7 +314,10 @@ class ModelStoreTests(unittest.TestCase):
             if receipt.exists() and not replaced:
                 opened = os.fstat(fd)
                 named = receipt.stat()
-                if (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino):
+                if (opened.st_dev, opened.st_ino) == (
+                    named.st_dev,
+                    named.st_ino,
+                ):
                     replaced = True
                     receipt.rename(self.root / "original-receipt")
                     receipt.write_bytes(b"{}\n")
@@ -306,7 +346,10 @@ class ModelStoreTests(unittest.TestCase):
                 def replace_on_final_fstat(fd):
                     nonlocal reads
                     info = fstat(fd)
-                    if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+                    if (info.st_dev, info.st_ino) == (
+                        identity.st_dev,
+                        identity.st_ino,
+                    ):
                         reads += 1
                         if reads == 2:
                             artifact.rename(saved)
@@ -337,7 +380,10 @@ class ModelStoreTests(unittest.TestCase):
                 def replace_after_hash(path, digest, size=None, output=None):
                     nonlocal changed
                     count = checked(path, digest, size, output)
-                    if path == destination / "blobs" / self.blob.name and not changed:
+                    if (
+                        path == destination / "blobs" / self.blob.name
+                        and not changed
+                    ):
                         changed = True
                         original = receipt.read_bytes()
                         if mutation == "same-bytes-replacement":
@@ -369,7 +415,10 @@ class ModelStoreTests(unittest.TestCase):
                 def add_after_hash(path, digest, size=None, output=None):
                     nonlocal changed
                     count = checked(path, digest, size, output)
-                    if path == destination / "blobs" / self.blob.name and not changed:
+                    if (
+                        path == destination / "blobs" / self.blob.name
+                        and not changed
+                    ):
                         changed = True
                         extra = destination / "manifests/extra"
                         if extra_kind == "empty-directory":
@@ -380,8 +429,12 @@ class ModelStoreTests(unittest.TestCase):
                     return count
 
                 with (
-                    patch.object(models, "checked_file", side_effect=add_after_hash),
-                    self.assertRaisesRegex(ValueError, "unexpected model-store"),
+                    patch.object(
+                        models, "checked_file", side_effect=add_after_hash
+                    ),
+                    self.assertRaisesRegex(
+                        ValueError, "unexpected model-store"
+                    ),
                 ):
                     models.verify(destination)
                 self.assertTrue(changed)

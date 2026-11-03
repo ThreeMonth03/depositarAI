@@ -1,4 +1,6 @@
-"""Search-session state is typed data, never a transcript or a model summary."""
+"""Search-session state is typed data,
+never a transcript or a model summary.
+"""
 
 import copy
 from typing import Annotated, Literal
@@ -43,7 +45,9 @@ class SearchState(StrictModel):
     @model_validator(mode="after")
     def exclusive_time(self):
         if self.time is not None and self.unapplied_time is not None:
-            raise ValueError("cannot apply civil and unresolved lunar time together")
+            raise ValueError(
+                "cannot apply civil and unresolved lunar time together"
+            )
         return self
 
     @field_validator("topic")
@@ -130,7 +134,9 @@ class TurnPlan(StrictModel):
 
     def apply(self, previous):
         if self.relative_time is not None:
-            raise ValueError("relative time must be resolved before state application")
+            raise ValueError(
+                "relative time must be resolved before state application"
+            )
         if self.action not in {"new_search", "refine"}:
             raise ValueError("not an executable plan")
         state = (
@@ -142,9 +148,13 @@ class TurnPlan(StrictModel):
             state.topic = self.topic
         if self.time_op != "keep":
             state.time = self.time if self.time_op == "set" else None
-            state.unapplied_time = self.lunar_time if self.time_op == "lunar" else None
+            state.unapplied_time = (
+                self.lunar_time if self.time_op == "lunar" else None
+            )
         if self.formats_op != "keep":
-            state.formats = list(self.formats) if self.formats_op == "set" else []
+            state.formats = (
+                list(self.formats) if self.formats_op == "set" else []
+            )
         if not state.topic:
             raise ValueError("refinement needs an existing topic")
         return SearchState.model_validate(state.model_dump())
@@ -162,7 +172,9 @@ class TurnResponse(StrictModel):
 
 
 class ModelTurnPlan(StrictModel):
-    """One value per field prevents contradictory operation/value pairs in JSON."""
+    """One value per field prevents contradictory
+    operation/value pairs in JSON.
+    """
 
     action: Literal["new_search", "refine", "clarify", "reject"]
     topic: str | None = Field(max_length=256)
@@ -171,9 +183,22 @@ class ModelTurnPlan(StrictModel):
         Literal["keep", "clear"]
         | Annotated[
             list[
-                Literal["CSV", "PDF", "XLSX", "ZIP", "JSON", "GEOJSON", "SHP", "JPEG"]
+                Literal[
+                    "CSV",
+                    "PDF",
+                    "XLSX",
+                    "ZIP",
+                    "JSON",
+                    "GEOJSON",
+                    "SHP",
+                    "JPEG",
+                ]
             ],
-            Field(min_length=1, max_length=4, json_schema_extra={"uniqueItems": True}),
+            Field(
+                min_length=1,
+                max_length=4,
+                json_schema_extra={"uniqueItems": True},
+            ),
         ]
     )
     reason: Literal[
@@ -215,13 +240,19 @@ class ModelTurnPlan(StrictModel):
                 "relative_time": self.time.model_dump()
                 if isinstance(self.time, RelativeTime)
                 else None,
-                "formats_op": self.formats if isinstance(self.formats, str) else "set",
-                "formats": [] if isinstance(self.formats, str) else self.formats,
+                "formats_op": self.formats
+                if isinstance(self.formats, str)
+                else "set",
+                "formats": []
+                if isinstance(self.formats, str)
+                else self.formats,
             }
         )
 
 
-def model_plan_schema(*, allow_refine=True, relative_only=False, relative_texts=()):
+def model_plan_schema(
+    *, allow_refine=True, relative_only=False, relative_texts=()
+):
     """Constrain action/reason pairs in generation, not just after generation.
 
     Ollama's JSON grammar supports anyOf. Separate branches also prevent a
@@ -275,7 +306,11 @@ def model_plan_schema(*, allow_refine=True, relative_only=False, relative_texts=
         fields["action"] = {"type": "string", "enum": [action]}
         fields["reason"] = {"type": "string", "enum": reasons}
         if action == "new_search":
-            fields["topic"] = {"type": "string", "minLength": 1, "maxLength": 256}
+            fields["topic"] = {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+            }
         if relative_only and action in {"new_search", "refine"}:
             fields["time"] = {
                 "anyOf": [
@@ -292,11 +327,24 @@ def model_plan_schema(*, allow_refine=True, relative_only=False, relative_texts=
 
 
 MESSAGES = {
-    "lunar_time_unapplied": "已保留農曆文字搜尋相關資料；未換算國曆，也未套用日期篩選，結果不保證符合該農曆期間。若需精確篩選，請補充國曆日期或起訖範圍。",
-    "ambiguous_time": "請提供明確年份或日期範圍，例如「2025 年」或「最近三年」。",
+    "lunar_time_unapplied": (
+        "已保留農曆文字搜尋相關資料；未換算國曆，也未套用日期篩選，"
+        "結果不保證符合該農曆期間。若需精確篩選，請補充國曆日期或起訖範圍。"
+    ),
+    "ambiguous_time": (
+        "請提供明確年份或日期範圍，例如「2025 年」或「最近三年」。"
+    ),
     "missing_topic": "你想找哪一類資料集？例如河川水質、氣候觀測或土地利用。",
-    "unsupported_condition": "這個條件目前不支援。可搜尋主題、資料涵蓋時間與檔案格式；不支援更新日、排除條件或直接解讀檔案內容。",
-    "location_not_supported": "這版未啟用座標、附近或距離篩選。可以將地名當作文字搜尋，但不能保證地理範圍。",
-    "off_topic": "這裡只協助尋找 depositar 的公開資料集，不提供一般問答或程式解題。",
+    "unsupported_condition": (
+        "這個條件目前不支援。可搜尋主題、資料涵蓋時間與檔案格式；"
+        "不支援更新日、排除條件或直接解讀檔案內容。"
+    ),
+    "location_not_supported": (
+        "這版未啟用座標、附近或距離篩選。可以將地名當作文字搜尋，"
+        "但不能保證地理範圍。"
+    ),
+    "off_topic": (
+        "這裡只協助尋找 depositar 的公開資料集，不提供一般問答或程式解題。"
+    ),
     "unsafe": "無法處理這個要求。請描述你想尋找的公開資料集。",
 }

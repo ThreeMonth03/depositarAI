@@ -1,4 +1,6 @@
-"""One classification, one bounded state patch, then existing retrieval/reranking."""
+"""One classification, one bounded state
+patch, then existing retrieval/reranking.
+"""
 
 import asyncio
 import logging
@@ -39,7 +41,9 @@ def has_bare_recent(query):
         query,
         flags=re.IGNORECASE,
     )
-    return bool(re.search(r"最近|近期|\brecent(?:ly)?\b", quantified, re.IGNORECASE))
+    return bool(
+        re.search(r"最近|近期|\brecent(?:ly)?\b", quantified, re.IGNORECASE)
+    )
 
 
 def has_spatial_constraint(query):
@@ -56,7 +60,9 @@ def has_spatial_constraint(query):
 
 
 def short_non_date_reply(query):
-    """A format or acknowledgement cannot settle a pending calendar question."""
+    """A format or acknowledgement cannot
+    settle a pending calendar question.
+    """
     return bool(
         re.fullmatch(
             r"(?:(?:只要|只看|改成|改為|改为|格式改成|格式改為)\s*)?(?:"
@@ -109,10 +115,17 @@ class ConversationEngine:
                 try:
                     return await self.backend.call(operation, payload, timeout)
                 finally:
-                    timing[operation] = round((time.monotonic() - tick) * 1000, 3)
+                    timing[operation] = round(
+                        (time.monotonic() - tick) * 1000, 3
+                    )
 
             def response(
-                status, message, state=None, search=None, reason="none", notices=()
+                status,
+                message,
+                state=None,
+                search=None,
+                reason="none",
+                notices=(),
             ):
                 timing["total"] = round((time.monotonic() - start) * 1000, 3)
                 return TurnResponse(
@@ -128,11 +141,17 @@ class ConversationEngine:
 
             try:
                 async with asyncio.timeout(120):
-                    # Latest request must stay intact. Context only helps classify a
-                    # short follow-up; it does not confer trust on the latest text.
+                    # Latest request must stay intact. Context only helps
+                    # classify a
+                    # short follow-up; it does not confer trust on the latest
+                    # text.
                     scope_query = request.query
                     if request.state.topic or request.pending:
-                        prefix = f"找資料集：{request.state.topic or request.pending}；本輪搜尋條件："
+                        prefix = (
+                            "找資料集："
+                            f"{request.state.topic or request.pending}"
+                            "；本輪搜尋條件："
+                        )
                         budget = max(0, 512 - len(scope_query))
                         scope_query = prefix[:budget] + scope_query
                     verdict = (
@@ -149,9 +168,13 @@ class ConversationEngine:
                         raise ValueError("invalid scope verdict")
                     if verdict["decision"] != "search":
                         reason = (
-                            "unsafe" if verdict["decision"] == "unsafe" else "off_topic"
+                            "unsafe"
+                            if verdict["decision"] == "unsafe"
+                            else "off_topic"
                         )
-                        return response("rejected", MESSAGES[reason], reason=reason)
+                        return response(
+                            "rejected", MESSAGES[reason], reason=reason
+                        )
                     if has_spatial_constraint(request.query):
                         return response(
                             "clarification_required",
@@ -165,8 +188,10 @@ class ConversationEngine:
                             calendar.message,
                             reason=calendar.reason,
                         )
-                    # A bare format cannot resolve a pending calendar ambiguity.
-                    # Keep the original pending query until a supported date or a
+                    # A bare format cannot resolve a pending calendar
+                    # ambiguity.
+                    # Keep the original pending query until a supported date or
+                    # a
                     # complete new subject is supplied; never guess its year.
                     if request.pending and short_non_date_reply(request.query):
                         pending_calendar = calendar_text(request.pending)
@@ -196,7 +221,9 @@ class ConversationEngine:
                     planning_request = request.model_copy(
                         update={
                             "query": calendar.query,
-                            "pending": corrected_pending(request.pending, calendar),
+                            "pending": corrected_pending(
+                                request.pending, calendar
+                            ),
                         }
                     )
                     output = await call(
@@ -224,9 +251,12 @@ class ConversationEngine:
                             reason=plan.reason,
                         )
                     if plan.action == "refine" and not request.state.topic:
-                        # A model cannot refine a subject that was never committed.
-                        # The generation schema also excludes this action. Keep a
-                        # safe clarification if an adapter violates that contract.
+                        # A model cannot refine a subject that was never
+                        # committed.
+                        # The generation schema also excludes this action. Keep
+                        # a
+                        # safe clarification if an adapter violates that
+                        # contract.
                         return response(
                             "clarification_required",
                             MESSAGES["missing_topic"],
@@ -236,7 +266,10 @@ class ConversationEngine:
                         try:
                             if calendar.lunar_date or calendar.exact:
                                 raise ValueError(
-                                    "relative and explicit calendar conditions conflict"
+                                    (
+                                        "relative and explicit calendar "
+                                        "conditions conflict"
+                                    )
                                 )
                             interval = resolve_relative(
                                 plan.relative_time,
@@ -275,13 +308,22 @@ class ConversationEngine:
                             )
                     if plan.lunar_time:
                         # The model may select words, not invent a lunar date.
-                        sources = (request.query, planning_request.pending or "")
-                        if not any(plan.lunar_time.text in text for text in sources):
-                            raise ValueError("lunar text was not supplied by user")
+                        sources = (
+                            request.query,
+                            planning_request.pending or "",
+                        )
+                        if not any(
+                            plan.lunar_time.text in text for text in sources
+                        ):
+                            raise ValueError(
+                                "lunar text was not supplied by user"
+                            )
                         # Store selected time words only in their own field, so
                         # a later civil correction cannot leave them in topic.
                         if plan.topic and plan.lunar_time.text in plan.topic:
-                            topic = plan.topic.replace(plan.lunar_time.text, "").strip()
+                            topic = plan.topic.replace(
+                                plan.lunar_time.text, ""
+                            ).strip()
                             if not topic:
                                 return response(
                                     "clarification_required",
@@ -294,10 +336,14 @@ class ConversationEngine:
                     if calendar.lunar_date and plan.time_op == "set":
                         # A valid Gregorian-shaped value is still an invented
                         # conversion when the source is an explicit lunar date.
-                        raise ValueError("cannot apply civil interval to lunar input")
+                        raise ValueError(
+                            "cannot apply civil interval to lunar input"
+                        )
                     if calendar.exact and not plan.lunar_time:
-                        # This narrow, deterministic date result is more reliable
-                        # than asking the model to do ROC arithmetic. Qualifiers,
+                        # This narrow, deterministic date result is more
+                        # reliable
+                        # than asking the model to do ROC arithmetic.
+                        # Qualifiers,
                         # ranges and non-search actions never take this path.
                         plan = TurnPlan.model_validate(
                             {
@@ -311,17 +357,22 @@ class ConversationEngine:
                     stage = "state_application"
                     state = plan.apply(request.state)
                     retrieval_query = state.topic
-                    notices = [] if state.unapplied_time else list(calendar.notices)
+                    notices = (
+                        [] if state.unapplied_time else list(calendar.notices)
+                    )
                     if state.unapplied_time:
                         retrieval_query += " " + state.unapplied_time.text
                         notices.append(MESSAGES["lunar_time_unapplied"])
-                    # Retrieval accepts only verified state, not another LLM request.
+                    # Retrieval accepts only verified state, not another LLM
+                    # request.
                     query = RetrievalRequest(
                         query=retrieval_query,
                         top_k=request.top_k,
                         conditions=public_conditions(
                             {
-                                "time": state.time.model_dump() if state.time else None,
+                                "time": state.time.model_dump()
+                                if state.time
+                                else None,
                                 "formats": state.formats,
                             }
                         ),
@@ -329,15 +380,23 @@ class ConversationEngine:
                     stage = "retrieval_pipeline"
                     result = await self.search.search(query, request_id)
                     result["context_used"] = normalize_context(
-                        request.context.model_dump() if request.context else None
+                        request.context.model_dump()
+                        if request.context
+                        else None
                     )
                     search = RetrievalResponse.model_validate(result)
                     timing.update(
-                        {"search_" + k: v for k, v in result["timing_ms"].items()}
+                        {
+                            "search_" + k: v
+                            for k, v in result["timing_ms"].items()
+                        }
                     )
                     if result["status"] != "ok":
                         LOGGER.warning(
-                            "conversation_failed request_id=%s stage=retrieval_pipeline",
+                            (
+                                "conversation_failed request_id=%s "
+                                "stage=retrieval_pipeline"
+                            ),
                             request_id,
                         )
                         return response(
@@ -346,7 +405,8 @@ class ConversationEngine:
                         )
                     return response(
                         "ok",
-                        f"找到 {len(search.cards)} 筆候選資料集。你可以繼續調整時間、格式或搜尋主題。",
+                        f"找到 {len(search.cards)} 筆候選資料集。"
+                        "你可以繼續調整時間、格式或搜尋主題。",
                         state,
                         search,
                         notices=notices,
@@ -358,7 +418,8 @@ class ConversationEngine:
                 KeyError,
                 TimeoutError,
             ) as error:
-                # No query, model output, credentials or exception text in logs.
+                # No query, model output, credentials or exception text in
+                # logs.
                 LOGGER.warning(
                     "conversation_failed request_id=%s stage=%s kind=%s",
                     request_id,
@@ -366,5 +427,6 @@ class ConversationEngine:
                     type(error).__name__,
                 )
                 return response(
-                    "unavailable", "搜尋暫時無法完成；本輪未更改搜尋條件，請稍後重試。"
+                    "unavailable",
+                    "搜尋暫時無法完成；本輪未更改搜尋條件，請稍後重試。",
                 )

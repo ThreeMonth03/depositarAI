@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import copy
 
-from search.operations.catalog import administration, commands, execution, volumes
+from search.operations.catalog import (
+    administration,
+    commands,
+    execution,
+    volumes,
+)
 from search.operations.catalog.administration import admin as execute_admin
 from search.operations.catalog.policy import (
     CONTAINER_ID as CONTAINER_ID,
@@ -22,7 +27,9 @@ def _build_services(context):
         files = execution.service_sources(name)
         build = services[name]["build"]
         dockerfile = (
-            "Dockerfile" if name == "opensearch-search" else build["dockerfile"]
+            "Dockerfile"
+            if name == "opensearch-search"
+            else build["dockerfile"]
         )
         built[name] = execution.build_image(
             context, name, files, dockerfile, build["args"], network="default"
@@ -35,7 +42,9 @@ def _build_services(context):
             context["runner"], ["docker", "pull", reference], timeout=600
         )
         image = execution.inspect_image(context, reference)
-    if execution.registry_digest(reference) not in (image.get("RepoDigests") or []):
+    if execution.registry_digest(reference) not in (
+        image.get("RepoDigests") or []
+    ):
         raise RuntimeError("catalog_ollama_registry_digest_changed")
     built["ollama-embedding"] = {
         "image_id": image["Id"],
@@ -57,7 +66,7 @@ def _build_services(context):
 
 
 def _require_staged_images(context):
-    """Reverify both durable staging records and their local immutable images."""
+    """Reverify durable staging records and their immutable local images."""
     root = context["root"]
     if not all(
         (root / name).exists()
@@ -71,7 +80,8 @@ def _require_staged_images(context):
         or type(started.get("schema_version")) is not int
         or started.get("active_changed") is not False
         or started.get("services_started") is not False
-        or started != {**identity, "status": "started", "services_started": False}
+        or started
+        != {**identity, "status": "started", "services_started": False}
     ):
         raise RuntimeError("catalog_image_stage_receipt_changed")
     complete = execution.read_record(root, "image-stage-complete.json")
@@ -101,10 +111,13 @@ def stage_images(config, plan, *, repo_root, runner=None):
 
     Only a fresh prepared slot or an exactly completed image stage is accepted.
     Partial stages and older runtime/build evidence need explicit recovery; no
-    image is rebuilt or pulled during completed-stage reuse. ``services_started``
+    image is rebuilt or pulled during completed-stage reuse.
+    ``services_started``
     describes this operation and does not report whether services are running.
     """
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     with execution.operation_lock(context):
         root = context["root"]
         if (root / "image-stage-started.json").exists() or (
@@ -126,7 +139,9 @@ def stage_images(config, plan, *, repo_root, runner=None):
             or execution.container_ids(context)
             or administration._admin_ids(context)
         ):
-            raise RuntimeError("catalog_image_stage_requires_fresh_prepared_slot")
+            raise RuntimeError(
+                "catalog_image_stage_requires_fresh_prepared_slot"
+            )
         identity = execution.catalog_identity(context)
         execution.write_record(
             root,
@@ -142,7 +157,9 @@ def stage_images(config, plan, *, repo_root, runner=None):
             "status": "images_staged",
             "services_started": False,
             "images": execution.load_images(context),
-            "admin_image": administration._admin_image(context, read_only=True),
+            "admin_image": administration._admin_image(
+                context, read_only=True
+            ),
         }
         execution.write_record(root, "image-stage-complete.json", result)
         return result
@@ -154,9 +171,12 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
     The default retains reviewed local builds. A supplied exact-project/source
     ``images.json`` receipt must verify before startup intent and selects only
     local immutable images: no build, pull or fallback is performed. Completed
-    runtime reuse must still match that explicit choice and all existing proofs.
+    runtime reuse must still match that explicit choice and all existing
+    proofs.
     """
-    context = execution.load_context(config, plan, repo_root=repo_root, runner=runner)
+    context = execution.load_context(
+        config, plan, repo_root=repo_root, runner=runner
+    )
     runner = context["runner"]
     with execution.operation_lock(context):
         root = context["root"]
@@ -180,9 +200,13 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
         if (root / "runtime.json").exists():
             receipt, running_images = execution.require_runtime(context)
             if images is not None and images != running_images:
-                raise RuntimeError("catalog_prebuilt_images_differ_from_runtime")
+                raise RuntimeError(
+                    "catalog_prebuilt_images_differ_from_runtime"
+                )
             return receipt
-        if (root / "start-started.json").exists() or execution.container_ids(context):
+        if (root / "start-started.json").exists() or execution.container_ids(
+            context
+        ):
             raise RuntimeError("catalog_start_requires_explicit_recovery")
         identity = execution.catalog_identity(context)
         execution.write_record(
@@ -205,7 +229,8 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
                 )
             overlay = {
                 "services": {
-                    name: {"image": entry["image_id"]} for name, entry in images.items()
+                    name: {"image": entry["image_id"]}
+                    for name, entry in images.items()
                 }
             }
             execution.write_record(root, "image-lock.json", overlay)
@@ -219,7 +244,9 @@ def start(config, plan, *, repo_root, runner=None, prebuilt_images=None):
             for name, entry in images.items():
                 expected["services"][name]["image"] = entry["image_id"]
             if rendered != expected:
-                raise RuntimeError("catalog_image_override_changed_other_policy")
+                raise RuntimeError(
+                    "catalog_image_override_changed_other_policy"
+                )
             execution.load_images(
                 context
             )  # Repeat immutable ID/source proof immediately before startup.

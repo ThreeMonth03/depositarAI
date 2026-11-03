@@ -1,4 +1,6 @@
-"""Bind multi-batch observations without dropping failures or mixing baselines."""
+"""Bind multi-batch observations without dropping failures or mixing
+baselines.
+"""
 
 import copy
 import hashlib
@@ -10,7 +12,9 @@ from tests.unit.quality.fixtures import capture, plan_for, turn
 
 
 def encoded(value):
-    return (json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n").encode()
+    return (
+        json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode()
 
 
 def fixture_identity():
@@ -112,29 +116,42 @@ def full_fixture():
     for name in ("climate-a", "climate-b"):
         value = capture(
             turn({"start": "2020", "end": "2025"}),
-            turn({"start": "2024", "end": "2024"}, version=2, retain_topic=True),
+            turn(
+                {"start": "2024", "end": "2024"}, version=2, retain_topic=True
+            ),
         )
         value["cases"][0]["id"] = name
         records.append(make_record(value))
     return {
         "schema_version": 1,
-        "cases": [copy.deepcopy(record["plan"]["cases"][0]) for record in records],
+        "cases": [
+            copy.deepcopy(record["plan"]["cases"][0]) for record in records
+        ],
     }, records
 
 
 def unsupported_time_oracle():
-    """Keep artifact integrity valid while inserting an unsupported oracle field."""
+    """Keep artifact integrity valid while inserting an unsupported
+    oracle field.
+    """
     plan, records = full_fixture()
     expected = plan["cases"][0]["turns"][0]["expected"]
     expected["time"]["calendar"] = "unsupported_calendar"
     record = records[0]
-    record["plan"] = {"schema_version": 1, "cases": [copy.deepcopy(plan["cases"][0])]}
+    record["plan"] = {
+        "schema_version": 1,
+        "cases": [copy.deepcopy(plan["cases"][0])],
+    }
     captured = json.loads(record["files"]["capture.json"])
     captured["cases"][0]["turns"][0]["expected"] = copy.deepcopy(expected)
     run = json.loads(record["files"]["run.json"])
-    # Simulate untrusted input without asking the validator to bless the oracle.
+    # Simulate untrusted input without asking the validator to bless the
+    # oracle.
     raw = json.dumps(
-        record["plan"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        record["plan"],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     run["plan_sha256"] = hashlib.sha256(raw).hexdigest()
     rewrite(record, run=run, captured=captured)
@@ -145,7 +162,9 @@ class BatchAggregationTests(unittest.TestCase):
     def setUp(self):
         self.plan, self.records = full_fixture()
 
-    def test_unknown_time_oracle_is_rejected_even_with_matching_artifact_digests(self):
+    def test_matching_digests_cannot_allow_unknown_time_oracle(
+        self,
+    ):
         plan, records = unsupported_time_oracle()
         self.rejected(records, plan=plan, code="input_invalid")
 
@@ -160,11 +179,15 @@ class BatchAggregationTests(unittest.TestCase):
         if code:
             self.assertEqual("quality_batches_" + code, str(caught.exception))
 
-    def test_complete_batches_share_the_existing_evaluator_and_keep_provenance(self):
+    def test_complete_batches_share_the_existing_evaluator_and_keep_provenance(
+        self,
+    ):
         before = copy.deepcopy(self.records)
         report = batches.aggregate(self.plan, self.records)
         self.assertEqual("passed", report["status"])
-        self.assertEqual(contract.plan_digest(self.plan), report["plan_sha256"])
+        self.assertEqual(
+            contract.plan_digest(self.plan), report["plan_sha256"]
+        )
         self.assertEqual(4, report["summary"]["turn_count"])
         self.assertEqual(4, report["summary"]["evidence_complete_turn_count"])
         self.assertEqual(0, report["summary"]["evidence_missing_turn_count"])
@@ -181,24 +204,33 @@ class BatchAggregationTests(unittest.TestCase):
         )
         self.assertEqual(before, self.records)
 
-    def test_missing_batches_retain_the_full_denominator_without_model_failures(self):
+    def test_missing_batches_keep_denominator_without_model_failures(
+        self,
+    ):
         for records, missing in (([], 4), (self.records[:1], 2)):
             report = batches.aggregate(self.plan, records)
             self.assertEqual("incomplete", report["status"])
             self.assertEqual(4, report["summary"]["turn_count"])
-            self.assertEqual(missing, report["summary"]["evidence_missing_turn_count"])
-            self.assertEqual(0, report["summary"]["quality_failed_turn_count"])
-            self.assertEqual("missing", report["evidence"]["cases"][-1]["status"])
             self.assertEqual(
-                ["turn_not_captured"], report["cases"][-1]["turns"][-1]["issues"]
+                missing, report["summary"]["evidence_missing_turn_count"]
+            )
+            self.assertEqual(0, report["summary"]["quality_failed_turn_count"])
+            self.assertEqual(
+                "missing", report["evidence"]["cases"][-1]["status"]
+            )
+            self.assertEqual(
+                ["turn_not_captured"],
+                report["cases"][-1]["turns"][-1]["issues"],
             )
 
-    def test_quality_assertion_failure_is_distinct_from_incomplete_evidence(self):
+    def test_quality_assertion_failure_is_distinct_from_incomplete_evidence(
+        self,
+    ):
         record = self.records[0]
         captured = json.loads(record["files"]["capture.json"])
-        captured["cases"][0]["turns"][1]["response"]["result"]["state"]["topic"] = (
-            "different"
-        )
+        captured["cases"][0]["turns"][1]["response"]["result"]["state"][
+            "topic"
+        ] = "different"
         rewrite(record, captured=captured)
         report = batches.aggregate(self.plan, self.records)
         self.assertEqual("failed", report["status"])
@@ -206,7 +238,9 @@ class BatchAggregationTests(unittest.TestCase):
         self.assertEqual(0, report["summary"]["evidence_missing_turn_count"])
         self.assertEqual(1, report["summary"]["quality_failed_turn_count"])
 
-    def test_failed_partial_batch_supplies_no_cards_including_successful_prefix(self):
+    def test_failed_partial_batch_discards_all_cards(
+        self,
+    ):
         record = self.records[0]
         run, captured, outcomes = [
             json.loads(record["files"][name])
@@ -263,7 +297,9 @@ class BatchAggregationTests(unittest.TestCase):
                     "status": "not_run",
                     "error": None,
                     "session_reset": None,
-                    "turns": [{"turn": n, "status": "not_run"} for n in range(1, 3)],
+                    "turns": [
+                        {"turn": n, "status": "not_run"} for n in range(1, 3)
+                    ],
                 }
             ],
         }
@@ -282,10 +318,14 @@ class BatchAggregationTests(unittest.TestCase):
         run = json.loads(record["files"]["run.json"])
         outcomes = json.loads(record["files"]["outcomes.json"])
         run.update(
-            status="failed", error="shared_batch_reset_failed", completed_cases=0
+            status="failed",
+            error="shared_batch_reset_failed",
+            completed_cases=0,
         )
         outcomes["cases"][0].update(
-            status="failed", error="shared_batch_reset_failed", session_reset=False
+            status="failed",
+            error="shared_batch_reset_failed",
+            session_reset=False,
         )
         rewrite(record, run=run, outcomes=outcomes)
         report = batches.aggregate(self.plan, self.records)
@@ -299,7 +339,9 @@ class BatchAggregationTests(unittest.TestCase):
                 for record in self.records
             ],
         }
-        captured["cases"][0]["turns"].append(turn(None, version=3, retain_topic=True))
+        captured["cases"][0]["turns"].append(
+            turn(None, version=3, retain_topic=True)
+        )
         record = make_record(captured)
         full_plan = copy.deepcopy(record["plan"])
         run = json.loads(record["files"]["run.json"])
@@ -331,12 +373,15 @@ class BatchAggregationTests(unittest.TestCase):
             for row in case["turns"]:
                 self.assertEqual(["turn_not_captured"], row["issues"])
                 self.assertEqual([], row["cards"])
-        # A forged later success must not turn a stopped run into usable evidence.
+        # A forged later success must not turn a stopped run into usable
+        # evidence.
         later["status"] = "complete"
         rewrite(record, run=run, outcomes=outcomes)
         self.rejected([record], plan=full_plan, code="outcomes_invalid")
 
-    def test_mixed_source_policy_models_runtime_or_future_fields_are_rejected(self):
+    def test_mixed_source_policy_models_runtime_or_future_fields_are_rejected(
+        self,
+    ):
         for key, change in (
             ("production_revision", "6" * 40),
             ("bundle_id", "6" * 64),
@@ -356,9 +401,9 @@ class BatchAggregationTests(unittest.TestCase):
     def test_supplied_baseline_uses_all_fields_and_validates_hash_shapes(self):
         self.assertEqual(
             "passed",
-            batches.aggregate(self.plan, self.records, baseline=fixture_identity())[
-                "status"
-            ],
+            batches.aggregate(
+                self.plan, self.records, baseline=fixture_identity()
+            )["status"],
         )
         expected = fixture_identity()
         expected["selected_catalog"] = {"manifest_sha256": "7" * 64}
@@ -378,7 +423,10 @@ class BatchAggregationTests(unittest.TestCase):
                 "resident_models",
                 [{"role": "scope", "digest": "PRIVATE_INVALID_DIGEST"}],
             ),
-            ("candidate_runtime", {"start_identity_sha256": "PRIVATE_INVALID_SHA"}),
+            (
+                "candidate_runtime",
+                {"start_identity_sha256": "PRIVATE_INVALID_SHA"},
+            ),
             ("additional", {1: "integer key"}),
             ("additional", "x" * 4097),
             ("additional", {"value": float("nan")}),
@@ -431,7 +479,9 @@ class BatchAggregationTests(unittest.TestCase):
                         )
                 self.rejected(records)
 
-    def test_case_partition_disallows_duplicates_splits_or_changed_expectations(self):
+    def test_case_partition_rejects_duplicates_splits_and_changes(
+        self,
+    ):
         self.rejected(self.records + [self.records[0]], code="duplicate_case")
         for mutation in ("split", "query", "expected", "id"):
             records = copy.deepcopy(self.records)
