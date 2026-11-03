@@ -71,6 +71,7 @@ class SearchCIScopeTests(unittest.TestCase):
             "tests.unit.operations.documents.test_enrichment",
             "tests.unit.operations.test_namespace",
             "tests.unit.jobs.test_queue",
+            "tests.unit.jobs.test_cli",
             "tests.unit.jobs.test_pueue",
             "tests.unit.jobs.test_namespace",
             "tests.unit.jobs.test_sources",

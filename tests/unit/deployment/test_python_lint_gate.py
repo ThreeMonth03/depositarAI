@@ -64,6 +64,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/documents/cache.py", "")
         self.write("search/operations/documents/controller.py", "")
         self.write("search/operations/documents/derivation.py", "")
+        self.write("scripts/search_jobs.py", "")
         self.environment = {
             **os.environ,
             "PATH": str(Path(sys.executable).parent)
