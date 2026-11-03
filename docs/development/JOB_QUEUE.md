@@ -40,6 +40,27 @@ CLI 沒有 registry、config、group、shell 或環境變數的覆寫選項。
 queue root 與 runtime root 都使用 Git 外、目前帳號持有的專用 0700 目錄。
 `runtime_root` 放在這台主機的本機檔案系統，供 Unix socket 使用。
 
+登記檔父目錄、queue root、runtime root 與 client 父目錄的完整目錄鏈都只接受
+root 或執行帳號持有的目錄。一般父目錄不得讓 group／other 寫入；sticky
+父目錄可例外，但其 owner 與下一層目錄 owner 仍須可信任。CLI 在讀取登記及
+每次 client 呼叫前檢查，不追蹤 symlink，也不修正權限。最末專用目錄仍須為
+目前帳號持有的 0700，sticky 不會放寬這個要求。
+
+```text
+root:0755 → account:0700                         接受
+root:1777 → account:0700                         接受
+root:0755 → account:0775 → account:0700          拒絕：可寫的一般父目錄
+other-account:0555 → account:0700               拒絕：owner 可自行修改權限
+```
+
+檢查依據 Linux POSIX 權限與 sticky 語意。POSIX access ACL 的 group mode
+bits 對應 ACL mask，因此 group-write 關閉也限制 named-user／group 的有效寫入；
+這不表示程式已解析所有 ACL。維護者須確認儲存系統與 UID mapping 符合這些
+語意，才能啟用常設佇列；不能用 mode 檢查替 NFSv4／rich ACL、遠端管理權限或
+不可信任的 mount 背書。此規則不依 NFS／Ceph 名稱拒絕路徑。
+細節見 [ACL](https://man7.org/linux/man-pages/man5/acl.5.html) 與
+[sticky rename 規則](https://man7.org/linux/man-pages/man2/rename.2.html)。
+
 ```json
 {
   "schema_version": 1,
@@ -120,6 +141,17 @@ env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /absolute/private/tools/pueued \
 env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /absolute/private/tools/pueue \
   --config /absolute/private/job-queue/pueue.yml group add heavy --parallel 1
 ```
+
+維護者負責受控啟動：先核對 daemon 的固定官方 digest、可信任的路徑、上述
+config 與空 aliases，再以明確 argv 和最小環境啟動。私下保留 binary／config／
+aliases 摘要、啟動參數、PID 與 process start identity，供維護及清理定位。
+這是啟動責任紀錄，不是獨立的 daemon 認證。若既有 daemon 的啟動來源或設定不明，
+不能只憑 status、version、目前 config bytes 或另一次 socket probe 接管它；
+獨立 probe 不會認證稍後 client 連到的程序。
+
+同帳號的 agents／程序、root、主機與儲存管理者均在信任邊界內；此入口不隔離
+相同 UID，也不防止管理者改掛載或改寫資料。operator 與工作 source 仍須經可信任
+的維護流程審視，路徑檢查不會使不可信任程式變安全。
 
 保持 concurrency 為 **1**，default group 保持空白。請勿直接用 Pueue 的任意命令、
 force-start 或 restart 送產品工作。入口只放行固定 profile；送件先保持 stashed，

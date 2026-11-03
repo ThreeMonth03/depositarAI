@@ -20,7 +20,7 @@ import uuid
 from search.operations.shared import private_io
 from search.serialization import strict_json
 
-from . import execution, profiles
+from . import execution, namespace, profiles
 from .pueue import ENVIRONMENT, JobError, MAX_OUTPUT, Pueue, command, require
 from .sources import restore_modes
 
@@ -127,7 +127,9 @@ def common_directory(source):
 
 
 def load_registry(filename=None):
-    value = read(registry_path() if filename is None else filename)
+    filename = registry_path() if filename is None else Path(filename)
+    namespace.check_directory(filename.parent, private=True)
+    value = read(filename)
     require(
         type(value) is dict
         and set(value)
@@ -153,6 +155,7 @@ def load_registry(filename=None):
         host_identity() == value["machine_id_sha256"],
         "host_changed",
     )
+    namespace.check_transport(value)
     for name in ("root", "runtime_root"):
         os.close(private_io.open_directory(path(value[name])))
     root = path(value["root"])
