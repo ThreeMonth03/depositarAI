@@ -31,11 +31,8 @@ class SourceError(ValueError):
         return str(self)
 
 
-def source_identity(resource):
-    """Bind reuse to this resource's declared source, not a whole catalog."""
-    if type(resource) is not dict:
-        raise SourceError("document_source_metadata_invalid")
-    url = resource.get("url")
+def _source_url_bytes(url):
+    """Admit one public source URL without changing its identity bytes."""
     if type(url) is not str or not 1 <= len(url) <= 2048:
         raise SourceError("document_source_url_unsupported")
     try:
@@ -62,6 +59,14 @@ def source_identity(resource):
         allowed = False
     if not allowed:
         raise SourceError("document_source_url_unsupported")
+    return url_bytes
+
+
+def source_identity(resource):
+    """Bind reuse to this resource's declared source, not a whole catalog."""
+    if type(resource) is not dict:
+        raise SourceError("document_source_metadata_invalid")
+    url_bytes = _source_url_bytes(resource.get("url"))
     identifier, modified, declared_format = (
         resource.get("id"),
         resource.get("last_modified"),
@@ -150,6 +155,42 @@ def _header_value(headers, name, limit):
     return value
 
 
+def _complete_response(header_bytes, body):
+    """Validate final headers and complete body after HTTP 200 admission."""
+    try:
+        headers = http.client.parse_headers(
+            io.BytesIO(header_bytes + b"\r\n\r\n")
+        )
+    except (http.client.HTTPException, ValueError):
+        raise SourceError("document_source_headers_invalid") from None
+    length = _header_value(headers, "Content-Length", 20)
+    encoding = _header_value(headers, "Content-Encoding", 32)
+    transfer = _header_value(headers, "Transfer-Encoding", 32)
+    if (
+        encoding not in (None, "identity")
+        or transfer not in (None, "chunked")
+        or transfer
+        and length
+    ):
+        raise SourceError("document_source_headers_invalid")
+    if length is not None:
+        if not length.isdecimal():
+            raise SourceError("document_source_headers_invalid")
+        if int(length) > MAX_FILE_BYTES:
+            raise SourceError("document_source_too_large")
+        if int(length) != len(body):
+            raise SourceError("document_source_incomplete")
+    if len(body) > MAX_FILE_BYTES:
+        raise SourceError("document_source_too_large")
+    if not body:
+        raise SourceError("document_source_empty")
+    return body, {
+        "content_type": _header_value(headers, "Content-Type", 256) or "",
+        "etag": _header_value(headers, "ETag", 512),
+        "last_modified": _header_value(headers, "Last-Modified", 128),
+    }
+
+
 def _response(raw):
     consumed = 0
     for _ in range(5):
@@ -169,38 +210,7 @@ def _response(raw):
             continue
         if code != 200:
             raise SourceError("document_source_http_failed")
-        try:
-            headers = http.client.parse_headers(
-                io.BytesIO(header_bytes + b"\r\n\r\n")
-            )
-        except (http.client.HTTPException, ValueError):
-            raise SourceError("document_source_headers_invalid") from None
-        length = _header_value(headers, "Content-Length", 20)
-        encoding = _header_value(headers, "Content-Encoding", 32)
-        transfer = _header_value(headers, "Transfer-Encoding", 32)
-        if (
-            encoding not in (None, "identity")
-            or transfer not in (None, "chunked")
-            or transfer
-            and length
-        ):
-            raise SourceError("document_source_headers_invalid")
-        if length is not None:
-            if not length.isdecimal():
-                raise SourceError("document_source_headers_invalid")
-            if int(length) > MAX_FILE_BYTES:
-                raise SourceError("document_source_too_large")
-            if int(length) != len(raw):
-                raise SourceError("document_source_incomplete")
-        if len(raw) > MAX_FILE_BYTES:
-            raise SourceError("document_source_too_large")
-        if not raw:
-            raise SourceError("document_source_empty")
-        return raw, {
-            "content_type": _header_value(headers, "Content-Type", 256) or "",
-            "etag": _header_value(headers, "ETag", 512),
-            "last_modified": _header_value(headers, "Last-Modified", 128),
-        }
+        return _complete_response(header_bytes, raw)
     raise SourceError("document_source_headers_invalid")
 
 
