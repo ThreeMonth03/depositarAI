@@ -15,6 +15,7 @@ from search.model_policy import (
     SCOPE_MODEL_DIGEST,
 )
 from search.transport.http import HTTPRequest, HTTPResponse
+from search.operations.shared import runtime_probe
 from search.operations.shared.runtime_probe import ProbeTransport, probe_models
 
 
@@ -325,6 +326,163 @@ for name in (
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failed_chat_retains_partial_scope_row_and_continues_planner(self):
+        self.scope.fail_path = "/api/chat"
+        report = self.run_probe()
+        self.assertEqual(
+            report["models"][0],
+            {
+                "role": "scope",
+                "model": SCOPE_MODEL,
+                "digest": SCOPE_MODEL_DIGEST,
+                "status": "blocked",
+                "code": "warmup_failed",
+                "resident_before": False,
+                "num_ctx": 4096,
+                "elapsed_ms": 0,
+            },
+        )
+        self.assertEqual(report["models"][1]["status"], "ready")
+        self.assertEqual(len(self.scope.requests), 3)
+        self.assertEqual(len(self.planner.requests), 5)
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_deadline_clock_checks_surround_each_exchange(self):
+        events = []
+
+        def clock():
+            tick = self.clock()
+            events.append(("clock", tick))
+            return tick
+
+        for role, upstream in self.transports.items():
+            original = upstream.send
+
+            def send(request, *, original=original, role=role, **options):
+                events.append(("request", role, request.url))
+                return original(request, **options)
+
+            upstream.send = send
+        report = probe_models(transports=self.transports, clock=clock)
+        self.assertEqual(report["status"], "ready")
+        requests = [
+            index
+            for index, event in enumerate(events)
+            if event[0] == "request"
+        ]
+        self.assertEqual(len(requests), 10)
+        self.assertEqual(
+            len([event for event in events if event[0] == "clock"]), 26
+        )
+        for index in requests:
+            self.assertEqual(events[index - 1][0], "clock")
+            self.assertEqual(events[index + 1][0], "clock")
+
+    def test_budget_exhaustion_retains_unattempted_planner_row(self):
+        self.scope.delay = 50
+        report = self.run_probe(budget_seconds=20)
+        self.assertEqual(
+            report["models"][1],
+            {
+                "role": "planner",
+                "model": PLANNER_MODEL,
+                "digest": PLANNER_MODEL_DIGEST,
+                "status": "blocked",
+                "code": "warmup_failed",
+                "elapsed_ms": 0,
+            },
+        )
+        self.assertEqual(self.planner.requests, [])
+        self.assertEqual(report["total_ms"], 50000)
+
+    def test_role_tick_failure_is_outside_per_role_error_catch(self):
+        failure = RuntimeError("PRIVATE CLOCK ERROR")
+        clock = Mock(side_effect=[100.0, failure])
+        with self.assertRaises(RuntimeError) as raised:
+            probe_models(transports=self.transports, clock=clock)
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(clock.call_count, 2)
+        self.assertEqual(self.scope.requests, [])
+        self.assertEqual(self.planner.requests, [])
+
+    def test_transport_runtime_error_is_blocked_without_stopping_planner(self):
+        self.scope.send = Mock(side_effect=RuntimeError("PRIVATE ERROR"))
+        report = self.run_probe()
+        self.assertEqual(report["models"][0]["code"], "warmup_failed")
+        self.assertEqual(report["models"][1]["status"], "ready")
+        self.assertEqual(self.scope.send.call_count, 1)
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_unrelated_transport_error_and_interrupt_propagate_unchanged(self):
+        for error_type in (AssertionError, KeyboardInterrupt):
+            failure = error_type("PRIVATE TRANSPORT ERROR")
+            self.scope.send = Mock(side_effect=failure)
+            with self.subTest(error_type=error_type):
+                with self.assertRaises(error_type) as raised:
+                    self.run_probe()
+                self.assertIs(raised.exception, failure)
+                self.assertEqual(self.scope.send.call_count, 1)
+                self.assertEqual(self.planner.requests, [])
+
+    def test_final_pin_failure_keeps_residency_without_success_metrics(self):
+        original = self.scope.send
+
+        def send(request, **options):
+            if request.url.endswith("/api/tags") and self.scope.loaded:
+                self.scope.tags_digest = "f" * 64
+            return original(request, **options)
+
+        self.scope.send = send
+        report = self.run_probe()
+        row = report["models"][0]
+        self.assertEqual(row["status"], "blocked")
+        self.assertEqual(row["code"], "warmup_failed")
+        self.assertEqual(row["processor"], "GPU")
+        self.assertEqual(row["size_bytes"], 1000)
+        self.assertEqual(row["vram_bytes"], 1000)
+        for field in (
+            "load_ms",
+            "prompt_ms",
+            "decode_ms",
+            "prompt_eval_count",
+            "eval_count",
+        ):
+            self.assertNotIn(field, row)
+        self.assertEqual(report["models"][1]["status"], "ready")
+
+    def test_main_keeps_its_narrow_fixed_error_policy(self):
+        with (
+            patch.object(
+                runtime_probe,
+                "probe_models",
+                side_effect=RuntimeError("PRIVATE ERROR"),
+            ),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(runtime_probe.main(), 1)
+        printed.assert_called_once()
+        self.assertEqual(
+            json.loads(printed.call_args.args[0]),
+            {
+                "schema_version": 1,
+                "status": "blocked",
+                "code": "warmup_failed",
+            },
+        )
+        for error_type in (KeyError, KeyboardInterrupt):
+            failure = error_type("PRIVATE ERROR")
+            with (
+                self.subTest(error_type=error_type),
+                patch.object(
+                    runtime_probe, "probe_models", side_effect=failure
+                ),
+                patch("builtins.print") as printed,
+                self.assertRaises(error_type) as raised,
+            ):
+                runtime_probe.main()
+            self.assertIs(raised.exception, failure)
+            printed.assert_not_called()
 
 
 if __name__ == "__main__":

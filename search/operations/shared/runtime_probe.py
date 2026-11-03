@@ -158,6 +158,122 @@ def _resident(value, model, digest):
     return row
 
 
+def _validate_completion(raw, role, model, payload, row):
+    """Validate the fixed completion before checking final residency."""
+    if (
+        type(raw) is not dict
+        or raw.get("model") != model
+        or raw.get("done") is not True
+        or raw.get("done_reason") != "stop"
+    ):
+        raise ValueError("probe_completion_invalid")
+    message = raw.get("message")
+    if (
+        type(message) is not dict
+        or type(message.get("content")) is not str
+        or message.get("role") != "assistant"
+    ):
+        raise ValueError("probe_completion_invalid")
+    visible = strict_json(message["content"].encode())
+    expected = {"decision": "search"} if role == "scope" else {"ready": True}
+    if visible != expected or (
+        role == "planner" and type(visible["ready"]) is not bool
+    ):
+        raise ValueError("probe_visible_invalid")
+    for field in (
+        "load_duration",
+        "prompt_eval_duration",
+        "eval_duration",
+        "prompt_eval_count",
+        "eval_count",
+    ):
+        if type(raw.get(field)) is not int or not 0 <= raw[field] <= 1024**4:
+            raise ValueError("probe_completion_metrics")
+    if (
+        raw["prompt_eval_count"] <= 0
+        or not 0 < raw["eval_count"] <= payload["options"]["num_predict"]
+        or raw["prompt_eval_count"] + payload["options"]["num_predict"]
+        > row["num_ctx"]
+    ):
+        raise ValueError("probe_context_invalid")
+
+
+def _warm_role(row, role, model, digest, role_budget, transports, remaining):
+    """Run one pinned warmup, retaining progress in the caller-owned row."""
+    transport = (
+        ProbeTransport(role) if transports is None else transports[role]
+    )
+
+    def request(method, path, *, payload=None, timeout=5):
+        body = (
+            None
+            if payload is None
+            else json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode()
+        )
+        logical = HTTPRequest(
+            method,
+            OLLAMA_BASE_URL + path,
+            (
+                ("Accept", "application/json"),
+                ("Content-Type", "application/json"),
+            ),
+            body,
+        )
+        response = transport.send(
+            logical,
+            timeout=remaining(timeout),
+            max_bytes=MAX_RESPONSE_BYTES,
+        )
+        remaining(timeout)
+        if (
+            not isinstance(response, HTTPResponse)
+            or response.status != 200
+            or response.url != logical.url
+            or type(response.body) is not bytes
+            or len(response.body) > MAX_RESPONSE_BYTES
+        ):
+            raise ValueError("probe_response_invalid")
+        return strict_json(response.body)
+
+    _identity(request("GET", "/api/tags"), model, digest)
+    before = _resident(request("GET", "/api/ps"), model, digest)
+    row["resident_before"] = before is not None
+    payload = _payload(role)
+    row["num_ctx"] = payload["options"]["num_ctx"]
+    raw = request("POST", "/api/chat", payload=payload, timeout=role_budget)
+    _validate_completion(raw, role, model, payload, row)
+    after = _resident(request("GET", "/api/ps"), model, digest)
+    if after is None or after["context_length"] != row["num_ctx"]:
+        raise ValueError("probe_context_not_resident")
+    row["size_bytes"] = after["size"]
+    row["vram_bytes"] = after["size_vram"]
+    row["processor"] = (
+        "GPU"
+        if after["size_vram"] == after["size"]
+        else "CPU+GPU"
+        if after["size_vram"]
+        else "CPU"
+    )
+    if row["processor"] != "GPU":
+        row["code"] = "full_gpu_residency_required"
+        raise ValueError("probe_gpu_not_full")
+    _identity(request("GET", "/api/tags"), model, digest)
+    row.update(
+        status="ready",
+        code="ready",
+        load_ms=round(raw["load_duration"] / 1_000_000, 3),
+        prompt_ms=round(raw["prompt_eval_duration"] / 1_000_000, 3),
+        decode_ms=round(raw["eval_duration"] / 1_000_000, 3),
+        prompt_eval_count=raw["prompt_eval_count"],
+        eval_count=raw["eval_count"],
+    )
+
+
 def probe_models(
     *,
     transports=None,
@@ -216,123 +332,14 @@ def probe_models(
             return min(cap, left)
 
         try:
-            transport = (
-                ProbeTransport(role)
-                if transports is None
-                else transports[role]
-            )
-
-            def request(method, path, *, payload=None, timeout=5):
-                body = (
-                    None
-                    if payload is None
-                    else json.dumps(
-                        payload,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                    ).encode()
-                )
-                logical = HTTPRequest(
-                    method,
-                    OLLAMA_BASE_URL + path,
-                    (
-                        ("Accept", "application/json"),
-                        ("Content-Type", "application/json"),
-                    ),
-                    body,
-                )
-                response = transport.send(
-                    logical,
-                    timeout=remaining(timeout),
-                    max_bytes=MAX_RESPONSE_BYTES,
-                )
-                remaining(timeout)
-                if (
-                    not isinstance(response, HTTPResponse)
-                    or response.status != 200
-                    or response.url != logical.url
-                    or type(response.body) is not bytes
-                    or len(response.body) > MAX_RESPONSE_BYTES
-                ):
-                    raise ValueError("probe_response_invalid")
-                return strict_json(response.body)
-
-            _identity(request("GET", "/api/tags"), model, digest)
-            before = _resident(request("GET", "/api/ps"), model, digest)
-            row["resident_before"] = before is not None
-            payload = _payload(role)
-            row["num_ctx"] = payload["options"]["num_ctx"]
-            raw = request(
-                "POST", "/api/chat", payload=payload, timeout=role_budget
-            )
-            if (
-                type(raw) is not dict
-                or raw.get("model") != model
-                or raw.get("done") is not True
-                or raw.get("done_reason") != "stop"
-            ):
-                raise ValueError("probe_completion_invalid")
-            message = raw.get("message")
-            if (
-                type(message) is not dict
-                or type(message.get("content")) is not str
-                or message.get("role") != "assistant"
-            ):
-                raise ValueError("probe_completion_invalid")
-            visible = strict_json(message["content"].encode())
-            expected = (
-                {"decision": "search"} if role == "scope" else {"ready": True}
-            )
-            if visible != expected or (
-                role == "planner" and type(visible["ready"]) is not bool
-            ):
-                raise ValueError("probe_visible_invalid")
-            for field in (
-                "load_duration",
-                "prompt_eval_duration",
-                "eval_duration",
-                "prompt_eval_count",
-                "eval_count",
-            ):
-                if (
-                    type(raw.get(field)) is not int
-                    or not 0 <= raw[field] <= 1024**4
-                ):
-                    raise ValueError("probe_completion_metrics")
-            if (
-                raw["prompt_eval_count"] <= 0
-                or not 0
-                < raw["eval_count"]
-                <= payload["options"]["num_predict"]
-                or raw["prompt_eval_count"] + payload["options"]["num_predict"]
-                > row["num_ctx"]
-            ):
-                raise ValueError("probe_context_invalid")
-            after = _resident(request("GET", "/api/ps"), model, digest)
-            if after is None or after["context_length"] != row["num_ctx"]:
-                raise ValueError("probe_context_not_resident")
-            row["size_bytes"] = after["size"]
-            row["vram_bytes"] = after["size_vram"]
-            row["processor"] = (
-                "GPU"
-                if after["size_vram"] == after["size"]
-                else "CPU+GPU"
-                if after["size_vram"]
-                else "CPU"
-            )
-            if row["processor"] != "GPU":
-                row["code"] = "full_gpu_residency_required"
-                raise ValueError("probe_gpu_not_full")
-            _identity(request("GET", "/api/tags"), model, digest)
-            row.update(
-                status="ready",
-                code="ready",
-                load_ms=round(raw["load_duration"] / 1_000_000, 3),
-                prompt_ms=round(raw["prompt_eval_duration"] / 1_000_000, 3),
-                decode_ms=round(raw["eval_duration"] / 1_000_000, 3),
-                prompt_eval_count=raw["prompt_eval_count"],
-                eval_count=raw["eval_count"],
+            _warm_role(
+                row,
+                role,
+                model,
+                digest,
+                role_budget,
+                transports,
+                remaining,
             )
         except (OSError, ValueError, KeyError, TypeError, RuntimeError):
             pass
