@@ -81,25 +81,9 @@ def _string(value, maximum):
         raise ExtractorError("document_extractor_report_invalid") from None
 
 
-def validate_report(value, *, expected_format=None, header_policy=None):
-    """Validate the closed output contract, including empty-content
-    semantics.
-    """
+def _validate_fields(value):
+    """Check the closed report fields and their resource bounds."""
     error = "document_extractor_report_invalid"
-    if (
-        expected_format is not None
-        and (
-            type(expected_format) is not str
-            or expected_format not in {"CSV", "PDF"}
-        )
-    ) or (
-        header_policy is not None
-        and (
-            type(header_policy) is not str
-            or header_policy not in HEADER_POLICIES
-        )
-    ):
-        raise ExtractorError(error)
     if type(value) is not dict or set(value) != _REPORT_KEYS:
         raise ExtractorError(error)
     if (
@@ -137,7 +121,12 @@ def validate_report(value, *, expected_format=None, header_policy=None):
         type(rows) is not int or not 0 <= rows <= MAX_ROWS_OBSERVED
     ):
         raise ExtractorError(error)
-    status = value["status"]
+    return mime, columns, rows
+
+
+def _validate_content(value, status, mime, columns, rows):
+    """Check status-dependent content, PDF fields and OCR semantics."""
+    error = "document_extractor_report_invalid"
     if status in {"unsupported_format", "parse_error"}:
         if (
             columns
@@ -161,6 +150,30 @@ def validate_report(value, *, expected_format=None, header_policy=None):
         status == "empty_text" and mime == "application/pdf"
     ):
         raise ExtractorError(error)
+
+
+def validate_report(value, *, expected_format=None, header_policy=None):
+    """Validate the closed output contract, including empty-content
+    semantics.
+    """
+    error = "document_extractor_report_invalid"
+    if (
+        expected_format is not None
+        and (
+            type(expected_format) is not str
+            or expected_format not in {"CSV", "PDF"}
+        )
+    ) or (
+        header_policy is not None
+        and (
+            type(header_policy) is not str
+            or header_policy not in HEADER_POLICIES
+        )
+    ):
+        raise ExtractorError(error)
+    mime, columns, rows = _validate_fields(value)
+    status = value["status"]
+    _validate_content(value, status, mime, columns, rows)
     if header_policy == "absent" and columns:
         raise ExtractorError(error)
     if expected_format is not None and status in {"ok", "empty_text"}:
