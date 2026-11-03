@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import signal
 import socket
@@ -459,31 +460,60 @@ class ProcessTests(unittest.TestCase):
                     config.write_text(json.dumps(profile()))
                     config.chmod(0o600)
                     owned = Path(directory) / "owned.pid"
+                    pending = owned.with_suffix(".pending")
                     code = (
                         "from pathlib import Path\nimport sys\n"
                         "from search.operations.deployment import demo_connection as d\n"
                         "d.remote_check=lambda p:None\n"
                         "d.ssh_command=lambda p,**kw:[sys.executable,'-c','import time;time.sleep(30)']\n"
                         "d.available_port=lambda p:None\n"
-                        f"d.verify_local=lambda t:Path({str(owned)!r}).write_text(str(t.process.pid))\n"
+                        f"owned=Path({str(owned)!r})\n"
+                        "pending=owned.with_suffix('.pending')\n"
+                        "def ready(t):\n"
+                        "    with pending.open('w') as stream:\n"
+                        "        print('PID_PENDING',flush=True)\n"
+                        "        if sys.stdin.buffer.read(1)!=b'1':raise RuntimeError('gate_closed')\n"
+                        "        stream.write(str(t.process.pid))\n"
+                        "    pending.replace(owned)\n"
+                        "    print('PID_READY',flush=True)\n"
+                        "d.verify_local=ready\n"
                         f"raise SystemExit(d.main(['connect','--config',{str(config)!r}]))\n"
                     )
                     child = subprocess.Popen(
                         [sys.executable, "-c", code],
                         cwd=root,
+                        stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         start_new_session=True,
                     )
+                    identifier = None
                     try:
                         deadline = time.monotonic() + 5
-                        while (
-                            not owned.exists()
-                            and child.poll() is None
-                            and time.monotonic() < deadline
-                        ):
-                            time.sleep(0.01)
-                        self.assertTrue(owned.exists())
+
+                        def wait_marker(expected):
+                            data = bytearray()
+                            while len(data) < len(expected):
+                                remaining = deadline - time.monotonic()
+                                self.assertGreater(remaining, 0)
+                                readable, _, _ = select.select(
+                                    [child.stdout], [], [], remaining
+                                )
+                                self.assertTrue(readable)
+                                part = os.read(
+                                    child.stdout.fileno(), len(expected) - len(data)
+                                )
+                                self.assertTrue(part)
+                                data.extend(part)
+                            self.assertEqual(bytes(data), expected)
+
+                        # Force the create/write window before permitting publication.
+                        wait_marker(b"PID_PENDING\n")
+                        self.assertEqual(pending.read_bytes(), b"")
+                        self.assertFalse(owned.exists())
+                        child.stdin.write(b"1")
+                        child.stdin.flush()
+                        wait_marker(b"PID_READY\n")
                         identifier = int(owned.read_text())
                         child.send_signal(number)
                         out, err = child.communicate(timeout=8)
@@ -495,11 +525,28 @@ class ProcessTests(unittest.TestCase):
                             os.kill(identifier, 0)
                         self.assertIsNone(unrelated.poll())
                     finally:
-                        if child.poll() is None:
-                            os.killpg(child.pid, signal.SIGKILL)
-                            child.wait(timeout=5)
-                        child.stdout.close()
-                        child.stderr.close()
+                        try:
+                            if child.poll() is None:
+                                # Let handlers close the tunnel's separate session.
+                                child.terminate()
+                                try:
+                                    child.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    os.killpg(child.pid, signal.SIGKILL)
+                                    child.wait(timeout=5)
+                        finally:
+                            try:
+                                if identifier is not None:
+                                    try:
+                                        os.killpg(identifier, signal.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                            finally:
+                                for stream in (child.stdin, child.stdout, child.stderr):
+                                    try:
+                                        stream.close()
+                                    except OSError:
+                                        pass
         finally:
             os.killpg(unrelated.pid, signal.SIGKILL)
             unrelated.wait(timeout=5)
