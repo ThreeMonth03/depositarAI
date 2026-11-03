@@ -33,6 +33,7 @@ shell_files=(
   scripts/ci/install-compose.sh
   scripts/ci/runtime-imports.sh
   scripts/ci/python-unused.sh
+  scripts/ci/python-lint.sh
   scripts/ci/install-gitleaks.sh
   scripts/ci/source-package.sh
   scripts/ci/source-restore.sh
