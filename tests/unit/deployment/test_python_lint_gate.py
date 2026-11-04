@@ -79,6 +79,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/metadata/sync.py", "")
         self.write("scripts/search_jobs.py", "")
         self.write("scripts/search_model_source.py", "")
+        self.write("scripts/search_dictionary_permissions.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
         self.write("search/operations/deployment/images/build.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
@@ -188,6 +189,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/inference_runtime.py",
             "search/operations/deployment/credentials.py",
             "scripts/search_model_source.py",
+            "scripts/search_dictionary_permissions.py",
             "search/operations/documents/future_policy.py",
         ):
             with self.subTest(path=relative):

@@ -42,6 +42,7 @@ GATED_PATHS = (
     "scripts/ci",
     "scripts/search_jobs.py",
     "scripts/search_model_source.py",
+    "scripts/search_dictionary_permissions.py",
 )
 
 

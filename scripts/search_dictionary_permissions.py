@@ -70,6 +70,90 @@ def _apply_or_check_mode(fd: int, expected_mode: int, converge: bool) -> None:
         )
 
 
+def _enforce_entry(
+    directory_fd: int,
+    entry: os.DirEntry[str],
+    *,
+    expected_uid: int,
+    expected_device: int,
+    converge: bool,
+    visit,
+    depth: int,
+) -> None:
+    """Borrow the walker and parent FD; own the complete entry FD lifecycle."""
+    if not hasattr(os, "O_PATH"):
+        raise PolicyError("the host cannot safely inspect dictionary entries")
+    try:
+        inspect_fd = os.open(
+            entry.name,
+            os.O_PATH | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+    except OSError as error:
+        raise PolicyError(
+            "the dictionary tree contains an inaccessible or unsafe entry"
+        ) from error
+    try:
+        metadata = os.fstat(inspect_fd)
+        if stat.S_ISDIR(metadata.st_mode):
+            _validate_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_device=expected_device,
+                kind="directory",
+            )
+            open_flags = os.O_RDONLY | os.O_DIRECTORY
+        else:
+            _validate_metadata(
+                metadata,
+                expected_uid=expected_uid,
+                expected_device=expected_device,
+                kind="file",
+                require_single_link=True,
+            )
+            open_flags = os.O_RDONLY | os.O_NONBLOCK
+        try:
+            child_fd = os.open(
+                entry.name,
+                open_flags | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+        except OSError as error:
+            raise PolicyError(
+                "the dictionary tree contains an inaccessible entry"
+            ) from error
+        try:
+            opened = os.fstat(child_fd)
+            if (opened.st_dev, opened.st_ino) != (
+                metadata.st_dev,
+                metadata.st_ino,
+            ):
+                raise PolicyError(
+                    "the dictionary tree changed while it was opened"
+                )
+            if stat.S_ISDIR(metadata.st_mode):
+                _apply_or_check_mode(child_fd, DIRECTORY_MODE, converge)
+                visit(child_fd, depth + 1)
+            else:
+                _apply_or_check_mode(child_fd, FILE_MODE, converge)
+        finally:
+            os.close(child_fd)
+        current = os.stat(
+            entry.name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        if (current.st_dev, current.st_ino) != (
+            metadata.st_dev,
+            metadata.st_ino,
+        ):
+            raise PolicyError(
+                "the dictionary tree changed while it was inspected"
+            )
+    finally:
+        os.close(inspect_fd)
+
+
 def enforce(data_root: str, converge: bool) -> None:
     expected_uid = os.getuid()
     root_fd = _open_directory(None, data_root)
@@ -123,90 +207,15 @@ def enforce(data_root: str, converge: bool) -> None:
                                     "the dictionary tree exceeds "
                                     "the entry limit"
                                 )
-                            if not hasattr(os, "O_PATH"):
-                                raise PolicyError(
-                                    "the host cannot safely inspect "
-                                    "dictionary entries"
-                                )
-                            try:
-                                inspect_fd = os.open(
-                                    entry.name,
-                                    os.O_PATH | os.O_CLOEXEC | os.O_NOFOLLOW,
-                                    dir_fd=directory_fd,
-                                )
-                            except OSError as error:
-                                raise PolicyError(
-                                    "the dictionary tree contains "
-                                    "an inaccessible or unsafe entry"
-                                ) from error
-                            try:
-                                metadata = os.fstat(inspect_fd)
-                                if stat.S_ISDIR(metadata.st_mode):
-                                    _validate_metadata(
-                                        metadata,
-                                        expected_uid=expected_uid,
-                                        expected_device=expected_device,
-                                        kind="directory",
-                                    )
-                                    open_flags = os.O_RDONLY | os.O_DIRECTORY
-                                else:
-                                    _validate_metadata(
-                                        metadata,
-                                        expected_uid=expected_uid,
-                                        expected_device=expected_device,
-                                        kind="file",
-                                        require_single_link=True,
-                                    )
-                                    open_flags = os.O_RDONLY | os.O_NONBLOCK
-                                try:
-                                    child_fd = os.open(
-                                        entry.name,
-                                        open_flags
-                                        | os.O_CLOEXEC
-                                        | os.O_NOFOLLOW,
-                                        dir_fd=directory_fd,
-                                    )
-                                except OSError as error:
-                                    raise PolicyError(
-                                        "the dictionary tree contains "
-                                        "an inaccessible entry"
-                                    ) from error
-                                try:
-                                    opened = os.fstat(child_fd)
-                                    if (opened.st_dev, opened.st_ino) != (
-                                        metadata.st_dev,
-                                        metadata.st_ino,
-                                    ):
-                                        raise PolicyError(
-                                            "the dictionary tree changed "
-                                            "while it was opened"
-                                        )
-                                    if stat.S_ISDIR(metadata.st_mode):
-                                        _apply_or_check_mode(
-                                            child_fd, DIRECTORY_MODE, converge
-                                        )
-                                        visit(child_fd, depth + 1)
-                                    else:
-                                        _apply_or_check_mode(
-                                            child_fd, FILE_MODE, converge
-                                        )
-                                finally:
-                                    os.close(child_fd)
-                                current = os.stat(
-                                    entry.name,
-                                    dir_fd=directory_fd,
-                                    follow_symlinks=False,
-                                )
-                                if (current.st_dev, current.st_ino) != (
-                                    metadata.st_dev,
-                                    metadata.st_ino,
-                                ):
-                                    raise PolicyError(
-                                        "the dictionary tree changed "
-                                        "while it was inspected"
-                                    )
-                            finally:
-                                os.close(inspect_fd)
+                            _enforce_entry(
+                                directory_fd,
+                                entry,
+                                expected_uid=expected_uid,
+                                expected_device=expected_device,
+                                converge=converge,
+                                visit=visit,
+                                depth=depth,
+                            )
 
                 visit(dictionary_fd, 1)
             finally:
