@@ -352,6 +352,105 @@ def _lock(root_fd):
             os.close(descriptor)
 
 
+def _build_images(
+    docker,
+    root,
+    plan,
+    completed,
+    *,
+    root_fd,
+    context_fd,
+    images_fd,
+    lock_fd,
+):
+    """Execute fixed image recipes under the caller's authority and budget.
+
+    Borrow outer descriptors; close only handles opened for each role.
+    """
+    result = {}
+    if (
+        _json(
+            docker.call(
+                ["info", "--format", "{{json .OSType}}"],
+                timeout=INSPECT_TIMEOUT_SECONDS,
+            )
+        )
+        != "linux"
+    ):
+        raise ImageBuildError("image_build_daemon_unsupported")
+    for service in SERVICES:
+        _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+        private_io.verify_directory(images_fd, root / "images")
+        fresh = service not in completed
+        slot = root / "images" / service
+        descriptor = private_io.open_child_directory(
+            images_fd, service, create=fresh
+        )
+        try:
+            identity = _identity(plan, service)
+            if fresh:
+                private_io.write_json(
+                    descriptor,
+                    "started.json",
+                    identity,
+                    max_bytes=MAX_RECORD_BYTES,
+                )
+                private_io.verify_directory(descriptor, slot)
+                _verify_source(
+                    root_fd,
+                    context_fd,
+                    root,
+                    plan,
+                    lock_fd=lock_fd,
+                )
+                docker.call(
+                    _build_arguments(root, plan, service, slot),
+                    timeout=BUILD_TIMEOUT_SECONDS,
+                )
+            private_io.verify_directory(descriptor, slot)
+            image_id = _iid(descriptor)
+            image = _inspect_image(docker, plan, service, image_id)
+            private_io.verify_directory(descriptor, slot)
+            _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+            record = {
+                "identity": identity,
+                "tag": TAGS[service] + plan["revision"],
+                "image": image,
+            }
+            if fresh:
+                private_io.write_json(
+                    descriptor,
+                    "complete.json",
+                    record,
+                    max_bytes=MAX_RECORD_BYTES,
+                )
+            else:
+                _equal(
+                    completed[service],
+                    record,
+                    "image_build_completed_image_changed",
+                )
+            result[service] = image
+        finally:
+            os.close(descriptor)
+    _verify_source(root_fd, context_fd, root, plan, lock_fd=lock_fd)
+    private_io.verify_directory(images_fd, root / "images")
+    final = _inventory(images_fd, plan)
+    if set(final) != set(SERVICES):
+        raise ImageBuildError("image_build_inventory_incomplete")
+    for service in SERVICES:
+        _equal(
+            final[service],
+            {
+                "identity": _identity(plan, service),
+                "tag": TAGS[service] + plan["revision"],
+                "image": result[service],
+            },
+            "image_build_final_receipt_changed",
+        )
+    return result
+
+
 def build_product_images(
     staged_root,
     expected_revision,
@@ -411,7 +510,6 @@ def build_product_images(
             root_fd, "images", create="images" not in os.listdir(root_fd)
         )
         completed = _inventory(images_fd, plan)
-        result = {}
         with tempfile.TemporaryDirectory(
             prefix="depositar-image-client-"
         ) as temporary:
@@ -423,92 +521,16 @@ def build_product_images(
                         "image_build_client_config_not_empty"
                     )
                 docker = _Docker(client, runner)
-                if (
-                    _json(
-                        docker.call(
-                            ["info", "--format", "{{json .OSType}}"],
-                            timeout=INSPECT_TIMEOUT_SECONDS,
-                        )
-                    )
-                    != "linux"
-                ):
-                    raise ImageBuildError("image_build_daemon_unsupported")
-                for service in SERVICES:
-                    _verify_source(
-                        root_fd, context_fd, root, plan, lock_fd=lock_fd
-                    )
-                    private_io.verify_directory(images_fd, root / "images")
-                    fresh = service not in completed
-                    slot = root / "images" / service
-                    descriptor = private_io.open_child_directory(
-                        images_fd, service, create=fresh
-                    )
-                    try:
-                        identity = _identity(plan, service)
-                        if fresh:
-                            private_io.write_json(
-                                descriptor,
-                                "started.json",
-                                identity,
-                                max_bytes=MAX_RECORD_BYTES,
-                            )
-                            private_io.verify_directory(descriptor, slot)
-                            _verify_source(
-                                root_fd,
-                                context_fd,
-                                root,
-                                plan,
-                                lock_fd=lock_fd,
-                            )
-                            docker.call(
-                                _build_arguments(root, plan, service, slot),
-                                timeout=BUILD_TIMEOUT_SECONDS,
-                            )
-                        private_io.verify_directory(descriptor, slot)
-                        image_id = _iid(descriptor)
-                        image = _inspect_image(docker, plan, service, image_id)
-                        private_io.verify_directory(descriptor, slot)
-                        _verify_source(
-                            root_fd, context_fd, root, plan, lock_fd=lock_fd
-                        )
-                        record = {
-                            "identity": identity,
-                            "tag": TAGS[service] + plan["revision"],
-                            "image": image,
-                        }
-                        if fresh:
-                            private_io.write_json(
-                                descriptor,
-                                "complete.json",
-                                record,
-                                max_bytes=MAX_RECORD_BYTES,
-                            )
-                        else:
-                            _equal(
-                                completed[service],
-                                record,
-                                "image_build_completed_image_changed",
-                            )
-                        result[service] = image
-                    finally:
-                        os.close(descriptor)
-                _verify_source(
-                    root_fd, context_fd, root, plan, lock_fd=lock_fd
+                result = _build_images(
+                    docker,
+                    root,
+                    plan,
+                    completed,
+                    root_fd=root_fd,
+                    context_fd=context_fd,
+                    images_fd=images_fd,
+                    lock_fd=lock_fd,
                 )
-                private_io.verify_directory(images_fd, root / "images")
-                final = _inventory(images_fd, plan)
-                if set(final) != set(SERVICES):
-                    raise ImageBuildError("image_build_inventory_incomplete")
-                for service in SERVICES:
-                    _equal(
-                        final[service],
-                        {
-                            "identity": _identity(plan, service),
-                            "tag": TAGS[service] + plan["revision"],
-                            "image": result[service],
-                        },
-                        "image_build_final_receipt_changed",
-                    )
                 return {
                     "schema_version": 1,
                     "revision": expected_revision,
