@@ -34,7 +34,6 @@ class ArchiveIntegrationTests(unittest.TestCase):
 
     def typed_job(self, kind, *, cancelled=False, source=True):
         fixture = self.fixture
-        identifier, root = fixture.job(cancelled=cancelled, source=source)
         config = b'{"state_root":"/private/fixture/native-state"}\n'
         profile = {
             "type": kind,
@@ -94,33 +93,24 @@ class ArchiveIntegrationTests(unittest.TestCase):
                 "recipe_sha256": "3" * 64,
             }
             status = "checkpoint"
+        identifier, task_id, root = fixture.allocate_job(source=source)
         profiles.freeze(root, profile, frozen)
-        request = queue.read(root / "request.json")
-        request["profile_definition"] = profile
-        queue.write(root / "request.json", request, replace=True)
-        queued = queue.read(root / "queue.json")
-        queued["request_sha256"] = queue.digest(request)
-        queue.write(root / "queue.json", queued, replace=True)
-        result = queue.read(root / "result.json")
-        result["request_sha256"] = queue.digest(request)
         if not cancelled:
             for name, raw in native.items():
                 target = root / name
                 target.parent.mkdir(mode=0o700, exist_ok=True)
                 target.write_bytes(raw)
                 target.chmod(0o600)
-            queue.write(root / "operation.json", operation, replace=True)
-            raw = private_io.canonical(operation)
-            (root / "stdout.bin").write_bytes(raw)
-            result.update(
-                status=status, operation_sha256=queue.digest(operation)
-            )
-            result["artifacts"]["stdout.bin"] = {
-                "bytes": len(raw),
-                "sha256": hashlib.sha256(raw).hexdigest(),
-            }
-        queue.write(root / "result.json", result, replace=True)
-        return identifier, root
+        return fixture.publish_job(
+            identifier,
+            task_id,
+            root,
+            profile=profile,
+            operation=operation,
+            raw=private_io.canonical(operation),
+            cancelled=cancelled,
+            status=status,
+        )
 
     def archive_and_read(self, identifier):
         registry = self.fixture.registry

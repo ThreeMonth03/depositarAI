@@ -141,7 +141,7 @@ class ArchiveTests(unittest.TestCase):
         queue.result(registry, identifier)
         return deepcopy(self.evidence[identifier])
 
-    def job(self, *, cancelled=False, source=True):
+    def allocate_job(self, *, source=True):
         self.count += 1
         identifier, task_id = f"{self.count:032x}", self.count
         root = self.root / "jobs" / identifier
@@ -161,6 +161,10 @@ class ArchiveTests(unittest.TestCase):
             frozen.chmod(0o700)
         else:
             frozen.mkdir(mode=0o700)
+        return identifier, task_id, root
+
+    def job(self, *, cancelled=False, source=True):
+        allocation = self.allocate_job(source=source)
         profile = {
             "type": "resource-pass",
             "bundle": str(self.base / "bundle"),
@@ -168,6 +172,38 @@ class ArchiveTests(unittest.TestCase):
             "plan_sha256": "b" * 64,
             "manifest_sha256": "c" * 64,
         }
+        operation = {
+            "schema_version": 1,
+            "status": "completed",
+            "plan_sha256": "b" * 64,
+            "catalog_manifest_sha256": "c" * 64,
+            "selected_count": 1,
+            "pending_count": 0,
+            "profile_count": 1,
+            "failed_count": 0,
+            "retryable_count": 0,
+            "attempted_count": 1,
+        }
+        return self.publish_job(
+            *allocation,
+            profile=profile,
+            operation=operation,
+            raw=(json.dumps(operation) + "\n").encode(),
+            cancelled=cancelled,
+        )
+
+    def publish_job(
+        self,
+        identifier,
+        task_id,
+        root,
+        *,
+        profile,
+        operation,
+        raw,
+        cancelled,
+        status="completed",
+    ):
         request = {
             "schema_version": 1,
             "issue": 69,
@@ -175,7 +211,7 @@ class ArchiveTests(unittest.TestCase):
             "source": str(self.repo),
             "revision": self.revision,
             "job_id": identifier,
-            "created_at_ns": self.count,
+            "created_at_ns": task_id,
             "queue_identity_sha256": queue.queue_identity(self.registry),
             "profile_definition": profile,
         }
@@ -187,23 +223,10 @@ class ArchiveTests(unittest.TestCase):
         result = {
             "job_id": identifier,
             "request_sha256": queue.digest(request),
-            "status": "cancelled" if cancelled else "completed",
+            "status": "cancelled" if cancelled else status,
         }
         if not cancelled:
-            operation = {
-                "schema_version": 1,
-                "status": "completed",
-                "plan_sha256": "b" * 64,
-                "catalog_manifest_sha256": "c" * 64,
-                "selected_count": 1,
-                "pending_count": 0,
-                "profile_count": 1,
-                "failed_count": 0,
-                "retryable_count": 0,
-                "attempted_count": 1,
-            }
             queue.write(root / "operation.json", operation)
-            raw = (json.dumps(operation) + "\n").encode()
             (root / "stdout.bin").write_bytes(raw)
             (root / "stdout.bin").chmod(0o600)
             result.update(
