@@ -60,6 +60,38 @@ def _key_digest(descriptor):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _verify_product_source(
+    config, store, source_revision, *, repo_root, runner
+):
+    """Check product identity before checking the current source revision."""
+    _same(
+        store.read("product.json"),
+        _marker(config),
+        "product_credentials_configuration_changed",
+    )
+    if require_clean_revision(repo_root, runner=runner) != source_revision:
+        raise CredentialError("product_credentials_source_changed")
+
+
+def _recheck_material(descriptor, root, started, completed):
+    """Recheck retained material before the caller's final authority fence."""
+    _same(
+        _record(descriptor, STARTED),
+        started,
+        "product_credentials_receipt_changed",
+    )
+    if _key_digest(descriptor) != completed["key_sha256"]:
+        raise CredentialError("product_credentials_receipt_changed")
+    _same(
+        _record(descriptor, COMPLETED),
+        completed,
+        "product_credentials_receipt_changed",
+    )
+    if set(os.listdir(descriptor)) != FILES:
+        raise CredentialError("product_credentials_inventory_changed")
+    private_io.verify_directory(descriptor, root)
+
+
 def read_api_key_authority(config, store):
     """Verify an existing complete API key without creating or adopting state.
 
@@ -122,21 +154,7 @@ def read_api_key_authority(config, store):
         )
         # Re-read both receipts and bytes before returning authority, including
         # the retained directory's binding to its configured pathname.
-        _same(
-            _record(descriptor, STARTED),
-            started,
-            "product_credentials_receipt_changed",
-        )
-        if _key_digest(descriptor) != completed["key_sha256"]:
-            raise CredentialError("product_credentials_receipt_changed")
-        _same(
-            _record(descriptor, COMPLETED),
-            completed,
-            "product_credentials_receipt_changed",
-        )
-        if set(os.listdir(descriptor)) != FILES:
-            raise CredentialError("product_credentials_inventory_changed")
-        private_io.verify_directory(descriptor, root)
+        _recheck_material(descriptor, root, started, completed)
         store._check_directory()
         _same(
             store.read(ANCHOR), started, "product_credentials_receipt_changed"
@@ -190,13 +208,9 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
     descriptor = None
     try:
         store._check_directory()
-        _same(
-            store.read("product.json"),
-            _marker(config),
-            "product_credentials_configuration_changed",
+        _verify_product_source(
+            config, store, source_revision, repo_root=repo_root, runner=runner
         )
-        if require_clean_revision(repo_root, runner=runner) != source_revision:
-            raise CredentialError("product_credentials_source_changed")
         configuration = _marker(config)["configuration_sha256"]
         try:
             started = store.read(ANCHOR)
@@ -300,32 +314,14 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
             )
         # Re-read the authority and material, not just the in-memory write
         # result.
-        _same(
-            _record(descriptor, STARTED),
-            started,
-            "product_credentials_receipt_changed",
-        )
-        if _key_digest(descriptor) != completed["key_sha256"]:
-            raise CredentialError("product_credentials_receipt_changed")
-        _same(
-            _record(descriptor, COMPLETED),
-            completed,
-            "product_credentials_receipt_changed",
-        )
-        if set(os.listdir(descriptor)) != FILES:
-            raise CredentialError("product_credentials_inventory_changed")
-        private_io.verify_directory(descriptor, root)
+        _recheck_material(descriptor, root, started, completed)
         store._check_directory()
         _same(
             store.read(ANCHOR), started, "product_credentials_receipt_changed"
         )
-        _same(
-            store.read("product.json"),
-            _marker(config),
-            "product_credentials_configuration_changed",
+        _verify_product_source(
+            config, store, source_revision, repo_root=repo_root, runner=runner
         )
-        if require_clean_revision(repo_root, runner=runner) != source_revision:
-            raise CredentialError("product_credentials_source_changed")
         return {
             "schema_version": 1,
             "status": "secrets-ready",
