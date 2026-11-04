@@ -114,7 +114,7 @@ public final class Main {
                             if (value == null || value.length() > MAX_COLUMN_CHARS) return empty("parse_error", mime, digest);
                             total += value.length();
                             if (total > MAX_COLUMN_TOTAL_CHARS) return empty("parse_error", mime, digest);
-                            columns.add(value);
+                            columns.add(value.replace('\0', ' '));
                         }
                     }
                     String[] count = data.getValues("row_count");
@@ -128,7 +128,7 @@ public final class Main {
                     data = parser.getText(stream, Map.of("resourceName", input.getFileName().toString()));
                 }
             }
-            String content = data.getContent() == null ? "" : data.getContent();
+            String content = data.getContent() == null ? "" : data.getContent().replace('\0', ' ');
             boolean truncated = content.length() > MAX_TEXT;
             truncated |= csv && rows != null && rows >= MAX_ROWS;
             String[] truncation = data.getValues("truncated");

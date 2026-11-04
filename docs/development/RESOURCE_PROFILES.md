@@ -137,7 +137,9 @@ python3 scripts/depositarai.py profile-resources status \
 來源素材與解析結果分開保存。需要取得素材時，24 小時內的來源快取會核對內容
 雜湊，沿用取得時間；這不表示已重新向來源確認。解析快取另綁定內容 SHA256、
 抽取器映像、編碼及標頭政策。完成計畫不會自動刷新；metadata、選取項目或抽取
-政策變更時，建立新的計畫與專用 `state-root`。身分不符或損毀的快取會明確失敗。
+政策或抽取器 recipe／映像變更時，建立新的計畫與專用 `state-root`。既有計畫仍綁
+原 helper，不能只換映像續跑；舊 profiles 保留其原映像與 provenance。
+身分不符或損毀的快取會明確失敗。
 
 素材、profiles 與進度記錄留在私有目錄。每個完整原檔最多 16 MiB；容量需涵蓋
 所選原檔、解析快取與 profiles。`run` 會先檢查剩餘空間，空間不足時停止。
@@ -213,6 +215,12 @@ metadata。空文字、格式不符或沒有欄名政策的 profile 會列出 sk
 
 ## 摘要的範圍
 
+抽取器在文字與 CSV 顯示／索引欄名中，把 NUL（U+0000）換成一個 ASCII 空白，
+例如 `A<NUL>B` 變成 `A B`，連續 NUL 保留為連續空白。此步驟不改其他 Unicode
+或原始檔案及其 SHA256。只有 NUL／空白的 PDF 回報 `empty_text`，並提示可能需要
+OCR；不會自動執行 OCR。輸出契約仍拒絕含 NUL 或其他不合法結構的報告，
+抽取器例外仍依既有規則停止批次。
+
 每資料集最多封入三個可用資源，超量選取會拒絕。CSV 僅索引明確
 採第一列政策的欄名，最多 32 個、單欄 128 字元、合計 2,048 字元；資料列值不進入
 搜尋。PDF 索引最多 8,192 字元，卡片顯示前 320 字元，截斷記在私有 `truncated`。
@@ -222,3 +230,16 @@ CSV 的 `rows_observed` 是有界觀察數，`rows_complete` 不承諾完整資�
 摘要不覆寫資料集的時間或地理涵蓋；格式篩選仍以資料集列出的全部資源 metadata
 為準。OCR 與 PDF 表格結構需另外處理。摘要及 provenance 會封入 v3 catalog；
 後續索引與向量重建沿用既有候選流程。
+
+## 開發者整合測試
+
+整合測試用合成 PDF／CSV 執行真實 Java 抽取器，再交給正常的 Python 輸出契約
+驗證。主機不需要 JDK；測試會建置或重用 helper 映像，並啟動短暫的 CPU 容器。
+請使用有 Docker 權限的非 root 帳號，先取得獨占測試窗口，避免與資源批次並行。
+
+```sh
+DEPOSITAR_TEST_DOCUMENT_EXTRACTOR_RUNTIME=1 \
+  python3 -m unittest tests.integration.documents.test_extractor
+```
+
+未設定環境變數時，這些整合測試會略過；日常 CPU 單元測試不會因此啟動 Docker。
