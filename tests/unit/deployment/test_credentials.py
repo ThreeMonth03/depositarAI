@@ -1,6 +1,7 @@
 """Real private key files and receipts; no Docker or network mutations."""
 
 from dataclasses import replace
+import errno
 import hashlib
 import json
 import os
@@ -490,3 +491,235 @@ class ProductCredentialsTests(unittest.TestCase):
                 ),
             ):
                 reader()
+
+    def test_writer_proof_keeps_marker_evaluation_order_and_priority(self):
+        original_marker = credentials._marker
+        expected = [
+            "product",
+            "marker",
+            "source",
+            "marker",
+            "anchor",
+            "anchor",
+            "product",
+            "marker",
+            "source",
+        ]
+        for reused in (False, True):
+            with (
+                self.subTest(reused=reused),
+                locked_state(self.config, create=True) as store,
+            ):
+                events = []
+                original_read = store.read
+
+                def read(name):
+                    if name == "product.json":
+                        events.append("product")
+                    elif name == credentials.ANCHOR:
+                        events.append("anchor")
+                    return original_read(name)
+
+                def marker(config):
+                    events.append("marker")
+                    return original_marker(config)
+
+                def source(*args, **kwargs):
+                    del args, kwargs
+                    events.append("source")
+                    return REVISION
+
+                with (
+                    patch.object(store, "read", side_effect=read),
+                    patch.object(credentials, "_marker", side_effect=marker),
+                    patch.object(
+                        credentials,
+                        "require_clean_revision",
+                        side_effect=source,
+                    ),
+                ):
+                    report = credentials.prepare_api_key(
+                        self.config, store, REVISION, repo_root=self.root
+                    )
+                self.assertEqual(report["api_key_reused"], reused)
+                self.assertEqual(events, expected)
+        original_key = self.key.read_bytes()
+        with locked_state(self.config, create=True) as store:
+            marker = store.read("product.json")
+            store.write(
+                "product.json",
+                {**marker, "configuration_sha256": "0" * 64},
+                replace=True,
+            )
+            with (
+                patch.object(credentials, "require_clean_revision") as source,
+                patch.object(private_io, "open_child_directory") as open_child,
+                self.assertRaisesRegex(
+                    credentials.CredentialError,
+                    "^product_credentials_configuration_changed$",
+                ),
+            ):
+                credentials.prepare_api_key(
+                    self.config, store, REVISION, repo_root=self.root
+                )
+            source.assert_not_called()
+            open_child.assert_not_called()
+        self.assertEqual(self.key.read_bytes(), original_key)
+
+    def test_final_fence_keeps_readonly_source_boundary_and_read_order(self):
+        self.prepare()
+        for readonly in (False, True):
+            with (
+                self.subTest(readonly=readonly),
+                locked_state(self.config, create=True) as store,
+            ):
+                events, retained = [], []
+                original_open = private_io.open_child_directory
+                original_verify = private_io.verify_directory
+                original_listdir = os.listdir
+                original_record = credentials._record
+                original_digest = credentials._key_digest
+
+                def open_child(*args, **kwargs):
+                    fd = original_open(*args, **kwargs)
+                    retained.append(fd)
+                    return fd
+
+                def record(fd, name):
+                    events.append(name)
+                    return original_record(fd, name)
+
+                def digest(fd):
+                    events.append(credentials.KEY)
+                    return original_digest(fd)
+
+                def listdir(path):
+                    if retained and path == retained[-1]:
+                        events.append("inventory")
+                    return original_listdir(path)
+
+                def verify(fd, path, **kwargs):
+                    if retained and fd == retained[-1]:
+                        events.append("directory")
+                    return original_verify(fd, path, **kwargs)
+
+                with (
+                    patch.object(
+                        private_io,
+                        "open_child_directory",
+                        side_effect=open_child,
+                    ),
+                    patch.object(
+                        private_io, "verify_directory", side_effect=verify
+                    ),
+                    patch.object(os, "listdir", side_effect=listdir),
+                    patch.object(credentials, "_record", side_effect=record),
+                    patch.object(
+                        credentials, "_key_digest", side_effect=digest
+                    ),
+                    patch.object(
+                        credentials, "_marker", wraps=credentials._marker
+                    ) as marker,
+                    patch.object(
+                        credentials,
+                        "require_clean_revision",
+                        return_value=REVISION,
+                    ) as source,
+                ):
+                    if readonly:
+                        credentials.read_api_key_authority(self.config, store)
+                    else:
+                        credentials.prepare_api_key(
+                            self.config, store, REVISION, repo_root=self.root
+                        )
+                self.assertEqual(
+                    events[-5:],
+                    [
+                        credentials.STARTED,
+                        credentials.KEY,
+                        credentials.COMPLETED,
+                        "inventory",
+                        "directory",
+                    ],
+                )
+                self.assertEqual(events.count(credentials.STARTED), 2)
+                self.assertEqual(events.count(credentials.KEY), 2)
+                self.assertEqual(events.count(credentials.COMPLETED), 2)
+                self.assertEqual(marker.call_count, 1 if readonly else 3)
+                self.assertEqual(source.call_count, 0 if readonly else 2)
+                self.assertEqual(len(retained), 1)
+                with self.assertRaises(OSError) as raised:
+                    os.fstat(retained[0])
+                self.assertEqual(raised.exception.errno, errno.EBADF)
+
+    def test_material_reread_keeps_original_raw_close_error_priority(self):
+        self.prepare()
+        for readonly in (False, True):
+            with (
+                self.subTest(readonly=readonly),
+                locked_state(self.config, create=True) as store,
+            ):
+                original_open = private_io.open_child_directory
+                original_record, original_close = credentials._record, os.close
+                retained, closes = [], []
+                reads = 0
+                close_error = OSError(errno.EIO, "synthetic material close")
+
+                def open_child(*args, **kwargs):
+                    fd = original_open(*args, **kwargs)
+                    retained.append(fd)
+                    return fd
+
+                def record(fd, name):
+                    nonlocal reads
+                    if name == credentials.STARTED:
+                        reads += 1
+                        if reads == 2:
+                            raise FileNotFoundError("synthetic final reread")
+                    return original_record(fd, name)
+
+                def close(fd):
+                    if retained and fd == retained[0]:
+                        closes.append(fd)
+                        original_close(fd)
+                        raise close_error
+                    return original_close(fd)
+
+                with (
+                    patch.object(
+                        private_io,
+                        "open_child_directory",
+                        side_effect=open_child,
+                    ),
+                    patch.object(credentials, "_record", side_effect=record),
+                    patch.object(os, "close", side_effect=close),
+                    patch.object(
+                        credentials,
+                        "require_clean_revision",
+                        return_value=REVISION,
+                    ),
+                    self.assertRaises(OSError) as raised,
+                ):
+                    if readonly:
+                        credentials.read_api_key_authority(self.config, store)
+                    else:
+                        credentials.prepare_api_key(
+                            self.config, store, REVISION, repo_root=self.root
+                        )
+                self.assertIs(raised.exception, close_error)
+                self.assertIsInstance(
+                    close_error.__context__, credentials.CredentialError
+                )
+                self.assertEqual(
+                    close_error.__context__.args,
+                    (
+                        "product_credentials_complete_evidence_missing"
+                        if readonly
+                        else "product_credentials_verification_failed",
+                    ),
+                )
+                self.assertEqual(closes, retained)
+                self.assertEqual(reads, 2)
+                with self.assertRaises(OSError) as missing:
+                    os.fstat(retained[0])
+                self.assertEqual(missing.exception.errno, errno.EBADF)
