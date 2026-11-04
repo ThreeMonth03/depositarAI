@@ -63,6 +63,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/shared/bounded_process.py", "")
         self.write("search/operations/catalog/policy.py", "")
         self.write("search/catalog/session.py", "")
+        self.write("search/catalog/build/builder.py", "")
         self.write("search/api/shared/middleware.py", "")
         self.write("search/http/__init__.py", "")
         self.write("search/web/app.py", "")
@@ -183,6 +184,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/shared/bounded_process.py",
             "search/operations/catalog/policy.py",
             "search/catalog/session.py",
+            "search/catalog/build/builder.py",
             "search/api/worker.py",
             "search/operations/deployment/images/build.py",
             "search/operations/deployment/release/runtime.py",

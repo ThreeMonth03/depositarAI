@@ -51,6 +51,69 @@ def _make_manifest(
     return manifest, manifest_bytes, bundle_digest
 
 
+def _normalize_records(raw_records, resource_context):
+    """Normalize unique records with context and deterministic ordering."""
+    if resource_context is not None and not isinstance(
+        resource_context, Mapping
+    ):
+        raise policy.BundleError(
+            "resource context selection must be a dataset map"
+        )
+    selected_context = (
+        {} if resource_context is None else dict(resource_context)
+    )
+    counters: Dict[str, Any] = {}
+    normalized: List[
+        Tuple[
+            str,
+            str,
+            Dict[str, Any],
+            Dict[str, Any],
+            Dict[str, Any],
+            Dict[str, Any],
+        ]
+    ] = []
+    seen_ids = set()
+    seen_urls = set()
+    for raw_record in raw_records:
+        dataset_id, dataset_url, corpus = normalize.normalize_package(
+            raw_record, counters
+        )
+        if dataset_id in seen_ids:
+            raise policy.BundleError("duplicate dataset UUID: %s" % dataset_id)
+        if dataset_url in seen_urls:
+            raise policy.BundleError("duplicate normalized dataset URL")
+        seen_ids.add(dataset_id)
+        seen_urls.add(dataset_url)
+        enrichment = normalize.resource_enrichment(
+            corpus, selected_context.pop(dataset_id, []), counters
+        )
+        fess = normalize.fess_document(
+            corpus, counters, resource_context=enrichment
+        )
+        context_row = {
+            "schema_version": 1,
+            "dataset_id": dataset_id,
+            "resources": enrichment,
+        }
+        normalized.append(
+            (
+                dataset_id,
+                dataset_url,
+                raw_record,
+                corpus,
+                fess,
+                context_row,
+            )
+        )
+    if selected_context:
+        raise policy.BundleError(
+            "resource context references an unknown dataset"
+        )
+    normalized.sort(key=lambda item: item[0])
+    return normalized, counters
+
+
 def build_bundle(
     input_path: os.PathLike,
     output_root: os.PathLike,
@@ -81,66 +144,9 @@ def build_bundle(
 
         lock_descriptor = storage._open_lock(root_descriptor)
         raw_records = snapshot.load_source(source)
-        if resource_context is not None and not isinstance(
-            resource_context, Mapping
-        ):
-            raise policy.BundleError(
-                "resource context selection must be a dataset map"
-            )
-        selected_context = (
-            {} if resource_context is None else dict(resource_context)
+        normalized, counters = _normalize_records(
+            raw_records, resource_context
         )
-        counters: Dict[str, Any] = {}
-        normalized: List[
-            Tuple[
-                str,
-                str,
-                Dict[str, Any],
-                Dict[str, Any],
-                Dict[str, Any],
-                Dict[str, Any],
-            ]
-        ] = []
-        seen_ids = set()
-        seen_urls = set()
-        for raw_record in raw_records:
-            dataset_id, dataset_url, corpus = normalize.normalize_package(
-                raw_record, counters
-            )
-            if dataset_id in seen_ids:
-                raise policy.BundleError(
-                    "duplicate dataset UUID: %s" % dataset_id
-                )
-            if dataset_url in seen_urls:
-                raise policy.BundleError("duplicate normalized dataset URL")
-            seen_ids.add(dataset_id)
-            seen_urls.add(dataset_url)
-            enrichment = normalize.resource_enrichment(
-                corpus, selected_context.pop(dataset_id, []), counters
-            )
-            fess = normalize.fess_document(
-                corpus, counters, resource_context=enrichment
-            )
-            context_row = {
-                "schema_version": 1,
-                "dataset_id": dataset_id,
-                "resources": enrichment,
-            }
-            normalized.append(
-                (
-                    dataset_id,
-                    dataset_url,
-                    raw_record,
-                    corpus,
-                    fess,
-                    context_row,
-                )
-            )
-        if selected_context:
-            raise policy.BundleError(
-                "resource context references an unknown dataset"
-            )
-        normalized.sort(key=lambda item: item[0])
 
         dataset_ids = [item[0] for item in normalized]
         source_rows = [item[2] for item in normalized]
