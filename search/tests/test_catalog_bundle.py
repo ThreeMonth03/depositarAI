@@ -1258,6 +1258,152 @@ class CatalogBundleTests(unittest.TestCase):
         ):
             builder.build_bundle(source, self.output)
 
+    def test_context_copy_precedes_ordered_normalization_and_duplicate_error(
+        self,
+    ):
+        from collections.abc import Mapping
+
+        rows = [_dataset(), _dataset(slug="duplicate-id")]
+        source = self.write_jsonl(rows, "phase-order.jsonl")
+        original_rows = json.dumps(rows, sort_keys=True)
+        selected = {UUID_1: []}
+        events, retained = [], []
+        open_root, open_lock = storage._open_output_root, storage._open_lock
+        normalize_package = builder.normalize.normalize_package
+
+        class Selection(Mapping):
+            def __iter__(self):
+                events.append("context-keys")
+                return iter(selected)
+
+            def __len__(self):
+                return len(selected)
+
+            def __getitem__(self, name):
+                events.append("context-value")
+                return selected[name]
+
+        def records():
+            for row in rows:
+                events.append("record")
+                yield row
+            events.append("records-exhausted")
+
+        def normalize_record(row, counters):
+            events.append("normalize")
+            return normalize_package(row, counters)
+
+        def root_descriptor(path):
+            descriptor = open_root(path)
+            retained.append(descriptor)
+            return descriptor
+
+        def lock_descriptor(descriptor):
+            lock = open_lock(descriptor)
+            retained.append(lock)
+            return lock
+
+        with (
+            mock.patch.object(
+                storage, "_open_output_root", side_effect=root_descriptor
+            ),
+            mock.patch.object(
+                storage, "_open_lock", side_effect=lock_descriptor
+            ),
+            mock.patch.object(
+                builder.snapshot, "load_source", return_value=records()
+            ),
+            mock.patch.object(
+                builder.normalize,
+                "normalize_package",
+                side_effect=normalize_record,
+            ),
+            mock.patch.object(storage, "_make_staging_directory") as staged,
+            self.assertRaisesRegex(
+                policy.BundleError, "duplicate dataset UUID"
+            ),
+        ):
+            builder.build_bundle(
+                source, self.output, resource_context=Selection()
+            )
+        staged.assert_not_called()
+        self.assertEqual(
+            events,
+            [
+                "context-keys",
+                "context-value",
+                "record",
+                "normalize",
+                "record",
+                "normalize",
+            ],
+        )
+        self.assertEqual(selected, {UUID_1: []})
+        self.assertEqual(json.dumps(rows, sort_keys=True), original_rows)
+        self.assertEqual(len(retained), 2)
+        for descriptor in retained:
+            with self.assertRaises(OSError) as closed:
+                os.fstat(descriptor)
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_enrichment_fault_precedes_unknown_context_and_staging(self):
+        source = self.write_jsonl([_dataset()], "enrichment-order.jsonl")
+        selected = {UUID_1: [], RESOURCE_UUID: []}
+        events, retained = [], []
+        failure = ValueError("synthetic enrichment failure")
+        normalize_package = builder.normalize.normalize_package
+        open_root, open_lock = storage._open_output_root, storage._open_lock
+
+        def normalize_record(row, counters):
+            events.append("normalize")
+            return normalize_package(row, counters)
+
+        def enrich(corpus, context, counters):
+            events.append("enrich")
+            self.assertIs(context, selected[UUID_1])
+            raise failure
+
+        def root_descriptor(path):
+            descriptor = open_root(path)
+            retained.append(descriptor)
+            return descriptor
+
+        def lock_descriptor(descriptor):
+            lock = open_lock(descriptor)
+            retained.append(lock)
+            return lock
+
+        with (
+            mock.patch.object(
+                storage, "_open_output_root", side_effect=root_descriptor
+            ),
+            mock.patch.object(
+                storage, "_open_lock", side_effect=lock_descriptor
+            ),
+            mock.patch.object(
+                builder.normalize,
+                "normalize_package",
+                side_effect=normalize_record,
+            ),
+            mock.patch.object(
+                builder.normalize, "resource_enrichment", side_effect=enrich
+            ),
+            mock.patch.object(storage, "_make_staging_directory") as staged,
+            self.assertRaises(ValueError) as raised,
+        ):
+            builder.build_bundle(
+                source, self.output, resource_context=selected
+            )
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(events, ["normalize", "enrich"])
+        self.assertEqual(selected, {UUID_1: [], RESOURCE_UUID: []})
+        staged.assert_not_called()
+        self.assertEqual(len(retained), 2)
+        for descriptor in retained:
+            with self.assertRaises(OSError) as closed:
+                os.fstat(descriptor)
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+
 
 if __name__ == "__main__":
     unittest.main()

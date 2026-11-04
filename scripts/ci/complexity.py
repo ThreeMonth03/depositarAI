@@ -23,6 +23,7 @@ GATED_PATHS = (
     "search/operations/shared/bounded_process.py",
     "search/operations/catalog/policy.py",
     "search/catalog/session.py",
+    "search/catalog/build/builder.py",
     "search/api/shared/middleware.py",
     "search/http",
     "search/web/app.py",
