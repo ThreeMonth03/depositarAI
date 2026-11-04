@@ -649,7 +649,7 @@ class ProviderRuntimeTests(unittest.TestCase):
                 private_api_tls, "gpu_ownership_proofs", return_value=()
             ),
             patch.object(
-                inference.gpu_ownership, "run_gpu_ownership", return_value=gpu
+                inference.gpu_collect, "run_gpu_ownership", return_value=gpu
             ),
             patch.object(
                 build,
@@ -713,7 +713,7 @@ class ProviderRuntimeTests(unittest.TestCase):
             (runtime.authority, "read_private", lambda _path: raw),
             (private_api_tls, "gpu_ownership_proofs", tls),
             (inference, "_gpu", gpu),
-            (inference.gpu_ownership, "bounded_runner", bounded),
+            (inference.gpu_collect, "bounded_runner", bounded),
             (build, "_run", execute),
             (probe, "verify_residency", resident),
         ):
@@ -763,7 +763,7 @@ class ProviderRuntimeTests(unittest.TestCase):
         self.assertEqual(provider.deadline, original)
 
     def test_real_cpu_runner_timeouts_obey_the_checkpoint_deadline(self):
-        from search.operations.deployment import gpu_ownership
+        from search.operations.deployment.gpu import contract as gpu_contract
         from search.operations.deployment.images import build
 
         provider = runtime.Provider.__new__(runtime.Provider)
@@ -782,7 +782,7 @@ class ProviderRuntimeTests(unittest.TestCase):
             (
                 provider._gpu_runner,
                 {"timeout": 30, "max_bytes": 128},
-                gpu_ownership.GPUOwnershipError,
+                gpu_contract.GPUOwnershipError,
             ),
         ):
             with (

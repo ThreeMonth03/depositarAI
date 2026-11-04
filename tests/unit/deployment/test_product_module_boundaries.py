@@ -148,6 +148,35 @@ def neutral_dependency(name):
 
 
 class ProductModuleBoundaryTests(unittest.TestCase):
+    def test_gpu_contract_and_snapshot_exclude_host_collection(self):
+        directory = ROOT / "search/operations/deployment/gpu"
+        forbidden = (
+            "subprocess",
+            "selectors",
+            "signal",
+            "search.operations.deployment.gpu.collect",
+            "search.operations.deployment.images",
+            "search.operations.deployment.inference",
+            "search.operations.deployment.provider",
+            "search.operations.catalog",
+        )
+        for name in ("contract", "snapshot"):
+            with self.subTest(module=name):
+                found = source_dependencies(directory / (name + ".py"))
+                self.assertEqual([], forbidden_dependencies(found, forbidden))
+        self.assertEqual(
+            [],
+            forbidden_dependencies(
+                source_dependencies(directory / "contract.py"),
+                ("search.operations.deployment.gpu.snapshot",),
+            ),
+        )
+        initializer = ast.parse((directory / "__init__.py").read_text())
+        self.assertEqual(len(initializer.body), 1)
+        self.assertIsInstance(initializer.body[0], ast.Expr)
+        self.assertIsInstance(initializer.body[0].value, ast.Constant)
+        self.assertIsInstance(initializer.body[0].value.value, str)
+
     def test_import_parser_resolves_package_and_module_contexts(self):
         for relative, expected in (
             (
@@ -503,7 +532,7 @@ class RuntimeDockerBoundaryTests(unittest.TestCase):
             "search.operations.deployment.release",
             "search.operations.deployment.gateway",
             "search.operations.deployment.gateway.activation",
-            "search.operations.deployment.gpu_ownership",
+            "search.operations.deployment.gpu",
             "search.operations.lifecycle",
             "search.operations.doctor",
             "scripts.prepare_search_models",
@@ -604,7 +633,7 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
                 "gateway",
                 "gateway.activation",
                 "payload",
-                "gpu_ownership",
+                "gpu",
             )
         ) + (
             "search.operations.lifecycle",

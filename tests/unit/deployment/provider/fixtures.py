@@ -559,7 +559,7 @@ def _checkpoint_evidence(test, data):
             lambda *_args, **_kwargs: (),
         ),
         (
-            inference.gpu_ownership,
+            inference.gpu_collect,
             "run_gpu_ownership",
             lambda *_args, **_kwargs: gpu,
         ),

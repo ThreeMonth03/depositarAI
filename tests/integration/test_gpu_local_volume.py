@@ -6,7 +6,9 @@ import tempfile
 import unittest
 import uuid
 
-from search.operations.deployment import gpu_ownership as ownership
+from search.operations.deployment.gpu import collect as gpu_collect
+from search.operations.deployment.gpu import contract as gpu_contract
+from search.operations.deployment.gpu import snapshot as gpu_snapshot
 from search.operations.deployment.source_bundle import NGINX_BASE
 
 
@@ -17,8 +19,8 @@ from search.operations.deployment.source_bundle import NGINX_BASE
 class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
     def command(self, argv):
         self.commands.append(argv)
-        result = ownership.bounded_runner(
-            argv, timeout=15, max_bytes=ownership.MAX_OUTPUT_BYTES
+        result = gpu_collect.bounded_runner(
+            argv, timeout=15, max_bytes=gpu_contract.MAX_OUTPUT_BYTES
         )
         self.assertEqual(
             result.returncode, 0, "disposable Docker metadata command failed"
@@ -26,7 +28,7 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
         return result.stdout
 
     def docker(self, *arguments):
-        return self.command([*ownership.DOCKER_PREFIX, *arguments])
+        return self.command([*gpu_collect.DOCKER_PREFIX, *arguments])
 
     def cleanup(self):
         # These identifiers are generated/returned by this fixture only.
@@ -35,7 +37,7 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
         def remove(*arguments):
             try:
                 result = subprocess.run(
-                    [*ownership.DOCKER_PREFIX, *arguments],
+                    [*gpu_collect.DOCKER_PREFIX, *arguments],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=15,
@@ -98,25 +100,25 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
             "-c",
             "exec sleep 120",
         ).strip()
-        row = ownership._inspect(self.command, self.container_id)
-        ownership._container(
+        row = gpu_collect._inspect(self.command, self.container_id)
+        gpu_snapshot._container(
             row
         )  # Shape only; does not grant volume authority.
-        root = ownership._strict_json(
+        root = gpu_collect._strict_json(
             self.docker("info", "--format", "{{json .DockerRootDir}}")
         )
-        before = ownership._collect_local_volumes([row], root, self.command)
+        before = gpu_collect._collect_local_volumes([row], root, self.command)
         self.assertEqual(len(before), 1)
         self.assertEqual(before[0].name, self.volume_name)
         with self.assertRaisesRegex(
-            ownership.GPUOwnershipError, "volume_evidence_invalid"
+            gpu_contract.GPUOwnershipError, "volume_evidence_invalid"
         ):
-            ownership._containers([row], {}, {}, frozenset())
+            gpu_snapshot._containers([row], {}, {}, frozenset())
         self.assertEqual(
-            set(ownership._containers([row], {}, {}, frozenset(), before)),
+            set(gpu_snapshot._containers([row], {}, {}, frozenset(), before)),
             {self.container_id},
         )
-        after = ownership._collect_local_volumes([row], root, self.command)
+        after = gpu_collect._collect_local_volumes([row], root, self.command)
         self.assertEqual(before, after)
         options_name = self.volume_name + "-options"
         with tempfile.TemporaryDirectory(
@@ -142,9 +144,9 @@ class LocalVolumeMetadataRuntimeTests(unittest.TestCase):
                     "Mounts": [{"Type": "volume", "Name": options_name}]
                 }
                 with self.assertRaisesRegex(
-                    ownership.GPUOwnershipError, "volume_metadata_invalid"
+                    gpu_contract.GPUOwnershipError, "volume_metadata_invalid"
                 ):
-                    ownership._collect_local_volumes(
+                    gpu_collect._collect_local_volumes(
                         [declaration], root, self.command
                     )
             finally:

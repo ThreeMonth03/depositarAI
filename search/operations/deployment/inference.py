@@ -24,11 +24,11 @@ from search.operations import doctor
 from search.operations.config import ProductConfig
 from search.operations.deployment import (
     composition,
-    gpu_ownership,
     inference_runtime,
     source_bundle,
     runtime_docker,
 )
+from search.operations.deployment.gpu import collect as gpu_collect
 from search.operations.deployment.images import authority as image_authority
 from search.operations.deployment.images import build as image_build
 from search.operations.deployment.runtime_docker import (
@@ -410,7 +410,7 @@ def _gpu(config, allowed, runner, *, cpu_proofs=()):
         if type(cpu_proofs) is tuple and not cpu_proofs
         else {"cpu_proofs": cpu_proofs}
     )
-    result = gpu_ownership.run_gpu_ownership(
+    result = gpu_collect.run_gpu_ownership(
         config, allowed=allowed, runner=runner, **options
     )
     if (

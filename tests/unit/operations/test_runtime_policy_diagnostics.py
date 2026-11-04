@@ -104,7 +104,7 @@ class RuntimePolicyDiagnosticTests(unittest.TestCase):
         self,
     ):
         with patch.object(
-            inference.gpu_ownership,
+            inference.gpu_collect,
             "run_gpu_ownership",
             return_value={
                 "schema_version": 1,

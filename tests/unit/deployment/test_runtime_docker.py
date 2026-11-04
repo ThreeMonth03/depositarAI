@@ -201,7 +201,7 @@ class RuntimeDockerTests(unittest.TestCase):
             '    "search.operations.deployment.gateway",\n'
             '    "search.operations.deployment.gateway.activation",\n'
             '    "search.operations.deployment.inference_runtime",\n'
-            '    "search.operations.deployment.gpu_ownership",\n'
+            '    "search.operations.deployment.gpu",\n'
             '    "scripts.prepare_search_models",\n'
             '    "torch", "fastapi", "django", "rest_framework", '
             '"adrf", "pydantic",\n'

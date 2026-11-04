@@ -42,6 +42,7 @@ depositarAI/
 │   │   ├── deployment/        映像、模型、release、gateway、入口與打包
 │   │   │   ├── payload/       完整產品素材收集與離線還原工作流
 │   │   │   ├── images/        映像建置、產品 staging 與完成證據
+│   │   │   ├── gpu/           GPU ownership 契約、純快照驗證與主機收集
 │   │   │   ├── candidate/     共用模型的 CPU 候選與獨立 catalog 權限
 │   │   │   │   └── batch/    有界多輪查詢、私有擷取與 session probes
 │   │   │   ├── frontend/      拆機 CPU 前端素材、政策、檢查與發版

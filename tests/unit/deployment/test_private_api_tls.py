@@ -13,8 +13,10 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.deployment import private_api_tls as endpoint
-from search.operations.deployment import gpu_ownership
-from tests.unit.deployment.test_gpu_ownership import container
+from search.operations.deployment.gpu import collect as gpu_collect
+from search.operations.deployment.gpu import contract as gpu_contract
+from search.operations.deployment.gpu import snapshot as gpu_snapshot
+from tests.unit.deployment.gpu.fixtures import container
 from tests.unit.deployment.public_entry.test_preflight import fixture
 
 OUTER_NAME = "api.example.test"
@@ -184,7 +186,7 @@ class TLSProofRunner:
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
-        local_prefix = gpu_ownership.DOCKER_PREFIX
+        local_prefix = gpu_collect.DOCKER_PREFIX
         if argv[0] == "docker":
             if tuple(argv[: len(local_prefix)]) != local_prefix:
                 raise AssertionError(
@@ -193,7 +195,7 @@ class TLSProofRunner:
             argv = ["docker", *argv[len(local_prefix) :]]
         if (
             argv[:2] == ["docker", "inspect"]
-            and argv[3] == gpu_ownership.INSPECT_FORMAT
+            and argv[3] == gpu_collect.INSPECT_FORMAT
         ):
             row = copy.deepcopy(self.projected[argv[-1]])
             row["HostConfig"]["DeviceRequests"].append(None)
@@ -363,11 +365,11 @@ class PrivateApiTlsTests(unittest.TestCase):
             self.output / "plan.json", runner=runner
         )
         self.assertEqual(len(proofs), 2)
-        self.assertEqual({p.role for p in proofs}, gpu_ownership.TLS_CPU_ROLES)
+        self.assertEqual({p.role for p in proofs}, gpu_contract.TLS_CPU_ROLES)
         for proof in proofs:
             self.assertEqual(
                 proof.projection_sha256,
-                gpu_ownership.cpu_projection_sha256(
+                gpu_snapshot.cpu_projection_sha256(
                     runner.projected[proof.container_id]
                 ),
             )
@@ -428,7 +430,7 @@ class PrivateApiTlsTests(unittest.TestCase):
 
         def changed(argv, **kwargs):
             value = runner(argv, **kwargs)
-            if gpu_ownership.INSPECT_FORMAT in argv:
+            if gpu_collect.INSPECT_FORMAT in argv:
                 self.api["StartedAt"] = "2026-10-30T00:00:00Z"
             return value
 

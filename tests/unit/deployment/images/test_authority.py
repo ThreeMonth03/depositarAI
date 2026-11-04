@@ -57,7 +57,7 @@ class ImageAuthorityBoundaryTests(unittest.TestCase):
             '    "search.operations.deployment.gateway.activation",\n'
             '    "search.operations.deployment.payload",\n'
             '    "search.operations.deployment.inference_runtime",\n'
-            '    "search.operations.deployment.gpu_ownership",\n'
+            '    "search.operations.deployment.gpu",\n'
             '    "search.operations.doctor", "search.reranker.model",\n'
             '    "scripts.prepare_search_models", "search.api",\n'
             '    "torch", "fastapi", "django", "rest_framework", '

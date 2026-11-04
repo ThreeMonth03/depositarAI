@@ -16,11 +16,10 @@ import re
 import subprocess
 
 from search.serialization import strict_json
-from search.operations.deployment import (
-    composition,
-    gpu_ownership,
-    source_bundle,
-)
+from search.operations.deployment import composition, source_bundle
+from search.operations.deployment.gpu import collect as gpu_collect
+from search.operations.deployment.gpu import contract as gpu_contract
+from search.operations.deployment.gpu import snapshot as gpu_snapshot
 from search.operations.deployment.images import build as image_build
 from search.operations.deployment.public_entry import preflight, profile
 from search.operations.shared import private_io
@@ -1005,7 +1004,7 @@ def _owned(path, plan, runner, *, healthy=False, with_roles=False):
 
 def gpu_ownership_proofs(
     plan_path, *, runner=subprocess.run
-) -> tuple[gpu_ownership.CPUContainerProof, ...]:
+) -> tuple[gpu_contract.CPUContainerProof, ...]:
     """Prove the exact healthy TLS pair without stopping it or granting GPU
     use.
 
@@ -1020,10 +1019,10 @@ def gpu_ownership_proofs(
     def local_runner(argv, **kwargs):
         if (
             argv[0] == "docker"
-            and tuple(argv[: len(gpu_ownership.DOCKER_PREFIX)])
-            != gpu_ownership.DOCKER_PREFIX
+            and tuple(argv[: len(gpu_collect.DOCKER_PREFIX)])
+            != gpu_collect.DOCKER_PREFIX
         ):
-            argv = [*gpu_ownership.DOCKER_PREFIX, *argv[1:]]
+            argv = [*gpu_collect.DOCKER_PREFIX, *argv[1:]]
         if runner is subprocess.run:
             return image_build._run(
                 argv,
@@ -1047,16 +1046,16 @@ def gpu_ownership_proofs(
     result = []
     try:
         for role, identifier in sorted(identifiers.items()):
-            row = gpu_ownership._inspect(command, identifier)
-            proof = gpu_ownership.CPUContainerProof(
+            row = gpu_collect._inspect(command, identifier)
+            proof = gpu_contract.CPUContainerProof(
                 identifier,
                 row["Image"],
                 "private-api-tls-" + role,
-                gpu_ownership.cpu_projection_sha256(row),
+                gpu_snapshot.cpu_projection_sha256(row),
             )
-            gpu_ownership._container(row, proof)
+            gpu_snapshot._container(row, proof)
             result.append(proof)
-    except gpu_ownership.GPUOwnershipError:
+    except gpu_contract.GPUOwnershipError:
         raise EndpointError("private_api_tls_runtime_changed") from None
     _require(check(path, runner=local_runner) == plan, "material_changed")
     _require(
