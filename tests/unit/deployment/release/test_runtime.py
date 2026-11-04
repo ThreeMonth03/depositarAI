@@ -604,6 +604,77 @@ class ReleaseRuntimeTests(unittest.TestCase):
                 values[key] = None
                 self.reject(values)
 
+    def test_entrypoints_preserve_inventory_and_client_error_priority(self):
+        values = evidence()
+        values["containers"][1]["Id"] = values["containers"][0]["Id"]
+        values["lease"] = None
+        with mock.patch.object(
+            client_lease,
+            "validate_client_lease",
+            wraps=client_lease.validate_client_lease,
+        ) as single:
+            self.reject(values, "release_runtime_identity_changed")
+            values["shared_clients"] = []
+            self.reject(values, "release_runtime_client_lease_invalid")
+            values["containers"].pop()
+            self.reject(values, "release_runtime_inventory_invalid")
+        single.assert_not_called()
+
+        private = evidence()
+        private.pop("networks")
+        with mock.patch.object(
+            client_lease,
+            "validate_client_lease",
+            wraps=client_lease.validate_client_lease,
+        ) as single:
+            with self.assertRaisesRegex(
+                release_runtime.ReleaseRuntimeError,
+                "^release_runtime_shared_client_changed$",
+            ):
+                release_runtime._validate_containers(
+                    **private, validated_clients=[]
+                )
+            single.assert_not_called()
+            release_runtime._validate_containers(
+                **private, validated_clients=None
+            )
+        single.assert_called_once()
+
+    def test_role_order_preserves_competing_faults_and_original_references(
+        self,
+    ):
+        for order, code in (
+            ((0, 1, 2), "release_runtime_mounts_changed"),
+            ((0, 2, 1), "release_runtime_command_changed"),
+        ):
+            with self.subTest(order=order):
+                values = evidence()
+                values["containers"][1]["Mounts"][0]["RW"] = True
+                values["containers"][2]["Config"]["Cmd"] = ["unexpected"]
+                values["containers"] = [
+                    values["containers"][index] for index in order
+                ]
+                before = copy.deepcopy(values)
+                self.reject(values, code)
+                self.assertEqual(values, before)
+
+        private = shared_runtime_evidence()
+        private.pop("networks")
+        members = private.pop("shared_clients")
+        proofs = client_lease.validate_clients(members)
+        validated = list(zip(members, proofs))
+        before = copy.deepcopy((private, validated))
+        by_role, client = release_runtime._validate_containers(
+            **private, validated_clients=validated
+        )
+        self.assertEqual((private, validated), before)
+        self.assertIs(client, proofs[0])
+        self.assertEqual(
+            list(by_role), ["conversation-api", "web", "filtered-embedding"]
+        )
+        for role, row in zip(by_role, private["containers"]):
+            self.assertIs(by_role[role], row)
+
 
 class SharedReleaseRuntimeTests(unittest.TestCase):
     def reject(self, values, code):
@@ -723,6 +794,22 @@ class SharedReleaseRuntimeTests(unittest.TestCase):
             "catalog_network"
         ]["Containers"].pop(old)
         self.reject(values, "release_runtime_identity_collision")
+
+    def test_other_catalog_core_collision_is_rejected_before_plan(self):
+        values = shared_runtime_evidence(separate_catalogs=True)
+        proofs = client_lease.validate_clients(values["shared_clients"])
+        foreign_core = proofs[1]["core_container_ids"]["fess-search"]
+        self.assertNotIn(
+            foreign_core, proofs[0]["core_container_ids"].values()
+        )
+        values["containers"][1]["Id"] = foreign_core
+        before = copy.deepcopy(values)
+        with mock.patch.object(
+            release_runtime, "_plan", wraps=release_runtime._plan
+        ) as plan:
+            self.reject(values, "release_runtime_identity_collision")
+        plan.assert_not_called()
+        self.assertEqual(values, before)
 
 
 if __name__ == "__main__":
