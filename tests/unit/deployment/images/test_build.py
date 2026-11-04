@@ -481,6 +481,142 @@ class ProductImageBuildTests(unittest.TestCase):
             self.invoke()
         self.assertEqual([], self.docker.calls)
 
+    def test_command_budget_is_shared_across_roles_without_a_second_client(
+        self,
+    ):
+        with (
+            mock.patch.object(build, "MAX_COMMANDS", 5),
+            mock.patch.object(build, "_Docker", wraps=build._Docker) as client,
+            self.assertRaisesRegex(
+                build.ImageBuildError, "^image_build_command_budget$"
+            ),
+        ):
+            self.invoke()
+        client.assert_called_once()
+        self.assertEqual(
+            [argv[5] for argv, _, _ in self.docker.calls],
+            ["info", "build", "image", "image", "build"],
+        )
+        self.assertTrue(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
+        self.assertEqual(
+            {"started.json", "image.iid"},
+            {p.name for p in (self.root / "images/web").iterdir()},
+        )
+        self.assertFalse((self.root / "images/reranker").exists())
+
+    def test_late_failure_releases_owned_handles_and_keeps_partial_evidence(
+        self,
+    ):
+        held, clients = {}, []
+        directory = build.private_io.open_directory
+        child = build.private_io.open_child_directory
+        lock = build._lock
+
+        def open_directory(path):
+            descriptor = directory(path)
+            if Path(path) == self.root:
+                held["root"] = descriptor
+            else:
+                held["client"] = descriptor
+                clients.append(Path(path))
+            return descriptor
+
+        def open_child(parent, name, **options):
+            descriptor = child(parent, name, **options)
+            if parent == held.get("root") and name in {"context", "images"}:
+                held[name] = descriptor
+            return descriptor
+
+        def open_lock(parent):
+            held["lock"] = lock(parent)
+            return held["lock"]
+
+        def fail_web(service, _iid):
+            if service == "web":
+                raise ValueError("late private failure")
+
+        self.docker.on_build = fail_web
+        with (
+            mock.patch.object(
+                build.private_io, "open_directory", open_directory
+            ),
+            mock.patch.object(
+                build.private_io, "open_child_directory", open_child
+            ),
+            mock.patch.object(build, "_lock", open_lock),
+            self.assertRaisesRegex(
+                build.ImageBuildError, "^image_build_state_unsafe$"
+            ),
+        ):
+            self.invoke()
+        self.assertEqual(
+            set(held), {"root", "context", "images", "lock", "client"}
+        )
+        for descriptor in held.values():
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        self.assertEqual(len(clients), 1)
+        self.assertFalse(clients[0].exists())
+        with (self.root / "image-build.lock").open("rb") as released:
+            fcntl.flock(released, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertEqual(2, len(self.commands("build")))
+        self.assertTrue(
+            (self.root / "images/conversation-api/complete.json").exists()
+        )
+        self.assertEqual(
+            {"started.json"},
+            {p.name for p in (self.root / "images/web").iterdir()},
+        )
+
+    def test_client_close_error_keeps_original_priority_over_build_failure(
+        self,
+    ):
+        client = {}
+        directory = build.private_io.open_directory
+        close = os.close
+        primary = build.ImageBuildError("image_build_command_failed")
+        cleanup = OSError("private close failure")
+
+        def open_directory(path):
+            descriptor = directory(path)
+            if Path(path) != self.root:
+                client["fd"] = descriptor
+                client["path"] = Path(path)
+            return descriptor
+
+        def close_client(descriptor):
+            if descriptor == client.get("fd") and not client.get("attempts"):
+                client["attempts"] = 1
+                close(descriptor)
+                raise cleanup
+            close(descriptor)
+
+        def fail_web(service, _iid):
+            if service == "web":
+                raise primary
+
+        self.docker.on_build = fail_web
+        with (
+            mock.patch.object(
+                build.private_io, "open_directory", open_directory
+            ),
+            mock.patch.object(build.os, "close", close_client),
+            self.assertRaisesRegex(
+                build.ImageBuildError, "^image_build_state_unsafe$"
+            ) as caught,
+        ):
+            self.invoke()
+        self.assertIs(caught.exception.__context__, cleanup)
+        self.assertIs(cleanup.__context__, primary)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertEqual(client["attempts"], 1)
+        self.assertFalse(client["path"].exists())
+        self.assertEqual(2, len(self.commands("build")))
+        self.assertFalse((self.root / "images/web/complete.json").exists())
+
 
 class ImageBuildRunnerTests(unittest.TestCase):
     def test_private_binary_input_uses_fixed_arguments_and_environment(
