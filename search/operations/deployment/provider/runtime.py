@@ -622,9 +622,9 @@ class Provider:
         )
 
     def _gpu_runner(self, argv, *, timeout, max_bytes, deadline=None):
-        from search.operations.deployment import gpu_ownership
+        from search.operations.deployment.gpu import collect as gpu_collect
 
-        return gpu_ownership.bounded_runner(
+        return gpu_collect.bounded_runner(
             argv,
             timeout=self.remaining(timeout, deadline=deadline),
             max_bytes=max_bytes,

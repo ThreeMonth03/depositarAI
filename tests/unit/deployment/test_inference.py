@@ -183,7 +183,7 @@ class PrivateInferenceTests(unittest.TestCase):
         ).start()
         mock.patch("search.reranker.model.MODEL_HASHES", reranker_pins).start()
         mock.patch.object(
-            inference.gpu_ownership, "run_gpu_ownership", side_effect=self.gpu
+            inference.gpu_collect, "run_gpu_ownership", side_effect=self.gpu
         ).start()
 
     def gpu(self, config, *, allowed, runner=None):
@@ -534,7 +534,7 @@ class PrivateInferenceTests(unittest.TestCase):
 
     def test_global_gpu_preflight_failure_prevents_start(self):
         with mock.patch.object(
-            inference.gpu_ownership,
+            inference.gpu_collect,
             "run_gpu_ownership",
             return_value={"status": "blocked", "code": "unknown_compute_pid"},
         ):
@@ -794,7 +794,7 @@ class InferenceDockerBoundsTests(unittest.TestCase):
 
 class PrivateInferenceTLSOwnershipTests(unittest.TestCase):
     def test_gpu_gate_keeps_tls_in_the_real_ownership_collector(self):
-        from tests.unit.deployment.test_gpu_ownership import (
+        from tests.unit.deployment.gpu.fixtures import (
             CONFIG,
             FakeRunner,
             tls_container,
@@ -812,7 +812,7 @@ class PrivateInferenceTLSOwnershipTests(unittest.TestCase):
             inference._gpu(CONFIG, (), FakeRunner([row]))
 
     def test_gpu_gate_requires_cpu_count_in_the_verified_result(self):
-        from tests.unit.deployment.test_gpu_ownership import (
+        from tests.unit.deployment.gpu.fixtures import (
             CONFIG,
             tls_container,
             tls_proof,
@@ -830,7 +830,7 @@ class PrivateInferenceTLSOwnershipTests(unittest.TestCase):
             "gpu_count": 4,
         }
         with mock.patch.object(
-            inference.gpu_ownership, "run_gpu_ownership", return_value=response
+            inference.gpu_collect, "run_gpu_ownership", return_value=response
         ):
             with self.assertRaisesRegex(
                 inference.InferenceError, "gpu_ownership_blocked"

@@ -11,7 +11,7 @@ import re
 
 from search.operations.catalog import client_lease, policy
 from search.operations.deployment import process_identity
-from search.operations.deployment.gpu_ownership import GPUContainerProof
+from search.operations.deployment.gpu.contract import GPUContainerProof
 from search.operations.shared import private_io
 
 

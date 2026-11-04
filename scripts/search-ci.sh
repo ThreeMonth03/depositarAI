@@ -176,7 +176,10 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.test_source_artifact \
   tests.unit.deployment.test_ci_gitleaks_install \
   tests.unit.deployment.test_composition \
-  tests.unit.deployment.test_gpu_ownership \
+  tests.unit.deployment.gpu.test_snapshot \
+  tests.unit.deployment.gpu.test_collect \
+  tests.unit.deployment.gpu.test_volumes \
+  tests.unit.deployment.gpu.test_tls \
   tests.unit.deployment.test_source_bundle \
   tests.unit.deployment.images.test_build \
   tests.unit.deployment.images.test_staging \

@@ -547,7 +547,7 @@ blocked = (
     'search.operations.deployment.inference',
     'search.operations.deployment.release',
     'search.operations.deployment.gateway',
-    'search.operations.deployment.gpu_ownership',
+    'search.operations.deployment.gpu',
     'torch', 'django', 'rest_framework', 'adrf', 'pydantic',
 )
 class BlockImports(importlib.abc.MetaPathFinder):
