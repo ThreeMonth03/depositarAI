@@ -723,3 +723,115 @@ class ProductCredentialsTests(unittest.TestCase):
                 with self.assertRaises(OSError) as missing:
                     os.fstat(retained[0])
                 self.assertEqual(missing.exception.errno, errno.EBADF)
+
+    def test_reuse_anchor_precedes_missing_directory(self):
+        self.prepare()
+        retained = self.root / "retained-secrets"
+        self.key_root.rename(retained)
+        with locked_state(self.config, create=True) as store:
+            anchor = store.read(credentials.ANCHOR)
+            store.write(
+                credentials.ANCHOR,
+                {**anchor, "kind": "invalid"},
+                replace=True,
+            )
+            with (
+                patch.object(
+                    credentials,
+                    "require_clean_revision",
+                    return_value=REVISION,
+                ),
+                patch.object(private_io, "open_child_directory") as opened,
+                patch.object(credentials.secrets, "token_hex") as generated,
+                self.assertRaisesRegex(
+                    credentials.CredentialError,
+                    "^product_credentials_receipt_changed$",
+                ),
+            ):
+                credentials.prepare_api_key(
+                    self.config, store, REVISION, repo_root=self.root
+                )
+            opened.assert_not_called()
+            generated.assert_not_called()
+        self.assertTrue((retained / credentials.KEY).is_file())
+
+    def test_incomplete_publication_keeps_close_error_and_blocks_rotation(
+        self,
+    ):
+        original_open = private_io.open_child_directory
+        original_write, original_close = private_io.write_json, os.close
+        retained, closes = [], []
+        close_error = OSError(errno.EIO, "synthetic publication close")
+
+        def open_child(*args, **kwargs):
+            descriptor = original_open(*args, **kwargs)
+            retained.append(descriptor)
+            return descriptor
+
+        def publish(descriptor, name, *args, **kwargs):
+            if name == credentials.COMPLETED:
+                raise OSError(errno.EIO, "synthetic completion failure")
+            return original_write(descriptor, name, *args, **kwargs)
+
+        def close(descriptor):
+            if retained and descriptor == retained[0]:
+                closes.append(descriptor)
+                original_close(descriptor)
+                raise close_error
+            return original_close(descriptor)
+
+        with locked_state(self.config, create=True) as store:
+            with (
+                patch.object(private_io, "open_child_directory", open_child),
+                patch.object(private_io, "write_json", publish),
+                patch.object(os, "close", close),
+                patch.object(
+                    credentials.secrets, "token_hex", return_value="b" * 64
+                ),
+                patch.object(
+                    credentials,
+                    "require_clean_revision",
+                    return_value=REVISION,
+                ),
+                self.assertRaises(OSError) as raised,
+            ):
+                credentials.prepare_api_key(
+                    self.config, store, REVISION, repo_root=self.root
+                )
+            self.assertIs(raised.exception, close_error)
+            self.assertIsInstance(
+                close_error.__context__, credentials.CredentialError
+            )
+            self.assertEqual(
+                close_error.__context__.args,
+                ("product_credentials_verification_failed",),
+            )
+            self.assertEqual(closes, retained)
+            with self.assertRaises(OSError) as closed:
+                os.fstat(retained[0])
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+            self.assertEqual(
+                set(os.listdir(self.key_root)),
+                {credentials.STARTED, credentials.KEY},
+            )
+            key_bytes, inode = self.key.read_bytes(), self.key.stat().st_ino
+            with (
+                patch.object(credentials.secrets, "token_hex") as generated,
+                patch.object(private_io, "write_json") as written,
+                patch.object(
+                    credentials,
+                    "require_clean_revision",
+                    return_value=REVISION,
+                ),
+                self.assertRaisesRegex(
+                    credentials.CredentialError,
+                    "^product_credentials_recovery_required$",
+                ),
+            ):
+                credentials.prepare_api_key(
+                    self.config, store, REVISION, repo_root=self.root
+                )
+            generated.assert_not_called()
+            written.assert_not_called()
+            self.assertEqual(self.key.read_bytes(), key_bytes)
+            self.assertEqual(self.key.stat().st_ino, inode)
