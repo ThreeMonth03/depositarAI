@@ -222,6 +222,137 @@ def validate_runtime(compose, images, containers, networks):
     return _validate_runtime(compose, images, containers, networks)
 
 
+def _validated_container_index(compose, images, containers):
+    """Prove each complete container row before indexing the next one."""
+    by_service, seen = {}, set()
+    for row in containers:
+        if type(row) is not dict or any(
+            type(row.get(key)) is not dict
+            for key in ("Config", "HostConfig", "State", "NetworkSettings")
+        ):
+            raise InferenceRuntimeError("inference_runtime_container_invalid")
+        labels = row["Config"].get("Labels") or {}
+        name = labels.get("com.docker.compose.service")
+        if (
+            name not in SERVICES
+            or name in by_service
+            or labels.get("com.docker.compose.project") != compose["name"]
+            or labels.get("com.docker.compose.oneoff") != "False"
+            or type(row.get("Id")) is not str
+            or policy.CONTAINER_ID.fullmatch(row["Id"]) is None
+            or row["Id"] in seen
+            or row.get("Image") != images[name]["Id"]
+            or row["Config"].get("Image") != images[name]["Id"]
+            or any(
+                labels.get(key) != value
+                for key, value in (
+                    images[name]["Config"].get("Labels") or {}
+                ).items()
+            )
+        ):
+            raise InferenceRuntimeError("inference_runtime_identity_changed")
+        seen.add(row["Id"])
+        by_service[name] = row
+        service, image = compose["services"][name], images[name]["Config"]
+        _resources(row, service)
+        _mounts(row, service)
+        environment = _environment(image.get("Env") or [])
+        environment.update(
+            {key: str(value) for key, value in service["environment"].items()}
+        )
+        _equal(
+            _environment(row["Config"].get("Env") or []),
+            environment,
+            "inference_runtime_environment_changed",
+        )
+        if (
+            row["Config"].get("Cmd")
+            != service.get("command", image.get("Cmd"))
+            or row["Config"].get("Entrypoint") != image.get("Entrypoint")
+            or row["Config"].get("WorkingDir", "")
+            != image.get("WorkingDir", "")
+            or row["Config"].get("StopSignal", "")
+            != image.get("StopSignal", "")
+        ):
+            raise InferenceRuntimeError("inference_runtime_command_changed")
+        network = compose["networks"][service["networks"][0]]["name"]
+        if row["HostConfig"].get("NetworkMode") != network or set(
+            row["NetworkSettings"].get("Networks") or {}
+        ) != {network}:
+            raise InferenceRuntimeError(
+                "inference_runtime_network_attachment_changed"
+            )
+    return by_service, seen
+
+
+def _network_index(compose, networks):
+    """Index the exact supplied networks before joining topology."""
+    by_network = {}
+    for row in networks:
+        if type(row) is not dict or row.get("Name") in by_network:
+            raise InferenceRuntimeError(
+                "inference_runtime_network_inventory_changed"
+            )
+        by_network[row.get("Name")] = row
+    expected_names = {entry["name"] for entry in compose["networks"].values()}
+    if set(by_network) != expected_names:
+        raise InferenceRuntimeError(
+            "inference_runtime_network_inventory_changed"
+        )
+    return by_network
+
+
+def _validate_network_topology(compose, by_service, by_network, clients):
+    """Prove every peer and attachment against the same network snapshot."""
+    network_ids = {}
+    for key, expected in compose["networks"].items():
+        row = by_network[expected["name"]]
+        peers = {
+            entry["Id"]
+            for name, entry in by_service.items()
+            if key in compose["services"][name]["networks"]
+        }
+        for item in clients:
+            peers.add(item["api_container_id"])
+            if row.get("Id") != item["network_ids"][expected["name"]]:
+                raise InferenceRuntimeError(
+                    "inference_client_network_id_changed"
+                )
+            if type(row.get("Containers")) is not dict:
+                raise InferenceRuntimeError(
+                    "inference_runtime_network_peers_changed"
+                )
+        if (
+            type(row.get("Id")) is not str
+            or policy.CONTAINER_ID.fullmatch(row["Id"]) is None
+            or row.get("Internal") is not True
+            or row.get("Attachable") is not False
+            or row.get("Ingress") is not False
+            or row.get("Driver") != "bridge"
+            or row.get("Scope") != "local"
+            or row.get("Labels", {}).get("com.docker.compose.project")
+            != compose["name"]
+            or row.get("Labels", {}).get("com.docker.compose.network") != key
+            or set(row.get("Containers") or {}) != peers
+        ):
+            raise InferenceRuntimeError(
+                "inference_runtime_network_peers_changed"
+            )
+        network_ids[key] = row["Id"]
+        for name, container in by_service.items():
+            if container["Id"] in peers:
+                attachment = container["NetworkSettings"]["Networks"][
+                    expected["name"]
+                ]
+                if attachment.get("NetworkID") != row["Id"]:
+                    raise InferenceRuntimeError(
+                        "inference_runtime_network_id_changed"
+                    )
+    if len(set(network_ids.values())) != 2:
+        raise InferenceRuntimeError("inference_runtime_network_id_changed")
+    return network_ids
+
+
 def _validate_runtime(
     compose, images, containers, networks, *, client=None, clients=None
 ):
@@ -260,138 +391,17 @@ def _validate_runtime(
             != plan["inference_source_sha256"]
         ):
             raise InferenceRuntimeError("inference_runtime_source_changed")
-        by_service, seen = {}, set()
-        for row in containers:
-            if type(row) is not dict or any(
-                type(row.get(key)) is not dict
-                for key in ("Config", "HostConfig", "State", "NetworkSettings")
-            ):
-                raise InferenceRuntimeError(
-                    "inference_runtime_container_invalid"
-                )
-            labels = row["Config"].get("Labels") or {}
-            name = labels.get("com.docker.compose.service")
-            if (
-                name not in SERVICES
-                or name in by_service
-                or labels.get("com.docker.compose.project") != compose["name"]
-                or labels.get("com.docker.compose.oneoff") != "False"
-                or type(row.get("Id")) is not str
-                or policy.CONTAINER_ID.fullmatch(row["Id"]) is None
-                or row["Id"] in seen
-                or row.get("Image") != images[name]["Id"]
-                or row["Config"].get("Image") != images[name]["Id"]
-                or any(
-                    labels.get(key) != value
-                    for key, value in (
-                        images[name]["Config"].get("Labels") or {}
-                    ).items()
-                )
-            ):
-                raise InferenceRuntimeError(
-                    "inference_runtime_identity_changed"
-                )
-            seen.add(row["Id"])
-            by_service[name] = row
-            service, image = compose["services"][name], images[name]["Config"]
-            _resources(row, service)
-            _mounts(row, service)
-            environment = _environment(image.get("Env") or [])
-            environment.update(
-                {
-                    key: str(value)
-                    for key, value in service["environment"].items()
-                }
-            )
-            _equal(
-                _environment(row["Config"].get("Env") or []),
-                environment,
-                "inference_runtime_environment_changed",
-            )
-            if (
-                row["Config"].get("Cmd")
-                != service.get("command", image.get("Cmd"))
-                or row["Config"].get("Entrypoint") != image.get("Entrypoint")
-                or row["Config"].get("WorkingDir", "")
-                != image.get("WorkingDir", "")
-                or row["Config"].get("StopSignal", "")
-                != image.get("StopSignal", "")
-            ):
-                raise InferenceRuntimeError(
-                    "inference_runtime_command_changed"
-                )
-            network = compose["networks"][service["networks"][0]]["name"]
-            if row["HostConfig"].get("NetworkMode") != network or set(
-                row["NetworkSettings"].get("Networks") or {}
-            ) != {network}:
-                raise InferenceRuntimeError(
-                    "inference_runtime_network_attachment_changed"
-                )
+        by_service, seen = _validated_container_index(
+            compose, images, containers
+        )
         if any(seen & set(item["expected_peer_ids"]) for item in clients):
             raise InferenceRuntimeError(
                 "inference_client_container_identity_collision"
             )
-        by_network = {}
-        for row in networks:
-            if type(row) is not dict or row.get("Name") in by_network:
-                raise InferenceRuntimeError(
-                    "inference_runtime_network_inventory_changed"
-                )
-            by_network[row.get("Name")] = row
-        expected_names = {
-            entry["name"] for entry in compose["networks"].values()
-        }
-        if set(by_network) != expected_names:
-            raise InferenceRuntimeError(
-                "inference_runtime_network_inventory_changed"
-            )
-        network_ids = {}
-        for key, expected in compose["networks"].items():
-            row = by_network[expected["name"]]
-            peers = {
-                entry["Id"]
-                for name, entry in by_service.items()
-                if key in compose["services"][name]["networks"]
-            }
-            for item in clients:
-                peers.add(item["api_container_id"])
-                if row.get("Id") != item["network_ids"][expected["name"]]:
-                    raise InferenceRuntimeError(
-                        "inference_client_network_id_changed"
-                    )
-                if type(row.get("Containers")) is not dict:
-                    raise InferenceRuntimeError(
-                        "inference_runtime_network_peers_changed"
-                    )
-            if (
-                type(row.get("Id")) is not str
-                or policy.CONTAINER_ID.fullmatch(row["Id"]) is None
-                or row.get("Internal") is not True
-                or row.get("Attachable") is not False
-                or row.get("Ingress") is not False
-                or row.get("Driver") != "bridge"
-                or row.get("Scope") != "local"
-                or row.get("Labels", {}).get("com.docker.compose.project")
-                != compose["name"]
-                or row.get("Labels", {}).get("com.docker.compose.network")
-                != key
-                or set(row.get("Containers") or {}) != peers
-            ):
-                raise InferenceRuntimeError(
-                    "inference_runtime_network_peers_changed"
-                )
-            network_ids[key] = row["Id"]
-            for name, container in by_service.items():
-                if container["Id"] in peers:
-                    attachment = container["NetworkSettings"]["Networks"][
-                        expected["name"]
-                    ]
-                    if attachment.get("NetworkID") != row["Id"]:
-                        raise InferenceRuntimeError(
-                            "inference_runtime_network_id_changed"
-                        )
-        if len(set(network_ids.values())) != 2:
-            raise InferenceRuntimeError("inference_runtime_network_id_changed")
+        by_network = _network_index(compose, networks)
+        network_ids = _validate_network_topology(
+            compose, by_service, by_network, clients
+        )
         return {
             "container_ids": {
                 name: row["Id"] for name, row in sorted(by_service.items())

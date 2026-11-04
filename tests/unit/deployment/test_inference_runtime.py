@@ -213,6 +213,24 @@ class InferenceRuntimeTests(unittest.TestCase):
             self.compose, self.images, self.containers, self.networks
         )
 
+    def test_ordered_row_proofs_precede_later_identity_and_network_faults(
+        self,
+    ):
+        self.containers[0]["Config"]["Tty"] = True
+        self.containers[1]["Id"] = self.containers[0]["Id"]
+        self.networks[0] = None
+        with self.assertRaisesRegex(
+            inference_runtime.InferenceRuntimeError,
+            "^inference_runtime_resource_or_health_changed$",
+        ):
+            self.invoke()
+        self.containers[0]["Config"]["Tty"] = False
+        with self.assertRaisesRegex(
+            inference_runtime.InferenceRuntimeError,
+            "^inference_runtime_identity_changed$",
+        ):
+            self.invoke()
+
     def test_exact_three_private_gpu_roles_are_proved_without_returning_env(
         self,
     ):
@@ -512,6 +530,38 @@ class LeasedInferenceRuntimeTests(unittest.TestCase):
         self.assertRegex(str(caught.exception), r"^inference_[a-z_]+$")
         if code is not None:
             self.assertEqual(code, str(caught.exception))
+
+    def test_client_admission_and_collision_precede_network_inventory(self):
+        user = self.client["api_container"]["Config"]["User"]
+        self.client["api_container"]["Config"]["User"] = "0"
+        self.containers[0]["Config"]["Tty"] = True
+        self.networks[0] = None
+        self.reject("inference_client_lease_invalid")
+        self.client["api_container"]["Config"]["User"] = user
+        self.containers[0]["Config"]["Tty"] = False
+        self.containers[0]["Id"] = self.client["lease"]["api_container_id"]
+        self.reject("inference_client_container_identity_collision")
+
+    def test_network_index_precedes_ordered_client_topology(self):
+        first, second = self.networks
+        network_id = first["Id"]
+        peers = first["Containers"]
+        attachment = next(
+            row["NetworkSettings"]["Networks"][first["Name"]]
+            for row in self.containers
+            if first["Name"] in row["NetworkSettings"]["Networks"]
+        )
+        attachment["NetworkID"] = "f" * 64
+        first["Id"] = "e" * 64
+        first["Containers"] = None
+        self.networks[1] = copy.deepcopy(first)
+        self.reject("inference_runtime_network_inventory_changed")
+        self.networks[1] = second
+        self.reject("inference_client_network_id_changed")
+        first["Id"] = network_id
+        self.reject("inference_runtime_network_peers_changed")
+        first["Containers"] = peers
+        self.reject("inference_runtime_network_id_changed")
 
     def test_exact_gpu_roles_and_sealed_api_do_not_return_inputs(
         self,
