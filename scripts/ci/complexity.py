@@ -13,6 +13,7 @@ GATED_PATHS = (
     "search/planning",
     "search/api/retrieval",
     "search/api/conversation/calendar.py",
+    "search/api/worker.py",
     "search/operations/cli.py",
     "search/operations/config.py",
     "search/operations/doctor.py",

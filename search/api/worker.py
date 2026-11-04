@@ -63,60 +63,65 @@ def run(operation, payload, settings):
 
         return search(payload, settings)
     if operation == "ready":
-        from .retrieval.index import search
-
-        bundle = CatalogBundle.load(
-            settings.bundle_path,
-            expected_manifest_sha256=settings.manifest_sha256,
-        )
-        # Both requests use the same query-only index and catalog authority.
-        for conditions in ({}, {"time": {"start": "2025", "end": "2025"}}):
-            search(
-                {"query": "氣候", "top_k": 1, "conditions": conditions},
-                settings,
-            )
-        for role, model_name, model_digest in (
-            (
-                "scope",
-                OllamaScopeClassifier.model,
-                OllamaScopeClassifier.model_digest,
-            ),
-            ("answer", PLANNER_MODEL, PLANNER_MODEL_DIGEST),
-        ):
-            transport = ModelTransport(role)
-            response = transport.send(
-                HTTPRequest("GET", OLLAMA_BASE_URL + "/api/tags", ()),
-                timeout=3,
-                max_bytes=128 * 1024,
-            )
-            data = strict_json(response.body)
-            if response.status != 200 or not any(
-                model.get("name") == model_name
-                and model.get("digest") == model_digest
-                for model in data.get("models", [])
-            ):
-                raise ValueError("model identity mismatch")
-        result = {"ready": True, "documents": len(bundle.documents)}
-        if settings.rerank_enabled:
-            result["reranker_ready"] = False
-            try:
-                url = service_address("reranker", 8001) + "/healthz"
-                response = UrllibTransport().send(
-                    HTTPRequest("GET", url, ()),
-                    timeout=2,
-                    max_bytes=MAX_RESPONSE_BYTES,
-                )
-                result["reranker_ready"] = (
-                    response.status == 200
-                    and response.url == url
-                    and strict_json(response.body)
-                    == {"ready": True, "model_revision": MODEL_REVISION}
-                )
-            except Exception:
-                # Optional ranking may degrade without taking search offline.
-                pass
-        return result
+        return _ready(settings)
     raise ValueError("unknown worker operation")
+
+
+def _ready(settings):
+    """Check required catalog and models before optional reranker health."""
+    from .retrieval.index import search
+
+    bundle = CatalogBundle.load(
+        settings.bundle_path,
+        expected_manifest_sha256=settings.manifest_sha256,
+    )
+    # Both requests use the same query-only index and catalog authority.
+    for conditions in ({}, {"time": {"start": "2025", "end": "2025"}}):
+        search(
+            {"query": "氣候", "top_k": 1, "conditions": conditions},
+            settings,
+        )
+    for role, model_name, model_digest in (
+        (
+            "scope",
+            OllamaScopeClassifier.model,
+            OllamaScopeClassifier.model_digest,
+        ),
+        ("answer", PLANNER_MODEL, PLANNER_MODEL_DIGEST),
+    ):
+        transport = ModelTransport(role)
+        response = transport.send(
+            HTTPRequest("GET", OLLAMA_BASE_URL + "/api/tags", ()),
+            timeout=3,
+            max_bytes=128 * 1024,
+        )
+        data = strict_json(response.body)
+        if response.status != 200 or not any(
+            model.get("name") == model_name
+            and model.get("digest") == model_digest
+            for model in data.get("models", [])
+        ):
+            raise ValueError("model identity mismatch")
+    result = {"ready": True, "documents": len(bundle.documents)}
+    if settings.rerank_enabled:
+        result["reranker_ready"] = False
+        try:
+            url = service_address("reranker", 8001) + "/healthz"
+            response = UrllibTransport().send(
+                HTTPRequest("GET", url, ()),
+                timeout=2,
+                max_bytes=MAX_RESPONSE_BYTES,
+            )
+            result["reranker_ready"] = (
+                response.status == 200
+                and response.url == url
+                and strict_json(response.body)
+                == {"ready": True, "model_revision": MODEL_REVISION}
+            )
+        except Exception:
+            # Optional ranking may degrade without taking search offline.
+            pass
+    return result
 
 
 def main():
