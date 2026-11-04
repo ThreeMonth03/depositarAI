@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 from pathlib import Path
@@ -156,6 +157,141 @@ class SearchDictionaryPermissionsTests(unittest.TestCase):
             1,
             bootstrap.count("timeout --signal=TERM --kill-after=5s 60s"),
         )
+
+    def test_limits_keep_global_count_and_partial_modes(self) -> None:
+        nested = self.dictionary / "nested"
+        nested.mkdir(mode=0o755)
+        leaf = nested / "words.txt"
+        leaf.write_bytes(b"original\n")
+        leaf.chmod(0o644)
+        self.dictionary.chmod(0o755)
+        parents = (self.root, self.root / "opensearch")
+        parent_modes = [stat.S_IMODE(path.stat().st_mode) for path in parents]
+
+        with mock.patch.object(POLICY, "MAX_ENTRIES", 1):
+            with self.assertRaisesRegex(POLICY.PolicyError, "entry limit"):
+                POLICY.enforce(str(self.root), True)
+        self.assertEqual(0o700, stat.S_IMODE(self.dictionary.stat().st_mode))
+        self.assertEqual(0o700, stat.S_IMODE(nested.stat().st_mode))
+        self.assertEqual(0o644, stat.S_IMODE(leaf.stat().st_mode))
+        self.assertEqual(b"original\n", leaf.read_bytes())
+
+        outside = self.root / "outside.txt"
+        outside.write_bytes(b"outside\n")
+        outside.chmod(0o644)
+        leaf.unlink()
+        leaf.symlink_to(outside)
+        self.dictionary.chmod(0o755)
+        nested.chmod(0o755)
+        with mock.patch.object(POLICY, "MAX_DEPTH", 1):
+            with self.assertRaisesRegex(POLICY.PolicyError, "depth limit"):
+                POLICY.enforce(str(self.root), True)
+        self.assertEqual(0o700, stat.S_IMODE(nested.stat().st_mode))
+        self.assertEqual(0o644, stat.S_IMODE(outside.stat().st_mode))
+        self.assertEqual(b"outside\n", outside.read_bytes())
+        self.assertEqual(
+            parent_modes,
+            [stat.S_IMODE(path.stat().st_mode) for path in parents],
+        )
+
+    def test_open_identity_change_refuses_before_mode_and_closes_fds(
+        self,
+    ) -> None:
+        self.dictionary.chmod(0o700)
+        leaf = self.dictionary / "words.txt"
+        saved = self.root / "original.txt"
+        leaf.write_bytes(b"original\n")
+        leaf.chmod(0o644)
+        original_open, original_close = os.open, os.close
+        opened_fds, closed_fds = [], []
+
+        def opened(path, flags, *args, **kwargs):
+            if path == leaf.name and not flags & os.O_PATH:
+                leaf.rename(saved)
+                leaf.write_bytes(b"replacement\n")
+                leaf.chmod(0o644)
+            descriptor = original_open(path, flags, *args, **kwargs)
+            opened_fds.append(descriptor)
+            return descriptor
+
+        def closed(descriptor):
+            closed_fds.append(descriptor)
+            return original_close(descriptor)
+
+        with (
+            mock.patch.object(POLICY.os, "open", side_effect=opened),
+            mock.patch.object(POLICY.os, "close", side_effect=closed),
+        ):
+            with self.assertRaisesRegex(
+                POLICY.PolicyError, "changed while it was opened"
+            ) as raised:
+                POLICY.enforce(str(self.root), True)
+        self.assertEqual(5, len(opened_fds))
+        self.assertEqual(list(reversed(opened_fds)), closed_fds)
+        for descriptor in opened_fds:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        self.assertIs(type(raised.exception), POLICY.PolicyError)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertEqual(0o644, stat.S_IMODE(leaf.stat().st_mode))
+        self.assertEqual(0o644, stat.S_IMODE(saved.stat().st_mode))
+        self.assertEqual(b"original\n", saved.read_bytes())
+        self.assertEqual(b"replacement\n", leaf.read_bytes())
+
+    def test_post_name_change_preserves_close_error_priority(self) -> None:
+        self.dictionary.chmod(0o700)
+        original_open, original_close = os.open, os.close
+        leaf = self.dictionary / "words.txt"
+        saved = self.root / "original.txt"
+        for close_fault in (False, True):
+            with self.subTest(close_fault=close_fault):
+                leaf.write_bytes(b"original\n")
+                leaf.chmod(0o644)
+                opened_fds, closed_fds = [], []
+                close_error = OSError(errno.EIO, "synthetic close fault")
+
+                def opened(path, flags, *args, **kwargs):
+                    descriptor = original_open(path, flags, *args, **kwargs)
+                    opened_fds.append(descriptor)
+                    return descriptor
+
+                def closed(descriptor):
+                    original_close(descriptor)
+                    closed_fds.append(descriptor)
+                    if descriptor == opened_fds[-1]:
+                        leaf.rename(saved)
+                        leaf.write_bytes(b"replacement\n")
+                        leaf.chmod(0o644)
+                    if close_fault and descriptor == opened_fds[-2]:
+                        raise close_error
+
+                expected = OSError if close_fault else POLICY.PolicyError
+                with (
+                    mock.patch.object(POLICY.os, "open", side_effect=opened),
+                    mock.patch.object(POLICY.os, "close", side_effect=closed),
+                ):
+                    with self.assertRaises(expected) as raised:
+                        POLICY.enforce(str(self.root), True)
+                self.assertEqual(5, len(opened_fds))
+                self.assertEqual(list(reversed(opened_fds)), closed_fds)
+                for descriptor in opened_fds:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                error = raised.exception
+                if close_fault:
+                    self.assertIs(error, close_error)
+                    error = error.__context__
+                self.assertIs(type(error), POLICY.PolicyError)
+                self.assertEqual(
+                    "the dictionary tree changed while it was inspected",
+                    str(error),
+                )
+                self.assertEqual(0o600, stat.S_IMODE(saved.stat().st_mode))
+                self.assertEqual(0o644, stat.S_IMODE(leaf.stat().st_mode))
+                self.assertEqual(b"original\n", saved.read_bytes())
+                self.assertEqual(b"replacement\n", leaf.read_bytes())
+                saved.unlink()
+                leaf.unlink()
 
 
 if __name__ == "__main__":
