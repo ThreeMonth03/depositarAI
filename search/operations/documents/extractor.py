@@ -25,7 +25,23 @@ MAX_COLUMNS = 256
 MAX_COLUMN_CHARS = 512
 MAX_COLUMN_TOTAL_CHARS = 8192
 MAX_ROWS_OBSERVED = 10000
-ERROR_CODES = frozenset({"document_extractor_operator_must_be_nonroot"})
+ERROR_CODES = frozenset(
+    {
+        "document_extractor_build_failed",
+        "document_extractor_cleanup_failed",
+        "document_extractor_command_failed",
+        "document_extractor_command_timeout",
+        "document_extractor_image_invalid",
+        "document_extractor_input_changed",
+        "document_extractor_input_invalid",
+        "document_extractor_inspect_failed",
+        "document_extractor_operator_must_be_nonroot",
+        "document_extractor_output_limit",
+        "document_extractor_report_invalid",
+        "document_extractor_settings_invalid",
+        "document_extractor_source_invalid",
+    }
+)
 FESS_IMAGE = (
     "ghcr.io/codelibs/fess:15.8.0@sha256:"
     "442a58831e87aae6ae22ef60e0536ececbda553bd5f5e8e5dc98cc022578dc75"

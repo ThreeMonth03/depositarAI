@@ -1416,3 +1416,148 @@ class OperatorErrorOwnerTests(unittest.TestCase):
             self.assertIsNone(diagnostic)
             direct.assert_not_called()
             dynamic.assert_not_called()
+
+
+class ExtractorDiagnosticCLITests(unittest.TestCase):
+    CODES = frozenset(
+        {
+            "document_extractor_build_failed",
+            "document_extractor_cleanup_failed",
+            "document_extractor_command_failed",
+            "document_extractor_command_timeout",
+            "document_extractor_image_invalid",
+            "document_extractor_input_changed",
+            "document_extractor_input_invalid",
+            "document_extractor_inspect_failed",
+            "document_extractor_operator_must_be_nonroot",
+            "document_extractor_output_limit",
+            "document_extractor_report_invalid",
+            "document_extractor_settings_invalid",
+            "document_extractor_source_invalid",
+        }
+    )
+
+    def invoke_failure(self, error, command):
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli
+        from search.operations.documents import batches
+
+        arguments = [
+            "profile-resources",
+            "run",
+            "--bundle",
+            "/private/never-read-bundle",
+            "--state-root",
+            "/private/never-read-state",
+            "--expected-plan-sha256",
+            "a" * 64,
+        ]
+        owner, action = batches, "run"
+        if command == "sync":
+            arguments = ["--config", "/private/never-read-config", "sync"]
+            owner, action = cli, "_runtime_report"
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            patch.object(owner, action, side_effect=error),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            status = cli.main(arguments)
+        return status, output.getvalue(), errors.getvalue()
+
+    def assert_failure(self, error, code=None, command="profile-resources"):
+        status, output, errors = self.invoke_failure(error, command)
+        expected = {
+            "schema_version": 1,
+            "status": "failed",
+            "code": "product_operation_failed",
+            "error_type": type(error).__name__,
+            "active_changed": False,
+        }
+        if code is not None:
+            expected["error_code"] = code
+        self.assertEqual(1, status)
+        self.assertEqual("", output)
+        self.assertEqual(expected, json.loads(errors))
+        for private in ("/private/", "example.test", "raw-docker-output"):
+            self.assertNotIn(private, errors)
+
+    def test_registered_codes_are_exact_reviewed_literals(self):
+        from search.operations.documents import extractor
+
+        self.assertEqual(self.CODES, extractor.ERROR_CODES)
+
+    def test_fixed_codes_reach_actual_cli_failure_json_and_exit(self):
+        from search.operations.documents import extractor
+
+        for code in sorted(self.CODES):
+            with self.subTest(code=code):
+                self.assert_failure(extractor.ExtractorError(code), code)
+
+    def test_unknown_text_arguments_and_noncanonical_types_stay_private(self):
+        from search.operations.documents import extractor
+
+        class DerivedExtractorError(extractor.ExtractorError):
+            pass
+
+        class HostileText(str):
+            def __eq__(self, other):
+                raise AssertionError("must not compare nonexact strings")
+
+            def __hash__(self):
+                raise AssertionError("must not hash nonexact strings")
+
+            def __str__(self):
+                raise AssertionError("must not stringify exception arguments")
+
+        code = "document_extractor_command_timeout"
+        forged = type(
+            "ExtractorError", (ValueError,), {"__module__": extractor.__name__}
+        )
+        foreign = type(
+            "ExtractorError",
+            (extractor.ExtractorError,),
+            {"__module__": "untrusted.fixture"},
+        )
+        for error in (
+            extractor.ExtractorError("document_extractor_unknown"),
+            extractor.ExtractorError("/private/resource token=secret"),
+            extractor.ExtractorError("https://example.test/private"),
+            extractor.ExtractorError("raw-docker-output token=secret"),
+            extractor.ExtractorError(),
+            extractor.ExtractorError(code, "/private/extra-argument"),
+            extractor.ExtractorError(None),
+            extractor.ExtractorError(HostileText(code)),
+            DerivedExtractorError(code),
+            forged(code),
+            foreign(code),
+        ):
+            with self.subTest(error_type=type(error).__name__):
+                self.assert_failure(error)
+
+    def test_wrong_command_keeps_fixed_extractor_codes_generic(self):
+        from search.operations.documents import extractor
+
+        for code in sorted(self.CODES):
+            with self.subTest(code=code):
+                self.assert_failure(
+                    extractor.ExtractorError(code), command="sync"
+                )
+
+    def test_synthetic_nul_report_preserves_its_fixed_cli_diagnostic(self):
+        from search.operations.documents import extractor
+        from tests.unit.operations.documents.test_extractor import report
+
+        value = report()
+        value["text"] = "station\x00value"
+        with self.assertRaises(extractor.ExtractorError) as caught:
+            extractor.validate_report(value)
+        self.assertEqual(
+            "document_extractor_report_invalid", str(caught.exception)
+        )
+        self.assert_failure(
+            caught.exception, "document_extractor_report_invalid"
+        )
