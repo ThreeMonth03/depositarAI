@@ -368,19 +368,8 @@ def _image_and_command(role, service, image, row, revision):
         raise ReleaseRuntimeError("release_runtime_environment_changed")
 
 
-def _validate_containers(
-    compose,
-    images,
-    containers,
-    lease,
-    *,
-    catalog_identity,
-    image_proof,
-    image_environment,
-    catalog_network,
-    validated_clients=None,
-):
-    """The unchanged CPU capability profile, without a website peer claim."""
+def _container_inventory(compose, images, containers):
+    """Index the release inventory while preserving row references."""
     if (
         type(images) is not dict
         or set(images) != SERVICES
@@ -411,6 +400,51 @@ def _validate_containers(
             raise ReleaseRuntimeError("release_runtime_identity_changed")
         by_role[role] = row
         seen.add(row["Id"])
+    return by_role, seen
+
+
+def _release_client(member, validated_clients, seen):
+    """Select the client proof and all registered core identities."""
+    if validated_clients is None:
+        client = client_lease.validate_client_lease(**member)
+        core_ids = set(client["core_container_ids"].values())
+    else:
+        matches = [
+            proof
+            for evidence, proof in validated_clients
+            if evidence == member
+        ]
+        if len(matches) != 1:
+            raise ReleaseRuntimeError("release_runtime_shared_client_changed")
+        client = matches[0]
+        core_ids = set().union(
+            *(
+                set(p["core_container_ids"].values())
+                for _, p in validated_clients
+            )
+        )
+        other_apis = {p["api_container_id"] for _, p in validated_clients} - {
+            client["api_container_id"]
+        }
+        if seen & other_apis:
+            raise ReleaseRuntimeError("release_runtime_identity_collision")
+    return client, core_ids
+
+
+def _validate_containers(
+    compose,
+    images,
+    containers,
+    lease,
+    *,
+    catalog_identity,
+    image_proof,
+    image_environment,
+    catalog_network,
+    validated_clients=None,
+):
+    """The unchanged CPU capability profile, without a website peer claim."""
+    by_role, seen = _container_inventory(compose, images, containers)
     try:
         member = {
             "lease": lease,
@@ -421,31 +455,7 @@ def _validate_containers(
             "api_container": by_role["conversation-api"],
             "catalog_network": catalog_network,
         }
-        if validated_clients is None:
-            client = client_lease.validate_client_lease(**member)
-            core_ids = set(client["core_container_ids"].values())
-        else:
-            matches = [
-                proof
-                for evidence, proof in validated_clients
-                if evidence == member
-            ]
-            if len(matches) != 1:
-                raise ReleaseRuntimeError(
-                    "release_runtime_shared_client_changed"
-                )
-            client = matches[0]
-            core_ids = set().union(
-                *(
-                    set(p["core_container_ids"].values())
-                    for _, p in validated_clients
-                )
-            )
-            other_apis = {
-                p["api_container_id"] for _, p in validated_clients
-            } - {client["api_container_id"]}
-            if seen & other_apis:
-                raise ReleaseRuntimeError("release_runtime_identity_collision")
+        client, core_ids = _release_client(member, validated_clients, seen)
     except client_lease.LeaseError:
         raise ReleaseRuntimeError(
             "release_runtime_client_lease_invalid"

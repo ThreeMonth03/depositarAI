@@ -36,6 +36,7 @@ GATED_PATHS = (
     "search/operations/metadata/sync.py",
     "search/operations/deployment/frontend/policy.py",
     "search/operations/deployment/images/build.py",
+    "search/operations/deployment/release/runtime.py",
     "scripts/ci",
     "scripts/search_jobs.py",
     "scripts/search_model_source.py",
