@@ -83,6 +83,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/deployment/images/build.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
+        self.write("search/operations/deployment/credentials.py", "")
         self.environment = {
             **os.environ,
             "PATH": str(Path(sys.executable).parent)
@@ -185,6 +186,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/images/build.py",
             "search/operations/deployment/release/runtime.py",
             "search/operations/deployment/inference_runtime.py",
+            "search/operations/deployment/credentials.py",
             "scripts/search_model_source.py",
             "search/operations/documents/future_policy.py",
         ):

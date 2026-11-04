@@ -71,6 +71,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/operations/deployment/images/build.py`。
 - `search/operations/deployment/release/runtime.py`。
 - `search/operations/deployment/inference_runtime.py`。
+- `search/operations/deployment/credentials.py`。
 - `scripts/ci` 的完整 Python 工具目錄。
 - `scripts/search_jobs.py`、`scripts/search_model_source.py`。
 

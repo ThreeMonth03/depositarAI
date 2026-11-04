@@ -187,6 +187,85 @@ def read_api_key_authority(config, store):
             os.close(descriptor)
 
 
+def _validate_prepare_inputs(config, store, source_revision):
+    """Validate the complete prepare contract before filesystem work."""
+    if (
+        not isinstance(config, ProductConfig)
+        or not isinstance(store, StateStore)
+        or store.root != config.state_root
+        or type(source_revision) is not str
+        or REVISION.fullmatch(source_revision) is None
+    ):
+        raise CredentialError("product_credentials_state_invalid")
+
+
+def _check_reuse_anchor(store, started, configuration):
+    """Check anchor identity before opening its existing material folder."""
+    if (
+        type(started) is not dict
+        or type(started.get("creation_revision")) is not str
+        or REVISION.fullmatch(started["creation_revision"]) is None
+    ):
+        raise CredentialError("product_credentials_receipt_changed")
+    _same(
+        started,
+        {
+            "schema_version": 1,
+            "kind": "product-api-key",
+            "configuration_sha256": configuration,
+            "creation_revision": started["creation_revision"],
+        },
+        "product_credentials_receipt_changed",
+    )
+    if "secrets" not in os.listdir(store.fd):
+        raise CredentialError("product_credentials_recovery_required")
+
+
+def _verify_or_publish_material(descriptor, root, started, reused):
+    """Borrow the owner's directory FD for the fixed material protocol."""
+    names = set(os.listdir(descriptor))
+    if reused:
+        if names != FILES:
+            raise CredentialError("product_credentials_recovery_required")
+        _same(
+            _record(descriptor, STARTED),
+            started,
+            "product_credentials_receipt_changed",
+        )
+    else:
+        if names:
+            raise CredentialError("product_credentials_recovery_required")
+        private_io.verify_directory(descriptor, root)
+        private_io.write_json(
+            descriptor, STARTED, started, max_bytes=MAX_RECORD_BYTES
+        )
+        key = secrets.token_hex(32)
+        if type(key) is not str or re.fullmatch(r"[0-9a-f]{64}", key) is None:
+            raise CredentialError("product_api_key_generation_invalid")
+        private_io.verify_directory(descriptor, root)
+        private_io.write_file(
+            descriptor, KEY, (key + "\n").encode("ascii"), max_bytes=65
+        )
+    completed = {
+        "schema_version": 1,
+        "status": "verified",
+        "started_sha256": _digest(started),
+        "key_sha256": _key_digest(descriptor),
+    }
+    if reused:
+        _same(
+            _record(descriptor, COMPLETED),
+            completed,
+            "product_credentials_receipt_changed",
+        )
+    else:
+        private_io.verify_directory(descriptor, root)
+        private_io.write_json(
+            descriptor, COMPLETED, completed, max_bytes=MAX_RECORD_BYTES
+        )
+    return completed
+
+
 def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
     """Create once or reverify the private key under an already-held product
     lock.
@@ -197,14 +276,7 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
     existing state must have the exact complete inventory and matching digests.
     A crash between durable intent and completion requires explicit recovery.
     """
-    if (
-        not isinstance(config, ProductConfig)
-        or not isinstance(store, StateStore)
-        or store.root != config.state_root
-        or type(source_revision) is not str
-        or REVISION.fullmatch(source_revision) is None
-    ):
-        raise CredentialError("product_credentials_state_invalid")
+    _validate_prepare_inputs(config, store, source_revision)
     descriptor = None
     try:
         store._check_directory()
@@ -244,24 +316,7 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
             store.write(ANCHOR, started)
         else:
             reused = True
-            if (
-                type(started) is not dict
-                or type(started.get("creation_revision")) is not str
-                or REVISION.fullmatch(started["creation_revision"]) is None
-            ):
-                raise CredentialError("product_credentials_receipt_changed")
-            _same(
-                started,
-                {
-                    "schema_version": 1,
-                    "kind": "product-api-key",
-                    "configuration_sha256": configuration,
-                    "creation_revision": started["creation_revision"],
-                },
-                "product_credentials_receipt_changed",
-            )
-            if "secrets" not in os.listdir(store.fd):
-                raise CredentialError("product_credentials_recovery_required")
+            _check_reuse_anchor(store, started, configuration)
         if descriptor is None:
             descriptor = private_io.open_child_directory(
                 store.fd,
@@ -269,49 +324,9 @@ def prepare_api_key(config, store, source_revision, *, repo_root, runner=None):
                 create="secrets" not in os.listdir(store.fd),
             )
         root = config.state_root / "secrets"
-        names = set(os.listdir(descriptor))
-        if reused:
-            if names != FILES:
-                raise CredentialError("product_credentials_recovery_required")
-            _same(
-                _record(descriptor, STARTED),
-                started,
-                "product_credentials_receipt_changed",
-            )
-        else:
-            if names:
-                raise CredentialError("product_credentials_recovery_required")
-            private_io.verify_directory(descriptor, root)
-            private_io.write_json(
-                descriptor, STARTED, started, max_bytes=MAX_RECORD_BYTES
-            )
-            key = secrets.token_hex(32)
-            if (
-                type(key) is not str
-                or re.fullmatch(r"[0-9a-f]{64}", key) is None
-            ):
-                raise CredentialError("product_api_key_generation_invalid")
-            private_io.verify_directory(descriptor, root)
-            private_io.write_file(
-                descriptor, KEY, (key + "\n").encode("ascii"), max_bytes=65
-            )
-        completed = {
-            "schema_version": 1,
-            "status": "verified",
-            "started_sha256": _digest(started),
-            "key_sha256": _key_digest(descriptor),
-        }
-        if reused:
-            _same(
-                _record(descriptor, COMPLETED),
-                completed,
-                "product_credentials_receipt_changed",
-            )
-        else:
-            private_io.verify_directory(descriptor, root)
-            private_io.write_json(
-                descriptor, COMPLETED, completed, max_bytes=MAX_RECORD_BYTES
-            )
+        completed = _verify_or_publish_material(
+            descriptor, root, started, reused
+        )
         # Re-read the authority and material, not just the in-memory write
         # result.
         _recheck_material(descriptor, root, started, completed)
