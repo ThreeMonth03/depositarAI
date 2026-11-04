@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 from search.api.shared.admission import Busy
 from search.api.shared.backend import BackendFailure
@@ -259,6 +259,130 @@ class WorkerReadinessTests(unittest.TestCase):
             worker.run("ready", {}, self.settings),
             {"ready": True, "documents": 5, "reranker_ready": False},
         )
+
+    def test_ready_reads_settings_once_in_required_probe_order(self):
+        events = Mock()
+        original = self.settings
+
+        class ObservedSettings:
+            @property
+            def bundle_path(self):
+                events.setting("bundle_path")
+                return original.bundle_path
+
+            @property
+            def manifest_sha256(self):
+                events.setting("manifest_sha256")
+                return original.manifest_sha256
+
+            @property
+            def rerank_enabled(self):
+                events.setting("rerank_enabled")
+                return original.rerank_enabled
+
+        class Documents:
+            def __len__(self):
+                events.documents()
+                return 5
+
+        self.bundle.return_value.documents = Documents()
+        for name, mock in (
+            ("catalog", self.bundle),
+            ("search", self.query),
+            ("model", self.models),
+            ("peer", self.peer),
+            ("health", self.health),
+        ):
+            events.attach_mock(mock, name)
+        settings = ObservedSettings()
+        self.assertEqual(
+            worker.run("ready", {}, settings),
+            {"ready": True, "documents": 5, "reranker_ready": True},
+        )
+        tags = worker.HTTPRequest(
+            "GET", worker.OLLAMA_BASE_URL + "/api/tags", ()
+        )
+        self.assertEqual(
+            events.mock_calls,
+            [
+                call.setting("bundle_path"),
+                call.setting("manifest_sha256"),
+                call.catalog(
+                    original.bundle_path,
+                    expected_manifest_sha256=original.manifest_sha256,
+                ),
+                call.search(
+                    {"query": "氣候", "top_k": 1, "conditions": {}}, settings
+                ),
+                call.search(
+                    {
+                        "query": "氣候",
+                        "top_k": 1,
+                        "conditions": {
+                            "time": {"start": "2025", "end": "2025"}
+                        },
+                    },
+                    settings,
+                ),
+                call.model("scope"),
+                call.model().send(tags, timeout=3, max_bytes=128 * 1024),
+                call.model("answer"),
+                call.model().send(tags, timeout=3, max_bytes=128 * 1024),
+                call.documents(),
+                call.setting("rerank_enabled"),
+                call.peer("reranker", 8001),
+                call.health(),
+                call.health().send(
+                    worker.HTTPRequest(
+                        "GET", "http://172.18.0.4:8001/healthz", ()
+                    ),
+                    timeout=2,
+                    max_bytes=worker.MAX_RESPONSE_BYTES,
+                ),
+            ],
+        )
+
+    def test_disabled_reranker_and_flag_failure_keep_the_optional_boundary(
+        self,
+    ):
+        original = self.settings
+        disabled = SimpleNamespace(
+            bundle_path=original.bundle_path,
+            manifest_sha256=original.manifest_sha256,
+            rerank_enabled=False,
+        )
+        self.assertEqual(
+            worker.run("ready", {}, disabled),
+            {"ready": True, "documents": 5},
+        )
+        error = RuntimeError("flag unavailable")
+
+        class InvalidFlag:
+            bundle_path = original.bundle_path
+            manifest_sha256 = original.manifest_sha256
+
+            @property
+            def rerank_enabled(self):
+                raise error
+
+        with self.assertRaises(RuntimeError) as caught:
+            worker.run("ready", {}, InvalidFlag())
+        self.assertIs(caught.exception, error)
+        self.assertEqual(self.query.call_count, 4)
+        self.assertEqual(self.models.call_count, 4)
+        self.peer.assert_not_called()
+        self.health.assert_not_called()
+
+    def test_catalog_load_failure_stops_before_all_other_probes(self):
+        error = ValueError("catalog unavailable")
+        self.bundle.side_effect = error
+        with self.assertRaises(ValueError) as caught:
+            worker.run("ready", {}, self.settings)
+        self.assertIs(caught.exception, error)
+        self.query.assert_not_called()
+        self.models.assert_not_called()
+        self.peer.assert_not_called()
+        self.health.assert_not_called()
 
 
 if __name__ == "__main__":

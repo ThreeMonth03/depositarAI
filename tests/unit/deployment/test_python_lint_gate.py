@@ -53,6 +53,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/planning/__init__.py", "")
         self.write("search/api/retrieval/__init__.py", "")
         self.write("search/api/conversation/calendar.py", "")
+        self.write("search/api/worker.py", "")
         self.write("search/operations/cli.py", "")
         self.write("search/operations/config.py", "")
         self.write("search/operations/doctor.py", "")
@@ -177,6 +178,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/shared/bounded_process.py",
             "search/operations/catalog/policy.py",
             "search/catalog/session.py",
+            "search/api/worker.py",
             "scripts/search_model_source.py",
             "search/operations/documents/future_policy.py",
         ):
