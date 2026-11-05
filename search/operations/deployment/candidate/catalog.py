@@ -74,6 +74,77 @@ finally:os.close(fd)
 )
 
 
+_BOUNDED_CONTEXT = r"""
+import json, os, sys, time
+from pathlib import Path
+
+repo, config_file, revision = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(repo))
+from search.operations.config import load_config
+from search.operations.state import StateStore
+from search.operations.catalog import commands, execution, query
+from search.operations.shared.private_io import open_directory, read_file
+from search.operations.shared.source_identity import require_clean_revision
+
+maximum, seconds = int(sys.argv[5]), float(sys.argv[6])
+assert 1 <= maximum <= 256 and 0 < seconds <= 120
+deadline = time.monotonic() + seconds
+base, calls = commands.default_runner(repo), 0
+
+
+def limited(argv, *, timeout):
+    global calls
+    left = deadline - time.monotonic()
+    assert left > 0 and calls < maximum
+    calls += 1
+    return base(argv, timeout=min(timeout, left))
+
+
+assert require_clean_revision(repo, runner=limited) == revision
+config = load_config(config_file, repo_root=repo)
+fd = open_directory(config.state_root)
+try:
+    store = StateStore(config.state_root, fd)
+    context = execution.load_context(
+        config,
+        store.read("index-candidate.json"),
+        repo_root=repo,
+        runner=limited,
+    )
+    if sys.argv[4] != "-":
+        p = Path(sys.argv[4])
+        parent = open_directory(p.parent)
+        try:
+            snapshot = json.loads(
+                read_file(parent, p.name, mode=0o600, max_bytes=1024**2)
+            )
+        finally:
+            os.close(parent)
+        assert type(snapshot) is list and len(snapshot) == 3
+        authority = query.verify_authority(
+            context, observe_runtime=lambda _: tuple(snapshot)
+        )
+    else:
+        authority = query.read_authority(context)
+    images = execution.load_images(context)
+    assert require_clean_revision(repo, runner=limited) == revision
+    assert time.monotonic() <= deadline
+    print(
+        json.dumps(
+            {
+                "source_revision": revision,
+                "plan": context["plan"],
+                "compose": context["compose"],
+                "authority": authority,
+                "images": images,
+            }
+        )
+    )
+finally:
+    os.close(fd)
+"""
+
+
 class SharedCatalogError(ValueError):
     """Fixed diagnostic; never include source output or credential values."""
 
@@ -147,9 +218,24 @@ def validate_chunk_profile(context):
 
 
 def source_record(
-    source, config_file, revision, *, snapshot=None, timeout=120
+    source,
+    config_file,
+    revision,
+    *,
+    snapshot=None,
+    timeout=120,
+    source_runner=None,
+    process_runner=None,
+    audit_budget=None,
 ):
-    require(require_clean_revision(source) == revision, "source_changed")
+    if audit_budget is not None:
+        _audit_budget(audit_budget)
+    source_options = {} if source_runner is None else {"runner": source_runner}
+    run = image_build._run if process_runner is None else process_runner
+    require(
+        require_clean_revision(source, **source_options) == revision,
+        "source_changed",
+    )
     with tempfile.TemporaryDirectory(
         prefix="shared-catalog-audit-"
     ) as directory:
@@ -159,7 +245,7 @@ def source_record(
             "-S",
             "-B",
             "-c",
-            _CONTEXT,
+            _CONTEXT if audit_budget is None else _BOUNDED_CONTEXT,
             str(source),
             str(config_file),
             revision,
@@ -173,7 +259,16 @@ def source_record(
             finally:
                 os.close(fd)
             args.append(str(Path(directory) / "snapshot.json"))
-        result = image_build._run(
+        if audit_budget is not None:
+            if snapshot is None:
+                args.append("-")
+            args.extend(
+                [
+                    str(audit_budget["commands"]),
+                    str(min(audit_budget["seconds"], timeout)),
+                ]
+            )
+        result = run(
             args,
             timeout=timeout,
             environment={
@@ -190,13 +285,59 @@ def source_record(
         and value["source_revision"] == revision,
         "source_audit_invalid",
     )
-    require(require_clean_revision(source) == revision, "source_changed")
+    require(
+        require_clean_revision(source, **source_options) == revision,
+        "source_changed",
+    )
     return value
 
 
-def load_context(source, config_file, config, store):
-    revision = require_clean_revision(source)
-    value = source_record(source, config_file, revision)
+def _audit_budget(value):
+    require(
+        type(value) is dict and set(value) == {"commands", "seconds"},
+        "audit_budget_invalid",
+    )
+    require(
+        type(value["commands"]) is int and 1 <= value["commands"] <= 256,
+        "audit_budget_invalid",
+    )
+    require(
+        type(value["seconds"]) in (int, float) and 0 < value["seconds"] <= 120,
+        "audit_budget_invalid",
+    )
+
+
+def _audit_runners(
+    context, source_runner=None, process_runner=None, audit_budget=None
+):
+    values = {
+        "source_runner": source_runner
+        if source_runner is not None
+        else context.get("source_runner"),
+        "process_runner": process_runner
+        if process_runner is not None
+        else context.get("process_runner"),
+        "audit_budget": audit_budget
+        if audit_budget is not None
+        else context.get("audit_budget"),
+    }
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def load_context(
+    source,
+    config_file,
+    config,
+    store,
+    *,
+    source_runner=None,
+    process_runner=None,
+    audit_budget=None,
+):
+    options = {} if source_runner is None else {"runner": source_runner}
+    revision = require_clean_revision(source, **options)
+    runners = _audit_runners({}, source_runner, process_runner, audit_budget)
+    value = source_record(source, config_file, revision, **runners)
     release_controller._same(value["plan"], store.read("index-candidate.json"))
     plan = value["plan"]
     composition._catalog(config, plan, revision)
@@ -217,6 +358,7 @@ def load_context(source, config_file, config, store):
         "source_revision": revision,
         "runner": commands.default_runner(source),
         "query_profile": query_profile(source),
+        **runners,
     }
     return context, value
 
@@ -281,7 +423,13 @@ class Catalog:
             ),
         }
 
-    def refresh(self):
+    def refresh(self, *, source_runner=None):
+        selected = (
+            source_runner
+            if source_runner is not None
+            else self.context.get("source_runner")
+        )
+        options = {} if selected is None else {"runner": selected}
         require(
             product_config.load_config(
                 self.config_file, repo_root=self.context["repo"]
@@ -290,7 +438,7 @@ class Catalog:
             "config_changed",
         )
         require(
-            require_clean_revision(self.context["repo"])
+            require_clean_revision(self.context["repo"], **options)
             == self.context["source_revision"],
             "source_changed",
         )
@@ -302,14 +450,31 @@ class Catalog:
             self.key,
         )
 
-    def audit(self, snapshot, *, timeout):
-        self.refresh()
+    def audit(
+        self,
+        snapshot,
+        *,
+        timeout,
+        source_runner=None,
+        process_runner=None,
+        audit_budget=None,
+    ):
+        runners = _audit_runners(
+            self.context, source_runner, process_runner, audit_budget
+        )
+        options = (
+            {}
+            if "source_runner" not in runners
+            else {"source_runner": runners["source_runner"]}
+        )
+        self.refresh(**options)
         value = source_record(
             self.context["repo"],
             self.config_file,
             self.context["source_revision"],
             snapshot=snapshot,
             timeout=timeout,
+            **runners,
         )
         for key, expected in (
             ("plan", self.context["plan"]),
@@ -322,7 +487,7 @@ class Catalog:
                 expected,
                 "shared_backend_catalog_authority_changed",
             )
-        self.refresh()
+        self.refresh(**options)
 
 
 def select(profile, stack, config, existing, docker):

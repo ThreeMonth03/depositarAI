@@ -119,11 +119,13 @@ class ComplexityEntryTests(unittest.TestCase):
                 "search/quality",
                 "search/operations/deployment/candidate",
                 "search/operations/deployment/provider",
+                "search/operations/deployment/transition",
                 "search/operations/documents",
                 "search/operations/jobs/archive.py",
                 "search/operations/metadata/source.py",
                 "search/operations/metadata/sync.py",
                 "search/operations/deployment/frontend/policy.py",
+                "search/operations/deployment/frontend/binding.py",
                 "search/operations/deployment/images/build.py",
                 "search/operations/deployment/release/runtime.py",
                 "search/operations/deployment/inference_runtime.py",
@@ -132,6 +134,8 @@ class ComplexityEntryTests(unittest.TestCase):
                 "scripts/search_jobs.py",
                 "scripts/search_model_source.py",
                 "scripts/search_dictionary_permissions.py",
+                "scripts/update_search_backend.py",
+                "scripts/participate_backend_binding.py",
             ],
         )
 
@@ -223,6 +227,7 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/operations/deployment/candidate/batch/policy.py",
                 "search/operations/deployment/candidate/policy.py",
                 "search/operations/deployment/provider/policy.py",
+                "search/operations/deployment/transition/future_policy.py",
                 "search/operations/documents/cache.py",
                 "search/operations/documents/controller.py",
                 "search/operations/documents/derivation.py",
@@ -238,6 +243,7 @@ class RealComplexityGateTests(unittest.TestCase):
                 "search/operations/metadata/source.py",
                 "search/operations/metadata/sync.py",
                 "search/operations/deployment/frontend/policy.py",
+                "search/operations/deployment/frontend/binding.py",
                 "search/operations/deployment/images/build.py",
                 "search/operations/deployment/release/runtime.py",
                 "search/operations/deployment/inference_runtime.py",
@@ -246,6 +252,8 @@ class RealComplexityGateTests(unittest.TestCase):
                 "scripts/search_jobs.py",
                 "scripts/search_model_source.py",
                 "scripts/search_dictionary_permissions.py",
+                "scripts/update_search_backend.py",
+                "scripts/participate_backend_binding.py",
             )
             for relative in accepted_files:
                 path = root / relative

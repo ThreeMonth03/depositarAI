@@ -1,5 +1,10 @@
 # 私有 Conversation API 的獨立 TLS 接口
 
+已接管 canonical provider 的 API 換版，請使用[後端更新](BACKEND_UPDATE.md)
+協調 TLS、API 與 VM binding。這裡的 plan 準備與唯讀檢查仍供該流程重用；已登記的
+endpoint 有 reservation 時，正常 `up`／`stop` 會拒絕。切換只停止已證明屬於封存
+plan 的 TLS pair，可有短暫停機；失聯或不明結果會保留操作，不自行宣告回退成功。
+
 這是供核准的 VM BFF 使用的服務接口，不是公眾網站或整套產品 installer。
 既有 `18083`、catalog、模型與 `active.conf` 保持原狀；公眾登入與配額仍須在網站入口處理。
 

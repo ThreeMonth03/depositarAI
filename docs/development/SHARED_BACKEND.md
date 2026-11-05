@@ -6,6 +6,8 @@ scope/planner 模型與 reranker，並可查現役或另一份已準備好的唯
 
 操作協調與 catalog 權限由 [`candidate/`](../../search/operations/deployment/candidate/controller.py)
 管理；有界案例執行見[批次流程](SHARED_BATCH.md)。
+候選通過審查後，以[後端更新](BACKEND_UPDATE.md)管理 API／TLS／VM binding 的
+成套切換、明確回退與舊 CPU backend 退休。
 
 ```text
 operator CLI → 候選 BFF → 候選 API ─┬→ 已封存 catalog/index（自己的 query-only 權限）
@@ -102,7 +104,8 @@ catalog locks。已註冊候選不能直接改 catalog 或 Roles；先處理原�
 
 Active／rollback 的 container、network、source、build 與共享依賴受到保護，不能
 透過 candidate `stop` 刪除。Active B 與 rollback A 同時存在時沒有第三 client 名額；
-回退窗口後的 A 退休屬於獨立的受控 release 操作，不是一般候選清理。
+回退窗口後，以 `backend-code-retire` 退休 A；它使用封存的 rollback 權責與
+獨立清理決定，不經一般候選 `stop`。來源、模型、catalog 與原收據保留。
 
 候選來源必須是乾淨、已提交的 Git checkout。從包含此 operator 的已審查版本執行：
 

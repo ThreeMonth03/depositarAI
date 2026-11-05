@@ -369,9 +369,12 @@ def _checkpoint_evidence(test, data):
         Path("/private/fake-client"), command, max_commands=128
     )
     shared = {"commands": commands}
+    image_test = SimpleNamespace(
+        addCleanup=stack.callback, assertEqual=test.assertEqual
+    )
     images = {
         member.source_revision: image_binding_fixture(
-            test, provider, member, docker, shared=shared
+            image_test, provider, member, docker, shared=shared
         )
         for member in members
     }

@@ -267,7 +267,7 @@ class Control:
 
 
 @contextmanager
-def open_control(path, *, create=False):
+def _locked_control(path, *, create=False):
     config, config_sha256 = _control_configuration(path)
     root = config["state_root"]
     namespace.check_directory(root.parent)
@@ -289,17 +289,32 @@ def open_control(path, *, create=False):
         control = Control(
             path, config, fd, lock, config_sha256, allow_empty=create
         )
-        if not create:
-            contract.require(
-                control.roles["pending_operation_sha256"] is None,
-                "recovery_required",
-            )
         yield control
         control.refresh()
     finally:
         if lock is not None:
             os.close(lock)
         os.close(fd)
+
+
+@contextmanager
+def open_control(path, *, create=False):
+    """Admit normal operations only while no transition is reserved."""
+    with _locked_control(path, create=create) as control:
+        if control._roles is not None:
+            contract.require(
+                control.roles["pending_operation_sha256"] is None,
+                "recovery_required",
+            )
+            try:
+                control.read("operation-hold.json")
+            except FileNotFoundError:
+                pass
+            else:
+                raise contract.ProviderError(
+                    "shared_backend_provider_recovery_required"
+                )
+        yield control
 
 
 def read_roles(control):

@@ -74,6 +74,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/candidate/batch/__init__.py", ""
         )
         self.write("search/operations/deployment/provider/__init__.py", "")
+        self.write("search/operations/deployment/transition/__init__.py", "")
         self.write(
             "search/operations/documents/__init__.py", '"""Fixtures."""\n'
         )
@@ -82,7 +83,10 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("scripts/search_jobs.py", "")
         self.write("scripts/search_model_source.py", "")
         self.write("scripts/search_dictionary_permissions.py", "")
+        self.write("scripts/update_search_backend.py", "")
+        self.write("scripts/participate_backend_binding.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
+        self.write("search/operations/deployment/frontend/binding.py", "")
         self.write("search/operations/deployment/images/build.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
@@ -194,6 +198,10 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/credentials.py",
             "scripts/search_model_source.py",
             "scripts/search_dictionary_permissions.py",
+            "scripts/update_search_backend.py",
+            "scripts/participate_backend_binding.py",
+            "search/operations/deployment/transition/future_policy.py",
+            "search/operations/deployment/frontend/binding.py",
             "search/operations/documents/future_policy.py",
         ):
             with self.subTest(path=relative):

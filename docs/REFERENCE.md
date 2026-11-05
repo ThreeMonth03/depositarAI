@@ -11,6 +11,7 @@
 | Docker 與拆機前端 | [部署目錄](../deploy/README.md)、[網站設定](SEARCH_WEBSITE.md) |
 | 前端部署檢查與私有 API TLS | [唯讀檢查](development/FRONTEND_CHECK.md)、[TLS 接口](development/PRIVATE_API_TLS.md) |
 | 模型與檢索服務 | [私有 runtime](development/PRIVATE_RUNTIME.md) |
+| 共用模型下的 API 換版、回退與退休 | [後端更新](development/BACKEND_UPDATE.md) |
 | Catalog 重用與 metadata 比較 | [Catalog cache](development/CATALOG_CACHE.md)、[Sync 與候選索引](development/PRODUCT_LIFECYCLE.md#metadata-與候選索引) |
 | CSV／PDF 離線擷取與快取 | [資源摘要](development/RESOURCE_PROFILES.md) |
 | Agent 共用單機工作排程 | [私有工作佇列](development/JOB_QUEUE.md) |

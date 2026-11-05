@@ -207,6 +207,12 @@ def _admit_operation(store, name):
     """Validate an operation and all prior intents before a new receipt."""
     if name not in OPERATIONS:
         raise ValueError("product_operation_invalid")
+    from search.operations.deployment.transition import enrollment
+
+    try:
+        enrollment.require_unmanaged(store.root)
+    except ValueError:
+        raise ValueError("product_operation_provider_managed") from None
     receipts = operation_receipts(store)
     if len(receipts) >= MAX_OPERATIONS:
         raise ValueError("product_operation_retention_limit")

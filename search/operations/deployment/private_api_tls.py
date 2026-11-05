@@ -1075,7 +1075,9 @@ def _stop_owned(path, plan, runner):
         _compose_output(["docker", "rm", *identifiers], runner)
 
 
-def operate(action, plan_path, *, runner=subprocess.run):
+def _operate_owned(
+    action, plan_path, *, runner=subprocess.run, cleanup_runner=None
+):
     _require(action in ("check", "up", "stop"))
     path = _path(str(plan_path))
     # Stop requires intact, authenticated assets, but not a healthy backend or
@@ -1111,7 +1113,11 @@ def operate(action, plan_path, *, runner=subprocess.run):
             _owned(path, plan, runner, healthy=True)
             check(path, runner=runner)
         except Exception:
-            _stop_owned(path, plan, runner)
+            _stop_owned(
+                path,
+                plan,
+                runner if cleanup_runner is None else cleanup_runner,
+            )
             raise
     elif action == "stop":
         _stop_owned(path, plan, runner)
@@ -1121,6 +1127,18 @@ def operate(action, plan_path, *, runner=subprocess.run):
         "deployment_performed": action == "up",
         "public_readiness_verified": False,
     }
+
+
+def operate(action, plan_path, *, runner=subprocess.run):
+    """Retain the endpoint fence around normal mutating TLS commands."""
+    if action == "check":
+        return _operate_owned(action, plan_path, runner=runner)
+    from search.operations.deployment.transition import enrollment
+
+    root = enrollment.endpoint_root(_path(str(plan_path)))
+    with enrollment.locked(root):
+        enrollment.require_unreserved(root)
+        return _operate_owned(action, plan_path, runner=runner)
 
 
 def main(argv=None):

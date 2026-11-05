@@ -8,6 +8,12 @@ main source ref、指定發布 workflow 與 OCI archive 由共用 artifact verif
 此流程只管理 canonical profile 指定的前端 Compose project，沿用同一份 env、CIDR、
 API 與 catalog pins。API／BFF 必須是目前的 contract4；不部署後端、模型或索引。
 
+API 版本改動由[後端更新 participant](BACKEND_UPDATE.md)協調，只修改 current
+binding，保留前端映像、容器與 previous 原始 API pin。正常前端部署會檢查同一份
+reservation；操作未明確完成前不能另行換版。若 previous API／catalog／contract／env
+已與 current 不相容，image rollback 在容器變更前拒絕；請先用成套後端回退流程，
+或發行相容的前端版本。
+
 ## 發布版本
 
 PR 的 CI 使用 GitHub-hosted runner 與唯讀權限，不持有內網部署憑證。

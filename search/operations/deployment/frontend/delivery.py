@@ -167,7 +167,7 @@ def _lock(parent_fd, name, *, create=False, wait=0):
             (before.st_dev, before.st_ino) == (named.st_dev, named.st_ino),
             "lock_changed",
         )
-        yield
+        yield fd
     finally:
         os.close(fd)
 
@@ -740,12 +740,32 @@ class Delivery:
             return _summary("deployed", self.switch(before, candidate))
 
 
+def _compatible_backend(current, previous):
+    fields = check.FIELDS - {
+        "frontend_revision",
+        "web_platform_manifest",
+        "web_nginx_platform_manifest",
+    }
+    require(
+        all(current[key] == previous[key] for key in fields),
+        "backend_binding_incompatible",
+    )
+
+
 def operate(config_path, operation, revision=None, *, runner=None):
     require(operation in ("deploy", "rollback", "status"), "operation_invalid")
     config = load_config(config_path)
     state = State(config["state_root"])
     try:
         with state.locked():
+            from search.operations.deployment.transition import enrollment
+
+            try:
+                enrollment.require_unreserved(state.root)
+            except ValueError:
+                raise FrontendDeliveryError(
+                    "frontend_delivery_backend_binding_reserved"
+                ) from None
             with tempfile.TemporaryDirectory(
                 prefix=".docker-", dir=state.root
             ) as directory:
@@ -774,6 +794,9 @@ def operate(config_path, operation, revision=None, *, runner=None):
                     return _summary("ready", before)
                 require(before["previous"] is not None, "no_previous_release")
                 target = copy.deepcopy(before["previous"])
+                _compatible_backend(
+                    before["current"]["profile"], target["profile"]
+                )
                 delivery.verify_images(target)
                 target["nonce"] = uuid.uuid4().hex
                 target["composition"] = _native(

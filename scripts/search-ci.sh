@@ -104,6 +104,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.frontend.test_wrapper \
   tests.unit.deployment.frontend.test_artifact \
   tests.unit.deployment.frontend.test_delivery \
+  tests.unit.deployment.frontend.test_binding \
   tests.unit.deployment.frontend.test_publisher \
   tests.unit.deployment.test_python_package_layout \
   tests.unit.deployment.test_product_module_boundaries \
@@ -196,6 +197,16 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.provider.test_authority \
   tests.unit.deployment.provider.test_adoption \
   tests.unit.deployment.provider.test_runtime \
+  tests.unit.deployment.transition.test_backend \
+  tests.unit.deployment.transition.test_contract \
+  tests.unit.deployment.transition.test_controller \
+  tests.unit.deployment.transition.test_controller_faults \
+  tests.unit.deployment.transition.test_enrollment \
+  tests.unit.deployment.transition.test_journal \
+  tests.unit.deployment.transition.test_provider_admission \
+  tests.unit.deployment.transition.test_retirement \
+  tests.unit.deployment.transition.test_transport \
+  tests.unit.operations.test_transition_state \
   tests.unit.deployment.candidate.batch.test_capture \
   tests.unit.deployment.candidate.batch.test_probe \
   tests.unit.deployment.candidate.batch.test_execution \
@@ -243,6 +254,8 @@ from pathlib import Path
 roots = (Path("search"), Path("deploy/docker"))
 files = [
     Path("scripts/read_env.py"),
+    Path("scripts/update_search_backend.py"),
+    Path("scripts/participate_backend_binding.py"),
     Path("scripts/search_dictionary_permissions.py"),
     Path("scripts/search_model_source.py"),
     Path("scripts/validate_catalog_compose.py"),
