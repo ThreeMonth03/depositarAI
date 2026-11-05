@@ -15,6 +15,8 @@ BFF 內驗證上游 HTTPS：匿名 `/v1/version` 須回 401，使用既有服務
 這些檢查不送搜尋 query、不建立搜尋 session、不呼叫 `/readyz` 或模型，也不重啟、
 重建或更新服務。通過只能證明當下私有前端與 TLS version 路徑正常，不能證明 GPU 推論、
 模型常駐 VRAM、搜尋品質、OIDC、實際防爬挑戰或外部使用者的網路路徑正常。
+它也不檢查磁碟容量或 quota。已經排程但出現異常時，先看下方的[結果判讀](#判讀結果)，
+不需重新安裝排程。
 
 ## 先手動核對
 
@@ -35,6 +37,42 @@ operator source 的 revision 可以與現役前端不同；受檢版本與 image
 成功會輸出固定結構的 JSON，`status` 為 `frontend_checked`，退出碼為 0；失敗退出碼為 1，
 並回固定錯誤 JSON。先處理失敗原因，再排程；不要修改預期 revision、image 或 manifest
 來消除警示。此步只執行唯讀 checker，不會送 query。
+
+## 判讀結果
+
+先確認這是一次新執行，再判斷結果。Cron 依 `last-run.json` 的 UTC `checked_at`、
+`exit_code` 及私有的 `last-check.json` 輸出查核；systemd 直接執行 checker，
+不經 cron wrapper，也不產生這兩份檔案，須核對本次 unit 執行結果與 journal 時間。
+
+| 觀察 | 意義 | 下一步 |
+| --- | --- | --- |
+| 已確認本次 checker 退出 0，輸出 `frontend_checked` | 當次前端與 TLS version 路徑通過 | 保留時間與版本；其他健康範圍仍未驗證 |
+| 結果不存在或時間已過期 | 沒有目前健康證據；尚不知是排程、主機或連線問題 | 查看原有 cron／timer 與主機可達性 |
+| Checker 退出 1，回 `frontend_check_failed` | 檢查失敗，沒有細分根因 | 依[checker 故障說明](FRONTEND_CHECK.md#檢查失敗時)核對部署配對 |
+| Cron wrapper 退出 124／137 | 124 為逾時；137 可能被強制終止 | 查該次時間與結果；不據此重啟服務或 GPU |
+| Cron wrapper 退出 74 | 暫存或結果寫入失敗；checker 可能尚未執行 | 核對私有結果目錄的空間、權限與可用性 |
+| Cron wrapper 退出 78 | 私有結果目錄不符要求，checker 尚未執行 | 核對指定目錄的擁有者、0700 與非 symlink；不直接修改不明目錄 |
+| Wrapper 退出 0，但沒有新檢查完成 | 可能因鎖已占用而略過 | 查既有執行與最近結果；不能送出健康 heartbeat |
+| 結果不完整或兩檔無法配對 | 可能仍在更新或曾中斷，不能視為完整成功 | 保留原檔與時間，核對該次執行，不拿舊成功補齊 |
+
+`last-check.json` 先替換，`last-run.json` 隨後替換，兩檔不是原子配對，也沒有共同 run ID。
+因此不能只靠檔名與退出碼 0，認定讀到的是同一次成功。鎖占用時 wrapper 直接退出 0，
+不跑 checker、不更新結果；這也不是一次成功檢查。systemd timer 為 active 或歷史
+`Result=success` 同樣不足以證明目前健康。
+Checker 已非零退出時，後續結果寫入失敗仍保留原退出碼，不一定會看到 74。
+
+過期門檻須由維護者約定。例如每五分鐘執行一次，以十五分鐘未更新為失聯門檻時：
+
+```text
+最後結果：12:00 UTC，exit_code=0
+現在時間：12:20 UTC
+判讀：已過期；不能視為目前健康
+```
+
+分享診斷時只提供排程方式、本次 UTC 時間、退出碼與 source revision；原始輸出、
+私有路徑、設定及憑證留在受保護位置。無法確認身分、權限或中斷狀態時，停止後續變更，
+依[部署故障處理](../guide/operations.md#失敗時先看什麼)交接診斷；不要刪鎖、改收據、
+放寬權限或自行重啟 GPU 來恢復綠燈。
 
 ## 選擇排程方式
 
@@ -190,12 +228,11 @@ timer 在 user manager 啟動約兩分鐘後可執行，之後約每五分鐘一
 若第一次啟用時啟動時間已經過去，可能立即執行。相同 service 尚未結束時不會疊加新實例；
 service 的 120 秒時限限制這次檢查，逾時屬失敗，不代表應重新啟動應用服務。
 
-## 查看結果與接入既有告警
+## 外部告警與失聯
 
-checker 的 JSON 與 systemd 執行結果記入 journal。用上面的 `show` 指令區分
-`Result=success`、`exit-code` 或 `timeout`，並核對日誌時間與 timer 的最近／下次執行時間。
-單看 timer 為 active 或舊的成功紀錄，不能判斷現在健康。journal 的保留期限與重開後是否保留，
-依主機 journald 設定；本方案未另建長期儲存或遠端備份。
+systemd 的 checker JSON 與執行結果記入 journal；用前述 `show` 指令區分
+`Result=success`、`exit-code` 或 `timeout`，再依[結果判讀](#判讀結果)核對新鮮度。
+journal 的保留期限與重開後是否保留，依主機 journald 設定；本方案未另建長期儲存或遠端備份。
 
 **這裡沒有外部通知通道，寫入 journal 不等於已發出告警。**
 若機構已有監控，可由它接收這個 user unit 的 failed 狀態，另檢查是否長時間沒有新結果。
