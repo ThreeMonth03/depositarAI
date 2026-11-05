@@ -1404,6 +1404,155 @@ class CatalogBundleTests(unittest.TestCase):
                 os.fstat(descriptor)
             self.assertEqual(closed.exception.errno, errno.EBADF)
 
+    def test_text_phase_preserves_counters_and_exception_boundaries(self):
+        normalize = builder.normalize
+        counters = {}
+        value = " <b>２０２４</b>&nbsp;Ａ‮	B "
+        cleaned = normalize._clean_text(value, "title", counters, "title")
+        self.assertEqual(cleaned, "2024 A B")
+        self.assertEqual(
+            list(counters.items()),
+            [
+                ("html_fields_cleaned", 1),
+                ("control_characters_removed", 1),
+                ("bidi_characters_removed", 1),
+                ("normalized_fields", 1),
+            ],
+        )
+
+        parser_failure = RuntimeError("synthetic parser close failure")
+        counters = {}
+        with (
+            mock.patch.object(
+                normalize._TextExtractor, "close", side_effect=parser_failure
+            ),
+            self.assertRaisesRegex(
+                policy.BundleError, "title contains malformed HTML"
+            ) as raised,
+        ):
+            normalize._clean_text("plain", "title", counters, "title")
+        self.assertIs(raised.exception.__cause__, parser_failure)
+        self.assertEqual(counters, {})
+
+        counter_failure = ValueError("synthetic Unicode counter failure")
+        with (
+            mock.patch.object(
+                normalize, "_increment", side_effect=counter_failure
+            ),
+            self.assertRaises(ValueError) as raised,
+        ):
+            normalize._clean_text("‮", "title", {}, "title")
+        self.assertIs(raised.exception, counter_failure)
+
+    def test_dataset_identity_precedes_late_fields_and_preserves_years(self):
+        normalize = builder.normalize
+        package = _dataset()
+        package.update(private=True, id="not-a-uuid", resources={})
+        counters = {}
+        with (
+            mock.patch.object(normalize.uuid, "UUID") as parse,
+            self.assertRaisesRegex(policy.BundleError, "private=false"),
+        ):
+            normalize.normalize_package(package, counters)
+        parse.assert_not_called()
+        self.assertEqual(counters, {})
+
+        package = _dataset()
+        package.update(
+            name="<b>２０２４-data</b>", resources={}, organization=False
+        )
+        counters = {}
+        with self.assertRaisesRegex(
+            policy.BundleError, "resources must be an array"
+        ):
+            normalize.normalize_package(package, counters)
+        self.assertEqual(
+            list(counters.items()),
+            [("html_fields_cleaned", 1), ("normalized_fields", 1)],
+        )
+
+        package = _dataset()
+        package.update(
+            start_time="２０２０",
+            end_time="２０２４",
+            created_time="2021",
+            metadata_created="2001",
+            metadata_modified="2025",
+        )
+        before = json.dumps(package, sort_keys=True)
+        _, _, corpus = normalize.normalize_package(package, {})
+        self.assertEqual(
+            corpus["temporal"],
+            {
+                "status": "complete",
+                "start": "2020",
+                "end": "2024",
+                "created": "2021",
+            },
+        )
+        self.assertEqual(corpus["metadata_created"], "2001")
+        self.assertEqual(corpus["metadata_modified"], "2025")
+        self.assertEqual(json.dumps(package, sort_keys=True), before)
+
+    def test_enrichment_entry_projection_precedes_validation_and_binding(
+        self,
+    ):
+        normalize = builder.normalize
+        package = _dataset()
+        package["resources"][0]["id"] = RESOURCE_UUID
+        package["resources"].append(
+            {**package["resources"][0], "id": UUID_2, "name": "second.csv"}
+        )
+        _, _, corpus = normalize.normalize_package(package, {})
+        entries = [
+            _resource_enrichment(columns=["Ｂ", "A"]),
+            _resource_enrichment(resource_id=UUID_2),
+        ]
+        before = json.dumps(entries, sort_keys=True)
+        cleaned = normalize.resource_enrichment(corpus, entries, {})
+        self.assertEqual(
+            [entry["context"]["resource_id"] for entry in cleaned],
+            [UUID_2, RESOURCE_UUID],
+        )
+        self.assertEqual(cleaned[1]["context"]["columns"], ["B", "A"])
+        self.assertEqual(
+            cleaned[1]["profile_sha256"], entries[0]["profile_sha256"]
+        )
+        self.assertIsNot(cleaned[1], entries[0])
+        self.assertIsNot(cleaned[1]["context"], entries[0]["context"])
+        self.assertIsNot(
+            cleaned[1]["context"]["columns"],
+            entries[0]["context"]["columns"],
+        )
+        self.assertEqual(json.dumps(entries, sort_keys=True), before)
+
+        malformed = _resource_enrichment(resource_id=UUID_1)
+        malformed["truncated"] = 1
+        malformed["unexpected"] = "must reach closed validation"
+        del malformed["context"]["columns"]
+        before = json.dumps(malformed, sort_keys=True)
+        validate = normalize.resource_contract.validate_enrichment_resources
+        with (
+            mock.patch.object(
+                normalize.resource_contract,
+                "validate_enrichment_resources",
+                wraps=validate,
+            ) as checked,
+            self.assertRaisesRegex(
+                policy.BundleError, "resource enrichment is invalid:"
+            ) as raised,
+        ):
+            normalize.resource_enrichment(corpus, [malformed], {})
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        checked.assert_called_once()
+        forwarded = checked.call_args.args[0][0]
+        self.assertIs(type(forwarded["truncated"]), int)
+        self.assertNotIn("columns", forwarded["context"])
+        self.assertEqual(
+            forwarded["unexpected"], "must reach closed validation"
+        )
+        self.assertEqual(json.dumps(malformed, sort_keys=True), before)
+
 
 if __name__ == "__main__":
     unittest.main()

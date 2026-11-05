@@ -90,6 +90,31 @@ def _increment(
     counters[key] = int(counters.get(key, 0)) + amount
 
 
+def _clean_unicode(extracted: str, counters: MutableMapping[str, Any]) -> str:
+    """Remove controls and normalize whitespace in extracted text."""
+    clean_chars: List[str] = []
+    control_count = 0
+    bidi_count = 0
+    for character in unicodedata.normalize("NFKC", extracted):
+        codepoint = ord(character)
+        category = unicodedata.category(character)
+        if codepoint in _BIDI_CODEPOINTS:
+            bidi_count += 1
+            continue
+        if category in ("Cc", "Cf"):
+            control_count += 1
+            if character in "\t\n\r\f":
+                clean_chars.append(" ")
+            continue
+        clean_chars.append(character)
+    if control_count:
+        _increment(counters, "control_characters_removed", control_count)
+    if bidi_count:
+        _increment(counters, "bidi_characters_removed", bidi_count)
+
+    return _WHITESPACE_RE.sub(" ", "".join(clean_chars)).strip()
+
+
 def _clean_text(
     value: Any,
     limit_name: str,
@@ -118,27 +143,7 @@ def _clean_text(
     if extracted != value:
         _increment(counters, "html_fields_cleaned")
 
-    clean_chars: List[str] = []
-    control_count = 0
-    bidi_count = 0
-    for character in unicodedata.normalize("NFKC", extracted):
-        codepoint = ord(character)
-        category = unicodedata.category(character)
-        if codepoint in _BIDI_CODEPOINTS:
-            bidi_count += 1
-            continue
-        if category in ("Cc", "Cf"):
-            control_count += 1
-            if character in "\t\n\r\f":
-                clean_chars.append(" ")
-            continue
-        clean_chars.append(character)
-    if control_count:
-        _increment(counters, "control_characters_removed", control_count)
-    if bidi_count:
-        _increment(counters, "bidi_characters_removed", bidi_count)
-
-    cleaned = _WHITESPACE_RE.sub(" ", "".join(clean_chars)).strip()
+    cleaned = _clean_unicode(extracted, counters)
     limit = policy.STRING_LIMITS[limit_name]
     if len(cleaned) > limit:
         if not truncate:
@@ -399,9 +404,10 @@ def _normalize_resource(
     }
 
 
-def normalize_package(
+def _package_identity(
     package: Any, counters: MutableMapping[str, Any]
-) -> Tuple[str, str, Dict[str, Any]]:
+) -> Tuple[str, str, str]:
+    """Validate public admission and derive the dataset identity."""
     if not isinstance(package, dict):
         raise policy.BundleError("each JSON Lines record must be an object")
     if package.get("private") is not False:
@@ -436,6 +442,13 @@ def normalize_package(
             "dataset slug must not contain an at-sign token"
         )
     dataset_url = policy.DATASET_URL_PREFIX + quote(slug, safe="")
+    return dataset_id, slug, dataset_url
+
+
+def normalize_package(
+    package: Any, counters: MutableMapping[str, Any]
+) -> Tuple[str, str, Dict[str, Any]]:
+    dataset_id, slug, dataset_url = _package_identity(package, counters)
 
     resources_raw = package.get("resources")
     if resources_raw is None:
@@ -670,6 +683,34 @@ def resource_profile_content(
     }
 
 
+def _clean_enrichment_entry(
+    entry: Any, counters: MutableMapping[str, Any]
+) -> Dict[str, Any]:
+    """Copy and clean one profile entry before collection validation."""
+    if not isinstance(entry, Mapping) or not isinstance(
+        entry.get("context"), Mapping
+    ):
+        raise policy.BundleError("resource context entry is malformed")
+    result = dict(entry)
+    context = dict(entry["context"])
+    content = resource_profile_content(
+        context.get("format"),
+        name=context.get("name", ""),
+        columns=context.get("columns", []),
+        text=result.get("index_text", ""),
+        counters=counters,
+    )
+    for field in ("name", "columns", "excerpt"):
+        if field in context:
+            context[field] = content[field]
+    if "index_text" in result:
+        result["index_text"] = content["index_text"]
+    if "truncated" in result and type(result["truncated"]) is bool:
+        result["truncated"] = result["truncated"] or content["truncated"]
+    result["context"] = context
+    return result
+
+
 def resource_enrichment(
     corpus: Mapping[str, Any],
     entries: Sequence[Mapping[str, Any]],
@@ -683,28 +724,7 @@ def resource_enrichment(
         raise policy.BundleError("resource context exceeds its resource limit")
     cleaned: List[Dict[str, Any]] = []
     for entry in entries:
-        if not isinstance(entry, Mapping) or not isinstance(
-            entry.get("context"), Mapping
-        ):
-            raise policy.BundleError("resource context entry is malformed")
-        result = dict(entry)
-        context = dict(entry["context"])
-        content = resource_profile_content(
-            context.get("format"),
-            name=context.get("name", ""),
-            columns=context.get("columns", []),
-            text=result.get("index_text", ""),
-            counters=counters,
-        )
-        for field in ("name", "columns", "excerpt"):
-            if field in context:
-                context[field] = content[field]
-        if "index_text" in result:
-            result["index_text"] = content["index_text"]
-        if "truncated" in result and type(result["truncated"]) is bool:
-            result["truncated"] = result["truncated"] or content["truncated"]
-        result["context"] = context
-        cleaned.append(result)
+        cleaned.append(_clean_enrichment_entry(entry, counters))
     cleaned.sort(
         key=lambda item: (
             item["context"].get("resource_id")
