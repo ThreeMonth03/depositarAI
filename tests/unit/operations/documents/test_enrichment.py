@@ -2,16 +2,19 @@
 hits."""
 
 from copy import deepcopy
+import gzip
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from search.catalog.bundle import CatalogBundle
 from search.catalog.build import identity
+from search.catalog.errors import BundleError
 from search.operations.documents import enrichment, sets
 from search.operations.metadata import sync as metadata_sync
 from search.operations.shared import private_io
@@ -795,6 +798,278 @@ class ResourceEnrichmentTests(unittest.TestCase):
             ):
                 self.load_set(path, deadline=1)
             self.assertEqual(1, reader.call_count)
+
+    def test_captured_baseline_preserves_profiles_and_mixed_outcomes(self):
+        references = self.many_profiles(5)
+        for reference, status in zip(
+            references[1:4],
+            ("empty_text", "parse_error", "unsupported_format"),
+        ):
+            profile = json.loads(
+                (
+                    self.profiles / (reference["profile_sha256"] + ".json")
+                ).read_bytes()
+            )
+            profile["result"].update(
+                status=status, columns=[], text="", rows_observed=None
+            )
+            reference["profile_sha256"] = self.publish(profile).stem
+        failure = {
+            key: references[-1][key] for key in ("dataset_id", "resource_id")
+        }
+        failure["code"] = "document_source_http_failed"
+        selected = self.publish_set(references[:4], [failure])
+        captured = Path(self.base["bundle_path"])
+        before = {
+            path: path.read_bytes()
+            for path in [selected, *self.profiles.iterdir()]
+        }
+        with (
+            patch.object(identity, "source_digest", return_value="c" * 64),
+            patch.object(
+                enrichment.source, "fetch", side_effect=AssertionError("fetch")
+            ),
+            patch.object(
+                enrichment.extractor,
+                "extract",
+                side_effect=AssertionError("parser"),
+            ),
+            patch.object(
+                enrichment.extractor,
+                "build_image",
+                side_effect=AssertionError("helper"),
+            ),
+        ):
+            result = self.sync(
+                force=True,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+        report = result["resource_profiles"]
+        self.assertEqual(
+            (5, 1, 3, 1),
+            tuple(
+                report[key]
+                for key in (
+                    "selected_count",
+                    "included_count",
+                    "skipped_count",
+                    "failed_count",
+                )
+            ),
+        )
+        self.assertEqual([failure], report["failures"])
+        self.assertEqual(
+            {"empty_text", "parse_error", "unsupported_format"},
+            {row["reason"] for row in report["resources"] if "reason" in row},
+        )
+        self.assertEqual(
+            self.base["manifest_sha256"],
+            report["profile_baseline_manifest_sha256"],
+        )
+        self.assertNotEqual(
+            report["metadata_baseline_manifest_sha256"],
+            report["profile_baseline_manifest_sha256"],
+        )
+        output = Path(result["bundle_path"])
+        manifest = json.loads((output / "bundle-manifest.json").read_bytes())
+        self.assertEqual("c" * 64, manifest["builder"]["source_sha256"])
+        with gzip.open(output / "resource-context.v1.jsonl.gz", "rt") as data:
+            entries = [
+                entry
+                for line in data
+                for entry in json.loads(line)["resources"]
+            ]
+        self.assertEqual(1, len(entries))
+        entry = entries[0]
+        self.assertEqual(
+            self.base["manifest_sha256"], entry["source_manifest_sha256"]
+        )
+        self.assertEqual(
+            references[0]["profile_sha256"], entry["profile_sha256"]
+        )
+        self.assertEqual("sha256:" + "a" * 64, entry["extractor_image_id"])
+        self.assertEqual("b" * 64, entry["extractor_source_sha256"])
+        self.assertEqual(100, entry["acquired_at"])
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_warm_captured_baseline_is_never_inherited_by_default(self):
+        selected = self.publish_set(self.many_profiles(1))
+        captured = Path(self.base["bundle_path"])
+        fetches = self.fetches
+        with patch.object(identity, "source_digest", return_value="c" * 64):
+            explicit = self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+            previous = (self.cache / "latest.json").read_bytes()
+            with self.assertRaisesRegex(
+                enrichment.EnrichmentError, "provenance_invalid"
+            ):
+                self.sync(ttl_seconds=3600, profile_set=selected)
+            self.assertEqual(
+                previous, (self.cache / "latest.json").read_bytes()
+            )
+            plain = self.sync(ttl_seconds=3600)
+            again = self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+        self.assertTrue(
+            all(row["cache_hit"] for row in (explicit, plain, again))
+        )
+        self.assertEqual(fetches, self.fetches)
+        self.assertEqual(0, plain["resource_profiles"]["selected_count"])
+        self.assertNotIn(
+            "profile_baseline_manifest_sha256", plain["resource_profiles"]
+        )
+        self.assertEqual(explicit["manifest_sha256"], again["manifest_sha256"])
+        self.assertNotEqual(plain["manifest_sha256"], again["manifest_sha256"])
+
+    def test_warm_captured_baseline_rechecks_pin_and_data_equivalence(self):
+        selected = self.publish_set(self.many_profiles(1))
+        captured = Path(self.base["bundle_path"])
+        with patch.object(identity, "source_digest", return_value="c" * 64):
+            explicit = self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+            previous = (self.cache / "latest.json").read_bytes()
+            with self.assertRaises(BundleError):
+                self.sync(
+                    ttl_seconds=3600,
+                    profile_set=selected,
+                    profile_baseline_bundle=Path(explicit["bundle_path"]),
+                )
+            self.assertEqual(
+                previous, (self.cache / "latest.json").read_bytes()
+            )
+            self.rows[0]["title"] = "Changed captured metadata"
+            self.sync(force=True)
+            previous = (self.cache / "latest.json").read_bytes()
+            fetches = self.fetches
+            with self.assertRaisesRegex(
+                enrichment.EnrichmentError, "source_mismatch"
+            ):
+                self.sync(
+                    ttl_seconds=3600,
+                    profile_set=selected,
+                    profile_baseline_bundle=captured,
+                )
+        self.assertEqual(fetches, self.fetches)
+        self.assertEqual(previous, (self.cache / "latest.json").read_bytes())
+
+    def test_warm_captured_baseline_rechecks_actual_artifact_bytes(self):
+        selected = self.publish_set(self.many_profiles(1))
+        captured = Path(self.base["bundle_path"])
+        with patch.object(identity, "source_digest", return_value="c" * 64):
+            self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+            artifact = captured / "corpus.v2.jsonl.gz"
+            artifact.chmod(0o600)
+            artifact.write_bytes(b"corrupt")
+            artifact.chmod(0o400)
+            previous = (self.cache / "latest.json").read_bytes()
+            fetches = self.fetches
+            with self.assertRaises(BundleError):
+                self.sync(
+                    ttl_seconds=3600,
+                    profile_set=selected,
+                    profile_baseline_bundle=captured,
+                )
+        self.assertEqual(fetches, self.fetches)
+        self.assertEqual(previous, (self.cache / "latest.json").read_bytes())
+
+    def test_late_captured_directory_replacement_cannot_publish(self):
+        selected = self.publish_set(self.many_profiles(1))
+        captured = Path(self.base["bundle_path"])
+        previous = (self.cache / "latest.json").read_bytes()
+        original = enrichment.load_profiles
+
+        def replace_after_import(*args, **kwargs):
+            result = original(*args, **kwargs)
+            saved = captured.with_name(captured.name + "-saved")
+            captured.rename(saved)
+            shutil.copytree(saved, captured)
+            return result
+
+        with (
+            patch.object(identity, "source_digest", return_value="c" * 64),
+            patch.object(
+                enrichment, "load_profiles", side_effect=replace_after_import
+            ),
+            self.assertRaisesRegex(ValueError, "directory_changed"),
+        ):
+            self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+        self.assertEqual(previous, (self.cache / "latest.json").read_bytes())
+
+    def test_captured_baseline_keeps_late_corrupt_profile_guard(self):
+        references = self.many_profiles(2)
+        selected = self.publish_set(references)
+        captured = Path(self.base["bundle_path"])
+        last = self.profiles / (references[-1]["profile_sha256"] + ".json")
+        last.write_bytes(last.read_bytes() + b" ")
+        previous = (self.cache / "latest.json").read_bytes()
+        with (
+            patch.object(identity, "source_digest", return_value="c" * 64),
+            self.assertRaisesRegex(
+                enrichment.EnrichmentError, "profile_invalid"
+            ),
+        ):
+            self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+        self.assertEqual(previous, (self.cache / "latest.json").read_bytes())
+
+    def test_captured_baseline_keeps_snapshot_replacement_guard(self):
+        selected = self.publish_set(self.many_profiles(2))
+        captured = Path(self.base["bundle_path"])
+        previous = (self.cache / "latest.json").read_bytes()
+        original = enrichment.load_profiles
+
+        def change_snapshot(*args, **kwargs):
+            result = original(*args, **kwargs)
+            snapshot = Path(args[3])
+            changed = deepcopy(self.rows)
+            changed[0]["resources"][0]["url"] = (
+                "https://example.test/changed.csv"
+            )
+            snapshot.chmod(0o600)
+            snapshot.write_bytes(
+                gzip.compress(
+                    b"".join(private_io.canonical(row) for row in changed)
+                )
+            )
+            snapshot.chmod(0o400)
+            return result
+
+        with (
+            patch.object(identity, "source_digest", return_value="c" * 64),
+            patch.object(
+                enrichment, "load_profiles", side_effect=change_snapshot
+            ),
+            self.assertRaisesRegex(
+                enrichment.EnrichmentError, "source_mismatch"
+            ),
+        ):
+            self.sync(
+                ttl_seconds=3600,
+                profile_set=selected,
+                profile_baseline_bundle=captured,
+            )
+        self.assertEqual(previous, (self.cache / "latest.json").read_bytes())
 
     def test_control_joined_text_passes_the_strict_public_contract(self):
         for file_format in ("PDF", "CSV"):

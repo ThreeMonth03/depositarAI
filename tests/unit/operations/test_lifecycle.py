@@ -123,6 +123,47 @@ class ProductLifecycleTests(unittest.TestCase):
             )
             self.assertIsNone(value["active_release"])
 
+    def test_profile_baseline_reaches_sync_and_stage_without_candidate_loss(
+        self,
+    ):
+        from search.operations.catalog import backend
+        from search.operations.documents.sets import ProfileSetError
+        from search.operations.metadata import sync as catalog_sync
+
+        first = self.sync()
+        baseline = Path(first["bundle_path"])
+        previous = (self.config.state_root / "candidate.json").read_bytes()
+        invalid = self.root / ("profile-set-" + "b" * 64 + ".json")
+        invalid.write_bytes(b"{}")
+        invalid.chmod(0o600)
+        for action in (self.sync, self.stage):
+            with (
+                self.subTest(action=action.__name__),
+                patch.object(
+                    catalog_sync, "sync", wraps=catalog_sync.sync
+                ) as sync,
+                patch.object(
+                    backend, "prepare", side_effect=AssertionError("runtime")
+                ) as prepare,
+            ):
+                with self.assertRaises(ProfileSetError):
+                    action(
+                        profile_set=invalid,
+                        profile_baseline_bundle=baseline,
+                    )
+                sync.assert_called_once()
+                self.assertEqual(invalid, sync.call_args.kwargs["profile_set"])
+                self.assertEqual(
+                    baseline,
+                    sync.call_args.kwargs["profile_baseline_bundle"],
+                )
+                prepare.assert_not_called()
+            self.assertEqual(
+                previous,
+                (self.config.state_root / "candidate.json").read_bytes(),
+            )
+            self.assertIsNone(lifecycle.status(self.config)["active_release"])
+
     def test_config_identity_change_rejected_but_ttl_change_allowed(self):
         self.sync()
         with self.assertRaisesRegex(ValueError, "configuration_mismatch"):

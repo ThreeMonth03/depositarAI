@@ -205,6 +205,24 @@ profile-set 可匯入超過 20 份摘要，整份集合最多 30,000 項；匯�
 匯入會核對原 metadata-only manifest、snapshot 來源、dataset/resource ID、
 來源 URL 與素材雜湊、完整下載標記及抽取契約，不從快取目錄自行搜尋摘要。
 
+若目前 metadata builder 已更新，而 profile-set 仍綁定先前保存的 metadata-only
+bundle，可明確提供原始 bundle：
+
+```sh
+python3 scripts/depositarai.py --config /absolute/private/product.json sync \
+  --snapshot /absolute/private/frozen-snapshot.jsonl.gz \
+  --profile-set "$profile_set" \
+  --profile-baseline-bundle /absolute/private/captured-metadata/sha256-BUNDLE_ID
+```
+
+此選項只能搭配 `--profile-set`，manifest SHA256 取自集合原有記錄。
+兩份 bundle 都須通過完整驗證；四個 artifact 的全部描述與 manifest 欄位，
+除了 `bundle_id` 與 `builder.source_sha256`，必須連 JSON 型別都相同。
+結果 receipt 分別記錄目前 metadata baseline 與原 profile baseline 的 manifest
+SHA256。封存摘要仍保留舊 profile、manifest、抽取器及取得時間，沒有重新下載或解析。
+每次同步，包括 TTL 快取命中，都重新驗證本次明確提供的 baseline；不沿用上次准入。
+省略此選項時，仍依目前 metadata manifest 驗證集合。
+
 `partial` 計畫的失敗項目會保留在集合及匯入報告中，未取得內容的資料集仍可使用
 metadata。空文字、格式不符或沒有欄名政策的 profile 會列出 skipped 原因。
 重試後產生的新集合使用新的內容雜湊；同步時選擇要採用的那份集合。
