@@ -1553,6 +1553,67 @@ class CatalogBundleTests(unittest.TestCase):
         )
         self.assertEqual(json.dumps(malformed, sort_keys=True), before)
 
+    def test_control_removal_preserves_unicode_normalization(self):
+        import unicodedata
+
+        cases = (
+            ("e\u200b\u0301", "é", "control_characters_removed"),
+            ("e\x00\u0301", "é", "control_characters_removed"),
+            ("e\u202e\u0301", "é", "bidi_characters_removed"),
+            ("e&#8203;&#769;", "é", "control_characters_removed"),
+            ("\u1100\u200b\u1161", "가", "control_characters_removed"),
+        )
+        for value, expected, counter in cases:
+            with self.subTest(value=value):
+                counters = {}
+                cleaned = builder.normalize._clean_text(
+                    value, "title", counters, "synthetic title"
+                )
+                self.assertEqual(
+                    unicodedata.normalize("NFKC", cleaned), cleaned
+                )
+                self.assertEqual(cleaned, expected)
+                self.assertEqual(counters[counter], 1)
+                self.assertEqual(counters["normalized_fields"], 1)
+                self.assertEqual(
+                    builder.normalize._clean_text(
+                        cleaned, "title", {}, "synthetic title"
+                    ),
+                    cleaned,
+                )
+
+    def test_final_unicode_normalization_precedes_character_limits(self):
+        limit = policy.STRING_LIMITS["resource_context_name"]
+        marker = "...[truncated]"
+        for count in (limit, limit + 1):
+            with self.subTest(count=count):
+                counters = {}
+                cleaned = builder.normalize._clean_text(
+                    "e\u200b\u0301" * count,
+                    "resource_context_name",
+                    counters,
+                    "synthetic resource name",
+                )
+                expected = "é" * count
+                if count > limit:
+                    expected = expected[: limit - len(marker)] + marker
+                self.assertEqual(cleaned, expected)
+                self.assertEqual(
+                    counters.get("truncated_fields", 0), int(count > limit)
+                )
+                self.assertEqual(counters["control_characters_removed"], count)
+        counters = {}
+        self.assertEqual(
+            builder.normalize._clean_text(
+                "e\n\u0301", "title", counters, "synthetic title"
+            ),
+            "e \u0301",
+        )
+        self.assertEqual(
+            counters,
+            {"control_characters_removed": 1, "normalized_fields": 1},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
