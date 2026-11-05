@@ -15,7 +15,9 @@ import sys
 
 from scripts.ci import source_artifact
 from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME, CatalogBundle
-from search.operations.deployment import product_package, source_bundle
+from search.operations.deployment import source_bundle
+from search.operations.deployment.payload import archive, contract
+from search.operations.deployment.payload import plan as package_plan
 from search.operations.deployment.images import build as image_build
 from search.operations.shared import private_io
 
@@ -45,7 +47,7 @@ ERROR_CODES = frozenset(
     )
 )
 MAX_ENTRIES = 1024
-MAX_TOTAL_BYTES = 3 * product_package.MAX_ARCHIVE_BYTES
+MAX_TOTAL_BYTES = 3 * contract.MAX_ARCHIVE_BYTES
 GIT_ENVIRONMENT = (
     "PATH=/usr/local/bin:/usr/bin:/bin",
     "LANG=C.UTF-8",
@@ -106,6 +108,7 @@ SOURCE_PROOF = (
     "from pathlib import Path\n"
     "root, payload = map(Path, sys.argv[1:3])\n"
     "expected_manifest = sys.argv[3]\n"
+    "expected_revision = sys.argv[4]\n"
     "# Trusted consumer policy: hash the committed builder closure "
     "independently of\n"
     "# packaged builder code. The package cannot shrink or replace "
@@ -127,8 +130,7 @@ SOURCE_PROOF = (
     '    "search/catalog/resources.py",\n'
     ")\n"
     "sys.path.insert(0, str(root))\n"
-    "from search.operations.deployment import source_bundle, "
-    "product_package\n"
+    "from search.operations.deployment import source_bundle\n"
     "from search.operations.catalog import backend, execution, "
     "administration\n"
     "from search.operations.shared import private_io\n"
@@ -152,22 +154,58 @@ SOURCE_PROOF = (
     "    return subprocess.CompletedProcess(argv, result.returncode,\n"
     '        result.stdout.decode("utf-8"), '
     'result.stderr.decode("utf-8"))\n'
+    "# Select only known owners from the authenticated packaged Git tree.\n"
+    "# Current code has one layout; legacy imports are confined to "
+    "this reader.\n"
+    "git = source_bundle._Git(root, run)\n"
+    "git.clean(expected_revision)\n"
+    "source_tree = git.tree(expected_revision)\n"
+    'legacy_path = "search/operations/deployment/product_package.py"\n'
+    'canonical_prefix = "search/operations/deployment/payload/"\n'
+    'canonical_paths = {canonical_prefix + name + ".py"\n'
+    '    for name in ("contract", "plan", "archive", "export")}\n'
+    "canonical_present = canonical_paths & set(source_tree)\n"
+    "legacy_layout = legacy_path in source_tree\n"
+    "if legacy_layout and not canonical_present:\n"
+    "    selected_paths = {legacy_path}\n"
+    "elif not legacy_layout and canonical_present == canonical_paths:\n"
+    "    selected_paths = canonical_paths | {canonical_prefix + "
+    '"__init__.py"}\n'
+    "else:\n"
+    '    raise ValueError("source_layout_invalid")\n'
+    "for name in selected_paths:\n"
+    "    entry = source_tree.get(name)\n"
+    '    if (type(entry) is not dict or entry.get("type") != "blob"\n'
+    '            or entry.get("mode") not in {"100644", "100755"}):\n'
+    '        raise ValueError("source_layout_invalid")\n'
+    "if legacy_layout:\n"
+    "    from search.operations.deployment import product_package as "
+    "historical_policy\n"
+    "    maximum_record_bytes = historical_policy.MAX_RECORD_BYTES\n"
+    "else:\n"
+    "    from search.operations.deployment.payload import plan as "
+    "historical_policy\n"
+    "    from search.operations.deployment.payload import contract as "
+    "historical_contract\n"
+    "    maximum_record_bytes = historical_contract.MAX_RECORD_BYTES\n"
+    "catalog_roles = historical_policy.CATALOG_ROLES\n"
     "payload_fd = private_io.open_directory(payload)\n"
     "def read_record(name, expected):\n"
     "    raw = private_io.read_file(payload_fd, name, mode=0o600,\n"
-    "        max_bytes=product_package.MAX_RECORD_BYTES)\n"
+    "        max_bytes=maximum_record_bytes)\n"
     "    if hashlib.sha256(raw).hexdigest() != expected:\n"
     '        raise ValueError("package_changed")\n'
     "    private_io.verify_directory(payload_fd, payload)\n"
     "    return json.loads(raw)\n"
     'plan = read_record("package.json", expected_manifest)\n'
-    'revision, origin = plan["revision"], plan["catalog"]["revision"]\n'
-    "app = source_bundle.committed_source_plan(root, revision, "
-    "runner=run)\n"
+    'revision, origin = plan["revision"], '
+    'plan["catalog"]["revision"]\n'
+    "if revision != expected_revision:\n"
+    '    raise ValueError("source_revision_invalid")\n'
+    "app = source_bundle.committed_source_plan(root, revision, runner=run)\n"
     'backend.validate_compatibility({"revision": origin}, '
     "repo_root=root,\n"
     "    revision=revision, runner=text_run)\n"
-    "git = source_bundle._Git(root, run)\n"
     "tree = git.tree(origin)\n"
     "names = set(administration.ADMIN_FILES)\n"
     'for role in ("fess-search", "opensearch-search"):\n'
@@ -188,7 +226,7 @@ SOURCE_PROOF = (
     'separators=(",", ":"),\n'
     ').encode("utf-8")).hexdigest()\n'
     "catalog = {}\n"
-    "for role in product_package.CATALOG_ROLES:\n"
+    "for role in catalog_roles:\n"
     "    paths = administration.ADMIN_FILES if role == "
     '"catalog-admin" else execution.service_sources(\n'
     '        "opensearch-search" if role == "opensearch-hash" else '
@@ -198,15 +236,19 @@ SOURCE_PROOF = (
     "        for name in paths})\n"
     'receipt = plan["catalog_image_receipt"]\n'
     "if receipt is not None:\n"
-    "    product_package._catalog_images(plan, "
-    'read_record(receipt["path"], receipt["sha256"]))\n'
+    '    catalog_receipt = read_record(receipt["path"], '
+    'receipt["sha256"])\n'
+    "    if legacy_layout:\n"
+    "        historical_policy._catalog_images(plan, catalog_receipt)\n"
+    "    else:\n"
+    "        historical_policy.catalog_images(plan, catalog_receipt)\n"
     "git.clean(revision)\n"
     "private_io.verify_directory(payload_fd, payload)\n"
     "os.close(payload_fd)\n"
     "print(json.dumps({\n"
     '    "revision": revision, "catalog_revision": origin,\n'
-    '    "source_tree": git.raw(["git", "-C", str(root), "rev-parse", '
-    'revision + "^{tree}"]).decode().strip(),\n'
+    '    "source_tree": git.raw(["git", "-C", str(root), '
+    '"rev-parse", revision + "^{tree}"]).decode().strip(),\n'
     '    "app_sources": {role: value["source_sha256"] for role, value '
     'in app["services"].items()},\n'
     '    "catalog_sources": catalog,\n'
@@ -218,9 +260,17 @@ SOURCE_PROOF = (
 def _source_proof(source, package, manifest, manifest_sha256):
     try:
         proof = _python(
-            ["-c", SOURCE_PROOF, source, package, manifest_sha256], timeout=300
+            [
+                "-c",
+                SOURCE_PROOF,
+                source,
+                package,
+                manifest_sha256,
+                manifest["revision"],
+            ],
+            timeout=300,
         )
-        product_package._keys(
+        contract.keys(
             proof,
             {
                 "revision",
@@ -244,7 +294,7 @@ def _source_proof(source, package, manifest, manifest_sha256):
             or proof["catalog_sources"]
             != {
                 role: manifest["images"][role]["source_sha256"]
-                for role in product_package.CATALOG_ROLES
+                for role in package_plan.CATALOG_ROLES
             }
         ):
             _fail("source_closure_invalid")
@@ -256,34 +306,30 @@ def _source_proof(source, package, manifest, manifest_sha256):
 def _manifest(raw, revision):
     try:
         value = image_build._json(raw)
-        product_package._keys(
+        contract.keys(
             value,
             PLAN_KEYS | {"status", "image_archive", "catalog_image_receipt"},
             "manifest_invalid",
         )
-        plan = product_package._validate_plan(
-            {key: value[key] for key in PLAN_KEYS}
-        )
+        plan = package_plan.validate({key: value[key] for key in PLAN_KEYS})
         if value["revision"] != revision or value["status"] != "packaged":
             _fail("manifest_invalid")
         archive = value["image_archive"]
-        product_package._keys(
+        contract.keys(
             archive, {"path", "bytes", "sha256", "format"}, "archive_invalid"
         )
         if (
             archive["path"] != "images.tar"
             or type(archive["bytes"]) is not int
-            or not 1 <= archive["bytes"] <= product_package.MAX_ARCHIVE_BYTES
+            or not 1 <= archive["bytes"] <= contract.MAX_ARCHIVE_BYTES
             or archive["format"]
             not in {"docker-save-classic", "docker-save-oci-linux-amd64"}
         ):
             _fail("manifest_invalid")
-        product_package._hash(archive["sha256"])
+        contract.hash_value(archive["sha256"])
         receipt = value["catalog_image_receipt"]
         if receipt is not None:
-            product_package._keys(
-                receipt, {"path", "sha256"}, "receipt_invalid"
-            )
+            contract.keys(receipt, {"path", "sha256"}, "receipt_invalid")
             if receipt != {
                 "path": "catalog-images.json",
                 "sha256": plan["catalog"]["image_receipt_sha256"],
@@ -479,7 +525,7 @@ def _sealed_metadata(path):
             descriptor,
             MANIFEST_NAME,
             mode=0o400,
-            max_bytes=product_package.MAX_RECORD_BYTES,
+            max_bytes=contract.MAX_RECORD_BYTES,
         )
         return identities, image_build._json(raw)
     finally:
@@ -548,7 +594,7 @@ def restore_product(
                 package_fd,
                 "package.json",
                 mode=0o600,
-                max_bytes=product_package.MAX_RECORD_BYTES,
+                max_bytes=contract.MAX_RECORD_BYTES,
             )
             if hashlib.sha256(raw).hexdigest() != expected_manifest_sha256:
                 _fail("manifest_digest_mismatch")
@@ -578,7 +624,7 @@ def restore_product(
                     package_fd,
                     "catalog-images.json",
                     mode=0o600,
-                    max_bytes=product_package.MAX_RECORD_BYTES,
+                    max_bytes=contract.MAX_RECORD_BYTES,
                 )
                 # Historical source/file policy is checked by the restored
                 # revision's _catalog_images, not this controller's policy.
@@ -597,7 +643,7 @@ def restore_product(
                 package_fd,
                 "SHA256SUMS",
                 mode=0o600,
-                max_bytes=product_package.MAX_RECORD_BYTES,
+                max_bytes=contract.MAX_RECORD_BYTES,
             )
             expected = "".join(
                 item["sha256"] + "  " + name + "\n"
@@ -615,9 +661,7 @@ def restore_product(
                 ):
                     _fail("dependency_changed")
                 if (
-                    product_package._check_archive(
-                        descriptor, manifest["images"]
-                    )
+                    archive.check_archive(descriptor, manifest["images"])
                     != manifest["image_archive"]["format"]
                 ):
                     _fail("archive_invalid")
@@ -698,7 +742,7 @@ def restore_product(
                     package_fd,
                     "package.json",
                     mode=0o600,
-                    max_bytes=product_package.MAX_RECORD_BYTES,
+                    max_bytes=contract.MAX_RECORD_BYTES,
                 )
                 != raw
             ):
@@ -765,7 +809,7 @@ def restore_product(
                 root_fd,
                 "restore.json",
                 result,
-                max_bytes=product_package.MAX_RECORD_BYTES,
+                max_bytes=contract.MAX_RECORD_BYTES,
             )
             return result
     except ProductRestoreError:

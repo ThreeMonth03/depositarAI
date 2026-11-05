@@ -3,201 +3,35 @@
 from __future__ import annotations
 
 import copy
-import gzip
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import stat
-import subprocess
 import tarfile
 import tempfile
 import unittest
 
-from search.operations.deployment import product_package as package
+from scripts import search_model_source, validate_catalog_compose
+from search.operations.deployment import composition
+from search.operations.deployment.payload import archive as image_archive
+from search.operations.deployment.payload import contract, export
+from search.operations.deployment.payload import plan as package_plan
+from search.operations.catalog import execution as catalog_execution
+from tests.unit.deployment.payload.fixtures import (
+    FakeDocker,
+    oci_fixture,
+    record,
+)
 from search.operations.shared import private_io
 from search.catalog.build import builder
-from search.catalog.bundle import CatalogBundle
+from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME, CatalogBundle
 from search.reranker.model import MODEL_HASHES
 from tests.unit.operations.test_metadata_sync import dataset
 
 
 REVISION = "a" * 40
-
-
-def record(raw):
-    return {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
-
-
-def oci_fixture(
-    *, architecture="amd64", corrupt_blob=False, wrong_compatibility=False
-):
-    """Docker 29's observed index ID, config blob, and gzip-layer layout."""
-    blobs = {}
-
-    def descriptor(raw, media_type):
-        digest = hashlib.sha256(raw).hexdigest()
-        blobs["blobs/sha256/" + digest] = raw
-        return {
-            "digest": "sha256:" + digest,
-            "size": len(raw),
-            "mediaType": media_type,
-        }
-
-    uncompressed = b"synthetic fixed layer bytes"
-    layer = descriptor(
-        gzip.compress(uncompressed, mtime=0),
-        "application/vnd.oci.image.layer.v1.tar+gzip",
-    )
-    config_value = {
-        "architecture": architecture,
-        "os": "linux",
-        "config": {"Env": ["PATH=/usr/bin"], "Labels": {}},
-        "rootfs": {
-            "type": "layers",
-            "diff_ids": ["sha256:" + hashlib.sha256(uncompressed).hexdigest()],
-        },
-    }
-    config = descriptor(
-        private_io.canonical(config_value),
-        "application/vnd.oci.image.config.v1+json",
-    )
-    manifest = descriptor(
-        private_io.canonical(
-            {
-                "schemaVersion": 2,
-                "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                "config": config,
-                "layers": [layer],
-            }
-        ),
-        "application/vnd.oci.image.manifest.v1+json",
-    )
-    manifest["platform"] = {"architecture": architecture, "os": "linux"}
-    # Real save retains other-platform index references without their blobs.
-    uncached = {
-        "digest": "sha256:" + "f" * 64,
-        "size": 200,
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "platform": {"architecture": "arm64", "os": "linux"},
-    }
-    root = descriptor(
-        private_io.canonical(
-            {
-                "schemaVersion": 2,
-                "mediaType": "application/vnd.oci.image.index.v1+json",
-                "manifests": [manifest, uncached],
-            }
-        ),
-        "application/vnd.oci.image.index.v1+json",
-    )
-    blobs["index.json"] = private_io.canonical(
-        {
-            "schemaVersion": 2,
-            "mediaType": "application/vnd.oci.image.index.v1+json",
-            "manifests": [root],
-        }
-    )
-    blobs["oci-layout"] = private_io.canonical({"imageLayoutVersion": "1.0.0"})
-    blobs["manifest.json"] = private_io.canonical(
-        [
-            {
-                "Config": "blobs/sha256/" + config["digest"][7:],
-                "Layers": [
-                    "blobs/sha256/"
-                    + (
-                        "e" * 64
-                        if wrong_compatibility
-                        else layer["digest"][7:]
-                    )
-                ],
-                "RepoTags": ["fixture:test"],
-            }
-        ]
-    )
-    if corrupt_blob:
-        blobs["blobs/sha256/" + layer["digest"][7:]] += b"corruption"
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w") as archive:
-        for name, raw in blobs.items():
-            member = tarfile.TarInfo(name)
-            member.size = len(raw)
-            archive.addfile(member, io.BytesIO(raw))
-    environment_digest = hashlib.sha256(
-        private_io.canonical({"PATH": "/usr/bin"})
-    ).hexdigest()
-    return stream.getvalue(), {
-        "fixture": {
-            "image_id": root["digest"],
-            "image_environment_sha256": environment_digest,
-        }
-    }
-
-
-class FakeDocker:
-    def __init__(self, plan, images, configs, layer):
-        self.plan, self.images, self.configs, self.layer = (
-            plan,
-            images,
-            configs,
-            layer,
-        )
-        self.calls = []
-        self.corrupt_layer = False
-        self.omit_image = False
-        self.fail_save = False
-        self.after_save = None
-
-    def __call__(self, argv, *, timeout, environment):
-        self.calls.append(list(argv))
-        assert environment == {
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-        }
-        assert not list(Path(argv[4]).iterdir())
-        arguments = argv[5:]
-        if arguments[:2] == ["image", "inspect"]:
-            inspected = self.images[arguments[-1]]
-            return subprocess.CompletedProcess(
-                argv, 0, json.dumps(inspected), ""
-            )
-        assert arguments[:2] == ["image", "save"]
-        assert set(arguments[4:]) == set(self.images)
-        assert not Path(arguments[3]).exists()
-        if self.fail_save:
-            return subprocess.CompletedProcess(
-                argv, 1, b"", b"private-output-sentinel"
-            )
-        rows = []
-        with tarfile.open(arguments[3], mode="w") as archive:
-
-            def add(name, raw):
-                member = tarfile.TarInfo(name)
-                member.size = len(raw)
-                archive.addfile(member, io.BytesIO(raw))
-
-            for index, (identifier, config) in enumerate(self.configs.items()):
-                if self.omit_image and index == 0:
-                    continue
-                name = identifier[7:] + ".json"
-                add(name, config)
-                rows.append(
-                    {
-                        "Config": name,
-                        "RepoTags": None,
-                        "Layers": ["layer/layer.tar"],
-                    }
-                )
-            add(
-                "layer/layer.tar",
-                self.layer + (b"corrupt" if self.corrupt_layer else b""),
-            )
-            add("manifest.json", json.dumps(rows).encode())
-        if self.after_save:
-            self.after_save()
-        return subprocess.CompletedProcess(argv, 0, b"", b"")
 
 
 class ProductPackageTests(unittest.TestCase):
@@ -208,8 +42,8 @@ class ProductPackageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.source_raw = {
-            package.source_names(REVISION)[0]: b"reviewed-source-archive",
-            package.source_names(REVISION)[1]: b"reviewed-git-bundle",
+            package_plan.source_names(REVISION)[0]: b"reviewed-source-archive",
+            package_plan.source_names(REVISION)[1]: b"reviewed-git-bundle",
             "SOURCE_REVISION": (REVISION + "\n").encode(),
         }
         self.source_raw["SHA256SUMS"] = "".join(
@@ -221,13 +55,13 @@ class ProductPackageTests(unittest.TestCase):
         }
         self.metadata_raw = {
             name: (name + " public metadata").encode()
-            for name in (*package.ARTIFACT_NAMES, package.MANIFEST_NAME)
+            for name in (*ARTIFACT_NAMES, MANIFEST_NAME)
         }
         self.metadata = {
             "bundle_id": "b" * 64,
-            "manifest_sha256": record(
-                self.metadata_raw[package.MANIFEST_NAME]
-            )["sha256"],
+            "manifest_sha256": record(self.metadata_raw[MANIFEST_NAME])[
+                "sha256"
+            ],
             "document_count": 1,
             "files": {
                 name: record(raw) for name, raw in self.metadata_raw.items()
@@ -248,7 +82,7 @@ class ProductPackageTests(unittest.TestCase):
             role: {
                 "weights/model.bin": (role + " pinned model bytes").encode()
             }
-            for role in package.MODEL_ROLES
+            for role in package_plan.MODEL_ROLES
         }
         self.models = {
             role: {name: record(raw) for name, raw in files.items()}
@@ -263,16 +97,14 @@ class ProductPackageTests(unittest.TestCase):
         environment_digest = hashlib.sha256(
             private_io.canonical(environment)
         ).hexdigest()
-        for index, role in enumerate(package.IMAGE_ROLES):
+        for index, role in enumerate(package_plan.IMAGE_ROLES):
             source_digest = hashlib.sha256(role.encode()).hexdigest()
             if role in {"fess-search", "opensearch-search"}:
                 sources = {
                     name: hashlib.sha256(name.encode()).hexdigest()
-                    for name in package.catalog_execution.service_sources(role)
+                    for name in catalog_execution.service_sources(role)
                 }
-                source_digest = package.catalog_execution.digest_record(
-                    sources
-                )
+                source_digest = catalog_execution.digest_record(sources)
             labels = {"fixture-role": role}
             if role != "ollama":
                 labels["org.opencontainers.image.revision"] = REVISION
@@ -302,7 +134,7 @@ class ProductPackageTests(unittest.TestCase):
                 "Config": config["config"],
                 "RepoDigests": [
                     "ollama/ollama@"
-                    + package.composition.OLLAMA_IMAGE.split("@", 1)[1]
+                    + composition.OLLAMA_IMAGE.split("@", 1)[1]
                 ]
                 if role == "ollama"
                 else [],
@@ -312,7 +144,7 @@ class ProductPackageTests(unittest.TestCase):
                 "image_environment_sha256": environment_digest,
             }
             self.images[role].update(
-                {"reference": package.composition.OLLAMA_IMAGE}
+                {"reference": composition.OLLAMA_IMAGE}
                 if role == "ollama"
                 else {"revision": REVISION, "source_sha256": source_digest}
             )
@@ -323,10 +155,10 @@ class ProductPackageTests(unittest.TestCase):
             "images": {},
         }
         for service, base in (
-            ("fess-search", package.validate_catalog_compose.FESS_BASE_IMAGE),
+            ("fess-search", validate_catalog_compose.FESS_BASE_IMAGE),
             (
                 "opensearch-search",
-                package.validate_catalog_compose.OPENSEARCH_BASE_IMAGE,
+                validate_catalog_compose.OPENSEARCH_BASE_IMAGE,
             ),
             ("ollama-embedding", None),
         ):
@@ -334,9 +166,7 @@ class ProductPackageTests(unittest.TestCase):
             sources = (
                 {
                     name: hashlib.sha256(name.encode()).hexdigest()
-                    for name in package.catalog_execution.service_sources(
-                        service
-                    )
+                    for name in catalog_execution.service_sources(service)
                 }
                 if base is not None
                 else {}
@@ -344,17 +174,17 @@ class ProductPackageTests(unittest.TestCase):
             self.catalog_images["images"][service] = {
                 "reference": self.catalog["project"] + "-" + service + ":1"
                 if base is not None
-                else package.composition.OLLAMA_IMAGE,
+                else composition.OLLAMA_IMAGE,
                 "image_id": self.images[role]["image_id"],
-                "labels": package.catalog_execution.image_labels(
+                "labels": catalog_execution.image_labels(
                     {"plan": self.catalog}, service, sources, base
                 )
                 if base is not None
                 else {},
                 "sources": sources,
             }
-        self.catalog["image_receipt_sha256"] = (
-            package.catalog_execution.digest_record(self.catalog_images)
+        self.catalog["image_receipt_sha256"] = catalog_execution.digest_record(
+            self.catalog_images
         )
         self.source_files = self.write_inputs("source-input", self.source_raw)
         self.metadata_files = self.write_inputs(
@@ -386,7 +216,7 @@ class ProductPackageTests(unittest.TestCase):
         return result
 
     def make_plan(self, **options):
-        return package.plan_product_package(
+        return package_plan.create(
             REVISION,
             source=self.source,
             images=self.images,
@@ -397,7 +227,7 @@ class ProductPackageTests(unittest.TestCase):
         )
 
     def export(self, **options):
-        return package.export_product_package(
+        return export.create(
             self.plan,
             self.destination,
             source_files=self.source_files,
@@ -426,7 +256,7 @@ class ProductPackageTests(unittest.TestCase):
         self.catalog_images.update(
             project=self.catalog["project"], revision=revision
         )
-        for role in package.CATALOG_ROLES:
+        for role in package_plan.CATALOG_ROLES:
             entry = self.images[role]
             old_id = entry["image_id"]
             config = json.loads(self.configs.pop(old_id))
@@ -446,14 +276,14 @@ class ProductPackageTests(unittest.TestCase):
                 self.catalog["project"] + "-" + service + ":1"
             )
             receipt["image_id"] = self.images[service]["image_id"]
-            receipt["labels"] = package.catalog_execution.image_labels(
+            receipt["labels"] = catalog_execution.image_labels(
                 {"plan": self.catalog},
                 service,
                 receipt["sources"],
                 receipt["labels"]["io.depositar.ai.catalog.base"],
             )
-        self.catalog["image_receipt_sha256"] = (
-            package.catalog_execution.digest_record(self.catalog_images)
+        self.catalog["image_receipt_sha256"] = catalog_execution.digest_record(
+            self.catalog_images
         )
         self.plan = self.make_plan()
         self.docker = FakeDocker(
@@ -473,9 +303,9 @@ class ProductPackageTests(unittest.TestCase):
         )
         self.assertEqual("1" * 40, receipt["revision"])
         self.assertEqual(self.catalog["project"], receipt["project"])
-        for role in package.BUILT_ROLES:
+        for role in package_plan.BUILT_ROLES:
             self.assertEqual(
-                "1" * 40 if role in package.CATALOG_ROLES else REVISION,
+                "1" * 40 if role in package_plan.CATALOG_ROLES else REVISION,
                 result["images"][role]["revision"],
             )
         self.assertEqual(
@@ -491,14 +321,14 @@ class ProductPackageTests(unittest.TestCase):
                 original = entry["revision"]
                 entry["revision"] = wrong
                 with self.assertRaisesRegex(
-                    package.ProductPackageError, "image_source_mismatch"
+                    contract.ProductPackageError, "image_source_mismatch"
                 ):
                     self.make_plan()
                 entry["revision"] = original
         receipt = copy.deepcopy(self.catalog_images)
         receipt["revision"] = REVISION
         with self.assertRaisesRegex(
-            package.ProductPackageError, "catalog_images_identity_mismatch"
+            contract.ProductPackageError, "catalog_images_identity_mismatch"
         ):
             self.export(catalog_images=receipt)
         self.assertFalse(self.destination.exists())
@@ -508,7 +338,7 @@ class ProductPackageTests(unittest.TestCase):
         row = self.inspections[self.images["catalog-admin"]["image_id"]]
         row["Config"]["Labels"]["org.opencontainers.image.revision"] = REVISION
         with self.assertRaisesRegex(
-            package.ProductPackageError, "image_source_mismatch"
+            contract.ProductPackageError, "image_source_mismatch"
         ):
             self.export(catalog_images=self.catalog_images)
         self.assert_incomplete()
@@ -612,14 +442,14 @@ class ProductPackageTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 receipt = copy.deepcopy(self.catalog_images)
                 mutation(receipt)
-                with self.assertRaises(package.ProductPackageError) as error:
+                with self.assertRaises(contract.ProductPackageError) as error:
                     self.export(catalog_images=receipt)
                 self.assertNotIn("private-sentinel", str(error.exception))
                 self.assertFalse(self.destination.exists())
 
     def test_catalog_receipt_cannot_change_during_authority_reproof(self):
         with self.assertRaisesRegex(
-            package.ProductPackageError, "copied_asset_changed"
+            contract.ProductPackageError, "copied_asset_changed"
         ):
             self.export(
                 catalog_images=self.catalog_images,
@@ -646,7 +476,7 @@ class ProductPackageTests(unittest.TestCase):
         ):
             previous = copy.deepcopy(self.images)
             mutation()
-            with self.assertRaises(package.ProductPackageError):
+            with self.assertRaises(contract.ProductPackageError):
                 self.make_plan()
             self.images = previous
 
@@ -655,13 +485,13 @@ class ProductPackageTests(unittest.TestCase):
             "depositar-ai-catalog-" + "f" * 12 + "-" + REVISION[:12]
         )
         with self.assertRaisesRegex(
-            package.ProductPackageError, "catalog_identity_mismatch"
+            contract.ProductPackageError, "catalog_identity_mismatch"
         ):
             self.make_plan()
 
     def test_unknown_fields_cannot_smuggle_credentials_into_manifest(self):
         self.catalog["password"] = "private-sentinel"
-        with self.assertRaises(package.ProductPackageError) as error:
+        with self.assertRaises(contract.ProductPackageError) as error:
             self.make_plan()
         self.assertNotIn("private-sentinel", str(error.exception))
 
@@ -674,7 +504,7 @@ class ProductPackageTests(unittest.TestCase):
             "config\\model.bin",
         ):
             self.models["api"] = {name: record(b"fixture")}
-            with self.assertRaises(package.ProductPackageError):
+            with self.assertRaises(contract.ProductPackageError):
                 self.make_plan()
 
     def test_pinned_reranker_inventory_accepts_reviewed_tokenizer_metadata(
@@ -713,20 +543,20 @@ class ProductPackageTests(unittest.TestCase):
                 self.models = copy.deepcopy(original)
                 self.models[role] = {name: {"bytes": 1, "sha256": digest}}
                 with self.assertRaisesRegex(
-                    package.ProductPackageError, "asset_name_invalid"
+                    contract.ProductPackageError, "asset_name_invalid"
                 ):
                     self.make_plan()
         # Archive/source paths retain the general secret-name policy.
         with self.assertRaisesRegex(
-            package.ProductPackageError, "asset_name_invalid"
+            contract.ProductPackageError, "asset_name_invalid"
         ):
-            package._relative("special_tokens_map.json")
+            contract.relative("special_tokens_map.json")
 
     def test_credential_token_filenames_still_rejected_in_every_model_role(
         self,
     ):
         original = copy.deepcopy(self.models)
-        for role in package.MODEL_ROLES:
+        for role in package_plan.MODEL_ROLES:
             for name in (
                 "credentials.json",
                 "token.json",
@@ -741,14 +571,14 @@ class ProductPackageTests(unittest.TestCase):
                     self.models = copy.deepcopy(original)
                     self.models[role] = {name: record(b"private-sentinel")}
                     with self.assertRaisesRegex(
-                        package.ProductPackageError, "asset_name_invalid"
+                        contract.ProductPackageError, "asset_name_invalid"
                     ):
                         self.make_plan()
 
     def test_tampered_plan_cannot_assert_runtime_install_success(self):
         self.plan["runtime_install_verified"] = True
         with self.assertRaisesRegex(
-            package.ProductPackageError, "plan_changed"
+            contract.ProductPackageError, "plan_changed"
         ):
             self.export()
         self.assertFalse(self.destination.exists())
@@ -756,14 +586,14 @@ class ProductPackageTests(unittest.TestCase):
 
     def test_existing_or_symlink_destination_is_not_adopted(self):
         self.destination.mkdir(mode=0o700)
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assertEqual([], self.docker.calls)
         self.destination.rmdir()
         self.destination.symlink_to(
             self.root / "source-input", target_is_directory=True
         )
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assertEqual([], self.docker.calls)
 
@@ -771,7 +601,7 @@ class ProductPackageTests(unittest.TestCase):
         path = self.source_files["SOURCE_REVISION"]
         original = path.read_bytes()
         path.write_bytes(b"f" * 40 + b"\n")
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assert_incomplete()
         self.assertEqual([], self.docker.calls)
@@ -781,7 +611,7 @@ class ProductPackageTests(unittest.TestCase):
         target.write_bytes(original)
         target.chmod(0o600)
         path.symlink_to(target)
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assert_incomplete()
 
@@ -789,7 +619,7 @@ class ProductPackageTests(unittest.TestCase):
         next(iter(self.model_files["api"].values())).write_bytes(
             b"wrong pinned model"
         )
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assert_incomplete()
         self.assertEqual([], self.docker.calls)
@@ -811,8 +641,7 @@ class ProductPackageTests(unittest.TestCase):
             sealed, expected_manifest_sha256=built["manifest_sha256"]
         )
         inputs = {
-            name: sealed / name
-            for name in (*package.ARTIFACT_NAMES, package.MANIFEST_NAME)
+            name: sealed / name for name in (*ARTIFACT_NAMES, MANIFEST_NAME)
         }
         original = {name: path.read_bytes() for name, path in inputs.items()}
         expected = {name: record(raw) for name, raw in original.items()}
@@ -823,12 +652,12 @@ class ProductPackageTests(unittest.TestCase):
         # This is the original failure on the supported non-root product host.
         if os.geteuid() != 0:
             with self.assertRaisesRegex(
-                package.search_model_source.ModelSourceError,
+                search_model_source.ModelSourceError,
                 "model_source_allocated_root_not_private",
             ):
-                with package.search_model_source.open_source_root(sealed):
+                with search_model_source.open_source_root(sealed):
                     pass
-        package._copy_files(inputs, expected, target, sealed_metadata=True)
+        export._copy_files(inputs, expected, target, sealed_metadata=True)
         self.assertEqual(0o1770, stat.S_IMODE(allocated.stat().st_mode))
         self.assertEqual(0o700, stat.S_IMODE(sealed.parent.stat().st_mode))
         self.assertEqual(0o500, stat.S_IMODE(sealed.stat().st_mode))
@@ -858,8 +687,8 @@ class ProductPackageTests(unittest.TestCase):
         )  # write_inputs intentionally creates private parents.
         target = self.root / "metadata-copy"
         target.mkdir(mode=0o700)
-        with self.assertRaises(package.search_model_source.ModelSourceError):
-            package._copy_files(
+        with self.assertRaises(search_model_source.ModelSourceError):
+            export._copy_files(
                 inputs,
                 self.metadata["files"],
                 target,
@@ -876,7 +705,7 @@ class ProductPackageTests(unittest.TestCase):
             "API_KEY=private-sentinel"
         )
         with self.assertRaisesRegex(
-            package.ProductPackageError, "image_secret_configuration"
+            contract.ProductPackageError, "image_secret_configuration"
         ) as error:
             self.export()
         self.assertNotIn("private-sentinel", str(error.exception))
@@ -886,7 +715,7 @@ class ProductPackageTests(unittest.TestCase):
         self,
     ):
         self.docker.fail_save = True
-        with self.assertRaises(package.ProductPackageError) as error:
+        with self.assertRaises(contract.ProductPackageError) as error:
             self.export()
         self.assertNotIn("private-output-sentinel", str(error.exception))
         self.assert_incomplete()
@@ -894,14 +723,14 @@ class ProductPackageTests(unittest.TestCase):
 
     def test_archive_missing_image_or_corrupt_layer_is_rejected(self):
         self.docker.omit_image = True
-        with self.assertRaises(package.ProductPackageError):
+        with self.assertRaises(contract.ProductPackageError):
             self.export()
         self.assert_incomplete()
         self.destination = self.root / "second-output"
         self.docker.omit_image = False
         self.docker.corrupt_layer = True
         with self.assertRaisesRegex(
-            package.ProductPackageError, "archive_layer_digest_mismatch"
+            contract.ProductPackageError, "archive_layer_digest_mismatch"
         ):
             self.export()
         self.assert_incomplete()
@@ -912,7 +741,7 @@ class ProductPackageTests(unittest.TestCase):
             "Config"
         ]["Labels"].update({"org.opencontainers.image.revision": "f" * 40})
         with self.assertRaisesRegex(
-            package.ProductPackageError, "image_source_mismatch"
+            contract.ProductPackageError, "image_source_mismatch"
         ):
             self.export()
         self.assert_incomplete()
@@ -921,10 +750,10 @@ class ProductPackageTests(unittest.TestCase):
             "org.opencontainers.image.revision"
         ] = REVISION
         self.docker.after_save = lambda: (
-            self.destination / "metadata" / package.MANIFEST_NAME
+            self.destination / "metadata" / MANIFEST_NAME
         ).write_bytes(b"mutated-after-copy")
         with self.assertRaisesRegex(
-            package.ProductPackageError, "copied_asset_changed"
+            contract.ProductPackageError, "copied_asset_changed"
         ):
             self.export()
         self.assert_incomplete()
@@ -932,7 +761,7 @@ class ProductPackageTests(unittest.TestCase):
     def test_missing_registry_repodigest_is_not_replaced_by_image_id(self):
         self.inspections[self.images["ollama"]["image_id"]]["RepoDigests"] = []
         with self.assertRaisesRegex(
-            package.ProductPackageError, "registry_digest_mismatch"
+            contract.ProductPackageError, "registry_digest_mismatch"
         ):
             self.export()
         self.assert_incomplete()
@@ -952,7 +781,7 @@ class ProductPackageTests(unittest.TestCase):
             raise RuntimeError("private-authority-sentinel")
 
         with self.assertRaisesRegex(
-            package.ProductPackageError, "publication_authority_failed"
+            contract.ProductPackageError, "publication_authority_failed"
         ) as error:
             self.export(before_publish=failed_authority)
         self.assertNotIn("private-authority-sentinel", str(error.exception))
@@ -983,7 +812,7 @@ class ProductPackageTests(unittest.TestCase):
             self.docker.after_save = mutation
             with (
                 self.subTest(mutation=mutation),
-                self.assertRaises(package.ProductPackageError),
+                self.assertRaises(contract.ProductPackageError),
             ):
                 self.export()
             self.assert_incomplete()
@@ -994,7 +823,7 @@ class ProductPackageTests(unittest.TestCase):
                 stream.write(b"after-verification-change")
 
         with self.assertRaisesRegex(
-            package.ProductPackageError, "archive_changed"
+            contract.ProductPackageError, "archive_changed"
         ):
             self.export(before_publish=changed_payload)
         self.assert_incomplete()
@@ -1005,7 +834,7 @@ class ProductPackageTests(unittest.TestCase):
         path.write_bytes(raw)
         descriptor = os.open(path, os.O_RDONLY)
         try:
-            return package._check_archive(descriptor, images)
+            return image_archive.check_archive(descriptor, images)
         finally:
             os.close(descriptor)
 
@@ -1024,9 +853,31 @@ class ProductPackageTests(unittest.TestCase):
         ):
             with (
                 self.subTest(options=options),
-                self.assertRaisesRegex(package.ProductPackageError, error),
+                self.assertRaisesRegex(contract.ProductPackageError, error),
             ):
                 self.check_oci_fixture(**options)
+
+    def test_archive_members_reject_duplicates_links_and_traversal(self):
+        cases = (
+            ("duplicate", (("a", tarfile.REGTYPE),) * 2, "archive_member"),
+            ("link", (("link", tarfile.SYMTYPE),), "archive_member"),
+            ("fifo", (("fifo", tarfile.FIFOTYPE),), "archive_member"),
+            ("traversal", (("../outside", tarfile.REGTYPE),), "asset_name"),
+        )
+        for label, members, code in cases:
+            with self.subTest(kind=label):
+                path = self.root / (label + ".tar")
+                with tarfile.open(path, "w") as archive:
+                    for name, kind in members:
+                        member = tarfile.TarInfo(name)
+                        member.type = kind
+                        member.size = 1 if member.isfile() else 0
+                        archive.addfile(member, io.BytesIO(b"x"))
+                with path.open("rb") as stream:
+                    with self.assertRaisesRegex(
+                        contract.ProductPackageError, code
+                    ):
+                        image_archive.check_archive(stream.fileno(), {})
 
 
 if __name__ == "__main__":

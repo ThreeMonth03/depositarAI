@@ -224,7 +224,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.release.test_probe \
   tests.unit.deployment.gateway.test_probe_script \
   tests.unit.deployment.gateway.test_probe_runtime \
-  tests.unit.deployment.test_product_package \
+  tests.unit.deployment.payload.test_package \
   tests.unit.deployment.payload.test_restore \
   tests.unit.deployment.public_entry.test_profile \
   tests.unit.deployment.public_entry.test_identity_adapter \
