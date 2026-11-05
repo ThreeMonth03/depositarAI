@@ -795,3 +795,37 @@ class ResourceEnrichmentTests(unittest.TestCase):
             ):
                 self.load_set(path, deadline=1)
             self.assertEqual(1, reader.call_count)
+
+    def test_control_joined_text_passes_the_strict_public_contract(self):
+        for file_format in ("PDF", "CSV"):
+            with self.subTest(file_format=file_format):
+                self.rows[0]["resources"][0]["format"] = file_format
+                self.base = self.sync(force=True)
+                self.profile = self.make_profile()
+                self.profile["result"].update(
+                    detected_mime="application/pdf"
+                    if file_format == "PDF"
+                    else "text/csv",
+                    columns=[] if file_format == "PDF" else ["e\u200b\u0301"],
+                    text="A" * 320 + "e\u200b\u0301",
+                    rows_observed=None if file_format == "PDF" else 1,
+                )
+                validator = enrichment.resources.validate_enrichment_resources
+                with patch.object(
+                    enrichment.resources,
+                    "validate_enrichment_resources",
+                    wraps=validator,
+                ) as checked:
+                    contexts, report = self.load([self.publish()])
+                self.assertEqual(checked.call_count, 2)
+                self.assertEqual(checked.call_args.args[0], contexts[DATASET])
+                entry = contexts[DATASET][0]
+                expected = "A" * 320 + "é" if file_format == "PDF" else "é"
+                self.assertEqual(entry["index_text"], expected)
+                self.assertEqual(
+                    entry["context"]["excerpt"],
+                    "A" * 320 if file_format == "PDF" else "",
+                )
+                self.assertEqual(validator([entry]), [entry])
+                self.assertEqual(report["included_count"], 1)
+                self.assertFalse(entry["truncated"])

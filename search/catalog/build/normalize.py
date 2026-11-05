@@ -112,7 +112,8 @@ def _clean_unicode(extracted: str, counters: MutableMapping[str, Any]) -> str:
     if bidi_count:
         _increment(counters, "bidi_characters_removed", bidi_count)
 
-    return _WHITESPACE_RE.sub(" ", "".join(clean_chars)).strip()
+    cleaned = _WHITESPACE_RE.sub(" ", "".join(clean_chars)).strip()
+    return unicodedata.normalize("NFKC", cleaned)
 
 
 def _clean_text(
