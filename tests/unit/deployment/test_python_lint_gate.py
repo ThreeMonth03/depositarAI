@@ -55,6 +55,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/api/conversation/calendar.py", "")
         self.write("search/api/conversation/engine.py", "")
         self.write("search/api/worker.py", "")
+        self.write("search/scope.py", "")
         self.write("search/operations/cli.py", "")
         self.write("search/operations/config.py", "")
         self.write("search/operations/doctor.py", "")
@@ -194,6 +195,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/catalog/build/normalize.py",
             "search/api/conversation/engine.py",
             "search/api/worker.py",
+            "search/scope.py",
             "search/operations/deployment/images/build.py",
             "search/operations/deployment/release/runtime.py",
             "search/operations/deployment/inference_runtime.py",
