@@ -4,6 +4,7 @@ services."""
 from __future__ import annotations
 
 import fcntl
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -480,6 +481,43 @@ class CatalogSyncTests(unittest.TestCase):
             self.sync(baseline="invalid")
         self.assertEqual([], list(self.cache.iterdir()))
         self.assertEqual([], self.calls)
+
+    def test_profile_baseline_combination_refuses_before_cache_mutation(self):
+        for options in (
+            {"profile_baseline_bundle": self.root / "captured"},
+            {"profile_baseline_bundle": 1, "profile_set": self.root / "set"},
+        ):
+            with self.subTest(options=options):
+                with self.assertRaises(storage.SyncError):
+                    self.sync(**options)
+                self.assertEqual([], list(self.cache.iterdir()))
+                self.assertEqual([], self.calls)
+
+    def test_profile_baseline_comparison_keeps_types_and_remaining_fields(
+        self,
+    ):
+        self.rows = [dataset()]
+        baseline = self.sync()
+        manifest = json.loads(
+            (
+                Path(baseline["bundle_path"]) / "bundle-manifest.json"
+            ).read_bytes()
+        )
+        content = syncer._profile_baseline_content(manifest)
+        recipe = deepcopy(manifest)
+        recipe["bundle_id"] = "a" * 64
+        recipe["builder"]["source_sha256"] = "b" * 64
+        self.assertEqual(content, syncer._profile_baseline_content(recipe))
+        for value in (1.0, True):
+            with self.subTest(dataset_count=value, type=type(value)):
+                changed = deepcopy(manifest)
+                changed["dataset_count"] = value
+                self.assertNotEqual(
+                    content, syncer._profile_baseline_content(changed)
+                )
+        changed = deepcopy(manifest)
+        changed["normalization_counters"]["normalized_fields"] = 0
+        self.assertNotEqual(content, syncer._profile_baseline_content(changed))
 
     def test_publication_faults_keep_result_latest_and_quarantine_order(self):
         original = storage.write_record

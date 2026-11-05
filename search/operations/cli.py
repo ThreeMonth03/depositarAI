@@ -377,6 +377,11 @@ def _profile_selection(arguments):
         type=Path,
         help="frozen private resource batch profile set",
     )
+    arguments.add_argument(
+        "--profile-baseline-bundle",
+        type=Path,
+        help="captured metadata baseline pinned by the explicit profile set",
+    )
 
 
 def _provider_parsers(commands):
@@ -718,6 +723,11 @@ def _selected_profiles(options):
         **(
             {"profile_set": options.profile_set} if options.profile_set else {}
         ),
+        **(
+            {"profile_baseline_bundle": options.profile_baseline_bundle}
+            if options.profile_baseline_bundle is not None
+            else {}
+        ),
     }
 
 
@@ -952,6 +962,12 @@ def _validate_options(arguments, options):
             arguments.error(f"{options.command} does not use --config")
     elif options.config is None:
         arguments.error("--config is required for runtime commands")
+    if (
+        options.command in {"sync", "stage-catalog", "up-private"}
+        and options.profile_baseline_bundle is not None
+        and options.profile_set is None
+    ):
+        arguments.error("--profile-baseline-bundle requires --profile-set")
 
 
 def _handled_error(error):

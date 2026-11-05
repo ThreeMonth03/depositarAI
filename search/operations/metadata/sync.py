@@ -404,6 +404,80 @@ def _stage_snapshot(
     return built, bundle_path, catalog, snapshot_path, latest
 
 
+def _profile_baseline_content(manifest):
+    value = dict(manifest)
+    value.pop("bundle_id")
+    value["builder"] = dict(value["builder"])
+    value["builder"].pop("source_sha256")
+    return source.canonical(value)
+
+
+def _profile_baseline_manifest(descriptor, path, expected):
+    from search.operations.documents.enrichment import EnrichmentError
+
+    raw = storage.file_bytes(
+        descriptor,
+        "bundle-manifest.json",
+        mode=0o400,
+        limit=MAX_MANIFEST_BYTES,
+    )
+    private_io.verify_directory(descriptor, path, mode=0o500)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise EnrichmentError("document_enrichment_source_mismatch")
+    return source.strict_json(raw)
+
+
+@contextmanager
+def _profile_baseline(built, captured_bundle, profile_set):
+    if captured_bundle is None:
+        yield Path(built["bundle_path"]), built["manifest_sha256"], {}
+        return
+    from search.operations.documents import enrichment, sets
+
+    record, _ = sets.read(profile_set)
+    manifest_sha256 = record["catalog_manifest_sha256"]
+    captured_bundle = storage.real_path(captured_bundle)
+    descriptor = private_io.open_directory(captured_bundle, mode=0o500)
+    try:
+        CatalogBundle.load(
+            captured_bundle, expected_manifest_sha256=manifest_sha256
+        )
+        captured = _profile_baseline_manifest(
+            descriptor, captured_bundle, manifest_sha256
+        )
+        metadata_bundle = Path(built["bundle_path"])
+        metadata_descriptor = private_io.open_directory(
+            metadata_bundle, mode=0o500
+        )
+        try:
+            metadata = _profile_baseline_manifest(
+                metadata_descriptor,
+                metadata_bundle,
+                built["manifest_sha256"],
+            )
+        finally:
+            os.close(metadata_descriptor)
+        if _profile_baseline_content(captured) != _profile_baseline_content(
+            metadata
+        ):
+            raise enrichment.EnrichmentError(
+                "document_enrichment_source_mismatch"
+            )
+        yield (
+            captured_bundle,
+            manifest_sha256,
+            {
+                "profile_baseline_manifest_sha256": manifest_sha256,
+                "metadata_baseline_manifest_sha256": built["manifest_sha256"],
+            },
+        )
+        _profile_baseline_manifest(
+            descriptor, captured_bundle, manifest_sha256
+        )
+    finally:
+        os.close(descriptor)
+
+
 def sync(
     cache_root,
     *,
@@ -414,6 +488,7 @@ def sync(
     fetch=None,
     profile_files=(),
     profile_set=None,
+    profile_baseline_bundle=None,
 ):
     """Return a staged immutable snapshot/bundle/diff; never change active
     state.
@@ -429,6 +504,11 @@ def sync(
         and not isinstance(profile_set, (str, Path))
         or profile_files
         and profile_set is not None
+        or profile_baseline_bundle is not None
+        and (
+            not isinstance(profile_baseline_bundle, (str, Path))
+            or profile_set is None
+        )
     ):
         raise storage.SyncError(
             "TTL, force or profile selection is outside its bounded policy"
@@ -499,33 +579,41 @@ def sync(
                 baseline_source = built["manifest"]["artifacts"][
                     "source.jsonl.gz"
                 ]
-                context, profile_report = load_profiles(
-                    profile_files,
-                    bundle_path,
-                    catalog.manifest_sha256,
-                    snapshot_path,
-                    profile_set=profile_set,
-                    deadline=deadline,
-                )
-                built = builder.build_bundle(
-                    snapshot_path, root / "bundles", resource_context=context
-                )
-                if (
-                    built["manifest"]["artifacts"]["source.jsonl.gz"]
-                    != baseline_source
-                ):
-                    from search.operations.documents.enrichment import (
-                        EnrichmentError,
+                # Profile admission is per request, including metadata TTL
+                # hits; prior receipts never authorize a captured baseline.
+                with _profile_baseline(
+                    built, profile_baseline_bundle, profile_set
+                ) as (profile_bundle, profile_manifest, baseline_report):
+                    context, profile_report = load_profiles(
+                        profile_files,
+                        profile_bundle,
+                        profile_manifest,
+                        snapshot_path,
+                        profile_set=profile_set,
+                        deadline=deadline,
                     )
+                    profile_report.update(baseline_report)
+                    built = builder.build_bundle(
+                        snapshot_path,
+                        root / "bundles",
+                        resource_context=context,
+                    )
+                    if (
+                        built["manifest"]["artifacts"]["source.jsonl.gz"]
+                        != baseline_source
+                    ):
+                        from search.operations.documents.enrichment import (
+                            EnrichmentError,
+                        )
 
-                    raise EnrichmentError(
-                        "document_enrichment_source_mismatch"
+                        raise EnrichmentError(
+                            "document_enrichment_source_mismatch"
+                        )
+                    bundle_path = Path(built["bundle_path"])
+                    catalog = CatalogBundle.load(
+                        bundle_path,
+                        expected_manifest_sha256=built["manifest_sha256"],
                     )
-                bundle_path = Path(built["bundle_path"])
-                catalog = CatalogBundle.load(
-                    bundle_path,
-                    expected_manifest_sha256=built["manifest_sha256"],
-                )
             latest = {
                 **latest,
                 "run_id": run_id,

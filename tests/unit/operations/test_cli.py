@@ -1156,6 +1156,84 @@ class ResourceBatchCLITests(unittest.TestCase):
                 )
                 self.assertNotIn("profile_files", run.call_args.kwargs)
 
+    def test_profile_baseline_reaches_each_existing_lifecycle_owner(self):
+        from contextlib import redirect_stdout
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli, config, lifecycle
+
+        for command, action in (
+            ("sync", "sync_metadata"),
+            ("stage-catalog", "stage_catalog"),
+            ("up-private", "up_private"),
+        ):
+            with (
+                self.subTest(command=command),
+                patch.object(config, "load_config", return_value=object()),
+                patch.object(
+                    lifecycle, action, return_value={"status": "ready"}
+                ) as run,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(
+                    0,
+                    cli.main(
+                        [
+                            "--config",
+                            "/private/product.json",
+                            command,
+                            "--profile-set",
+                            "/private/profile-set.json",
+                            "--profile-baseline-bundle",
+                            "/private/captured-metadata",
+                        ]
+                    ),
+                )
+                self.assertEqual(
+                    Path("/private/profile-set.json"),
+                    run.call_args.kwargs["profile_set"],
+                )
+                self.assertEqual(
+                    Path("/private/captured-metadata"),
+                    run.call_args.kwargs["profile_baseline_bundle"],
+                )
+                self.assertNotIn("profile_files", run.call_args.kwargs)
+
+    def test_profile_baseline_requires_a_set_before_lifecycle_dispatch(self):
+        from contextlib import redirect_stderr
+        import io
+        from unittest.mock import patch
+
+        from search.operations import cli, config, lifecycle
+
+        for command, action in (
+            ("sync", "sync_metadata"),
+            ("stage-catalog", "stage_catalog"),
+            ("up-private", "up_private"),
+        ):
+            for selection in ([], ["--profile-file", "/private/profile.json"]):
+                with (
+                    self.subTest(command=command, selection=selection),
+                    patch.object(config, "load_config") as load,
+                    patch.object(lifecycle, action) as run,
+                    redirect_stderr(io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as caught:
+                        cli.main(
+                            [
+                                "--config",
+                                "/private/product.json",
+                                command,
+                                "--profile-baseline-bundle",
+                                "/private/captured-metadata",
+                                *selection,
+                            ]
+                        )
+                    self.assertEqual(2, caught.exception.code)
+                    load.assert_not_called()
+                    run.assert_not_called()
+
 
 class OperatorErrorOwnerTests(unittest.TestCase):
     def owners(self):
