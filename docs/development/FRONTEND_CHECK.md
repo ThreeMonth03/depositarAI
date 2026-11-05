@@ -72,7 +72,28 @@ revision、catalog manifest 與整數 contract4 全部吻合。API key 只在 BF
 本命令只做 GET 與固定的容器內唯讀檢查，不送搜尋 query、不建立 session、不呼叫
 `/readyz`、不操作模型、不 pull／build 或啟停服務。`public_readiness_verified`、
 `model_inference_verified`、`deployment_performed` 固定為 false。通過不代表實驗室外部
-路由、GPU 推論或搜尋品質已驗收；完整 browser 驗收仍須另行完成。
+路由、公眾入口、GPU 推論／VRAM 常駐、磁碟容量／quota 或搜尋品質已驗收；
+完整 browser 驗收仍須另行完成。
+
+## 檢查失敗時
+
+檢查未通過時，CLI 退出 1 並固定輸出：
+
+```json
+{"error":"frontend_check_failed"}
+```
+
+這是失敗訊號，沒有細分原因；不能據此判定是設定、runtime、網頁、TLS 或上游版本哪一項
+出了問題。它不會輸出內部例外、daemon 訊息、回應內容或 key。
+
+先確認結果來自本次執行，再保留 UTC 時間、退出碼及 operator source revision。
+排程的逾時、未執行或結果寫入失敗，依[監控結果判讀](FRONTEND_MONITORING.md#判讀結果)
+區分；原始輸出與設定留在私有位置，不直接貼入公開 Issue 或系統日誌。
+
+核對已驗證的部署收據與設定配對；身分、權限或操作狀態無法確認時，停止後續變更並交由
+該部署的維護者查核。不要靠修改預期版本、放寬權限或改寫收據消除失敗。
+涉及重啟或 GPU 狀態時，依[部署故障處理](../guide/operations.md#失敗時先看什麼)
+保留現場與停止條件；checker 本身不提供修復或重啟入口。
 
 CPU fixture 與安全回歸：
 
