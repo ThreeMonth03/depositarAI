@@ -53,6 +53,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/planning/__init__.py", "")
         self.write("search/api/retrieval/__init__.py", "")
         self.write("search/api/conversation/calendar.py", "")
+        self.write("search/api/conversation/engine.py", "")
         self.write("search/api/worker.py", "")
         self.write("search/operations/cli.py", "")
         self.write("search/operations/config.py", "")
@@ -191,6 +192,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/catalog/session.py",
             "search/catalog/build/builder.py",
             "search/catalog/build/normalize.py",
+            "search/api/conversation/engine.py",
             "search/api/worker.py",
             "search/operations/deployment/images/build.py",
             "search/operations/deployment/release/runtime.py",

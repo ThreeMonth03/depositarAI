@@ -97,6 +97,223 @@ def literal_refinement(request):
     return True
 
 
+async def _scope_response(request, call, response):
+    """Return an admission reply before planning, or None."""
+    scope_query = request.query
+    if request.state.topic or request.pending:
+        prefix = (
+            "找資料集："
+            f"{request.state.topic or request.pending}"
+            "；本輪搜尋條件："
+        )
+        budget = max(0, 512 - len(scope_query))
+        scope_query = prefix[:budget] + scope_query
+    verdict = (
+        {"decision": "search"}
+        if literal_refinement(request)
+        else await call("scope", {"query": scope_query}, 20)
+    )
+    if (
+        type(verdict) is not dict
+        or set(verdict) != {"decision"}
+        or verdict["decision"] not in {"search", "unsafe", "out_of_scope"}
+    ):
+        raise ValueError("invalid scope verdict")
+    if verdict["decision"] != "search":
+        reason = "unsafe" if verdict["decision"] == "unsafe" else "off_topic"
+        return response("rejected", MESSAGES[reason], reason=reason)
+    if has_spatial_constraint(request.query):
+        return response(
+            "clarification_required",
+            MESSAGES["location_not_supported"],
+            reason="location_not_supported",
+        )
+    return None
+
+
+def _planning_inputs(request, response):
+    """Keep calendar guards and planner input construction together."""
+    calendar = calendar_text(request.query)
+    if calendar.reason:
+        return response(
+            "clarification_required",
+            calendar.message,
+            reason=calendar.reason,
+        )
+    # A bare format cannot resolve a pending calendar
+    # ambiguity.
+    # Keep the original pending query until a supported date or
+    # a
+    # complete new subject is supplied; never guess its year.
+    if request.pending and short_non_date_reply(request.query):
+        pending_calendar = calendar_text(request.pending)
+        if pending_calendar.reason:
+            return response(
+                "clarification_required",
+                pending_calendar.message,
+                reason=pending_calendar.reason,
+            )
+    if has_bare_recent(request.query):
+        return response(
+            "clarification_required",
+            MESSAGES["ambiguous_time"],
+            reason="ambiguous_time",
+        )
+    relative_cues = (
+        relative_literals(request.query) if not calendar.lunar_date else []
+    )
+    if relative_cues and request.context is None:
+        return response(
+            "clarification_required",
+            MESSAGES["ambiguous_time"],
+            reason="ambiguous_time",
+        )
+    planning_request = request.model_copy(
+        update={
+            "query": calendar.query,
+            "pending": corrected_pending(request.pending, calendar),
+        }
+    )
+    return planning_request, calendar, relative_cues
+
+
+def _relative_plan(request, plan, calendar, relative_cues, response):
+    """Resolve grounded relative intent before calendar adaptation."""
+    if plan.relative_time is not None:
+        try:
+            if calendar.lunar_date or calendar.exact:
+                raise ValueError(
+                    ("relative and explicit calendar conditions conflict")
+                )
+            interval = resolve_relative(
+                plan.relative_time,
+                request.context.model_dump() if request.context else None,
+                request.query,
+            )
+        except (ValueError, OverflowError):
+            return response(
+                "clarification_required",
+                MESSAGES["ambiguous_time"],
+                reason="ambiguous_time",
+            )
+        plan = TurnPlan.model_validate(
+            {
+                **plan.model_dump(),
+                "time_op": "set",
+                "time": interval,
+                "relative_time": None,
+            }
+        )
+    elif relative_cues:
+        explicit_clear = plan.time_op == "clear" and re.search(
+            r"取消|不限|移除|清除|\b(?:remove|clear)\b",
+            request.query,
+            re.IGNORECASE,
+        )
+        if not explicit_clear:
+            # No fallback to dates invented by the model, or a
+            # silent keep that drops a relative restriction.
+            return response(
+                "clarification_required",
+                MESSAGES["ambiguous_time"],
+                reason="ambiguous_time",
+            )
+    return plan
+
+
+def _calendar_plan(request, planning_request, plan, calendar, response):
+    """Keep lunar grounding and exact civil correction in order."""
+    if plan.lunar_time:
+        # The model may select words, not invent a lunar date.
+        sources = (
+            request.query,
+            planning_request.pending or "",
+        )
+        if not any(plan.lunar_time.text in text for text in sources):
+            raise ValueError("lunar text was not supplied by user")
+        # Store selected time words only in their own field, so
+        # a later civil correction cannot leave them in topic.
+        if plan.topic and plan.lunar_time.text in plan.topic:
+            topic = plan.topic.replace(plan.lunar_time.text, "").strip()
+            if not topic:
+                return response(
+                    "clarification_required",
+                    MESSAGES["missing_topic"],
+                    reason="missing_topic",
+                )
+            plan = TurnPlan.model_validate(
+                {**plan.model_dump(), "topic": topic}
+            )
+    if calendar.lunar_date and plan.time_op == "set":
+        # A valid Gregorian-shaped value is still an invented
+        # conversion when the source is an explicit lunar date.
+        raise ValueError("cannot apply civil interval to lunar input")
+    if calendar.exact and not plan.lunar_time:
+        # This narrow, deterministic date result is more
+        # reliable
+        # than asking the model to do ROC arithmetic.
+        # Qualifiers,
+        # ranges and non-search actions never take this path.
+        plan = TurnPlan.model_validate(
+            {
+                **plan.model_dump(),
+                "time_op": "set",
+                "time": Interval(start=calendar.exact, end=calendar.exact),
+            }
+        )
+    return plan
+
+
+async def _plan(request, request_id, call, response):
+    """Plan while borrowing the turn's timed call and reply factory."""
+    scoped = await _scope_response(request, call, response)
+    if scoped is not None:
+        return scoped
+    inputs = _planning_inputs(request, response)
+    if isinstance(inputs, TurnResponse):
+        return inputs
+    planning_request, calendar, relative_cues = inputs
+    output = await call("conversation_plan", planning_request.model_dump(), 60)
+    if type(output) is dict and output.get("error") in {
+        "planner_incomplete",
+        "planner_invalid_output",
+    }:
+        LOGGER.warning(
+            "conversation_plan_failed request_id=%s code=%s",
+            request_id,
+            output["error"],
+        )
+        raise BackendFailure("planner did not produce an executable plan")
+    plan = TurnPlan.model_validate(output)
+    if plan.action in {"reject", "clarify"}:
+        return response(
+            "rejected"
+            if plan.action == "reject"
+            else "clarification_required",
+            MESSAGES[plan.reason],
+            reason=plan.reason,
+        )
+    if plan.action == "refine" and not request.state.topic:
+        # A model cannot refine a subject that was never
+        # committed.
+        # The generation schema also excludes this action. Keep
+        # a
+        # safe clarification if an adapter violates that
+        # contract.
+        return response(
+            "clarification_required",
+            MESSAGES["missing_topic"],
+            reason="missing_topic",
+        )
+    plan = _relative_plan(request, plan, calendar, relative_cues, response)
+    if isinstance(plan, TurnResponse):
+        return plan
+    plan = _calendar_plan(request, planning_request, plan, calendar, response)
+    if isinstance(plan, TurnResponse):
+        return plan
+    return plan, calendar
+
+
 class ConversationEngine:
     def __init__(self, settings, backend, *, slots=None):
         self.settings, self.backend = settings, backend
@@ -145,215 +362,10 @@ class ConversationEngine:
                     # classify a
                     # short follow-up; it does not confer trust on the latest
                     # text.
-                    scope_query = request.query
-                    if request.state.topic or request.pending:
-                        prefix = (
-                            "找資料集："
-                            f"{request.state.topic or request.pending}"
-                            "；本輪搜尋條件："
-                        )
-                        budget = max(0, 512 - len(scope_query))
-                        scope_query = prefix[:budget] + scope_query
-                    verdict = (
-                        {"decision": "search"}
-                        if literal_refinement(request)
-                        else await call("scope", {"query": scope_query}, 20)
-                    )
-                    if (
-                        type(verdict) is not dict
-                        or set(verdict) != {"decision"}
-                        or verdict["decision"]
-                        not in {"search", "unsafe", "out_of_scope"}
-                    ):
-                        raise ValueError("invalid scope verdict")
-                    if verdict["decision"] != "search":
-                        reason = (
-                            "unsafe"
-                            if verdict["decision"] == "unsafe"
-                            else "off_topic"
-                        )
-                        return response(
-                            "rejected", MESSAGES[reason], reason=reason
-                        )
-                    if has_spatial_constraint(request.query):
-                        return response(
-                            "clarification_required",
-                            MESSAGES["location_not_supported"],
-                            reason="location_not_supported",
-                        )
-                    calendar = calendar_text(request.query)
-                    if calendar.reason:
-                        return response(
-                            "clarification_required",
-                            calendar.message,
-                            reason=calendar.reason,
-                        )
-                    # A bare format cannot resolve a pending calendar
-                    # ambiguity.
-                    # Keep the original pending query until a supported date or
-                    # a
-                    # complete new subject is supplied; never guess its year.
-                    if request.pending and short_non_date_reply(request.query):
-                        pending_calendar = calendar_text(request.pending)
-                        if pending_calendar.reason:
-                            return response(
-                                "clarification_required",
-                                pending_calendar.message,
-                                reason=pending_calendar.reason,
-                            )
-                    if has_bare_recent(request.query):
-                        return response(
-                            "clarification_required",
-                            MESSAGES["ambiguous_time"],
-                            reason="ambiguous_time",
-                        )
-                    relative_cues = (
-                        relative_literals(request.query)
-                        if not calendar.lunar_date
-                        else []
-                    )
-                    if relative_cues and request.context is None:
-                        return response(
-                            "clarification_required",
-                            MESSAGES["ambiguous_time"],
-                            reason="ambiguous_time",
-                        )
-                    planning_request = request.model_copy(
-                        update={
-                            "query": calendar.query,
-                            "pending": corrected_pending(
-                                request.pending, calendar
-                            ),
-                        }
-                    )
-                    output = await call(
-                        "conversation_plan", planning_request.model_dump(), 60
-                    )
-                    if type(output) is dict and output.get("error") in {
-                        "planner_incomplete",
-                        "planner_invalid_output",
-                    }:
-                        LOGGER.warning(
-                            "conversation_plan_failed request_id=%s code=%s",
-                            request_id,
-                            output["error"],
-                        )
-                        raise BackendFailure(
-                            "planner did not produce an executable plan"
-                        )
-                    plan = TurnPlan.model_validate(output)
-                    if plan.action in {"reject", "clarify"}:
-                        return response(
-                            "rejected"
-                            if plan.action == "reject"
-                            else "clarification_required",
-                            MESSAGES[plan.reason],
-                            reason=plan.reason,
-                        )
-                    if plan.action == "refine" and not request.state.topic:
-                        # A model cannot refine a subject that was never
-                        # committed.
-                        # The generation schema also excludes this action. Keep
-                        # a
-                        # safe clarification if an adapter violates that
-                        # contract.
-                        return response(
-                            "clarification_required",
-                            MESSAGES["missing_topic"],
-                            reason="missing_topic",
-                        )
-                    if plan.relative_time is not None:
-                        try:
-                            if calendar.lunar_date or calendar.exact:
-                                raise ValueError(
-                                    (
-                                        "relative and explicit calendar "
-                                        "conditions conflict"
-                                    )
-                                )
-                            interval = resolve_relative(
-                                plan.relative_time,
-                                request.context.model_dump()
-                                if request.context
-                                else None,
-                                request.query,
-                            )
-                        except (ValueError, OverflowError):
-                            return response(
-                                "clarification_required",
-                                MESSAGES["ambiguous_time"],
-                                reason="ambiguous_time",
-                            )
-                        plan = TurnPlan.model_validate(
-                            {
-                                **plan.model_dump(),
-                                "time_op": "set",
-                                "time": interval,
-                                "relative_time": None,
-                            }
-                        )
-                    elif relative_cues:
-                        explicit_clear = plan.time_op == "clear" and re.search(
-                            r"取消|不限|移除|清除|\b(?:remove|clear)\b",
-                            request.query,
-                            re.IGNORECASE,
-                        )
-                        if not explicit_clear:
-                            # No fallback to dates invented by the model, or a
-                            # silent keep that drops a relative restriction.
-                            return response(
-                                "clarification_required",
-                                MESSAGES["ambiguous_time"],
-                                reason="ambiguous_time",
-                            )
-                    if plan.lunar_time:
-                        # The model may select words, not invent a lunar date.
-                        sources = (
-                            request.query,
-                            planning_request.pending or "",
-                        )
-                        if not any(
-                            plan.lunar_time.text in text for text in sources
-                        ):
-                            raise ValueError(
-                                "lunar text was not supplied by user"
-                            )
-                        # Store selected time words only in their own field, so
-                        # a later civil correction cannot leave them in topic.
-                        if plan.topic and plan.lunar_time.text in plan.topic:
-                            topic = plan.topic.replace(
-                                plan.lunar_time.text, ""
-                            ).strip()
-                            if not topic:
-                                return response(
-                                    "clarification_required",
-                                    MESSAGES["missing_topic"],
-                                    reason="missing_topic",
-                                )
-                            plan = TurnPlan.model_validate(
-                                {**plan.model_dump(), "topic": topic}
-                            )
-                    if calendar.lunar_date and plan.time_op == "set":
-                        # A valid Gregorian-shaped value is still an invented
-                        # conversion when the source is an explicit lunar date.
-                        raise ValueError(
-                            "cannot apply civil interval to lunar input"
-                        )
-                    if calendar.exact and not plan.lunar_time:
-                        # This narrow, deterministic date result is more
-                        # reliable
-                        # than asking the model to do ROC arithmetic.
-                        # Qualifiers,
-                        # ranges and non-search actions never take this path.
-                        plan = TurnPlan.model_validate(
-                            {
-                                **plan.model_dump(),
-                                "time_op": "set",
-                                "time": Interval(
-                                    start=calendar.exact, end=calendar.exact
-                                ),
-                            }
-                        )
+                    planned = await _plan(request, request_id, call, response)
+                    if isinstance(planned, TurnResponse):
+                        return planned
+                    plan, calendar = planned
                     stage = "state_application"
                     state = plan.apply(request.state)
                     retrieval_query = state.topic
