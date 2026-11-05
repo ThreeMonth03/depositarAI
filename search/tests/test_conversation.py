@@ -555,3 +555,140 @@ class WorkerTests(unittest.TestCase):
                     for branch in schema["anyOf"]
                 ]
                 self.assertEqual("refine" in actions, bool(topic))
+
+
+class PlanningBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.settings = Settings(
+            "a" * 40, "b" * 64, Path("/catalog"), Path("/unused"), True, 20
+        )
+        self.backend = ConversationFixture()
+        self.engine = ConversationEngine(self.settings, self.backend)
+
+    def test_planning_responses_preserve_state_and_notice_sequence(self):
+        from search.api.conversation import engine as module
+
+        events = []
+        parser, backend_call = module.calendar_text, self.backend.call
+
+        def recognize(query):
+            events.append(("calendar", query))
+            return parser(query)
+
+        async def recorded_call(operation, payload, timeout):
+            events.append(("backend", operation))
+            return await backend_call(operation, payload, timeout)
+
+        self.backend.call = recorded_call
+        self.backend.plan = {**PLAN, "action": "refine", "topic": None}
+        request = TurnRequest(
+            query="民國111年",
+            state=SearchState(
+                topic="氣候",
+                time={"start": "2020", "end": "2020"},
+                formats=["CSV"],
+            ),
+            context=CLOCK,
+        )
+        original = request.model_dump()
+        with patch.object(module, "calendar_text", side_effect=recognize):
+            result = asyncio.run(self.engine.turn(request, "planning-order"))
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(
+            events[:3],
+            [
+                ("calendar", request.query),
+                ("calendar", request.query),
+                ("backend", "conversation_plan"),
+            ],
+        )
+        self.assertEqual(sum(event[0] == "calendar" for event in events), 2)
+        self.assertEqual(result.state.time.start, "2022")
+        self.assertEqual(result.state.formats, ["CSV"])
+        self.assertIn("民國111年已換算", result.notices[0])
+        self.assertIn("2022年", self.backend.calls[0][1]["query"])
+        self.assertEqual(request.model_dump(), original)
+        self.assertIn("conversation_plan", result.timing_ms)
+
+    def test_failure_fallback_and_timing_keep_commit_boundary(self):
+        for failing in ("retrieve", "rerank"):
+            with self.subTest(stage=failing):
+                backend = ConversationFixture()
+                backend.plan = {
+                    **PLAN,
+                    "action": "refine",
+                    "topic": None,
+                    "formats_op": "set",
+                    "formats": ["CSV"],
+                }
+                backend.fail = failing
+                engine = ConversationEngine(self.settings, backend)
+                request = TurnRequest(
+                    query="CSV", state=SearchState(topic="氣候"), context=CLOCK
+                )
+                original = request.model_dump()
+                result = asyncio.run(engine.turn(request, "planning-fallback"))
+                self.assertEqual(request.model_dump(), original)
+                self.assertIn("conversation_plan", result.timing_ms)
+                self.assertGreaterEqual(result.timing_ms["total"], 0)
+                self.assertNotIn("private error", result.model_dump_json())
+                if failing == "retrieve":
+                    self.assertEqual(result.status, "unavailable")
+                    self.assertIs(result.state, request.state)
+                    self.assertIsNone(result.search)
+                    self.assertEqual(result.notices, [])
+                else:
+                    self.assertEqual(result.status, "ok")
+                    self.assertEqual(result.state.formats, ["CSV"])
+                    self.assertEqual(result.search.rerank_status, "fallback")
+                    self.assertEqual(
+                        result.search.warnings,
+                        [
+                            "unknown_condition_results_retained",
+                            "rerank_unavailable",
+                        ],
+                    )
+                    self.assertEqual(result.search.cards[0].dataset_id, IDS[0])
+
+    def test_planner_cancellation_releases_capacity(self):
+        async def scenario():
+            entered, finished = asyncio.Event(), asyncio.Event()
+            original_call = self.backend.call
+
+            async def paused(operation, payload, timeout):
+                value = await original_call(operation, payload, timeout)
+                if operation == "conversation_plan":
+                    entered.set()
+                    try:
+                        await asyncio.Future()
+                    finally:
+                        finished.set()
+                return value
+
+            self.backend.call = paused
+            request = TurnRequest(
+                query="氣候", state=SearchState(topic="河川"), context=CLOCK
+            )
+            original = request.model_dump()
+            task = asyncio.create_task(
+                self.engine.turn(request, "planning-cancel")
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=2)
+                self.assertTrue(finished.is_set())
+                self.assertEqual(request.model_dump(), original)
+            finally:
+                self.backend.call = original_call
+                if not task.done():
+                    task.cancel()
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True), timeout=2
+                )
+            result = await self.engine.turn(request, "planning-reuse")
+            self.assertEqual(result.status, "ok")
+            self.assertEqual(request.model_dump(), original)
+
+        asyncio.run(scenario())
