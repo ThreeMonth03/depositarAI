@@ -164,6 +164,39 @@ def _header_values(response: HTTPResponse, name: str) -> list[str]:
     return values
 
 
+def _validate_response_headers(response: HTTPResponse) -> None:
+    if not isinstance(response.headers, tuple):
+        raise OllamaAdapterError("invalid_upstream_response")
+    header_bytes = 0
+    for item in response.headers:
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or not all(isinstance(part, str) for part in item)
+        ):
+            raise OllamaAdapterError("invalid_upstream_response")
+        header_bytes += sum(len(part.encode("utf-8")) for part in item) + 4
+    if header_bytes > 64 * 1024:
+        raise OllamaAdapterError("invalid_upstream_response")
+    lengths = _header_values(response, "Content-Length")
+    if len(lengths) > 1 or (
+        lengths
+        and (
+            not lengths[0].isascii()
+            or not lengths[0].isdigit()
+            or int(lengths[0]) != len(response.body)
+        )
+    ):
+        raise OllamaAdapterError("invalid_upstream_response")
+    content_types = _header_values(response, "Content-Type")
+    if (
+        len(content_types) != 1
+        or content_types[0].split(";", 1)[0].strip().casefold()
+        != "application/json"
+    ):
+        raise OllamaAdapterError("invalid_upstream_response")
+
+
 def _validate_query(value: Any) -> str:
     if type(value) is not str:
         raise OllamaInputError("query must be text")
@@ -290,36 +323,7 @@ class OllamaScopeClassifier:
             or len(response.body) > max_bytes
         ):
             raise OllamaAdapterError("upstream_response_too_large")
-        if not isinstance(response.headers, tuple):
-            raise OllamaAdapterError("invalid_upstream_response")
-        header_bytes = 0
-        for item in response.headers:
-            if (
-                not isinstance(item, tuple)
-                or len(item) != 2
-                or not all(isinstance(part, str) for part in item)
-            ):
-                raise OllamaAdapterError("invalid_upstream_response")
-            header_bytes += sum(len(part.encode("utf-8")) for part in item) + 4
-        if header_bytes > 64 * 1024:
-            raise OllamaAdapterError("invalid_upstream_response")
-        lengths = _header_values(response, "Content-Length")
-        if len(lengths) > 1 or (
-            lengths
-            and (
-                not lengths[0].isascii()
-                or not lengths[0].isdigit()
-                or int(lengths[0]) != len(response.body)
-            )
-        ):
-            raise OllamaAdapterError("invalid_upstream_response")
-        content_types = _header_values(response, "Content-Type")
-        if (
-            len(content_types) != 1
-            or content_types[0].split(";", 1)[0].strip().casefold()
-            != "application/json"
-        ):
-            raise OllamaAdapterError("invalid_upstream_response")
+        _validate_response_headers(response)
         return response
 
     def _verify_digest(self, started: float) -> None:
@@ -423,6 +427,9 @@ class OllamaScopeClassifier:
                 request, started=started, max_bytes=MAX_CHAT_RESPONSE_BYTES
             ).body
         )
+        return self._completion_content(envelope)
+
+    def _completion_content(self, envelope: Any) -> str:
         if not isinstance(envelope, Mapping):
             raise OllamaAdapterError("invalid_upstream_response")
         if (

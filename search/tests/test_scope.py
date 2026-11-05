@@ -432,6 +432,143 @@ class ScopeAdapterTests(unittest.TestCase):
         with self.assertRaises(OllamaAdapterError):
             selector.classify("找資料")
 
+    def test_digest_and_chat_share_one_deadline_and_error_priority(self):
+        malformed = HTTPResponse(500, (), b"invalid", "http://example.test/")
+        good_tags = tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST)
+        good_chat = chat(SCOPE_MODEL, '{"decision":"search"}')
+        scenarios = (
+            (
+                (good_tags, good_chat),
+                [0, 1, 2, 3, 4],
+                ("search", None),
+                [("GET", 89, 64 * 1024), ("POST", 87, 128 * 1024)],
+            ),
+            (
+                (malformed,),
+                [0, 1, 91],
+                (None, "deadline_exceeded"),
+                [("GET", 89, 64 * 1024)],
+            ),
+            (
+                (good_tags, malformed),
+                [0, 1, 2, 3, 91],
+                (None, "deadline_exceeded"),
+                [("GET", 89, 64 * 1024), ("POST", 87, 128 * 1024)],
+            ),
+        )
+        for replies, clock_values, expected, expected_calls in scenarios:
+            with self.subTest(expected=expected, clock_values=clock_values):
+                values = iter(clock_values)
+                observed = []
+
+                def clock():
+                    value = next(values)
+                    observed.append(value)
+                    return value
+
+                transport = FakeTransport(*replies)
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=clock
+                )
+                result, error_code = None, None
+                try:
+                    result = classifier.classify("找公開氣候資料")
+                except OllamaAdapterError as error:
+                    error_code = error.code
+                self.assertEqual((result, error_code), expected)
+                self.assertEqual(observed, clock_values)
+                self.assertEqual(
+                    [
+                        (
+                            row["request"].method,
+                            row["timeout"],
+                            row["max_bytes"],
+                        )
+                        for row in transport.requests
+                    ],
+                    expected_calls,
+                )
+
+    def test_header_framing_rejection_never_reaches_chat(self):
+        valid = tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST)
+        content_type = ("Content-Type", "application/json")
+        length = ("Content-Length", str(len(valid.body)))
+        invalid_headers = (
+            (content_type, ("Content-Length", str(len(valid.body) + 1))),
+            (content_type, length, length),
+            (content_type, ("Content-Length", "１２")),
+            (("Content-Type", "text/plain"),),
+            (content_type, ("X-Fixture", "line\r\n" + UPSTREAM_SECRET)),
+        )
+        for headers in invalid_headers:
+            with self.subTest(headers=headers):
+                transport = FakeTransport(
+                    HTTPResponse(valid.status, headers, valid.body, valid.url),
+                    chat(SCOPE_MODEL, '{"decision":"search"}'),
+                )
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=lambda: 0
+                )
+                with self.assertRaises(OllamaAdapterError) as caught:
+                    classifier.classify("找公開氣候資料")
+                self.assertEqual(
+                    caught.exception.code, "invalid_upstream_response"
+                )
+                self.assertEqual(len(transport.requests), 1)
+                self.assertNotIn(UPSTREAM_SECRET, str(caught.exception))
+
+    def test_completion_validation_keeps_error_precedence(self):
+        oversized_thinking = "x" * (96 * 1024 + 1)
+        scenarios = (
+            (
+                {"model": "wrong-model", "eval_count": True},
+                {"role": "user"},
+                "incomplete_upstream_response",
+            ),
+            (
+                {"eval_count": True, "prompt_eval_count": 0},
+                {"role": "user", "thinking": oversized_thinking},
+                "invalid_upstream_response",
+            ),
+            (
+                {"eval_count": True, "prompt_eval_count": 0},
+                {"thinking": oversized_thinking},
+                "upstream_response_too_large",
+            ),
+            (
+                {"eval_count": True, "prompt_eval_count": 0},
+                {},
+                "invalid_upstream_response",
+            ),
+            ({"prompt_eval_count": 0}, {}, "context_budget_exceeded"),
+        )
+        for changes, message_changes, expected in scenarios:
+            with self.subTest(expected=expected, changes=changes):
+                payload = json.loads(
+                    chat(
+                        SCOPE_MODEL,
+                        '{"decision":"search"}',
+                        thinking=UPSTREAM_SECRET,
+                    ).body
+                )
+                payload.update(changes)
+                payload["message"].update(message_changes)
+                transport = FakeTransport(
+                    tags(SCOPE_MODEL, SCOPE_MODEL_DIGEST),
+                    response(OLLAMA_BASE_URL + "/api/chat", payload),
+                )
+                classifier = OllamaScopeClassifier(
+                    transport=transport, clock=lambda: 0
+                )
+                with self.assertRaises(OllamaAdapterError) as caught:
+                    classifier.classify("找公開氣候資料")
+                self.assertEqual(caught.exception.code, expected)
+                self.assertEqual(
+                    [row["request"].method for row in transport.requests],
+                    ["GET", "POST"],
+                )
+                self.assertNotIn(UPSTREAM_SECRET, str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
