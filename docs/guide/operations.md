@@ -112,7 +112,10 @@ provider 與已登記的完整 API clients；遇到未完成操作會拒絕，�
 正常 CPU 候選使用 schema2 的 `deploy/env/shared-backend.example.json`，
 明確指定 control 與 catalog。Bootstrap 結構、權責與候選操作見
 [共用後端參考](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/SHARED_BACKEND.md)。
-這個控制面不提供 API／TLS／BFF 切換、回退或重新開機復原；它們仍需各自的受控流程。
+完成 provider 接管與兩端新來源 writer 登記後，API／TLS／VM binding 的換版、
+回退及 rollback CPU backend 退休，使用[後端更新流程](https://github.com/ThreeMonth03/depositarAI/blob/main/docs/development/BACKEND_UPDATE.md)。
+它保留既有模型、catalog、HTTPS origin、前端映像與 env；模型或資料配方遷移、
+公眾入口切換及重開機復原仍使用各自的維護流程。
 
 ## 連線與試用
 

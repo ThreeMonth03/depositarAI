@@ -65,10 +65,12 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/quality`、`search/operations/deployment/candidate`。
 - `search/operations/deployment/provider`。
+- `search/operations/deployment/transition`。
 - `search/operations/documents` 的完整目錄。
 - `search/operations/metadata` 下的 `source.py`、`sync.py`。
 - `search/operations/jobs/archive.py`。
 - `search/operations/deployment/frontend/policy.py`。
+- `search/operations/deployment/frontend/binding.py`。
 - `search/operations/deployment/images/build.py`。
 - `search/operations/deployment/release/runtime.py`。
 - `search/operations/deployment/inference_runtime.py`。
@@ -76,6 +78,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `scripts/ci` 的完整 Python 工具目錄。
 - `scripts/search_jobs.py`、`scripts/search_model_source.py`。
 - `scripts/search_dictionary_permissions.py`。
+- `scripts/update_search_backend.py`、`scripts/participate_backend_binding.py`。
 
 其餘領域暫以 Ruff 原生 C901 JSON 完整列出，CI 保留
 `python-complexity-<source SHA>` artifact；報告中的既有項目不代表通過全庫守門。

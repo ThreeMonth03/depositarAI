@@ -2,13 +2,15 @@
 regressions.
 """
 
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 import copy
 from dataclasses import replace
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -324,6 +326,97 @@ class CatalogSnapshotTests(unittest.TestCase):
 
 
 class CatalogAuditTests(unittest.TestCase):
+    def test_context_default_calls_bind_the_selected_native_inputs(self):
+        from tests.unit.deployment import test_composition
+
+        config = test_composition.product()
+        plan = test_composition.catalog(config)
+        value = {"plan": plan, "compose": {"native": "composition"}}
+        bundle, profile = object(), {"MODEL": "fixture"}
+        store = SimpleNamespace(read=Mock(return_value=plan))
+        for injected in (False, True):
+            options = (
+                {"source_runner": Mock(), "process_runner": Mock()}
+                if injected
+                else {}
+            )
+            with (
+                self.subTest(injected=injected),
+                patch.object(
+                    catalog, "require_clean_revision", return_value=REVISION
+                ) as clean,
+                patch.object(
+                    catalog, "source_record", return_value=value
+                ) as source_record,
+                patch.object(
+                    catalog.execution,
+                    "read_record",
+                    return_value=value["compose"],
+                ),
+                patch.object(
+                    catalog.CatalogBundle, "load", return_value=bundle
+                ),
+                patch.object(catalog, "query_profile", return_value=profile),
+            ):
+                actual, returned = catalog.load_context(
+                    Path("/source"), Path("/config"), config, store, **options
+                )
+            source_record.assert_called_once_with(
+                Path("/source"), Path("/config"), REVISION, **options
+            )
+            source_options = (
+                {"runner": options["source_runner"]} if injected else {}
+            )
+            clean.assert_called_once_with(Path("/source"), **source_options)
+            self.assertIs(returned, value)
+            self.assertIs(actual["bundle"], bundle)
+            self.assertIs(actual["query_profile"], profile)
+            self.assertEqual(actual["plan"], plan)
+            self.assertEqual(actual["compose"], value["compose"])
+            self.assertEqual(actual["source_revision"], REVISION)
+            self.assertEqual(actual["repo"], Path("/source"))
+            self.assertTrue(callable(actual["runner"]))
+            for key, runner in options.items():
+                self.assertIs(actual[key], runner)
+
+    def test_audit_forwards_the_same_runners_to_both_source_guards(self):
+        binding = two_catalogs()[0][1]
+        value = {
+            "source_revision": REVISION,
+            "plan": binding.context["plan"],
+            "compose": binding.context["compose"],
+            "authority": binding.authority,
+            "images": binding.images,
+        }
+        source, process = Mock(), Mock()
+        snapshot = ({}, [], {})
+        with (
+            patch.object(binding, "refresh") as refresh,
+            patch.object(catalog, "source_record", return_value=value) as run,
+        ):
+            binding.audit(
+                snapshot,
+                timeout=17,
+                source_runner=source,
+                process_runner=process,
+            )
+        self.assertEqual(refresh.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs == {"source_runner": source}
+                for call in refresh.call_args_list
+            )
+        )
+        run.assert_called_once_with(
+            binding.context["repo"],
+            binding.config_file,
+            binding.context["source_revision"],
+            snapshot=snapshot,
+            timeout=17,
+            source_runner=source,
+            process_runner=process,
+        )
+
     def test_refresh_rejects_drift_in_config_source_plan_and_api_key_authority(
         self,
     ):
@@ -505,6 +598,69 @@ class CatalogAuditTests(unittest.TestCase):
                     Path("/selected-source"), Path("/config"), REVISION
                 )
             self.assertNotIn("PRIVATE", str(caught.exception))
+
+    def test_source_audit_injects_both_runners_without_changing_the_protocol(
+        self,
+    ):
+        from search.operations.shared import source_identity
+
+        inputs, calls = [], []
+        snapshot = ({"network_id": "b" * 64}, [], {"Containers": {}})
+        expected = {
+            "source_revision": REVISION,
+            "plan": {},
+            "compose": {},
+            "authority": {},
+            "images": {},
+        }
+
+        def source_runner(argv, *, timeout):
+            calls.append((list(argv), timeout))
+            return SimpleNamespace(
+                returncode=0, stdout=REVISION if "rev-parse" in argv else ""
+            )
+
+        def process_runner(argv, *, timeout, environment):
+            self.assertEqual(argv[:5], ["python3", "-I", "-S", "-B", "-c"])
+            self.assertEqual(argv[5], catalog._CONTEXT)
+            self.assertEqual(
+                argv[6:9], ["/selected-source", "/selected-config", REVISION]
+            )
+            self.assertEqual(timeout, 37)
+            self.assertEqual(
+                environment,
+                {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+            )
+            inputs.append(json.loads(Path(argv[9]).read_bytes()))
+            return SimpleNamespace(
+                returncode=0, stdout=json.dumps(expected).encode()
+            )
+
+        with (
+            patch.object(
+                source_identity,
+                "_runner",
+                side_effect=AssertionError("default Git forbidden"),
+            ),
+            patch.object(
+                catalog.image_build,
+                "_run",
+                side_effect=AssertionError("default process forbidden"),
+            ),
+        ):
+            actual = catalog.source_record(
+                Path("/selected-source"),
+                Path("/selected-config"),
+                REVISION,
+                snapshot=snapshot,
+                timeout=37,
+                source_runner=source_runner,
+                process_runner=process_runner,
+            )
+        self.assertEqual(actual, expected)
+        self.assertEqual(inputs, [list(snapshot)])
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(0 < timeout <= 15 for _args, timeout in calls))
 
     def test_query_audit_compares_every_selected_authority_component(self):
         binding = two_catalogs()[0][1]
@@ -930,3 +1086,540 @@ class CatalogCollectionTests(unittest.TestCase):
                     collected, observed = catalog.collect(docker, projects)
                     for binding in bindings:
                         catalog.observe(binding, collected, observed, clients)
+
+
+class BoundedDriverFixture:
+    """Real driver/source guards with synthetic context and command outputs."""
+
+    def __init__(self, test, *, cross=False, scan=False, extras=0):
+        from search.operations.catalog import backend, query
+        from search.operations.shared import private_io, source_identity
+
+        self.test, self.backend, self.query = test, backend, query
+        self.private_io, self.identity = private_io, source_identity
+        temporary = tempfile.TemporaryDirectory(prefix="catalog-child-driver-")
+        test.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.root.chmod(0o700)
+        self.repo, self.state = self.root / "source", self.root / "state"
+        self.repo.mkdir(mode=0o700)
+        self.state.mkdir(mode=0o700)
+        self.config_file = self.root / "product.json"
+        self.write(self.config_file, {})
+        self.producer = "b" * 40 if cross else REVISION
+        self.plan = {"revision": self.producer}
+        self.write(self.state / "index-candidate.json", self.plan)
+        self.config = SimpleNamespace(state_root=self.state)
+        self.snapshot = [{"fixture": "proof"}, [], {"Containers": {}}]
+        self.snapshot_file = self.root / "snapshot.json"
+        self.write(self.snapshot_file, self.snapshot)
+        self.files = ("recipe.py", "build.py")
+        for name in self.files:
+            (self.repo / name).write_text("fixture = 1\n")
+        self.scan, self.extras = scan, extras
+        self.mismatch_at = 0
+        self.query_failure, self.fail_at = False, None
+        self.step, self.now = 0.001, 100.0
+        self.calls, self.descriptors = [], []
+        self.output, self.namespace = io.StringIO(), {}
+        self.forbidden = Mock(
+            side_effect=AssertionError("default Git forbidden")
+        )
+        self.factory = Mock(return_value=self.base)
+        if scan:
+            self.prepare_slots()
+
+    def write(self, path, value):
+        path.write_bytes(self.private_io.canonical(value))
+        path.chmod(0o600)
+
+    def base(self, argv, *, timeout):
+        self.calls.append((list(argv), timeout))
+        self.now += self.step
+        value = ""
+        if self.fail_at == len(self.calls):
+            return SimpleNamespace(returncode=1, stdout="PRIVATE_CHILD_OUTPUT")
+        if "rev-parse" in argv:
+            value = REVISION
+        elif "ls-tree" in argv:
+            value = "\0".join(self.files)
+        elif "show" in argv:
+            revision, name = argv[-1].split(":", 1)
+            value = (self.repo / name).read_text()
+            if (
+                self.scan
+                and revision != REVISION
+                and name == self.files[self.mismatch_at]
+            ):
+                value = "different = 2\n"
+        return SimpleNamespace(returncode=0, stdout=value, stderr="")
+
+    def open_directory(self, path):
+        fd = self.original_open(path)
+        self.descriptors.append(fd)
+        return fd
+
+    def context(self, config, plan, *, repo_root, runner):
+        self.test.assertEqual(
+            (config, plan, repo_root), (self.config, self.plan, self.repo)
+        )
+        self.test.assertEqual(
+            execution.require_clean_revision(repo_root, runner=runner),
+            REVISION,
+        )
+        if self.scan:
+            self.scan_slots(runner)
+        else:
+            self.backend.validate_compatibility(
+                plan, repo_root=repo_root, revision=REVISION, runner=runner
+            )
+        runner(["docker", "image", "inspect", "fixed"], timeout=90)
+        return {
+            "repo": repo_root,
+            "runner": runner,
+            "plan": dict(plan),
+            "compose": {"fixture": "compose"},
+        }
+
+    def authority(self, context):
+        self.test.assertEqual(
+            self.query.require_clean_revision(
+                context["repo"], runner=context["runner"]
+            ),
+            REVISION,
+        )
+        if self.query_failure:
+            raise ValueError("PRIVATE_QUERY_CONSTRUCTION")
+        return {"fixture": "authority", "producer": self.producer}
+
+    def verify(self, context, *, observe_runtime):
+        self.test.assertEqual(observe_runtime(context), tuple(self.snapshot))
+        return self.authority(context)
+
+    def images(self, context):
+        context["runner"](
+            ["git", "-C", str(self.repo), "show", REVISION + ":recipe.py"],
+            timeout=30,
+        )
+        for _index in range(self.extras):
+            context["runner"](["docker", "inspect", "fixed"], timeout=30)
+        return {"fixture": "image"}
+
+    def recipe_inputs(self, count):
+        self.files = tuple(
+            "input-" + str(index) + ".py" for index in range(count)
+        )
+        for name in self.files:
+            (self.repo / name).write_text("fixture = 1\n")
+
+    def load_config(self, path, *, repo_root):
+        self.test.assertEqual((path, repo_root), (self.config_file, self.repo))
+        return self.config
+
+    def prepare_slots(self):
+        self.slots = self.root / "catalogs"
+        self.slots.mkdir(mode=0o700)
+        self.bundle = SimpleNamespace(bundle_id="c" * 64, documents=[{}])
+        self.bundle_file = self.root / "bundle"
+        for index in range(16):
+            revision = format(index + 1, "012x") + "b" * 28
+            slot = self.slots / ("c" * 12 + "-" + revision[:12])
+            slot.mkdir(mode=0o700)
+            self.write(
+                slot / "plan.json",
+                {
+                    "revision": revision,
+                    "bundle_path": str(self.bundle_file),
+                    "manifest_sha256": "d" * 64,
+                    "document_count": 1,
+                },
+            )
+            self.write(slot / "runtime.json", {})
+            self.complete_slot(slot)
+
+    def complete_slot(self, slot):
+        history = slot / "vector-operations"
+        history.mkdir(mode=0o700)
+        self.write(history / "recipe.json", {})
+        run = history / ("e" * 32)
+        run.mkdir(mode=0o700)
+        (run / "events").mkdir(mode=0o700)
+        self.write(run / "started.json", {})
+        self.write(run / "container.json", {})
+        self.write(
+            run / "complete.json",
+            {
+                "result": {
+                    "status": "complete-clean",
+                    "done_count": 1,
+                    "pending_count": 0,
+                }
+            },
+        )
+
+    def scan_slots(self, runner):
+        fd = self.open_directory(self.slots)
+        try:
+            result = self.backend._compatible_slot(
+                fd,
+                self.bundle,
+                self.bundle_file,
+                "d" * 64,
+                repo_root=self.repo,
+                revision=REVISION,
+                runner=runner,
+            )
+            self.test.assertEqual(result, REVISION)
+        finally:
+            os.close(fd)
+
+    def execute(self, *, snapshot=False, maximum=256, seconds=20, argv=None):
+        import time
+
+        self.calls, self.descriptors = [], []
+        self.output, self.namespace = io.StringIO(), {"__name__": "__main__"}
+        self.now = 100.0
+        self.original_open = self.private_io.open_directory
+        arguments = [
+            "bounded-catalog-child",
+            str(self.repo),
+            str(self.config_file),
+            REVISION,
+            str(self.snapshot_file) if snapshot else "-",
+            str(maximum),
+            str(seconds),
+        ]
+        with ExitStack() as stack:
+            for owner, name, value in (
+                (sys, "argv", arguments if argv is None else argv),
+                (sys, "path", list(sys.path)),
+                (time, "monotonic", lambda: self.now),
+                (catalog.product_config, "load_config", self.load_config),
+                (catalog.commands, "default_runner", self.factory),
+                (self.identity, "_runner", self.forbidden),
+                (self.private_io, "open_directory", self.open_directory),
+                (execution, "load_context", self.context),
+                (execution, "load_images", self.images),
+                (self.query, "read_authority", self.authority),
+                (self.query, "verify_authority", self.verify),
+                (self.backend, "STAGED_FILES", self.files[:1]),
+                (self.backend, "BUILD_FILES", self.files[1:]),
+                (self.backend, "DATA_FILES", ()),
+            ):
+                stack.enter_context(patch.object(owner, name, value))
+            with redirect_stdout(self.output):
+                exec(
+                    compile(
+                        catalog._BOUNDED_CONTEXT, "<catalog-child>", "exec"
+                    ),
+                    self.namespace,
+                )
+        return json.loads(self.output.getvalue())
+
+    def assert_closed(self):
+        for fd in self.descriptors:
+            with self.test.assertRaises(OSError):
+                os.fstat(fd)
+
+
+class BoundedCatalogDriverTests(unittest.TestCase):
+    def test_real_driver_routes_git_aliases_and_commands_to_one_runner(self):
+        from search.operations.shared import source_identity
+        from search.operations.catalog import query
+
+        for cross in (False, True):
+            for snapshot in (False, True):
+                with self.subTest(cross=cross, snapshot=snapshot):
+                    fixture = BoundedDriverFixture(self, cross=cross)
+                    result = fixture.execute(snapshot=snapshot)
+                    self.assertEqual(
+                        set(result),
+                        {
+                            "source_revision",
+                            "plan",
+                            "compose",
+                            "authority",
+                            "images",
+                        },
+                    )
+                    self.assertEqual(len(fixture.calls), 15 if cross else 10)
+                    self.assertIs(
+                        execution.require_clean_revision,
+                        source_identity.require_clean_revision,
+                    )
+                    self.assertIs(
+                        query.require_clean_revision,
+                        source_identity.require_clean_revision,
+                    )
+                    self.assertIs(
+                        fixture.namespace["require_clean_revision"],
+                        source_identity.require_clean_revision,
+                    )
+                    fixture.factory.assert_called_once_with(fixture.repo)
+                    fixture.forbidden.assert_not_called()
+                    fixture.assert_closed()
+
+    def test_command_256_boundary_refuses_before_the_next_base_attempt(self):
+        fixture = BoundedDriverFixture(self, extras=246)
+        fixture.execute(maximum=256)
+        self.assertEqual(len(fixture.calls), 256)
+        fixture.assert_closed()
+        with self.assertRaises(AssertionError):
+            fixture.execute(maximum=255)
+        self.assertEqual(len(fixture.calls), 255)
+        self.assertEqual(fixture.output.getvalue(), "")
+        fixture.assert_closed()
+
+    def test_sixteen_failed_compatible_slots_share_the_capsule_budget(self):
+        fixture = BoundedDriverFixture(self, scan=True)
+        fixture.execute()
+        historical = {
+            args[-1].split(":", 1)[0]
+            for args, _timeout in fixture.calls
+            if "show" in args and not args[-1].startswith(REVISION)
+        }
+        self.assertEqual(len(historical), 16)
+        self.assertEqual(len(fixture.calls), 58)
+        fixture.assert_closed()
+        with self.assertRaises(AssertionError):
+            fixture.execute(maximum=20)
+        self.assertEqual(len(fixture.calls), 20)
+        fixture.assert_closed()
+
+    def test_late_recipe_mismatch_exhausts_scan_without_unbounded_fallback(
+        self,
+    ):
+        from search.operations.catalog import backend
+
+        count = len(
+            backend.STAGED_FILES + backend.BUILD_FILES + backend.DATA_FILES
+        )
+        compatible = BoundedDriverFixture(self, cross=True)
+        compatible.recipe_inputs(count)
+        compatible.execute()
+        self.assertEqual(len(compatible.calls), 11 + 2 * count)
+        compatible.assert_closed()
+        incompatible = BoundedDriverFixture(self, scan=True)
+        incompatible.recipe_inputs(count)
+        incompatible.mismatch_at = count - 1
+        with self.assertRaises(AssertionError):
+            incompatible.execute(maximum=256)
+        self.assertEqual(len(incompatible.calls), 256)
+        self.assertEqual(incompatible.output.getvalue(), "")
+        incompatible.forbidden.assert_not_called()
+        incompatible.assert_closed()
+
+    def test_monotonic_deadline_clips_each_command_and_stops_when_expired(
+        self,
+    ):
+        fixture = BoundedDriverFixture(self)
+        fixture.step = 0.125
+        fixture.execute(seconds=4)
+        self.assertTrue(
+            all(0 < timeout <= 4 for _args, timeout in fixture.calls)
+        )
+        fixture.step = 1
+        with self.assertRaises(AssertionError):
+            fixture.execute(seconds=4)
+        self.assertEqual(
+            [timeout for _args, timeout in fixture.calls], [4, 3, 2, 1]
+        )
+        self.assertEqual(fixture.output.getvalue(), "")
+        fixture.assert_closed()
+
+    def test_failed_source_guard_has_no_json_or_raw_private_diagnostic(self):
+        fixture = BoundedDriverFixture(self)
+        fixture.fail_at = 2
+        with self.assertRaisesRegex(
+            ValueError, "product_source_unavailable"
+        ) as error:
+            fixture.execute(snapshot=True)
+        self.assertNotIn("PRIVATE", str(error.exception))
+        self.assertEqual(fixture.output.getvalue(), "")
+        fixture.forbidden.assert_not_called()
+        fixture.assert_closed()
+
+
+class CatalogProtocolFixture:
+    """Execute bounded child code at the fake process boundary."""
+
+    def __init__(self, test):
+        self.test, self.driver = test, BoundedDriverFixture(test)
+        self.calls, self.records = [], []
+        self.fail_child, self.process_error = False, None
+        self.child_error = None
+        self.value = {
+            "source_revision": REVISION,
+            "plan": self.driver.plan,
+            "compose": {"fixture": "compose"},
+            "authority": {"fixture": "authority", "producer": REVISION},
+            "images": {"fixture": "image"},
+        }
+
+    def source(self, argv, *, timeout):
+        self.calls.append((list(argv), timeout))
+        return SimpleNamespace(
+            returncode=0, stdout=REVISION if "rev-parse" in argv else ""
+        )
+
+    def process(self, argv, *, timeout, environment):
+        self.test.assertEqual(argv[:5], ["python3", "-I", "-S", "-B", "-c"])
+        self.test.assertEqual(
+            environment,
+            {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"},
+        )
+        record = {"argv": list(argv), "timeout": timeout, "snapshot": None}
+        self.records.append(record)
+        if len(argv) > 9 and argv[9] != "-":
+            self.snapshot(record, Path(argv[9]))
+        if self.process_error is not None:
+            raise self.process_error
+        if argv[5] == catalog._BOUNDED_CONTEXT:
+            return self.execute_child(argv)
+        self.test.assertEqual(argv[5], catalog._CONTEXT)
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps(self.value).encode()
+        )
+
+    def snapshot(self, record, path):
+        self.test.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.test.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        self.test.assertEqual(
+            json.loads(path.read_bytes()), self.driver.snapshot
+        )
+        record["snapshot"] = path
+
+    def execute_child(self, argv):
+        try:
+            value = self.driver.execute(argv=argv[5:])
+        except (ValueError, AssertionError) as error:
+            if not self.fail_child:
+                raise
+            self.child_error = error
+            return SimpleNamespace(
+                returncode=1,
+                stdout="PRIVATE_CHILD_OUTPUT",
+                stderr="PRIVATE_CHILD_DIAGNOSTIC",
+            )
+        return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode())
+
+    def audit(self, *, snapshot=False, budget=None, timeout=3):
+        with (
+            patch.object(
+                self.driver.identity, "_runner", self.driver.forbidden
+            ),
+            patch.object(
+                catalog.image_build,
+                "_run",
+                side_effect=AssertionError("default process forbidden"),
+            ),
+        ):
+            return catalog.source_record(
+                self.driver.repo,
+                self.driver.config_file,
+                REVISION,
+                snapshot=self.driver.snapshot if snapshot else None,
+                timeout=timeout,
+                source_runner=self.source,
+                process_runner=self.process,
+                audit_budget=budget,
+            )
+
+    def assert_closed(self):
+        for record in self.records:
+            if record["snapshot"] is not None:
+                self.test.assertFalse(record["snapshot"].parent.exists())
+        self.driver.assert_closed()
+        self.driver.forbidden.assert_not_called()
+
+
+class CatalogAuditProtocolTests(unittest.TestCase):
+    def test_bounded_process_argv_and_child_share_clipped_parent_timeout(self):
+        for snapshot in (False, True):
+            with self.subTest(snapshot=snapshot):
+                fixture = CatalogProtocolFixture(self)
+                actual = fixture.audit(
+                    snapshot=snapshot,
+                    budget={"commands": 23, "seconds": 9},
+                    timeout=2.5,
+                )
+                self.assertEqual(actual, fixture.value)
+                record = fixture.records[0]
+                self.assertEqual(len(record["argv"]), 12)
+                self.assertEqual(record["argv"][10:], ["23", "2.5"])
+                self.assertEqual(record["timeout"], 2.5)
+                self.assertEqual(len(fixture.calls), 4)
+                self.assertEqual(len(fixture.driver.calls), 10)
+                self.assertTrue(
+                    all(t <= 2.5 for _args, t in fixture.driver.calls)
+                )
+                fixture.assert_closed()
+
+    def test_default_script_and_nine_or_ten_argument_protocol_are_unchanged(
+        self,
+    ):
+        for snapshot in (False, True):
+            with self.subTest(snapshot=snapshot):
+                fixture = CatalogProtocolFixture(self)
+                self.assertEqual(
+                    fixture.audit(snapshot=snapshot), fixture.value
+                )
+                argv = fixture.records[0]["argv"]
+                self.assertEqual(len(argv), 10 if snapshot else 9)
+                self.assertEqual(argv[5], catalog._CONTEXT)
+                self.assertEqual(len(fixture.calls), 4)
+                self.assertEqual(fixture.driver.calls, [])
+                fixture.assert_closed()
+
+    def test_invalid_budget_rejects_before_any_source_or_child_command(self):
+        valid = {"commands": 1, "seconds": 1}
+        budgets = [
+            [],
+            valid | {"extra": True},
+            {"commands": 1},
+            *(
+                valid | {"commands": value}
+                for value in (False, 1.0, 0, 257, "1")
+            ),
+            *(
+                valid | {"seconds": value}
+                for value in (True, 0, 121, float("nan"), float("inf"))
+            ),
+        ]
+        for budget in budgets:
+            with self.subTest(budget=budget):
+                fixture = CatalogProtocolFixture(self)
+                with self.assertRaisesRegex(
+                    catalog.SharedCatalogError, "audit_budget_invalid"
+                ):
+                    fixture.audit(budget=budget)
+                self.assertEqual((fixture.calls, fixture.records), ([], []))
+                fixture.assert_closed()
+
+    def test_child_construction_error_closes_fds_and_hides_private_diagnostic(
+        self,
+    ):
+        fixture = CatalogProtocolFixture(self)
+        fixture.driver.query_failure, fixture.fail_child = True, True
+        old_argv, old_path = sys.argv, sys.path
+        with self.assertRaisesRegex(
+            catalog.SharedCatalogError, "source_audit_failed"
+        ) as error:
+            fixture.audit(snapshot=True, budget={"commands": 32, "seconds": 3})
+        self.assertIsInstance(fixture.child_error, ValueError)
+        self.assertEqual(
+            str(fixture.child_error), "PRIVATE_QUERY_CONSTRUCTION"
+        )
+        self.assertNotIn("PRIVATE", str(error.exception))
+        self.assertEqual(fixture.driver.output.getvalue(), "")
+        self.assertIs(sys.argv, old_argv)
+        self.assertIs(sys.path, old_path)
+        fixture.assert_closed()
+
+    def test_parent_process_error_removes_snapshot_before_propagating(self):
+        fixture = CatalogProtocolFixture(self)
+        fixture.process_error = TimeoutError("bounded process unavailable")
+        with self.assertRaises(TimeoutError) as error:
+            fixture.audit(snapshot=True, budget={"commands": 32, "seconds": 3})
+        self.assertIs(error.exception, fixture.process_error)
+        fixture.assert_closed()

@@ -444,7 +444,10 @@ class Session:
     def candidate_inputs(self, record):
         source = frozen_source(self.profile, record["revision"])
         require(
-            require_clean_revision(source) == record["revision"],
+            require_clean_revision(
+                source, **getattr(self.provider, "source_options", {})
+            )
+            == record["revision"],
             "candidate_source_changed",
         )
         policy = validate_shared_request_policy(

@@ -92,15 +92,13 @@ class _ImageBinding:
         )
 
     def refresh(self, owner):
-        from search.operations.deployment import source_bundle
         from search.operations.deployment.images import authority as images
         from search.operations.state import _marker
 
         self.require_owner(owner)
-        root = _source(self._source)
+        root = owner._source(self._source)
         contract.require(
-            source_bundle.committed_source_plan(root, self._source["revision"])
-            == self._plan
+            owner._source_plan(root, self._source["revision"]) == self._plan
             and self._store.read("product.json") == _marker(self._config)
             and images.read_completed_images(
                 self._config, self._store, self._plan
@@ -125,7 +123,7 @@ class Provider:
         self.roles_sha256 = control.roles_sha256
         self.provider_sha256 = control.provider_sha256
         self.anchor = control.provider
-        self.source_root = _source(self.anchor["source"])
+        self.source_root = self._source(self.anchor["source"])
         self.source_revision = self.anchor["source"]["revision"]
         self.config = configuration(
             self.anchor["configuration"], self.source_root
@@ -146,14 +144,26 @@ class Provider:
             )
         return self.stores[config.state_root]
 
-    def _verified_backend_images(self, config, source_root, source_revision):
+    def _source(self, value):
+        return _source(value)
+
+    def _source_plan(self, root, revision):
         from search.operations.deployment import source_bundle
+
+        return source_bundle.committed_source_plan(root, revision)
+
+    def _catalog_context(self, source, filename, config, store):
+        from search.operations.deployment.candidate import catalog
+
+        return catalog.load_context(source, filename, config, store)
+
+    def _verified_backend_images(self, config, source_root, source_revision):
         from search.operations.deployment.images import authority as images
         from search.operations.deployment.release import controller
 
         source = {"root": str(source_root), "revision": source_revision}
-        root = _source(source)
-        plan = source_bundle.committed_source_plan(root, source_revision)
+        root = self._source(source)
+        plan = self._source_plan(root, source_revision)
         store = self.store(config)
         sealed = images.read_completed_images(config, store, plan)
         inspected = controller._images(self.docker, plan, sealed)
@@ -173,12 +183,11 @@ class Provider:
 
     def load(self):
         from search.operations.deployment import inference, composition
-        from search.operations.deployment import source_bundle
         from search.operations.deployment.release import controller
 
         self._lock_states()
         self.store_native = self.store(self.config)
-        self.source_plan = source_bundle.committed_source_plan(
+        self.source_plan = self._source_plan(
             self.source_root, self.source_revision
         )
         from search.operations.deployment.candidate.policy import (
@@ -265,7 +274,7 @@ class Provider:
         configs, catalogs = {self.config.state_root: self.config}, {}
         for _name, record in self.backend_records:
             config = configuration(
-                record["configuration"], _source(record["catalog_source"])
+                record["configuration"], self._source(record["catalog_source"])
             )
             catalogs[config.state_root] = config
             for entry in (
@@ -338,17 +347,14 @@ class Provider:
     def _refresh_authorities(self, *, deadline=None):
         from search.operations.deployment import inference
 
-        self.control.refresh()
-        contract.require(
-            self.control.roles_sha256 == self.roles_sha256, "cas_conflict"
-        )
+        self._roles_admission()
         contract.require(
             self.control.provider == self.anchor
             and contract.digest(self.anchor) == self.provider_sha256
             and self.control.provider_sha256 == self.provider_sha256,
             "authority_changed",
         )
-        _source(self.anchor["source"])
+        self._source(self.anchor["source"])
         contract.require(
             configuration(self.anchor["configuration"], self.source_root)
             == self.config,
@@ -397,7 +403,7 @@ class Provider:
                 "authority_changed",
             )
             backend.catalog.refresh()
-            _source(backend.record["source"])
+            self._source(backend.record["source"])
             configuration(
                 backend.record["configuration"],
                 Path(backend.record["catalog_source"]["root"]),
@@ -409,6 +415,15 @@ class Provider:
                 _catalog_authority(
                     catalog, timeout=self.remaining(120, deadline=deadline)
                 )
+
+    def _roles_admission(self):
+        self.control.refresh()
+        contract.require(
+            self.control.roles_sha256 == self.roles_sha256, "cas_conflict"
+        )
+
+    def _tls_reference(self):
+        return self.roles["tls_plan_ref"]
 
     def observe(self, backends=None, catalogs=None):
         backends = self.backends if backends is None else backends
@@ -542,7 +557,6 @@ class Provider:
         from search.operations.deployment import inference, inference_runtime
         from search.operations.deployment import private_api_tls
         from search.operations.deployment.candidate import probe
-        from search.operations.deployment.images import build
 
         active = self.backends[0]
         identifier = active.lease["api_container_id"]
@@ -553,7 +567,7 @@ class Provider:
             "runtime_changed",
         )
         self._checkpoint_authorities(deadline=deadline)
-        tls = self.roles["tls_plan_ref"]
+        tls = self._tls_reference()
         contract.require(
             hashlib.sha256(authority.read_private(tls["path"])).hexdigest()
             == tls["sha256"],
@@ -577,17 +591,8 @@ class Provider:
             policy,
             timeout=self.remaining(20, deadline=deadline),
         )
-        result = build._run(
-            [
-                "nvidia-smi",
-                "--query-compute-apps=gpu_uuid,pid",
-                "--format=csv,noheader,nounits",
-            ],
-            timeout=self.remaining(15, deadline=deadline),
-            environment={
-                "PATH": "/usr/local/bin:/usr/bin:/bin",
-                "LANG": "C.UTF-8",
-            },
+        result = self._compute_process(
+            deadline=deadline,
         )
         contract.require(result.returncode == 0, "model_changed")
         self.compute_sha256 = _compute(self.config, result.stdout)
@@ -600,6 +605,22 @@ class Provider:
         self._checkpoint_runtime(deadline=deadline)
         self._checkpoint_authorities(deadline=deadline)
         return resident
+
+    def _compute_process(self, *, deadline=None):
+        from search.operations.deployment.images import build
+
+        return build._run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=gpu_uuid,pid",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=self.remaining(15, deadline=deadline),
+            environment={
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "LANG": "C.UTF-8",
+            },
+        )
 
     def remaining(self, maximum, *, deadline=None):
         left = (
@@ -665,6 +686,7 @@ def _catalog_authority(binding, *, timeout):
         binding.config_file,
         context["source_revision"],
         timeout=timeout,
+        **catalog._audit_runners(context),
     )
     contract.require(
         current
@@ -768,8 +790,8 @@ def _backend(provider, record, name):
     from search.operations.deployment import credentials, composition
     from search.operations.deployment.candidate import catalog
 
-    root = _source(record["source"])
-    catalog_root = _source(record["catalog_source"])
+    root = provider._source(record["source"])
+    catalog_root = provider._source(record["catalog_source"])
     config = configuration(record["configuration"], catalog_root)
     contract.require(
         replace(config, state_root=provider.config.state_root)
@@ -777,7 +799,7 @@ def _backend(provider, record, name):
         "authority_changed",
     )
     store = provider.store(config)
-    context, value = catalog.load_context(
+    context, value = provider._catalog_context(
         catalog_root, Path(record["configuration"]["path"]), config, store
     )
     key = credentials.read_api_key_authority(config, store)

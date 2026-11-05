@@ -26,6 +26,8 @@ SOURCE_PATHS = (
     "scripts/validate_search_web.py",
     "scripts/prepare_search_models.py",
     "scripts/search_jobs.py",
+    "scripts/update_search_backend.py",
+    "scripts/participate_backend_binding.py",
 )
 
 
