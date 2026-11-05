@@ -19,10 +19,11 @@ from search.operations.catalog import backend, execution, runtime
 from search.operations.deployment import (
     composition,
     inference,
-    product_package,
     source_bundle,
 )
 from search.operations.deployment.images import authority as image_evidence
+from search.operations.deployment.payload import export
+from search.operations.deployment.payload import plan as package_plan
 from search.operations.shared import private_io
 from search.operations.shared.source_identity import require_clean_revision
 
@@ -215,7 +216,7 @@ def package_product(
             )
             source_files = {
                 name: source_root / name
-                for name in product_package.source_names(revision)
+                for name in package_plan.source_names(revision)
             }
             metadata_files = {
                 name: Path(catalog_plan["bundle_path"]) / name
@@ -223,7 +224,7 @@ def package_product(
             }
             models, model_files = _models(config)
             receipt = execution.read_record(context["root"], "images.json")
-            plan = product_package.plan_product_package(
+            plan = package_plan.create(
                 revision,
                 source=_asset_records(
                     source_files, maximum=source_artifact.MAX_ARTIFACT_BYTES
@@ -257,7 +258,7 @@ def package_product(
                 ):
                     raise ValueError("product_package_image_authority_changed")
 
-            result = product_package.export_product_package(
+            result = export.create(
                 plan,
                 destination,
                 source_files=source_files,

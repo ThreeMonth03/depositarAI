@@ -93,6 +93,10 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
         self.write("search/operations/deployment/credentials.py", "")
+        self.write("search/operations/deployment/payload/contract.py", "")
+        self.write("search/operations/deployment/payload/plan.py", "")
+        self.write("search/operations/deployment/payload/archive.py", "")
+        self.write("search/operations/deployment/payload/export.py", "")
         self.environment = {
             **os.environ,
             "PATH": str(Path(sys.executable).parent)
@@ -200,6 +204,10 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/release/runtime.py",
             "search/operations/deployment/inference_runtime.py",
             "search/operations/deployment/credentials.py",
+            "search/operations/deployment/payload/contract.py",
+            "search/operations/deployment/payload/plan.py",
+            "search/operations/deployment/payload/archive.py",
+            "search/operations/deployment/payload/export.py",
             "scripts/search_model_source.py",
             "scripts/search_dictionary_permissions.py",
             "scripts/update_search_backend.py",

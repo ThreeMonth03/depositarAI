@@ -37,6 +37,10 @@ python3 scripts/depositarai.py restore-product \
 clean checkout 及 CLI help。Git 子程序隔離外部 Git 設定與環境，避免其他 repository
 設定影響這次還原。
 
+來源政策由包內已認證的歷史 revision 決定。工具支援現行 `payload/` 分層與舊的
+`product_package.py` 封裝配置；舊包不需要改寫。未知、不完整或混合兩套模組的來源
+配置會被拒絕，不能靠補入轉接檔來跳過來源核對。
+
 大型模型與 `images.tar` 留在原包，只還原來源並準備小型 metadata 驗證副本，避免
 再複製整個大型 payload。**原包是還原目錄持續依賴的素材，必須保留。**
 後續安裝使用素材前仍須重新核對，不能把這次成功收據當作檔案永遠不變的證明。

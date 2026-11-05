@@ -20,21 +20,21 @@ from unittest import mock
 from scripts import prepare_search_models
 from search.catalog.build import builder, identity
 from search.catalog import embedding as embedding_policy
-from search.catalog.bundle import CatalogBundle
+from search.catalog.bundle import ARTIFACT_NAMES, MANIFEST_NAME, CatalogBundle
 from search.operations import doctor
-from search.operations.deployment import product_package, source_bundle
+from search.operations.deployment import composition, source_bundle
+from search.operations.deployment.images import build as image_build
+from search.operations.deployment.payload import archive as image_archive
+from search.operations.deployment.payload import plan as package_plan
 from search.operations.deployment.payload import restore as product_restore
 from search.operations.shared import private_io
 from search.reranker import model as reranker_model
-from tests.unit.deployment.test_product_package import FakeDocker, record
+from tests.unit.deployment.payload.fixtures import FakeDocker, record
 from tests.unit.operations.test_metadata_sync import dataset
 
 
 ROOT = Path(__file__).resolve().parents[4]
-APP_PATHS = {
-    role: "fixture/" + role + ".py"
-    for role in product_package.image_build.SERVICES
-}
+APP_PATHS = {role: "fixture/" + role + ".py" for role in image_build.SERVICES}
 CATALOG_PATHS = {
     "fess-search": ("fixture/fess.py",),
     "opensearch-search": ("fixture/opensearch.py",),
@@ -195,7 +195,7 @@ class ProductRestoreTests(unittest.TestCase):
             ),
             "search/operations/deployment/product_package.py": (
                 "MAX_RECORD_BYTES = 1024**2\nCATALOG_ROLES = "
-                + repr(product_package.CATALOG_ROLES)
+                + repr(package_plan.CATALOG_ROLES)
                 + "\n"
             ).encode(),
             "search/operations/catalog/backend.py": (
@@ -254,9 +254,9 @@ class ProductRestoreTests(unittest.TestCase):
         self.source_tree = (
             self.git("rev-parse", "HEAD^{tree}").decode().strip()
         )
-        archive, bundle, revision = product_package.source_names(
-            self.revision
-        )[:-1]
+        archive, bundle, revision = package_plan.source_names(self.revision)[
+            :-1
+        ]
         source = self.package / "source"
         source.mkdir(mode=0o700)
         self.git(
@@ -293,8 +293,8 @@ class ProductRestoreTests(unittest.TestCase):
             "files": {},
         }
         for name in (
-            *product_package.ARTIFACT_NAMES,
-            product_package.MANIFEST_NAME,
+            *ARTIFACT_NAMES,
+            MANIFEST_NAME,
         ):
             raw = (sealed / name).read_bytes()
             self.write(self.package, "metadata/" + name, raw)
@@ -363,7 +363,7 @@ class ProductRestoreTests(unittest.TestCase):
     def _package_fixture(self):
         sources = {
             name: record((self.package / "source" / name).read_bytes())
-            for name in product_package.source_names(self.revision)
+            for name in package_plan.source_names(self.revision)
         }
         catalog = {
             "project": "depositar-ai-catalog-"
@@ -384,7 +384,7 @@ class ProductRestoreTests(unittest.TestCase):
             pass
         layer = stream.getvalue()
         images, configs = {}, {}
-        for role in product_package.IMAGE_ROLES:
+        for role in package_plan.IMAGE_ROLES:
             digest = None
             if role in APP_PATHS:
                 name = APP_PATHS[role]
@@ -434,7 +434,7 @@ class ProductRestoreTests(unittest.TestCase):
                 "image_environment_sha256": environment_digest,
             }
             images[role].update(
-                {"reference": product_package.composition.OLLAMA_IMAGE}
+                {"reference": composition.OLLAMA_IMAGE}
                 if role == "ollama"
                 else {
                     "revision": self.catalog_revision
@@ -443,7 +443,7 @@ class ProductRestoreTests(unittest.TestCase):
                     "source_sha256": digest,
                 }
             )
-        plan = product_package.plan_product_package(
+        plan = package_plan.create(
             self.revision,
             source=sources,
             images=images,
@@ -732,7 +732,7 @@ class ProductRestoreTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_metadata_semantics_are_checked_after_outer_hashes(self):
-        name = product_package.ARTIFACT_NAMES[0]
+        name = ARTIFACT_NAMES[0]
         raw = b"not a gzip metadata artifact"
         self.write(self.package, "metadata/" + name, raw)
         self.manifest["metadata"]["files"][name] = record(raw)
@@ -776,6 +776,7 @@ sys.meta_path.insert(0, RejectBuilder())
                 self.repo,
                 self.package,
                 self.anchor,
+                self.revision,
             ],
             timeout=300,
         )
@@ -819,7 +820,7 @@ sys.meta_path.insert(0, RejectBuilder())
                 self.destination
                 / "metadata"
                 / ("sha256-" + self.metadata["bundle_id"])
-                / product_package.ARTIFACT_NAMES[0]
+                / ARTIFACT_NAMES[0]
             )
             target.chmod(0o600)
             target.write_bytes(b"x" * target.stat().st_size)
@@ -883,9 +884,9 @@ sys.meta_path.insert(0, RejectBuilder())
                 product_restore, "_open_asset", side_effect=replace
             ),
             mock.patch.object(
-                product_package,
-                "_check_archive",
-                wraps=product_package._check_archive,
+                image_archive,
+                "check_archive",
+                wraps=image_archive.check_archive,
             ) as parsed,
         ):
             self.rejected("dependency_changed")
@@ -922,6 +923,80 @@ sys.meta_path.insert(0, RejectBuilder())
         self.assertEqual(
             (self.destination / "sentinel").read_bytes(), sentinel
         )
+
+    def _source_layout(self, layout):
+        legacy = "search/operations/deployment/product_package.py"
+        prefix = "search/operations/deployment/payload/"
+        original = self.git("show", self.catalog_revision + ":" + legacy)
+        self.write(self.repo, legacy, original)
+        for name in ("contract", "plan", "archive", "export"):
+            (self.repo / (prefix + name + ".py")).unlink(missing_ok=True)
+        if layout != "mixed":
+            (self.repo / legacy).unlink()
+        if layout != "unknown":
+            self.write(self.repo, prefix + "__init__.py", b'"""Payload."""\n')
+            self.write(
+                self.repo,
+                prefix + "contract.py",
+                b"MAX_RECORD_BYTES = 1024**2\n",
+            )
+            self.write(
+                self.repo,
+                prefix + "plan.py",
+                (
+                    "CATALOG_ROLES = " + repr(package_plan.CATALOG_ROLES)
+                ).encode(),
+            )
+            if layout != "partial":
+                for name in ("archive", "export"):
+                    self.write(self.repo, prefix + name + ".py", b"\n")
+        self.revision = self.commit()
+        self.source_tree = (
+            self.git("rev-parse", "HEAD^{tree}").decode().strip()
+        )
+        source = self.package / "source"
+        for path in source.iterdir():
+            path.unlink()
+        archive, bundle, revision = package_plan.source_names(self.revision)[
+            :-1
+        ]
+        self.git(
+            "archive",
+            "--format=tar.gz",
+            "--prefix=depositar-ai/",
+            "--output=" + str(source / archive),
+            self.revision,
+        )
+        self.git("bundle", "create", source / bundle, "HEAD")
+        self.write(source, revision, (self.revision + "\n").encode())
+        for name in (archive, bundle):
+            (source / name).chmod(0o600)
+        self.write(
+            source,
+            "SHA256SUMS",
+            "".join(
+                record((source / name).read_bytes())["sha256"]
+                + "  "
+                + name
+                + "\n"
+                for name in (archive, bundle, revision)
+            ).encode(),
+        )
+        self._package_fixture()
+
+    def test_canonical_packaged_policy_survives_real_child_restore(self):
+        self._source_layout("canonical")
+        result = self.restore()
+        self.assertEqual(result["status"], "package_restored")
+        self.assertEqual(result["source_tree"], self.source_tree)
+        self.assertTrue(result["source_closures_verified"])
+
+    def test_unknown_partial_and_mixed_source_layouts_are_rejected(self):
+        for layout in ("unknown", "partial", "mixed"):
+            with self.subTest(layout=layout):
+                self._source_layout(layout)
+                self.destination = self.root / ("restore-" + layout)
+                self.rejected("source_closure_invalid")
 
 
 if __name__ == "__main__":

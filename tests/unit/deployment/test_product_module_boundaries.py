@@ -729,5 +729,39 @@ class ImageFixtureConsumerBoundaryTests(unittest.TestCase):
                 )
 
 
+class PayloadBoundaryTests(unittest.TestCase):
+    def test_payload_owners_keep_admission_and_readers_outside_publication(
+        self,
+    ):
+        directory = ROOT / "search/operations/deployment/payload"
+        owner = "search.operations.deployment.payload."
+        boundaries = {
+            "contract": ("plan", "archive", "export", "collect", "restore"),
+            "plan": ("archive", "export", "collect", "restore"),
+            "archive": ("plan", "export", "collect", "restore"),
+            "export": ("collect", "restore"),
+        }
+        for name, forbidden in boundaries.items():
+            with self.subTest(owner=name):
+                self.assertEqual(
+                    [],
+                    forbidden_dependencies(
+                        source_dependencies(directory / (name + ".py")),
+                        tuple(owner + value for value in forbidden),
+                    ),
+                )
+        self.assertFalse((directory.parent / "product_package.py").exists())
+        for path in directory.parent.rglob("*.py"):
+            self.assertNotIn(
+                "search.operations.deployment.product_package",
+                source_dependencies(path),
+            )
+        initializer = ast.parse((directory / "__init__.py").read_text())
+        self.assertEqual(len(initializer.body), 1)
+        self.assertIsInstance(initializer.body[0], ast.Expr)
+        self.assertIsInstance(initializer.body[0].value, ast.Constant)
+        self.assertIsInstance(initializer.body[0].value.value, str)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,8 @@ import unittest
 from unittest.mock import patch
 
 from search.operations.config import GPUConfig, ProductConfig
-from search.operations.deployment import product_package
+from search.operations.deployment.payload import export as package_export
+from search.operations.deployment.payload import plan as package_plan
 from search.operations.deployment.payload import collect as packaging
 from search.operations.shared import private_io
 
@@ -124,7 +125,7 @@ class ProductPackagingTests(unittest.TestCase):
                 side_effect=ValueError("incomplete"),
             ),
             patch.object(packaging.source_artifact, "package") as scanner,
-            patch.object(product_package, "export_product_package") as export,
+            patch.object(package_export, "create") as export,
             self.assertRaisesRegex(ValueError, "incomplete"),
         ):
             self.package()
@@ -165,9 +166,7 @@ class ProductPackagingTests(unittest.TestCase):
                     failing,
                     side_effect=ValueError("source_rejected"),
                 ),
-                patch.object(
-                    product_package, "export_product_package"
-                ) as export,
+                patch.object(package_export, "create") as export,
                 self.assertRaisesRegex(ValueError, "source_rejected"),
             ):
                 self.package()
@@ -190,10 +189,10 @@ class ProductPackagingTests(unittest.TestCase):
         )
         authority = {"images": {}}
         images = {}
-        for index, role in enumerate(product_package.IMAGE_ROLES, 1):
+        for index, role in enumerate(package_plan.IMAGE_ROLES, 1):
             proof = {
                 "revision": catalog_revision
-                if role in product_package.CATALOG_ROLES
+                if role in package_plan.CATALOG_ROLES
                 else REVISION,
                 "source_sha256": "d" * 64,
                 "image_id": "sha256:" + format(index, "x") * 64,
@@ -221,13 +220,13 @@ class ProductPackagingTests(unittest.TestCase):
         ).hexdigest()
         models = {
             role: {"weights": {"bytes": 1, "sha256": "f" * 64}}
-            for role in product_package.MODEL_ROLES
+            for role in package_plan.MODEL_ROLES
         }
 
         def source_package(path, revision, scanner, *, repo_root):
             self.assertEqual(REVISION, revision)
             path.mkdir(mode=0o700)
-            names = product_package.source_names(revision)
+            names = package_plan.source_names(revision)
             for name in names[:-1]:
                 (path / name).write_bytes(
                     (revision + "\n").encode()
@@ -252,12 +251,12 @@ class ProductPackagingTests(unittest.TestCase):
             self.assertTrue(plan["models"]["delivery"] == "bundled")
             self.assertFalse(plan["install_complete"])
             self.assertEqual(
-                set(product_package.IMAGE_ROLES), set(plan["images"])
+                set(package_plan.IMAGE_ROLES), set(plan["images"])
             )
-            for role in product_package.BUILT_ROLES:
+            for role in package_plan.BUILT_ROLES:
                 self.assertEqual(
                     catalog_revision
-                    if role in product_package.CATALOG_ROLES
+                    if role in package_plan.CATALOG_ROLES
                     else REVISION,
                     plan["images"][role]["revision"],
                 )
@@ -304,9 +303,7 @@ class ProductPackagingTests(unittest.TestCase):
                 "read_record",
                 return_value={"verified": "images"},
             ),
-            patch.object(
-                product_package, "export_product_package", side_effect=export
-            ),
+            patch.object(package_export, "create", side_effect=export),
         ):
             self.assertEqual("packaged", self.package()["status"])
         restore.assert_called_once()
