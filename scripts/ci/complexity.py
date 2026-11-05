@@ -45,6 +45,7 @@ GATED_PATHS = (
     "search/operations/deployment/release/runtime.py",
     "search/operations/deployment/inference_runtime.py",
     "search/operations/deployment/credentials.py",
+    "search/operations/deployment/gateway/probe_runtime.py",
     "search/operations/deployment/payload/contract.py",
     "search/operations/deployment/payload/plan.py",
     "search/operations/deployment/payload/archive.py",

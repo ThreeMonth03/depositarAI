@@ -156,8 +156,7 @@ def _profile(row, *, image, identity, container_id, exited):
     return state["ExitCode"]
 
 
-def verify_gateway_from_image(
-    docker,
+def _admit_probe(
     *,
     source_plan,
     image_inspection,
@@ -169,17 +168,7 @@ def verify_gateway_from_image(
     directory_path,
     run_id,
 ):
-    """Return closed HTTP evidence after exact exited-helper removal is proven.
-
-    The dedicated retained directory must be empty and private. Its no-clobber
-    intent/container/failure records quarantine uncertain daemon work: this
-    function never adopts a prior run, retries, kills or removes running work.
-    A failed smoke probe also raises, after safe exited-helper cleanup if
-    possible. ``manifest_sha256`` is the catalog manifest, not the
-    source-bundle digest. Normal success uses exactly twelve bounded native
-    calls; the caller reserves that capacity in its shared Docker budget and
-    overall workflow deadline.
-    """
+    """Admit an exact image and empty private directory before probe intent."""
     if (
         type(revision) is not str
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
@@ -216,6 +205,95 @@ def verify_gateway_from_image(
         raise GatewayProbeRuntimeError(
             "gateway_probe_runtime_identity_invalid"
         ) from None
+
+
+def _website_result(
+    output,
+    *,
+    start_failed,
+    exit_code,
+    revision,
+    bundle_id,
+    manifest_sha256,
+):
+    """Decode a ready result only after a successful start and exact exit."""
+    website = None
+    if not start_failed and exit_code == 0:
+        try:
+            website = release_probe._web(
+                release_probe._json(output),
+                revision,
+                bundle_id,
+                manifest_sha256,
+            )
+        except Exception:
+            pass
+    return website
+
+
+def _verify_absence(call, identity, container_id, run_id, *, by_id=False):
+    """Confirm the fixed absence views through the caller's guarded call."""
+    filters = (
+        ["id=" + container_id]
+        if by_id
+        else [
+            "name=" + identity["container_name"],
+            LABEL + "run=" + run_id,
+        ]
+    )
+    for index, value in enumerate(filters):
+        argument = value if by_id or index == 0 else "label=" + value
+        _require(
+            call(
+                [
+                    "ps",
+                    "--all",
+                    "--no-trunc",
+                    "--filter",
+                    argument,
+                    "--format",
+                    "{{.ID}}",
+                ]
+            ).strip()
+            == b""
+        )
+
+
+def verify_gateway_from_image(
+    docker,
+    *,
+    source_plan,
+    image_inspection,
+    image_proof,
+    revision,
+    bundle_id,
+    manifest_sha256,
+    directory_fd,
+    directory_path,
+    run_id,
+):
+    """Return closed HTTP evidence after exact exited-helper removal is proven.
+
+    The dedicated retained directory must be empty and private. Its no-clobber
+    intent/container/failure records quarantine uncertain daemon work: this
+    function never adopts a prior run, retries, kills or removes running work.
+    A failed smoke probe also raises, after safe exited-helper cleanup if
+    possible. ``manifest_sha256`` is the catalog manifest, not the
+    source-bundle digest. Normal success uses exactly twelve bounded native
+    calls; the caller reserves that capacity in its shared Docker budget and
+    overall workflow deadline.
+    """
+    _admit_probe(
+        source_plan=source_plan,
+        image_inspection=image_inspection,
+        image_proof=image_proof,
+        revision=revision,
+        bundle_id=bundle_id,
+        manifest_sha256=manifest_sha256,
+        directory_fd=directory_fd,
+        directory_path=directory_path,
+        run_id=run_id,
+    )
 
     identity = {
         "schema_version": 1,
@@ -287,32 +365,6 @@ def verify_gateway_from_image(
         )
         _equal(actual.get("Config"), image_inspection["Config"])
 
-    def absence(*, by_id=False):
-        filters = (
-            ["id=" + container_id]
-            if by_id
-            else [
-                "name=" + identity["container_name"],
-                LABEL + "run=" + run_id,
-            ]
-        )
-        for index, value in enumerate(filters):
-            argument = value if by_id or index == 0 else "label=" + value
-            _require(
-                call(
-                    [
-                        "ps",
-                        "--all",
-                        "--no-trunc",
-                        "--filter",
-                        argument,
-                        "--format",
-                        "{{.ID}}",
-                    ]
-                ).strip()
-                == b""
-            )
-
     def inspect(exited):
         value = image_build._json(
             call(
@@ -335,7 +387,7 @@ def verify_gateway_from_image(
     try:
         publish("intent.json", {**identity, "status": "probe_started"})
         verify_image()
-        absence()
+        _verify_absence(call, identity, container_id, run_id)
         command = [
             "create",
             "--pull",
@@ -414,22 +466,19 @@ def verify_gateway_from_image(
         # inspected, exact exited helper may be removed; uncertainty is
         # retained.
         exit_code = inspect(True)
-        website = None
-        if not start_failed and exit_code == 0:
-            try:
-                website = release_probe._web(
-                    release_probe._json(output),
-                    revision,
-                    bundle_id,
-                    manifest_sha256,
-                )
-            except Exception:
-                pass
+        website = _website_result(
+            output,
+            start_failed=start_failed,
+            exit_code=exit_code,
+            revision=revision,
+            bundle_id=bundle_id,
+            manifest_sha256=manifest_sha256,
+        )
         _require(
             call(["rm", container_id]).strip() == container_id.encode("ascii")
         )
-        absence(by_id=True)
-        absence()
+        _verify_absence(call, identity, container_id, run_id, by_id=True)
+        _verify_absence(call, identity, container_id, run_id)
         removed = True
         verify_image()
         _require(website is not None and website["code"] == "ready")
