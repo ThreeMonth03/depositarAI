@@ -30,6 +30,7 @@ depositarAI/
 │   │   └── build/             離線 metadata 正規化、封存及 builder CLI
 │   ├── planning/              條件、日期、clock 與模型規劃
 │   ├── quality/               離線品質計畫契約與回應核對，不操作服務
+│   ├── trace/                 自願測試紀錄、私有保存與離線匯出
 │   ├── scope.py               搜尋用途分類
 │   ├── model_policy.py        固定模型身分與 request 限額
 │   ├── transport/             有界 HTTP transport
@@ -77,6 +78,7 @@ depositarAI/
 | 瀏覽器搜尋 session、訊息與存取狀態 | `web/src/search/session.ts`；不依賴呈現套件 |
 | 瀏覽器 HTTP 型別、傳輸與錯誤分類 | `web/src/api.ts` |
 | BFF session、caller identity 與私有 upstream client | `search/web/` |
+| 自願測試紀錄契約、私有保存與離線維護 | `search/trace/`；BFF 接點留在 `search/web/` |
 | Django／DRF 設定、HTTP 生命週期與共用 view 支援 | `search/http/`；不匯入搜尋或維運 domain |
 | 對話與 HTTP 契約 | `search/api/conversation/` |
 | OpenSearch 條件檢索、Haystack RRF 與重排 | `search/api/retrieval/`；純條件／時間規則放 `search/planning/` |

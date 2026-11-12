@@ -64,7 +64,9 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/catalog/build/builder.py`、`normalize.py`。
 - `search/http`、`search/api/shared/middleware.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
+- `search/web/trace.py`、`turn.py`。
 - `search/quality`、`search/operations/deployment/candidate`。
+- `search/trace` 的完整目錄。
 - `search/operations/deployment/provider`。
 - `search/operations/deployment/transition`。
 - `search/operations/documents` 的完整目錄。
@@ -72,6 +74,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/operations/jobs/archive.py`。
 - `search/operations/deployment/frontend/policy.py`。
 - `search/operations/deployment/frontend/binding.py`。
+- `search/operations/deployment/frontend/traces.py`。
 - `search/operations/deployment/images/build.py`。
 - `search/operations/deployment/release/runtime.py`。
 - `search/operations/deployment/inference_runtime.py`。

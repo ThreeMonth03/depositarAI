@@ -43,14 +43,45 @@ export type TurnResult = {
     catalog_manifest_sha256: string;
   };
 };
+export type TracePolicy = {
+  available: boolean;
+  notice_version: "search-trace-v1";
+  retention_days: number;
+};
+export const CAPTURE_STATUSES = [
+  "disabled",
+  "ready",
+  "queued",
+  "captured",
+  "oversize",
+  "queue_full",
+  "session_limit",
+  "total_limit",
+  "unavailable",
+  "revoked",
+  "incomplete",
+  "shutdown",
+  "projection_invalid",
+] as const;
+export type CaptureStatus = (typeof CAPTURE_STATUSES)[number];
+export type TraceStatus = {
+  enabled: boolean;
+  test_session_id: string | null;
+  notice_version: "search-trace-v1";
+  retention_days: number;
+  capture_status: CaptureStatus;
+  deletion_status: "none" | "pending" | "complete" | "unavailable";
+};
 export type Session = {
   token: string;
   version: number;
   expires_in: number;
+  trace?: TraceStatus;
   max_turns: number;
   revision: string;
 };
 export type Access = {
+  trace_policy?: TracePolicy;
   mode: "private" | "mixed" | "login_required";
   principal: { kind: "private" | "guest" | "user"; id: string | null };
   can_search: true;
@@ -59,6 +90,7 @@ export type Access = {
   limits: { turns: number | null; window_seconds: number | null };
 };
 export type Reply = {
+  trace?: TraceStatus;
   version: number;
   result: TurnResult;
   context_used: { reference_date: string; timezone: string };
@@ -207,6 +239,46 @@ function result(value: unknown): boolean {
   );
 }
 
+function tracePolicy(value: unknown): value is TracePolicy {
+  return (
+    record(value) &&
+    typeof value.available === "boolean" &&
+    value.notice_version === "search-trace-v1" &&
+    typeof value.retention_days === "number" &&
+    Number.isFinite(value.retention_days) &&
+    value.retention_days > 0
+  );
+}
+
+export function decodeTrace(value: unknown): TraceStatus {
+  if (
+    !record(value) ||
+    !tracePolicy({ ...value, available: true }) ||
+    typeof value.enabled !== "boolean" ||
+    (value.test_session_id !== null &&
+      (typeof value.test_session_id !== "string" ||
+        !/^[a-f0-9]{32}$/.test(value.test_session_id))) ||
+    (value.enabled && value.test_session_id === null) ||
+    !CAPTURE_STATUSES.includes(value.capture_status as CaptureStatus) ||
+    !["none", "pending", "complete", "unavailable"].includes(
+      value.deletion_status as string,
+    )
+  )
+    throw new Error("invalid_trace_response");
+  return value as TraceStatus;
+}
+
+function optionalTrace(value: unknown): TraceStatus | undefined {
+  if (!record(value) || value.trace === undefined) return undefined;
+  return decodeTrace(value.trace);
+}
+
+export function decodeTraceReply(value: unknown): TraceStatus {
+  const trace = optionalTrace(value);
+  if (!trace) throw new Error("missing_trace_response");
+  return trace;
+}
+
 // Check the values used by the UI before committing session state. Extra fields
 // are intentionally accepted; this is not a copy of the backend's full schema.
 export function decodeSession(value: unknown): Session {
@@ -225,6 +297,7 @@ export function decodeSession(value: unknown): Session {
     value.max_turns < 1
   )
     throw new Error("invalid_session_response");
+  optionalTrace(value);
   return value as Session;
 }
 
@@ -239,6 +312,7 @@ export function decodeReply(value: unknown, session: Session): Reply {
     !result(value.result)
   )
     throw new Error("invalid_turn_response");
+  optionalTrace(value);
   return value as Reply;
 }
 
@@ -248,7 +322,8 @@ export function decodeAccess(value: unknown): Access {
     !["private", "mixed", "login_required"].includes(value.mode as string) ||
     !record(value.principal) ||
     value.can_search !== true ||
-    !record(value.limits)
+    !record(value.limits) ||
+    (value.trace_policy !== undefined && !tracePolicy(value.trace_policy))
   )
     throw new Error("invalid_access_response");
 
@@ -283,6 +358,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     public retryAfterSeconds?: number,
+    public trace?: TraceStatus,
   ) {
     super(code);
   }
@@ -437,8 +513,10 @@ export async function request<T>(
       response.status,
       typeof value?.error?.code === "string" ? value.error.code : "unavailable",
       retryAfter(response, value?.error),
+      optionalTrace(value),
     );
   }
+  if (response.status === 204) return null as T;
   return response.json() as Promise<T>;
 }
 

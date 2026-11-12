@@ -3,7 +3,7 @@ verification, no redirects or proxies.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -12,6 +12,7 @@ import httpx
 
 from search.secrets import read_secret
 from search.serialization import strict_json
+from search.trace.limits import TraceLimits
 from search.api.conversation.contract import TurnResponse
 from search.web.origin import validate_origin
 
@@ -28,9 +29,19 @@ class WebSettings:
     edge_secret_file: Path | None = None
     upstream_ca_file: Path | None = None
     access_mode: str = "private"
+    trace_root: Path | None = None
+    trace_limits: TraceLimits = field(default_factory=TraceLimits)
 
     def __post_init__(self):
         validate_origin(self.origin, access_mode=self.access_mode)
+        if self.trace_root is not None and (
+            not self.trace_root.is_absolute()
+            or ".." in self.trace_root.parts
+            or self.trace_root == Path("/")
+        ):
+            raise ValueError(
+                "trace root must be an absolute private directory"
+            )
         peer = urlsplit(self.upstream)
         if (
             peer.username
@@ -70,7 +81,23 @@ class WebSettings:
             if upstream_ca_file
             else None,
             access_mode=os.environ.get("WEB_ACCESS_MODE", "private"),
+            trace_root=(
+                Path(os.environ["WEB_TRACE_ROOT"])
+                if os.environ.get("WEB_TRACE_ROOT")
+                else None
+            ),
+            trace_limits=_trace_limits(),
         )
+
+
+def _trace_limits():
+    values = {}
+    for item in fields(TraceLimits):
+        raw = os.environ.get("WEB_TRACE_" + item.name.upper())
+        if raw is not None:
+            convert = float if item.name == "shutdown_seconds" else int
+            values[item.name] = convert(raw)
+    return TraceLimits(**values)
 
 
 class UpstreamError(Exception):

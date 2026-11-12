@@ -21,6 +21,11 @@ config="${SEARCH_WEB_ENV_FILE:-$default_config}"
 # The dedicated file owns frontend settings, independent of an API checkout.
 unset WEB_UID WEB_GID WEB_API_KEY_FILE WEB_ORIGIN WEB_UPSTREAM WEB_UPSTREAM_CA_FILE COMPOSE_PROJECT_NAME
 unset WEB_ACCESS_MODE WEB_BIND_IP WEB_PORT WEB_ALLOWED_CIDRS WEB_ACCESS_FILE
+unset WEB_TRACE_ROOT WEB_TRACE_DIRECTORY WEB_TRACE_TTL_SECONDS WEB_TRACE_MAX_TURNS
+unset WEB_TRACE_MAX_EVENT_BYTES WEB_TRACE_MAX_SESSION_BYTES \
+  WEB_TRACE_MAX_TOTAL_BYTES
+unset WEB_TRACE_QUEUE_ITEMS WEB_TRACE_QUEUE_BYTES WEB_TRACE_MAX_SESSIONS \
+  WEB_TRACE_SHUTDOWN_SECONDS
 export SOURCE_REVISION
 SOURCE_REVISION="$(git rev-parse HEAD)"
 if [[ "$command" == up ]] && ! git diff --quiet HEAD -- search web deploy scripts/search-web.sh scripts/validate_search_web.py; then
@@ -32,10 +37,11 @@ if [[ "$mode" == intranet-http ]]; then
   compose+=(-f deploy/compose/compose.search-web.intranet.yaml)
   policy=(--intranet --prepare-access)
 fi
-has_private_ca="$("${compose[@]}" config --format json | python3 -c '
+optional_inputs="$("${compose[@]}" config --format json | python3 -c '
 import json, sys
 from pathlib import PurePosixPath
 from search.web.origin import validate_origin
+from search.operations.deployment.frontend.traces import absolute_directory
 environment = json.load(sys.stdin)["services"]["web"]["environment"]
 try:
     validate_origin(environment["WEB_ORIGIN"], access_mode=sys.argv[1])
@@ -48,10 +54,17 @@ if value and (
     or any(c in value for c in "\0\r\n")
 ):
     raise SystemExit("Private upstream CA must be an absolute file path.")
-print("yes" if value else "no")
+trace = environment.get("WEB_TRACE_ROOT")
+if trace and not absolute_directory(trace):
+    raise SystemExit("Trace output must be an absolute directory path.")
+print(("yes" if value else "no") + " " + ("yes" if trace else "no"))
 ' "$mode")"
+read -r has_private_ca has_trace_output <<< "$optional_inputs"
 if [[ "$has_private_ca" == yes ]]; then
   compose+=(-f deploy/compose/compose.search-web.ca.yaml)
+fi
+if [[ "$has_trace_output" == yes ]]; then
+  compose+=(-f deploy/compose/compose.search-web.traces.yaml)
 fi
 if [[ "$command" == up || "$command" == config ]]; then
   "${compose[@]}" config --format json | python3 scripts/validate_search_web.py "${policy[@]}"

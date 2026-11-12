@@ -29,6 +29,8 @@ ROLE_MODULES = {
         "search.web.app",
         "search.web.sessions",
         "search.web.upstream",
+        "search.trace.worker",
+        "search.operations.shared.private_io",
     ),
     "reranker": ("search.reranker.server",),
     "catalog-admin": ("search.catalog_admin",),

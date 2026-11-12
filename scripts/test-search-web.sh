@@ -106,8 +106,15 @@ bash scripts/ci/runtime-imports.sh depositar-search-conversation:ci conversation
 docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /app \
   --mount "type=bind,src=$project_dir/search/tests,dst=/app/search/tests,readonly" \
   --mount "type=bind,src=$project_dir/search/web,dst=/app/search/web,readonly" \
+  --mount "type=bind,src=$project_dir/search/trace,dst=/app/search/trace,readonly" \
+  --mount "type=bind,src=$project_dir/search/operations/shared/private_io.py,dst=/app/search/operations/shared/private_io.py,readonly" \
   --mount "type=bind,src=$project_dir/search/catalog/build,dst=/app/search/catalog/build,readonly" \
-  depositar-search-api:ci python -m unittest --durations 25 search.tests.test_http_application search.tests.test_conversation search.tests.test_conversation_calendar search.tests.test_conversation_time search.tests.test_search_web search.tests.test_search_web_identity search.tests.test_worker_io -v
+  depositar-search-api:ci python -m unittest --durations 25 search.tests.test_http_application search.tests.test_conversation search.tests.test_conversation_calendar search.tests.test_conversation_time search.tests.test_search_web search.tests.test_search_web_trace search.tests.test_search_web_identity search.tests.test_worker_io -v
+docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /repo \
+  --mount "type=bind,src=$project_dir,dst=/repo,readonly" \
+  depositar-search-api:ci python -m unittest --durations 25 \
+  tests.unit.trace.test_store tests.unit.trace.test_worker \
+  tests.unit.trace.test_quality tests.unit.trace.test_cli -v
 begin_phase python-style
 for action in check format; do
   options=(--no-cache)
@@ -115,7 +122,7 @@ for action in check format; do
   docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /app \
     --mount "type=bind,src=$project_dir/ruff.toml,dst=/app/ruff.toml,readonly" \
     --mount "type=bind,src=$project_dir/search,dst=/app/search,readonly" \
-    depositar-search-api:ci ruff "$action" "${options[@]}" search/web search/api/conversation/app.py \
+    depositar-search-api:ci ruff "$action" "${options[@]}" search/web search/trace search/api/conversation/app.py \
       search/api/conversation/contract.py search/api/conversation/engine.py search/api/conversation/worker.py \
       search/api/conversation/calendar.py search/tests/test_conversation_calendar.py \
       search/api/conversation/time.py search/tests/test_conversation_time.py \
@@ -212,6 +219,7 @@ if [[ "$suite" == all || "$suite" == browser ]]; then
     depositar-search-api:ci python -m uvicorn search.tests.web_fixture:conversation --factory \
     --host 0.0.0.0 --port 8000 --no-access-log >/dev/null
   docker run -d --name "$ci_name-web" --network-alias web "${common[@]}" \
+    -e WEB_TRACE_ROOT=/tmp/trace-fixture \
     --mount "type=bind,src=$project_dir/search,dst=/app/search,readonly" \
     depositar-search-web:ci python -m uvicorn search.tests.web_fixture:website --factory \
     --host 0.0.0.0 --port 8000 --no-access-log >/dev/null
@@ -233,6 +241,7 @@ if [[ "$suite" == all || "$suite" == browser ]]; then
   docker run --rm --network "container:$ci_name-nginx" --ipc=private --shm-size=256m \
     --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
     --cpus 2 --memory 2g --pids-limit 256 -e HOME=/tmp/browser-home \
+    -e DEPOSITAR_TEST_TRACE_RUNTIME=1 \
     --mount "type=bind,src=$project_dir/web,dst=/web" --workdir /web \
     "$browser_image" npm test
 fi

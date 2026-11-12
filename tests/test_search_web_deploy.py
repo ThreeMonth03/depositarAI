@@ -66,6 +66,7 @@ class WebsiteDeploymentTests(unittest.TestCase):
                 "WEB_ORIGIN",
                 "WEB_UPSTREAM",
                 "WEB_UPSTREAM_CA_FILE",
+                "WEB_TRACE_ROOT",
                 "NVIDIA_VISIBLE_DEVICES",
             },
             set(web["environment"]),
@@ -214,6 +215,87 @@ class WebsiteDeploymentTests(unittest.TestCase):
         self.assertIn(
             "Private upstream CA must be an absolute file path.", result.stderr
         )
+
+    def test_trace_override_uses_fixed_output_and_preserves_readonly_key(self):
+        value = json.loads(
+            subprocess.check_output(
+                [
+                    "docker",
+                    "compose",
+                    "--env-file",
+                    "deploy/env/.env.search-web.example",
+                    "-f",
+                    "deploy/compose/compose.search-web.yaml",
+                    "-f",
+                    "deploy/compose/compose.search-web.traces.yaml",
+                    "config",
+                    "--format",
+                    "json",
+                ],
+                cwd=ROOT,
+                env={
+                    **os.environ,
+                    "WEB_TRACE_DIRECTORY": "/private/synthetic-traces",
+                },
+            )
+        )
+        web = value["services"]["web"]
+        self.assertEqual(
+            "/var/lib/depositar/traces", web["environment"]["WEB_TRACE_ROOT"]
+        )
+        writable = [m for m in web["volumes"] if not m.get("read_only")]
+        self.assertEqual(1, len(writable))
+        self.assertEqual("/private/synthetic-traces", writable[0]["source"])
+        self.assertFalse(writable[0]["bind"]["create_host_path"])
+        self.assertTrue(web["volumes"][0]["read_only"])
+        validate(value)
+
+    def test_wrapper_trace_selection_ignores_caller_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "web.env"
+            path.write_text(
+                (ROOT / "deploy/env/.env.search-web.example").read_text()
+                + "\nWEB_TRACE_DIRECTORY=/private/synthetic-traces\n"
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/search-web.sh"), "config"],
+                cwd=ROOT,
+                env=dict(
+                    os.environ,
+                    SEARCH_WEB_ENV_FILE=str(path),
+                    WEB_TRACE_DIRECTORY="/unapproved/caller-traces",
+                    WEB_TRACE_QUEUE_ITEMS="nan",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("deployment policy passed", result.stdout)
+
+    def test_wrapper_trace_source_rejects_relative_and_parent_paths(self):
+        for directory in ("relative", "/private/../trace"):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "web.env"
+                path.write_text(
+                    (ROOT / "deploy/env/.env.search-web.example").read_text()
+                    + "\nWEB_TRACE_DIRECTORY="
+                    + directory
+                    + "\n"
+                )
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/search-web.sh"), "config"],
+                    cwd=ROOT,
+                    env=dict(os.environ, SEARCH_WEB_ENV_FILE=str(path)),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            with self.subTest(directory=directory):
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "Trace output must be an absolute", result.stderr
+                )
 
     def test_remote_requires_bare_https_upstream(self):
         for upstream in (

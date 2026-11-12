@@ -18,6 +18,11 @@ COPY search/api/shared/__init__.py search/api/shared/admission.py \
 COPY search/planning/__init__.py search/planning/clock.py \
     search/planning/contract.py search/planning/predicates.py /app/search/planning/
 COPY search/http /app/search/http/
+COPY search/operations/__init__.py /app/search/operations/
+COPY search/operations/shared/__init__.py \
+    search/operations/shared/private_io.py /app/search/operations/shared/
+COPY search/trace/__init__.py search/trace/limits.py search/trace/contract.py \
+    search/trace/files.py search/trace/store.py search/trace/worker.py /app/search/trace/
 COPY search/web /app/search/web/
 ARG SOURCE_REVISION=development
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION

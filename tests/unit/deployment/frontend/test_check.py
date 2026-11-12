@@ -364,6 +364,36 @@ class FrontendCheckTests(unittest.TestCase):
         )
         self.assertIn("EXPECTED_CONTRACT_VERSION=4\n", source)
 
+    def test_trace_runtime_only_allows_the_configured_output_writable(self):
+        from search.operations.deployment.frontend import traces
+
+        web = self.runner.config["services"]["web"]
+        web["environment"]["WEB_TRACE_ROOT"] = traces.TARGET
+        source = str(self.root / "search-traces")
+        web["volumes"].append(
+            {
+                "type": "bind",
+                "source": source,
+                "target": traces.TARGET,
+                "read_only": False,
+                "bind": {"create_host_path": False},
+            }
+        )
+        row = self.runner.rows[IDS["web"]]
+        row["Config"]["Env"].append("WEB_TRACE_ROOT=" + traces.TARGET)
+        row["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": source,
+                "Destination": traces.TARGET,
+                "RW": True,
+            }
+        )
+        self.assertEqual("frontend_checked", self.run_check()["status"])
+        row["Mounts"][0]["RW"] = True
+        with self.assertRaises(check.FrontendCheckError):
+            self.run_check()
+
     def test_profile_rejects_legacy_schema_protocols_and_unknown_fields(self):
         for key, value in (
             ("schema_version", 1),

@@ -3,6 +3,7 @@ boundary.
 """
 
 from pathlib import Path
+import os
 
 from search.api.shared.config import Settings
 from search.api.conversation.calendar import calendar_text
@@ -101,5 +102,10 @@ def website():
             "http://conversation-api:8000",
             key(),
             "a" * 40,
+            trace_root=(
+                Path(os.environ["WEB_TRACE_ROOT"])
+                if os.environ.get("WEB_TRACE_ROOT")
+                else None
+            ),
         )
     )

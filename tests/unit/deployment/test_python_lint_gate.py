@@ -70,8 +70,11 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/api/shared/middleware.py", "")
         self.write("search/http/__init__.py", "")
         self.write("search/web/app.py", "")
+        self.write("search/web/trace.py", "")
+        self.write("search/web/turn.py", "")
         self.write("search/tests/web_fixture.py", "")
         self.write("search/quality/__init__.py", "")
+        self.write("search/trace/__init__.py", "")
         self.write(
             "search/operations/deployment/candidate/batch/__init__.py", ""
         )
@@ -89,6 +92,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("scripts/participate_backend_binding.py", "")
         self.write("search/operations/deployment/frontend/policy.py", "")
         self.write("search/operations/deployment/frontend/binding.py", "")
+        self.write("search/operations/deployment/frontend/traces.py", "")
         self.write("search/operations/deployment/images/build.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
@@ -190,6 +194,9 @@ class PythonLintGateTests(unittest.TestCase):
 
         for relative in (
             "search/planning/branch.py",
+            "search/trace/future_policy.py",
+            "search/web/trace.py",
+            "search/web/turn.py",
             "search/operations/doctor.py",
             "search/operations/local_status.py",
             "search/operations/state.py",
@@ -218,6 +225,7 @@ class PythonLintGateTests(unittest.TestCase):
             "scripts/participate_backend_binding.py",
             "search/operations/deployment/transition/future_policy.py",
             "search/operations/deployment/frontend/binding.py",
+            "search/operations/deployment/frontend/traces.py",
             "search/operations/documents/future_policy.py",
         ):
             with self.subTest(path=relative):

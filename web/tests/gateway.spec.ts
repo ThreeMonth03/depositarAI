@@ -109,11 +109,21 @@ test("gateway API routes stay distinct from frontend files", async ({
   expect(await health.json()).toEqual({ status: "ok" });
   const access = await request.get("/api/access");
   expect(access.status()).toBe(200);
-  expect(await access.json()).toEqual(privateAccess);
+  expect(await access.json()).toEqual({
+    ...privateAccess,
+    trace_policy: {
+      available: true,
+      notice_version: "search-trace-v1",
+      retention_days: 7,
+    },
+  });
   const headers = { Origin: new URL(health.url()).origin };
-  const method = await request.get("/api/session", { headers });
-  expect(method.status()).toBe(405);
-  expect(method.headers()["content-type"]).toContain("application/json");
+  const session = await request.get("/api/session", { headers });
+  expect(session.status()).toBe(401);
+  expect(await session.json()).toEqual({
+    error: { code: "session_required" },
+  });
+  expect(session.headers()["content-type"]).toContain("application/json");
   for (const path of ["/api/missing", "/api/session/"]) {
     const response = await request.get(path, { headers });
     expect(response.status()).toBe(404);
