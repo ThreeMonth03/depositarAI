@@ -561,6 +561,133 @@ def _destination(package, destination):
     return path
 
 
+def _read_manifest(package_fd, expected_revision, expected_manifest_sha256):
+    """Authenticate package bytes before interpreting the manifest."""
+    raw = private_io.read_file(
+        package_fd,
+        "package.json",
+        mode=0o600,
+        max_bytes=contract.MAX_RECORD_BYTES,
+    )
+    if hashlib.sha256(raw).hexdigest() != expected_manifest_sha256:
+        _fail("manifest_digest_mismatch")
+    manifest = _manifest(raw, expected_revision)
+    return raw, manifest
+
+
+def _verify_payload(
+    package_fd, package, manifest, raw, expected_manifest_sha256
+):
+    """Verify all payload assets before creating a destination.
+
+    Borrow package_fd; the archive descriptor is owned and closed here.
+    """
+    assets = {
+        directory + "/" + name: item
+        for directory in ("source", "metadata")
+        for name, item in manifest[directory]["files"].items()
+    }
+    assets.update(
+        {
+            "models/" + role + "/" + name: item
+            for role, files in manifest["models"]["files"].items()
+            for name, item in files.items()
+        }
+    )
+    assets["images.tar"] = {
+        key: manifest["image_archive"][key] for key in ("bytes", "sha256")
+    }
+    assets["package.json"] = {
+        "bytes": len(raw),
+        "sha256": expected_manifest_sha256,
+    }
+    if manifest["catalog_image_receipt"] is not None:
+        receipt = private_io.read_file(
+            package_fd,
+            "catalog-images.json",
+            mode=0o600,
+            max_bytes=contract.MAX_RECORD_BYTES,
+        )
+        # Historical source/file policy is checked by the restored
+        # revision's _catalog_images, not this controller's policy.
+        assets["catalog-images.json"] = {
+            "bytes": len(receipt),
+            "sha256": manifest["catalog"]["image_receipt_sha256"],
+        }
+    if sum(item["bytes"] for item in assets.values()) > MAX_TOTAL_BYTES:
+        _fail("inventory_invalid")
+    names = set(assets) | {"SHA256SUMS"}
+    snapshot = _inventory(package_fd, names)
+    checksums = private_io.read_file(
+        package_fd,
+        "SHA256SUMS",
+        mode=0o600,
+        max_bytes=contract.MAX_RECORD_BYTES,
+    )
+    expected = "".join(
+        item["sha256"] + "  " + name + "\n"
+        for name, item in sorted(assets.items())
+    ).encode("ascii")
+    if checksums != expected:
+        _fail("checksums_invalid")
+    for name, record in assets.items():
+        _stream(package_fd, name, record, snapshot)
+    descriptor = _open_asset(package_fd, "images.tar")
+    try:
+        if private_io.identity(os.fstat(descriptor)) != snapshot["images.tar"]:
+            _fail("dependency_changed")
+        if (
+            archive.check_archive(descriptor, manifest["images"])
+            != manifest["image_archive"]["format"]
+        ):
+            _fail("archive_invalid")
+        if private_io.identity(os.fstat(descriptor)) != snapshot["images.tar"]:
+            _fail("dependency_changed")
+    except ProductRestoreError:
+        raise
+    except Exception:
+        _fail("archive_invalid")
+    finally:
+        os.close(descriptor)
+    _models(package, manifest)
+    return names, snapshot
+
+
+def _restore_and_validate_source(
+    restore, package, expected_revision, destination
+):
+    """Restore source and accept only its complete bounded success report."""
+    try:
+        restored = restore(
+            package / "source",
+            expected_revision,
+            destination / "source",
+        )
+        expected = {
+            "schema_version": 1,
+            "status": "restored",
+            "source_revision": expected_revision,
+            "tracked_file_count": restored["tracked_file_count"],
+            "digests_verified": True,
+            "archive_matches_git_tree": True,
+            "clean_git_checkout": True,
+            "cli_help_verified": True,
+            "runtime_restored": False,
+            "deployment_performed": False,
+        }
+        if (
+            type(restored["tracked_file_count"]) is not int
+            or not 1
+            <= restored["tracked_file_count"]
+            <= source_artifact.MAX_FILES
+            or private_io.canonical(restored) != private_io.canonical(expected)
+        ):
+            _fail("source_restore_failed")
+    except Exception:
+        _fail("source_restore_failed")
+    return restored
+
+
 def restore_product(
     package_directory: Path,
     *,
@@ -590,93 +717,12 @@ def restore_product(
         with ExitStack() as stack:
             package_fd = private_io.open_directory(package)
             stack.callback(os.close, package_fd)
-            raw = private_io.read_file(
-                package_fd,
-                "package.json",
-                mode=0o600,
-                max_bytes=contract.MAX_RECORD_BYTES,
+            raw, manifest = _read_manifest(
+                package_fd, expected_revision, expected_manifest_sha256
             )
-            if hashlib.sha256(raw).hexdigest() != expected_manifest_sha256:
-                _fail("manifest_digest_mismatch")
-            manifest = _manifest(raw, expected_revision)
-            assets = {
-                directory + "/" + name: item
-                for directory in ("source", "metadata")
-                for name, item in manifest[directory]["files"].items()
-            }
-            assets.update(
-                {
-                    "models/" + role + "/" + name: item
-                    for role, files in manifest["models"]["files"].items()
-                    for name, item in files.items()
-                }
+            names, snapshot = _verify_payload(
+                package_fd, package, manifest, raw, expected_manifest_sha256
             )
-            assets["images.tar"] = {
-                key: manifest["image_archive"][key]
-                for key in ("bytes", "sha256")
-            }
-            assets["package.json"] = {
-                "bytes": len(raw),
-                "sha256": expected_manifest_sha256,
-            }
-            if manifest["catalog_image_receipt"] is not None:
-                receipt = private_io.read_file(
-                    package_fd,
-                    "catalog-images.json",
-                    mode=0o600,
-                    max_bytes=contract.MAX_RECORD_BYTES,
-                )
-                # Historical source/file policy is checked by the restored
-                # revision's _catalog_images, not this controller's policy.
-                assets["catalog-images.json"] = {
-                    "bytes": len(receipt),
-                    "sha256": manifest["catalog"]["image_receipt_sha256"],
-                }
-            if (
-                sum(item["bytes"] for item in assets.values())
-                > MAX_TOTAL_BYTES
-            ):
-                _fail("inventory_invalid")
-            names = set(assets) | {"SHA256SUMS"}
-            snapshot = _inventory(package_fd, names)
-            checksums = private_io.read_file(
-                package_fd,
-                "SHA256SUMS",
-                mode=0o600,
-                max_bytes=contract.MAX_RECORD_BYTES,
-            )
-            expected = "".join(
-                item["sha256"] + "  " + name + "\n"
-                for name, item in sorted(assets.items())
-            ).encode("ascii")
-            if checksums != expected:
-                _fail("checksums_invalid")
-            for name, record in assets.items():
-                _stream(package_fd, name, record, snapshot)
-            descriptor = _open_asset(package_fd, "images.tar")
-            try:
-                if (
-                    private_io.identity(os.fstat(descriptor))
-                    != snapshot["images.tar"]
-                ):
-                    _fail("dependency_changed")
-                if (
-                    archive.check_archive(descriptor, manifest["images"])
-                    != manifest["image_archive"]["format"]
-                ):
-                    _fail("archive_invalid")
-                if (
-                    private_io.identity(os.fstat(descriptor))
-                    != snapshot["images.tar"]
-                ):
-                    _fail("dependency_changed")
-            except ProductRestoreError:
-                raise
-            except Exception:
-                _fail("archive_invalid")
-            finally:
-                os.close(descriptor)
-            _models(package, manifest)
             parent_fd = private_io.open_directory(destination.parent)
             stack.callback(os.close, parent_fd)
             try:
@@ -694,35 +740,9 @@ def restore_product(
             restore = (
                 _restore_source if source_restorer is None else source_restorer
             )
-            try:
-                restored = restore(
-                    package / "source",
-                    expected_revision,
-                    destination / "source",
-                )
-                expected = {
-                    "schema_version": 1,
-                    "status": "restored",
-                    "source_revision": expected_revision,
-                    "tracked_file_count": restored["tracked_file_count"],
-                    "digests_verified": True,
-                    "archive_matches_git_tree": True,
-                    "clean_git_checkout": True,
-                    "cli_help_verified": True,
-                    "runtime_restored": False,
-                    "deployment_performed": False,
-                }
-                if (
-                    type(restored["tracked_file_count"]) is not int
-                    or not 1
-                    <= restored["tracked_file_count"]
-                    <= source_artifact.MAX_FILES
-                    or private_io.canonical(restored)
-                    != private_io.canonical(expected)
-                ):
-                    _fail("source_restore_failed")
-            except Exception:
-                _fail("source_restore_failed")
+            restored = _restore_and_validate_source(
+                restore, package, expected_revision, destination
+            )
             source_fd = private_io.open_directory(destination / "source")
             stack.callback(os.close, source_fd)
             proof = _source_proof(

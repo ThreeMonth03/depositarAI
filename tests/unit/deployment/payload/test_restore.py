@@ -752,6 +752,45 @@ class ProductRestoreTests(unittest.TestCase):
         self.assertTrue((self.destination / "metadata").exists())
         self.rejected("destination_exists")
 
+    def test_child_restore_report_is_closed_before_proof_or_publication(self):
+        original = product_restore._restore_source
+        for variant in (
+            "extra",
+            "missing_count",
+            "missing_flag",
+            "bool_count",
+            "error",
+        ):
+            with self.subTest(variant=variant):
+                self.destination = self.root / ("restore-child-" + variant)
+
+                def changed(package, revision, destination):
+                    if variant == "error":
+                        raise product_restore.ProductRestoreError(
+                            "product_restore_anchors_invalid"
+                        )
+                    result = original(package, revision, destination)
+                    if variant == "extra":
+                        result["extra"] = False
+                    elif variant == "missing_count":
+                        result.pop("tracked_file_count")
+                    elif variant == "missing_flag":
+                        result.pop("digests_verified")
+                    else:
+                        result["tracked_file_count"] = True
+                    return result
+
+                with mock.patch.object(
+                    product_restore,
+                    "_source_proof",
+                    wraps=product_restore._source_proof,
+                ) as proof:
+                    self.rejected(
+                        "source_restore_failed", source_restorer=changed
+                    )
+                proof.assert_not_called()
+                self.assertTrue(self.destination.exists())
+
     def test_source_hash_claim_must_match_packaged_committed_policy(self):
         self.manifest["images"]["web"]["source_sha256"] = "f" * 64
         self.publish_manifest()
@@ -893,6 +932,70 @@ sys.meta_path.insert(0, RejectBuilder())
         parsed.assert_not_called()
         self.assertEqual(opened, 2)
         self.assertFalse(self.destination.exists())
+
+    def test_parser_identity_drift_closes_fds_before_destination_creation(
+        self,
+    ):
+        original = image_archive.check_archive
+        archive = self.package / "images.tar"
+        for parser_error, code in (
+            (False, "dependency_changed"),
+            (True, "archive_invalid"),
+        ):
+            with self.subTest(parser_error=parser_error):
+                self.destination = self.root / (
+                    "restore-parser-" + str(parser_error)
+                )
+                observed = []
+
+                def parse(descriptor, images):
+                    package_fd = opened.call_args.args[0]
+                    observed.append(
+                        (descriptor, package_fd, len(closed.call_args_list))
+                    )
+                    self.assertFalse(self.destination.exists())
+                    report = original(descriptor, images)
+                    os.fstat(package_fd)
+                    os.fchmod(descriptor, 0o400)
+                    if parser_error:
+                        raise ValueError("synthetic parser failure")
+                    return report
+
+                try:
+                    with (
+                        mock.patch.object(
+                            product_restore,
+                            "_open_asset",
+                            wraps=product_restore._open_asset,
+                        ) as opened,
+                        mock.patch.object(
+                            os, "close", wraps=os.close
+                        ) as closed,
+                        mock.patch.object(
+                            image_archive, "check_archive", side_effect=parse
+                        ),
+                        mock.patch.object(
+                            product_restore,
+                            "_models",
+                            wraps=product_restore._models,
+                        ) as models,
+                    ):
+                        self.rejected(code)
+                    self.assertEqual(1, len(observed))
+                    descriptor, package_fd, start = observed[0]
+                    closing = [
+                        call.args[0] for call in closed.call_args_list[start:]
+                    ]
+                    self.assertEqual([descriptor, package_fd], closing[-2:])
+                    self.assertEqual(1, closing.count(descriptor))
+                    self.assertEqual(1, closing.count(package_fd))
+                    for fd in (descriptor, package_fd):
+                        with self.assertRaises(OSError):
+                            os.fstat(fd)
+                    models.assert_not_called()
+                    self.assertFalse(self.destination.exists())
+                finally:
+                    archive.chmod(0o600)
 
     def test_existing_destination_and_package_overlap_are_rejected(self):
         self.destination.mkdir(mode=0o700)

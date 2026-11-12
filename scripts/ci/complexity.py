@@ -59,6 +59,7 @@ GATED_PATHS = (
     "search/operations/deployment/payload/plan.py",
     "search/operations/deployment/payload/archive.py",
     "search/operations/deployment/payload/export.py",
+    "search/operations/deployment/payload/restore.py",
     "search/operations/deployment/public_entry/host.py",
     "search/operations/deployment/public_entry/profile.py",
     "scripts/ci",
