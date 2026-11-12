@@ -162,6 +162,16 @@ verification that CKAN still exposes those datasets. Offline sync records
 `source_consistency=offline_not_checked`. Keep the original snapshot digest and
 provenance; do not rewrite an existing manifest or completion receipt.
 
+Metadata observation receipts distinguish this import from online observation.
+New schema-2 results retain a schema-1 `source_observation`: online matching
+scans record an operator UTC interval; offline imports and old immutable
+receipts have unknown source-observation times. These are not CKAN server
+timestamps. TTL hits retain and verify the original evidence receipt, while
+recording cache-use and decision times separately. They neither update the
+original observation nor redefine `fetched_at`. Missing or invalid evidence in
+the current schema fails closed, rather than falling back to unknown. See the
+[sync receipt contract](PRODUCT_LIFECYCLE.md) for fields and failure handling.
+
 Existing state also needs a deliberate handoff. TTL cache verifies its sealed
 bundle, and lifecycle sync automatically uses the previous staged metadata as
 the diff baseline. That baseline is validated before either download or offline

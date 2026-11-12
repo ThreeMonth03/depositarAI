@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import stat
 import time
+import urllib.error
 import uuid
 
 from search.catalog.build import (
@@ -39,6 +40,30 @@ MARKER = {
     "kind": "depositar-public-metadata-cache",
     "endpoint": source.ENDPOINT,
 }
+FAILURE_CODES = frozenset(
+    {
+        "timeout",
+        "source_incomplete",
+        "source_count_changed",
+        "source_content_changed",
+        "source_invalid",
+        "clock_invalid",
+        "clock_reversed",
+        "clock_future",
+        "evidence_invalid",
+        "io_failure",
+        "sync_invalid",
+        "unexpected_failure",
+    }
+)
+
+
+class ObservationError(storage.SyncError):
+    """Refuse invalid observation evidence before publishing latest."""
+
+    def __init__(self, message, *, code="evidence_invalid"):
+        super().__init__(message)
+        self.code = code
 
 
 def _verify_cache_directories(root, root_fd, folders, run_id, run_fd):
@@ -200,7 +225,144 @@ def compare(before, after):
     }
 
 
-def _verified_latest(root, root_fd, folders):
+def _observation(kind, snapshot_sha256, run_id, interval=(None, None)):
+    return {
+        "schema_version": 1,
+        "kind": kind,
+        "clock": "operator_utc",
+        "started_at": interval[0],
+        "completed_at": interval[1],
+        "source_endpoint": source.ENDPOINT,
+        "snapshot_sha256": snapshot_sha256,
+        "evidence_run_id": run_id,
+    }
+
+
+def _timestamp(value):
+    if (
+        type(value) not in (int, float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise ObservationError(
+            "invalid metadata operator timestamp", code="clock_invalid"
+        )
+    return value
+
+
+def _validate_observation(value, latest, checked_at):
+    fields = set(_observation("unknown_legacy", "", ""))
+    if (
+        type(value) is not dict
+        or set(value) != fields
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or type(value["kind"]) is not str
+        or value["kind"]
+        not in {"complete_online", "unknown_offline", "unknown_legacy"}
+        or value["clock"] != "operator_utc"
+        or value["source_endpoint"] != source.ENDPOINT
+        or value["snapshot_sha256"] != latest["snapshot_sha256"]
+        or type(value["evidence_run_id"]) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", value["evidence_run_id"]) is None
+    ):
+        raise ObservationError("invalid metadata source observation")
+    fetched = _timestamp(latest["fetched_at"])
+    if fetched > _timestamp(checked_at):
+        raise ObservationError(
+            "cached metadata timestamp is in the future", code="clock_future"
+        )
+    if value["kind"] == "complete_online":
+        started, completed = (
+            _timestamp(value["started_at"]),
+            _timestamp(value["completed_at"]),
+        )
+        if started > completed:
+            raise ObservationError(
+                "metadata observation clock reversed", code="clock_reversed"
+            )
+        if completed > fetched:
+            raise ObservationError(
+                "metadata observation is in the future", code="clock_future"
+            )
+        consistent = latest["source_consistency"] == "two_matching_full_scans"
+    else:
+        consistent = (
+            value["started_at"] is None and value["completed_at"] is None
+        )
+        if value["kind"] == "unknown_offline":
+            consistent = (
+                consistent
+                and latest["source_consistency"] == "offline_not_checked"
+            )
+    if not consistent:
+        raise ObservationError("metadata observation consistency mismatch")
+
+
+def _receipt_times(receipt, latest, checked_at):
+    decision = _timestamp(receipt.get("decision_at"))
+    if decision < latest["fetched_at"] or decision > checked_at:
+        raise ObservationError(
+            "metadata decision timestamp is in the future",
+            code="clock_future",
+        )
+    used = receipt.get("cache_used_at")
+    if (
+        "cache_used_at" not in receipt
+        or type(receipt.get("cache_hit")) is not bool
+    ):
+        raise ObservationError("invalid metadata cache-use evidence")
+    if receipt["cache_hit"]:
+        if not latest["fetched_at"] <= _timestamp(used) <= decision:
+            raise ObservationError(
+                "metadata cache-use clock reversed", code="clock_reversed"
+            )
+    elif used is not None:
+        raise ObservationError("unexpected metadata cache-use timestamp")
+
+
+def _source_receipt(receipt, latest, observation, run_id, version, checked_at):
+    if (
+        type(receipt) is not dict
+        or type(receipt.get("schema_version")) is not int
+        or receipt["schema_version"] != version
+        or receipt.get("run_id") != run_id
+        or receipt.get("status") != "ready"
+        or receipt.get("source_endpoint") != source.ENDPOINT
+        or any(
+            receipt.get(key) != latest[key]
+            for key in ("snapshot_sha256", "source_consistency", "fetched_at")
+        )
+    ):
+        raise ObservationError("metadata source receipt identity mismatch")
+    _timestamp(receipt["fetched_at"])
+    if version == 1:
+        if observation["kind"] != "unknown_legacy" or any(
+            key in receipt
+            for key in ("source_observation", "decision_at", "cache_used_at")
+        ):
+            raise ObservationError("invalid legacy metadata source receipt")
+    else:
+        original = receipt.get("source_observation")
+        _validate_observation(original, latest, checked_at)
+        if source.canonical(original) != source.canonical(observation):
+            raise ObservationError("metadata source observation changed")
+        _receipt_times(receipt, latest, checked_at)
+        if receipt["cache_hit"] != (run_id != observation["evidence_run_id"]):
+            raise ObservationError("metadata cache-use lineage mismatch")
+
+
+def _read_receipt(folders, run_id):
+    run_fd = storage.private_directory(folders["runs"], run_id)
+    try:
+        if "failure.json" in os.listdir(run_fd):
+            raise storage.SyncError("latest metadata run is quarantined")
+        return storage.read_record(run_fd, "result.json")
+    finally:
+        os.close(run_fd)
+
+
+def _verified_latest(root, root_fd, folders, checked_at):
     value = storage.read_record(root_fd, "latest.json")
     fields = {
         "schema_version",
@@ -213,11 +375,13 @@ def _verified_latest(root, root_fd, folders):
         "source_consistency",
         "document_count",
     }
+    if type(value) is dict and value.get("schema_version") == 2:
+        fields.add("source_observation")
     if (
         type(value) is not dict
         or set(value) != fields
         or type(value["schema_version"]) is not int
-        or value["schema_version"] != 1
+        or value["schema_version"] not in (1, 2)
         or value["endpoint"] != source.ENDPOINT
         or not isinstance(value["run_id"], str)
         or re.fullmatch(r"[0-9a-f]{32}", value["run_id"]) is None
@@ -228,31 +392,56 @@ def _verified_latest(root, root_fd, folders):
         )
         or type(value["fetched_at"]) not in (int, float)
         or not math.isfinite(value["fetched_at"])
+        or type(value["source_consistency"]) is not str
         or value["source_consistency"]
         not in {"two_matching_full_scans", "offline_not_checked"}
         or type(value["document_count"]) is not int
         or not 1 <= value["document_count"] <= policy.MAX_ROWS
     ):
         raise storage.SyncError("invalid latest metadata cache pointer")
-    run_fd = storage.private_directory(folders["runs"], value["run_id"])
-    try:
-        if "failure.json" in os.listdir(run_fd):
-            raise storage.SyncError("latest metadata run is quarantined")
-        receipt = storage.read_record(run_fd, "result.json")
-        for key in (
-            "snapshot_sha256",
-            "bundle_id",
-            "manifest_sha256",
-            "fetched_at",
-            "source_consistency",
-            "document_count",
-        ):
-            if receipt.get(key) != value[key]:
-                raise storage.SyncError(
-                    "latest pointer does not match its immutable receipt"
-                )
-    finally:
-        os.close(run_fd)
+    receipt = _read_receipt(folders, value["run_id"])
+    for key in (
+        "snapshot_sha256",
+        "bundle_id",
+        "manifest_sha256",
+        "fetched_at",
+        "source_consistency",
+        "document_count",
+    ):
+        if type(receipt) is not dict or receipt.get(key) != value[key]:
+            raise storage.SyncError(
+                "latest pointer does not match its immutable receipt"
+            )
+    observation = (
+        _observation(
+            "unknown_legacy", value["snapshot_sha256"], value["run_id"]
+        )
+        if value["schema_version"] == 1
+        else value["source_observation"]
+    )
+    _validate_observation(observation, value, checked_at)
+    _source_receipt(
+        receipt,
+        value,
+        observation,
+        value["run_id"],
+        value["schema_version"],
+        checked_at,
+    )
+    origin_id = observation["evidence_run_id"]
+    origin = (
+        receipt
+        if origin_id == value["run_id"]
+        else _read_receipt(folders, origin_id)
+    )
+    _source_receipt(
+        origin,
+        value,
+        observation,
+        origin_id,
+        1 if observation["kind"] == "unknown_legacy" else 2,
+        checked_at,
+    )
     snapshot = (
         root
         / "snapshots"
@@ -293,20 +482,32 @@ def _verified_latest(root, root_fd, folders):
         raise storage.SyncError(
             "cached snapshot and sealed bundle identities disagree"
         )
-    return value, snapshot, bundle_path, catalog
+    return (
+        {
+            **value,
+            "schema_version": 2,
+            "source_observation": observation,
+        },
+        snapshot,
+        bundle_path,
+        catalog,
+    )
 
 
 def _check_deadline(deadline):
     if time.monotonic() >= deadline:
-        raise storage.SyncError("metadata sync deadline exceeded")
+        raise ObservationError(
+            "metadata sync deadline exceeded", code="timeout"
+        )
 
 
 def _cached_candidate(root, root_fd, folders, ttl_seconds):
     """Return a verified TTL decision, or no candidate without latest."""
     latest = None
+    checked_at = source.operator_time()
     try:
         latest, snapshot_path, bundle_path, catalog = _verified_latest(
-            root, root_fd, folders
+            root, root_fd, folders, checked_at
         )
     except FileNotFoundError:
         if "latest.json" in os.listdir(root_fd):
@@ -314,11 +515,7 @@ def _cached_candidate(root, root_fd, folders, ttl_seconds):
                 "latest metadata cache is incomplete"
             ) from None
     if latest is not None:
-        age = time.time() - latest["fetched_at"]
-        if age < 0:
-            raise storage.SyncError(
-                "cached metadata timestamp is in the future"
-            )
+        age = checked_at - latest["fetched_at"]
         return age <= ttl_seconds, latest, snapshot_path, bundle_path, catalog
     return None
 
@@ -327,11 +524,11 @@ def _stage_snapshot(
     root, root_fd, folders, run_id, run_fd, deadline, snapshot, fetch
 ):
     """Acquire and seal a snapshot and baseline without publishing latest."""
-    records = (
-        source.stable_download(deadline, fetch)
-        if snapshot is None
-        else snapshots.load_source(str(storage.real_path(snapshot)))
-    )
+    if snapshot is None:
+        records, interval = source.observed_download(deadline, fetch)
+    else:
+        records = snapshots.load_source(str(storage.real_path(snapshot)))
+        interval = (None, None)
     _check_deadline(deadline)
     _verify_cache_directories(root, root_fd, folders, run_id, run_fd)
     ordered = sorted(
@@ -389,18 +586,27 @@ def _stage_snapshot(
     os.fsync(run_fd)
     os.fsync(folders["snapshots"])
     latest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "endpoint": source.ENDPOINT,
         "run_id": run_id,
         "snapshot_sha256": snapshot_sha,
         "bundle_id": catalog.bundle_id,
         "manifest_sha256": catalog.manifest_sha256,
-        "fetched_at": time.time(),
+        "fetched_at": source.operator_time(),
         "source_consistency": "two_matching_full_scans"
         if snapshot is None
         else "offline_not_checked",
         "document_count": len(catalog.documents),
+        "source_observation": _observation(
+            "complete_online" if snapshot is None else "unknown_offline",
+            snapshot_sha,
+            run_id,
+            interval,
+        ),
     }
+    _validate_observation(
+        latest["source_observation"], latest, latest["fetched_at"]
+    )
     return built, bundle_path, catalog, snapshot_path, latest
 
 
@@ -478,6 +684,34 @@ def _profile_baseline(built, captured_bundle, profile_set):
         os.close(descriptor)
 
 
+def _failure_details(error):
+    if isinstance(error, (source.MetadataSourceError, ObservationError)):
+        code = error.code
+        if type(code) is not str or code not in FAILURE_CODES:
+            code = "source_invalid"
+        label = (
+            "MetadataSourceError"
+            if isinstance(error, source.MetadataSourceError)
+            else "ObservationError"
+        )
+        return code, label
+    if isinstance(error, TimeoutError) or (
+        isinstance(error, urllib.error.URLError)
+        and isinstance(error.reason, TimeoutError)
+    ):
+        return "timeout", "TimeoutError"
+    if isinstance(error, OSError):
+        return "io_failure", "OSError"
+    if isinstance(error, ValueError):
+        label = (
+            "SyncError"
+            if isinstance(error, storage.SyncError)
+            else "ValueError"
+        )
+        return "sync_invalid", label
+    return "unexpected_failure", "Exception"
+
+
 def sync(
     cache_root,
     *,
@@ -529,9 +763,9 @@ def sync(
         )
         try:
             storage.write_record(
-                run_fd, "started.json", {"schema_version": 1, "run_id": run_id}
+                run_fd, "started.json", {"schema_version": 2, "run_id": run_id}
             )
-            cache_hit, built, latest = False, None, None
+            cache_hit, built, latest, cache_used_at = False, None, None, None
             if snapshot is None and ttl_seconds > 0 and not force:
                 candidate = _cached_candidate(
                     root, root_fd, folders, ttl_seconds
@@ -539,6 +773,9 @@ def sync(
                 if candidate is not None:
                     cache_hit, latest, snapshot_path, bundle_path, catalog = (
                         candidate
+                    )
+                    cache_used_at = (
+                        source.operator_time() if cache_hit else None
                     )
             if not cache_hit:
                 built, bundle_path, catalog, snapshot_path, latest = (
@@ -620,10 +857,14 @@ def sync(
                 "bundle_id": catalog.bundle_id,
                 "manifest_sha256": catalog.manifest_sha256,
             }
+            decision_at = source.operator_time()
+            _validate_observation(
+                latest["source_observation"], latest, decision_at
+            )
             _check_deadline(deadline)
             _verify_cache_directories(root, root_fd, folders, run_id, run_fd)
             report = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "status": "ready",
                 "run_id": run_id,
                 "snapshot_path": str(snapshot_path),
@@ -640,6 +881,9 @@ def sync(
                 "source_endpoint": source.ENDPOINT,
                 "source_consistency": latest["source_consistency"],
                 "fetched_at": latest["fetched_at"],
+                "source_observation": latest["source_observation"],
+                "decision_at": decision_at,
+                "cache_used_at": cache_used_at,
                 "diff": compare(before, catalog),
                 "elapsed_seconds": time.monotonic() - started,
                 "receipt_path": str(root / "runs" / run_id / "result.json"),
@@ -648,17 +892,20 @@ def sync(
                 "models_called": False,
                 "resource_profiles": profile_report,
             }
+            _receipt_times(report, latest, decision_at)
             storage.write_record(run_fd, "result.json", report)
             storage.write_record(root_fd, "latest.json", latest, replace=True)
             return report
         except Exception as error:
+            code, error_type = _failure_details(error)
             storage.write_record(
                 run_fd,
                 "failure.json",
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "status": "quarantined",
-                    "error_type": type(error).__name__,
+                    "error_type": error_type,
+                    "failure_code": code,
                     "promotion_allowed": False,
                     "live_index_modified": False,
                 },

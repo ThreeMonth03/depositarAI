@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 import urllib.parse
 import urllib.request
@@ -21,6 +22,24 @@ DEADLINE_SECONDS = 600
 
 class MetadataSourceError(ValueError):
     """Fixed operator diagnostics, never body-derived remote error messages."""
+
+    def __init__(self, message, *, code="source_invalid"):
+        super().__init__(message)
+        self.code = code
+
+
+def operator_time():
+    """Read a finite operator UTC timestamp, not a CKAN server timestamp."""
+    value = time.time()
+    if (
+        type(value) not in (int, float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise MetadataSourceError(
+            "invalid operator timestamp", code="clock_invalid"
+        )
+    return value
 
 
 def canonical(value):
@@ -67,7 +86,9 @@ def _response_body(response, deadline):
     raw = bytearray()
     while True:
         if time.monotonic() >= deadline:
-            raise MetadataSourceError("refresh deadline exceeded")
+            raise MetadataSourceError(
+                "refresh deadline exceeded", code="timeout"
+            )
         chunk = response.read1(min(65536, MAX_PAGE_BYTES + 1 - len(raw)))
         if not chunk:
             break
@@ -75,14 +96,16 @@ def _response_body(response, deadline):
         if len(raw) > MAX_PAGE_BYTES:
             raise MetadataSourceError("CKAN page exceeds its byte limit")
     if declared is not None and int(declared) != len(raw):
-        raise MetadataSourceError("CKAN response body is truncated")
+        raise MetadataSourceError(
+            "CKAN response body is truncated", code="source_incomplete"
+        )
     return raw
 
 
 def fetch_page(start, rows, deadline):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise MetadataSourceError("refresh deadline exceeded")
+        raise MetadataSourceError("refresh deadline exceeded", code="timeout")
     query = urllib.parse.urlencode(
         {
             "include_private": "false",
@@ -124,9 +147,13 @@ def _page_items(page, expected, offset, rows):
         or not isinstance(items, list)
         or len(items) != min(rows, count - offset)
     ):
-        raise MetadataSourceError("incomplete or oversized CKAN page")
+        raise MetadataSourceError(
+            "incomplete or oversized CKAN page", code="source_incomplete"
+        )
     if expected is not None and count != expected:
-        raise MetadataSourceError("CKAN count changed during download")
+        raise MetadataSourceError(
+            "CKAN count changed during download", code="source_count_changed"
+        )
     return count, items
 
 
@@ -137,7 +164,9 @@ def collect(fetch, deadline, *, rows=PAGE_ROWS):
     previous_id = ""
     while expected is None or len(records) < expected:
         if time.monotonic() >= deadline:
-            raise MetadataSourceError("refresh deadline exceeded")
+            raise MetadataSourceError(
+                "refresh deadline exceeded", code="timeout"
+            )
         page = fetch(len(records), rows, deadline)
         expected, items = _page_items(page, expected, len(records), rows)
         for item in items:
@@ -174,8 +203,26 @@ def stable_download(deadline, fetch=None):
     first = collect(fetch, deadline)
     first_digest = records_digest(first)
     second = collect(fetch, deadline)
+    if len(first) != len(second):
+        raise MetadataSourceError(
+            "CKAN count changed between complete scans",
+            code="source_count_changed",
+        )
     if first_digest != records_digest(second):
         raise MetadataSourceError(
-            "CKAN metadata changed between complete scans"
+            "CKAN metadata changed between complete scans",
+            code="source_content_changed",
         )
     return first
+
+
+def observed_download(deadline, fetch=None):
+    """Return matching records and their operator observation interval."""
+    started = operator_time()
+    records = stable_download(deadline, fetch)
+    completed = operator_time()
+    if completed < started:
+        raise MetadataSourceError(
+            "operator observation clock reversed", code="clock_reversed"
+        )
+    return records, (started, completed)

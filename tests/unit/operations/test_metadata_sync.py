@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 
 from search.catalog.build.policy import BundleError
 from search.catalog.bundle import CatalogBundle
@@ -68,7 +69,7 @@ class CatalogSyncTests(unittest.TestCase):
         report = self.sync()
         self.assertEqual(2, len(self.calls))
         self.assertEqual(
-            ("ready", 1, 2),
+            ("ready", 2, 2),
             (
                 report["status"],
                 report["schema_version"],
@@ -583,6 +584,371 @@ class CatalogSyncTests(unittest.TestCase):
             ["cache.json", "started.json", "failure.json"], written
         )
         self.assertFalse(self.pointer().exists())
+
+    def test_online_observation_precedes_build_and_survives_two_ttl_hits(self):
+        clock = [1000]
+        build = syncer.builder.build_bundle
+
+        def fetch(*args):
+            clock[0] += 1
+            return self.fetch(*args)
+
+        def build_later(*args, **kwargs):
+            clock[0] += 5
+            return build(*args, **kwargs)
+
+        with (
+            patch.object(source.time, "time", side_effect=lambda: clock[0]),
+            patch.object(
+                syncer.builder, "build_bundle", side_effect=build_later
+            ),
+        ):
+            first = syncer.sync(self.cache, fetch=fetch)
+        observation = first["source_observation"]
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "kind": "complete_online",
+                "clock": "operator_utc",
+                "started_at": 1000,
+                "completed_at": 1002,
+                "source_endpoint": source.ENDPOINT,
+                "snapshot_sha256": first["snapshot_sha256"],
+                "evidence_run_id": first["run_id"],
+            },
+            observation,
+        )
+        self.assertEqual(1007, first["fetched_at"])
+        self.assertEqual(1007, first["decision_at"])
+        self.assertIsNone(first["cache_used_at"])
+        original = Path(first["receipt_path"]).read_bytes()
+        for instant in (1010, 1020):
+            with patch.object(source.time, "time", return_value=instant):
+                reused = self.sync(ttl_seconds=60)
+            self.assertTrue(reused["cache_hit"])
+            self.assertNotEqual(first["run_id"], reused["run_id"])
+            self.assertEqual(observation, reused["source_observation"])
+            self.assertEqual(instant, reused["decision_at"])
+            self.assertEqual(instant, reused["cache_used_at"])
+            self.assertEqual(1007, reused["fetched_at"])
+        self.assertEqual(original, Path(first["receipt_path"]).read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_offline_observation_stays_unknown_when_reused(self):
+        snapshot = self.root / "offline.jsonl"
+        snapshot.write_bytes(
+            b"".join(source.canonical(r) + b"\n" for r in self.rows)
+        )
+        with patch.object(source.time, "time", return_value=1000):
+            first = syncer.sync(self.cache, snapshot=snapshot)
+        original = Path(first["receipt_path"]).read_bytes()
+        with patch.object(source.time, "time", return_value=1010):
+            reused = self.sync(ttl_seconds=60)
+        observation = reused["source_observation"]
+        self.assertEqual("unknown_offline", observation["kind"])
+        self.assertIsNone(observation["started_at"])
+        self.assertIsNone(observation["completed_at"])
+        self.assertEqual(first["source_observation"], observation)
+        self.assertEqual(1010, reused["cache_used_at"])
+        self.assertEqual([], self.calls)
+        self.assertEqual(original, Path(first["receipt_path"]).read_bytes())
+
+    def test_old_immutable_receipt_has_unknown_observation_without_today_fill(
+        self,
+    ):
+        with patch.object(source.time, "time", return_value=1000):
+            self.sync()
+            first = self.sync(ttl_seconds=60)
+        self.assertTrue(first["cache_hit"])
+        receipt_path = Path(first["receipt_path"])
+        old = json.loads(receipt_path.read_bytes())
+        old["schema_version"] = 1
+        for key in ("source_observation", "decision_at", "cache_used_at"):
+            del old[key]
+        receipt_path.write_bytes(source.canonical(old) + b"\n")
+        pointer = json.loads(self.pointer().read_bytes())
+        pointer["schema_version"] = 1
+        del pointer["source_observation"]
+        self.pointer().write_bytes(source.canonical(pointer) + b"\n")
+        immutable = receipt_path.read_bytes()
+        for instant in (1010, 1020):
+            with patch.object(source.time, "time", return_value=instant):
+                reused = self.sync(ttl_seconds=60)
+            observation = reused["source_observation"]
+            self.assertEqual("unknown_legacy", observation["kind"])
+            self.assertEqual(first["run_id"], observation["evidence_run_id"])
+            self.assertIsNone(observation["started_at"])
+            self.assertIsNone(observation["completed_at"])
+            self.assertEqual(1000, reused["fetched_at"])
+            self.assertEqual(2, reused["schema_version"])
+            self.assertEqual(immutable, receipt_path.read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_observation_origin_identity_is_revalidated_on_cache_hit(self):
+        first = self.sync()
+        self.sync(ttl_seconds=60)
+        origin_path = Path(first["receipt_path"])
+        original = origin_path.read_bytes()
+        previous = self.pointer().read_bytes()
+        for key, value in (
+            ("run_id", "a" * 32),
+            ("source_endpoint", "https://example.test/secret"),
+            ("status", "quarantined"),
+            ("schema_version", 1),
+            ("source_consistency", "offline_not_checked"),
+            ("snapshot_sha256", "a" * 64),
+            ("decision_at", first["fetched_at"] + 3600),
+            ("cache_hit", True),
+            ("cache_used_at", first["fetched_at"]),
+        ):
+            with self.subTest(field=key):
+                changed = json.loads(original)
+                changed[key] = value
+                origin_path.write_bytes(source.canonical(changed) + b"\n")
+                with self.assertRaises(syncer.ObservationError):
+                    self.sync(ttl_seconds=60)
+                self.assertEqual(previous, self.pointer().read_bytes())
+                origin_path.write_bytes(original)
+        self.assertEqual(2, len(self.calls))
+
+    def test_v2_cannot_lose_observation_or_disagree_with_original(self):
+        first = self.sync()
+        self.sync(ttl_seconds=60)
+        original_pointer = self.pointer().read_bytes()
+        origin_path = Path(first["receipt_path"])
+        original_receipt = origin_path.read_bytes()
+        pointer = json.loads(original_pointer)
+        del pointer["source_observation"]
+        self.pointer().write_bytes(source.canonical(pointer) + b"\n")
+        tampered = self.pointer().read_bytes()
+        with self.assertRaises(storage.SyncError):
+            self.sync(ttl_seconds=60)
+        self.assertEqual(tampered, self.pointer().read_bytes())
+        self.pointer().write_bytes(original_pointer)
+        receipt = json.loads(original_receipt)
+        receipt["source_observation"]["started_at"] -= 1
+        origin_path.write_bytes(source.canonical(receipt) + b"\n")
+        with self.assertRaises(syncer.ObservationError):
+            self.sync(ttl_seconds=60)
+        self.assertEqual(original_pointer, self.pointer().read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_origin_observation_is_validated_before_numeric_equality(self):
+        with patch.object(source.time, "time", return_value=1):
+            first = self.sync()
+            self.sync(ttl_seconds=60)
+        previous = self.pointer().read_bytes()
+        origin_path = Path(first["receipt_path"])
+        original = origin_path.read_bytes()
+        for field, value in (
+            ("schema_version", True),
+            ("started_at", True),
+            ("completed_at", 1.0),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(original)
+                changed["source_observation"][field] = value
+                origin_path.write_bytes(source.canonical(changed) + b"\n")
+                with (
+                    patch.object(source.time, "time", return_value=2),
+                    self.assertRaises(syncer.ObservationError),
+                ):
+                    self.sync(ttl_seconds=60)
+                self.assertEqual(previous, self.pointer().read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_linked_origin_cache_fields_cannot_claim_a_new_observation(self):
+        snapshot = self.root / "original.jsonl"
+        snapshot.write_bytes(
+            b"".join(source.canonical(row) + b"\n" for row in self.rows)
+        )
+        for kind in ("online", "offline"):
+            with self.subTest(kind=kind):
+                cache = self.root / kind
+                cache.mkdir(mode=0o700)
+                options = (
+                    {"fetch": self.fetch}
+                    if kind == "online"
+                    else {"snapshot": snapshot}
+                )
+                with patch.object(source.time, "time", return_value=1000):
+                    first = syncer.sync(cache, **options)
+                with patch.object(source.time, "time", return_value=1010):
+                    syncer.sync(cache, fetch=self.fetch, ttl_seconds=60)
+                previous = (cache / "latest.json").read_bytes()
+                origin_path = Path(first["receipt_path"])
+                origin = json.loads(origin_path.read_bytes())
+                origin.update(
+                    cache_hit=True, cache_used_at=origin["fetched_at"]
+                )
+                origin_path.write_bytes(source.canonical(origin) + b"\n")
+                with (
+                    patch.object(source.time, "time", return_value=1020),
+                    self.assertRaisesRegex(
+                        syncer.ObservationError, "lineage mismatch"
+                    ),
+                ):
+                    syncer.sync(cache, fetch=self.fetch, ttl_seconds=60)
+                self.assertEqual(
+                    previous, (cache / "latest.json").read_bytes()
+                )
+                failure = next((cache / "runs").glob("*/failure.json"))
+                self.assertEqual(
+                    "evidence_invalid",
+                    json.loads(failure.read_bytes())["failure_code"],
+                )
+
+    def test_current_cache_fields_cannot_hide_reuse_or_omit_nullable_time(
+        self,
+    ):
+        with patch.object(source.time, "time", return_value=1000):
+            self.sync()
+        with patch.object(source.time, "time", return_value=1010):
+            current = self.sync(ttl_seconds=60)
+        previous = self.pointer().read_bytes()
+        receipt_path = Path(current["receipt_path"])
+        original = receipt_path.read_bytes()
+        for missing in (False, True):
+            with self.subTest(missing_time=missing):
+                changed = json.loads(original)
+                if missing:
+                    del changed["cache_used_at"]
+                else:
+                    changed.update(cache_hit=False, cache_used_at=None)
+                receipt_path.write_bytes(source.canonical(changed) + b"\n")
+                with (
+                    patch.object(source.time, "time", return_value=1020),
+                    self.assertRaises(syncer.ObservationError),
+                ):
+                    self.sync(ttl_seconds=60)
+                self.assertEqual(previous, self.pointer().read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_clock_failures_preserve_latest_and_have_closed_codes(self):
+        self.sync()
+        previous = self.pointer().read_bytes()
+        for times, code in (
+            ([float("nan")], "clock_invalid"),
+            ([True], "clock_invalid"),
+            ([-1], "clock_invalid"),
+            ([1002, 1000], "clock_reversed"),
+            ([1000, 1002, 1001], "clock_future"),
+            ([1000, 1002, 1003, 1002], "clock_future"),
+        ):
+            with self.subTest(code=code, times=times):
+                before = set((self.cache / "runs").glob("*/failure.json"))
+                with (
+                    patch.object(source.time, "time", side_effect=times),
+                    self.assertRaises(ValueError),
+                ):
+                    self.sync()
+                failures = (
+                    set((self.cache / "runs").glob("*/failure.json")) - before
+                )
+                self.assertEqual(1, len(failures))
+                failure = json.loads(failures.pop().read_bytes())
+                self.assertEqual(code, failure["failure_code"])
+                self.assertEqual(previous, self.pointer().read_bytes())
+
+    def test_future_and_invalid_retained_observation_cannot_be_reused(self):
+        first = self.sync()
+        pointer = json.loads(self.pointer().read_bytes())
+        for field, value in (
+            ("started_at", first["fetched_at"] + 1),
+            ("completed_at", first["fetched_at"] + 1),
+            ("kind", []),
+            ("schema_version", True),
+        ):
+            with self.subTest(field=field):
+                changed = deepcopy(pointer)
+                changed["source_observation"][field] = value
+                self.pointer().write_bytes(source.canonical(changed) + b"\n")
+                previous = self.pointer().read_bytes()
+                with self.assertRaises(storage.SyncError):
+                    self.sync(ttl_seconds=60)
+                self.assertEqual(previous, self.pointer().read_bytes())
+        self.assertEqual(2, len(self.calls))
+
+    def test_source_failures_have_closed_codes_and_never_replace_latest(self):
+        self.sync()
+        previous = self.pointer().read_bytes()
+        page = {"count": 1, "results": [dataset()]}
+        for pages, code in (
+            ([TimeoutError("secret-url")], "timeout"),
+            ([page, TimeoutError("secret-body")], "timeout"),
+            ([URLError(TimeoutError("secret-timeout"))], "timeout"),
+            ([OSError("secret-url")], "io_failure"),
+            ([{"count": 2, "results": [dataset()]}], "source_incomplete"),
+            ([{"count": 0, "results": []}], "source_incomplete"),
+            (
+                [page, {"count": 2, "results": [dataset()]}],
+                "source_incomplete",
+            ),
+            (
+                [page, {"count": 2, "results": self.rows}],
+                "source_count_changed",
+            ),
+            (
+                [page, {"count": 1, "results": [dataset(title="changed")]}],
+                "source_content_changed",
+            ),
+            (
+                [page, {"count": 1, "results": [dataset(unindexed="new")]}],
+                "source_content_changed",
+            ),
+        ):
+            with self.subTest(code=code):
+                before = set((self.cache / "runs").glob("*/failure.json"))
+                pages = iter(pages)
+
+                def fetch(*_args):
+                    result = next(pages)
+                    if isinstance(result, Exception):
+                        raise result
+                    return result
+
+                with self.assertRaises(
+                    ValueError if code.startswith("source_") else OSError
+                ):
+                    syncer.sync(self.cache, fetch=fetch)
+                failures = (
+                    set((self.cache / "runs").glob("*/failure.json")) - before
+                )
+                failure = failures.pop().read_bytes()
+                self.assertEqual(code, json.loads(failure)["failure_code"])
+                self.assertNotIn(b"secret-", failure)
+                self.assertEqual(previous, self.pointer().read_bytes())
+
+    def test_unknown_exception_names_and_messages_are_not_receipt_fields(self):
+        self.sync()
+        previous = self.pointer().read_bytes()
+        secret_type = type("PRIVATE_CLASS_SENTINEL", (RuntimeError,), {})
+
+        def fetch(*_args):
+            raise secret_type("https://example.test/PRIVATE_URL_SENTINEL")
+
+        with self.assertRaises(secret_type):
+            syncer.sync(self.cache, fetch=fetch)
+        failure = next(
+            (self.cache / "runs").glob("*/failure.json")
+        ).read_bytes()
+        self.assertNotIn(b"PRIVATE_", failure)
+        self.assertEqual("Exception", json.loads(failure)["error_type"])
+        self.assertEqual(
+            "unexpected_failure", json.loads(failure)["failure_code"]
+        )
+        self.assertEqual(previous, self.pointer().read_bytes())
+
+    def test_missing_metadata_remains_review_not_confirmed_withdrawal(self):
+        first = self.sync()
+        self.rows.pop()
+        report = self.sync(baseline=self.baseline(first))
+        self.assertEqual("review_required", report["diff"]["status"])
+        self.assertEqual([dataset(2)["id"]], report["diff"]["missing"])
+        self.assertFalse(report["promotion_allowed"])
+        self.assertEqual(
+            "complete_online", report["source_observation"]["kind"]
+        )
 
 
 if __name__ == "__main__":

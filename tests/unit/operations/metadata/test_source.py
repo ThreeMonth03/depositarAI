@@ -654,6 +654,74 @@ class StabilityTests(unittest.TestCase):
             [(0, 100, 10)] * 2, [c.args for c in fetch.call_args_list]
         )
 
+    def test_observed_download_times_both_scans_without_copying_records(self):
+        first = dataset()
+        fetch = unittest.mock.Mock(
+            side_effect=[
+                {"count": 1, "results": [first]},
+                {"count": 1, "results": [dict(first)]},
+            ]
+        )
+        with (
+            patch.object(source.time, "monotonic", return_value=0),
+            patch.object(source.time, "time", side_effect=[1000, 1002]),
+        ):
+            records, interval = source.observed_download(10, fetch)
+        self.assertIs(first, records[0])
+        self.assertEqual((1000, 1002), interval)
+        self.assertEqual(2, fetch.call_count)
+
+    def test_observation_rejects_invalid_and_reversed_operator_clocks(self):
+        for value in (True, -1, float("nan"), float("inf"), "1000"):
+            with self.subTest(value=value):
+                fetch = unittest.mock.Mock()
+                with (
+                    patch.object(source.time, "time", return_value=value),
+                    self.assertRaises(source.MetadataSourceError) as caught,
+                ):
+                    source.observed_download(10, fetch)
+                self.assertEqual("clock_invalid", caught.exception.code)
+                fetch.assert_not_called()
+        with (
+            patch.object(source.time, "time", side_effect=[1002, 1000]),
+            patch.object(source.time, "monotonic", return_value=0),
+            patch.object(
+                source,
+                "fetch_page",
+                return_value={"count": 1, "results": [dataset()]},
+            ),
+            self.assertRaises(source.MetadataSourceError) as caught,
+        ):
+            source.observed_download(10)
+        self.assertEqual("clock_reversed", caught.exception.code)
+
+    def test_observation_preserves_transport_exception_in_either_scan(self):
+        page = {"count": 1, "results": [dataset()]}
+        for error in (OSError("synthetic IO"), TimeoutError("synthetic time")):
+            for prefix in ([], [page]):
+                with self.subTest(error=type(error), scan=len(prefix) + 1):
+                    fetch = unittest.mock.Mock(side_effect=[*prefix, error])
+                    with (
+                        patch.object(source.time, "monotonic", return_value=0),
+                        self.assertRaises(type(error)) as caught,
+                    ):
+                        source.observed_download(10, fetch)
+                    self.assertIs(error, caught.exception)
+                    self.assertEqual(len(prefix) + 1, fetch.call_count)
+
+    def test_changed_scan_count_and_partial_page_have_closed_codes(self):
+        with self.assertRaises(source.MetadataSourceError) as caught:
+            self.stable(
+                [
+                    {"count": 1, "results": [dataset()]},
+                    {"count": 2, "results": [dataset(), dataset(2)]},
+                ]
+            )
+        self.assertEqual("source_count_changed", caught.exception.code)
+        with self.assertRaises(source.MetadataSourceError) as caught:
+            self.stable([{"count": 2, "results": [dataset()]}])
+        self.assertEqual("source_incomplete", caught.exception.code)
+
 
 class JsonContractTests(unittest.TestCase):
     def test_canonical_is_utf8_sorted_and_has_no_newline(self):
