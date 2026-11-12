@@ -289,6 +289,71 @@ class OperatorTransportTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertEqual((status, None), self.request())
 
+    def test_non_success_responses_still_enforce_stream_and_length_bounds(
+        self,
+    ):
+        timers = []
+        real_timer = transport.threading.Timer
+
+        def start_timer(*arguments, **keywords):
+            timer = real_timer(*arguments, **keywords)
+            timers.append(timer)
+            return timer
+
+        for status in (403, 500):
+            for headers, limit in (
+                ({"Content-Length": None}, 16),
+                ({"Content-Length": "1"}, 1024),
+            ):
+                self.response = Response(
+                    b"PRIVATE response diagnostic",
+                    status=status,
+                    headers=headers,
+                )
+                self.response.read1 = Mock(wraps=self.response.read1)
+                self.connection.finish.reset_mock()
+                timers.clear()
+                with (
+                    self.subTest(status=status, headers=headers),
+                    patch.object(transport, "MAX_RESPONSE_BYTES", limit),
+                    patch.object(
+                        transport.threading, "Timer", side_effect=start_timer
+                    ),
+                    self.assertRaisesRegex(
+                        transport.TransportError,
+                        "^catalog_transport_request_failed$",
+                    ) as caught,
+                ):
+                    self.request()
+                self.assertGreater(self.response.read1.call_count, 0)
+                self.assertTrue(self.response.closed)
+                self.assertEqual(1, self.response.close_count)
+                self.connection.finish.assert_called_once_with()
+                self.assertEqual(1, len(timers))
+                self.assertFalse(timers[0].is_alive())
+                self.assertNotIn("PRIVATE", str(caught.exception))
+
+    def test_invalid_ndjson_bytes_fail_before_connection_and_watchdog(self):
+        multibyte = "雨\n"
+        self.assertEqual(2, len(multibyte))
+        self.assertEqual(4, len(multibyte.encode("utf-8")))
+        for payload, limit in (("\ud800\n", 4), (multibyte, 3)):
+            with (
+                self.subTest(payload=payload),
+                patch.object(transport, "MAX_REQUEST_BYTES", limit),
+                patch.object(transport.threading, "Timer") as timer,
+                self.assertRaisesRegex(
+                    transport.TransportError,
+                    "^catalog_transport_payload_invalid$",
+                ),
+            ):
+                self.client.request(
+                    "POST", "/" + INDEX + "/_bulk", payload, ndjson=True
+                )
+            self.assertLessEqual(len(payload), limit)
+            self.factory.assert_not_called()
+            timer.assert_not_called()
+
     def test_redirect_encoding_length_content_type_and_schema_rejected(self):
         for response in (
             Response(status=302),

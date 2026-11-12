@@ -24,6 +24,7 @@ GATED_PATHS = (
     "search/operations/shared/runtime_probe.py",
     "search/operations/shared/bounded_process.py",
     "search/operations/catalog/policy.py",
+    "search/operations/catalog/transport.py",
     "search/catalog/session.py",
     "search/catalog/build/builder.py",
     "search/catalog/build/normalize.py",

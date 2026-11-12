@@ -66,6 +66,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/shared/runtime_probe.py", "")
         self.write("search/operations/shared/bounded_process.py", "")
         self.write("search/operations/catalog/policy.py", "")
+        self.write("search/operations/catalog/transport.py", "")
         self.write("search/catalog/session.py", "")
         self.write("search/catalog/build/builder.py", "")
         self.write("search/catalog/build/normalize.py", "")
@@ -327,6 +328,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/shared/runtime_probe.py",
             "search/operations/shared/bounded_process.py",
             "search/operations/catalog/policy.py",
+            "search/operations/catalog/transport.py",
             "search/catalog/session.py",
             "search/catalog/build/builder.py",
             "search/catalog/build/normalize.py",

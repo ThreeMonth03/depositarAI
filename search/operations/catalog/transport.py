@@ -198,16 +198,10 @@ class OpenSearchClient:
         self._last_tick = tick
         return min(REQUEST_SECONDS, self._deadline - tick)
 
-    def request(
-        self,
-        method,
-        path,
-        payload=None,
-        *,
-        username=None,
-        password=None,
-        ndjson=False,
+    def _prepare_request(
+        self, method, path, payload, username, password, ndjson
     ):
+        """Validate an operation and return encoded body and auth bytes."""
         _operation(method, path)
         if (username is None) != (password is None):
             raise TransportError("catalog_transport_credentials_invalid")
@@ -249,6 +243,74 @@ class OpenSearchClient:
         ):
             raise TransportError("catalog_transport_payload_invalid")
         auth = base64.b64encode((username + ":" + password).encode("ascii"))
+        return body, auth
+
+    def _read_response(self, response, channel, expired):
+        """Bound framing and bytes while the caller owns the connection."""
+        if (
+            type(response.status) is not int
+            or not 200 <= response.status <= 599
+            or 300 <= response.status <= 399
+            or response.getheader("Content-Encoding", "identity") != "identity"
+        ):
+            raise TransportError("catalog_transport_response_invalid")
+        declared = response.getheader("Content-Length")
+        if declared is not None and (
+            not declared.isdecimal() or int(declared) > MAX_RESPONSE_BYTES
+        ):
+            raise TransportError("catalog_transport_response_invalid")
+        data = bytearray()
+        while not response.isclosed():
+            channel.settimeout(self._remaining())
+            chunk = response.read1(
+                min(65536, MAX_RESPONSE_BYTES + 1 - len(data))
+            )
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > MAX_RESPONSE_BYTES:
+                raise TransportError("catalog_transport_response_invalid")
+        self._remaining()
+        if expired.is_set():
+            raise TransportError("catalog_transport_deadline_exceeded")
+        if declared is not None and len(data) != int(declared):
+            raise TransportError("catalog_transport_response_invalid")
+        return data
+
+    def _response_value(self, response, data, expired):
+        if not 200 <= response.status <= 299:
+            # Denial/absence probes only require status. Never return an
+            # administrator error body, even if it happens to be JSON.
+            return response.status, None
+        if (
+            response.getheader("Content-Type", "").split(";", 1)[0].strip()
+            != "application/json"
+        ):
+            raise TransportError("catalog_transport_response_invalid")
+        raw = bytes(data)
+        bounded_json.predecode(raw)
+        value = strict_json(raw)
+        if type(value) is not dict:
+            raise TransportError("catalog_transport_response_invalid")
+        _response_depth(value)
+        self._remaining()
+        if expired.is_set():
+            raise TransportError("catalog_transport_deadline_exceeded")
+        return response.status, value
+
+    def request(
+        self,
+        method,
+        path,
+        payload=None,
+        *,
+        username=None,
+        password=None,
+        ndjson=False,
+    ):
+        body, auth = self._prepare_request(
+            method, path, payload, username, password, ndjson
+        )
         remaining = self._remaining()
         connection = _PinnedHTTPSConnection(
             self._peer, context=self._context, timeout=remaining
@@ -284,54 +346,8 @@ class OpenSearchClient:
             channel = connection.sock
             channel.settimeout(self._remaining())
             response = connection.getresponse()
-            if (
-                type(response.status) is not int
-                or not 200 <= response.status <= 599
-                or 300 <= response.status <= 399
-                or response.getheader("Content-Encoding", "identity")
-                != "identity"
-            ):
-                raise TransportError("catalog_transport_response_invalid")
-            declared = response.getheader("Content-Length")
-            if declared is not None and (
-                not declared.isdecimal() or int(declared) > MAX_RESPONSE_BYTES
-            ):
-                raise TransportError("catalog_transport_response_invalid")
-            data = bytearray()
-            while not response.isclosed():
-                channel.settimeout(self._remaining())
-                chunk = response.read1(
-                    min(65536, MAX_RESPONSE_BYTES + 1 - len(data))
-                )
-                if not chunk:
-                    break
-                data.extend(chunk)
-                if len(data) > MAX_RESPONSE_BYTES:
-                    raise TransportError("catalog_transport_response_invalid")
-            self._remaining()
-            if expired.is_set():
-                raise TransportError("catalog_transport_deadline_exceeded")
-            if declared is not None and len(data) != int(declared):
-                raise TransportError("catalog_transport_response_invalid")
-            if not 200 <= response.status <= 299:
-                # Denial/absence probes only require status. Never return an
-                # administrator error body, even if it happens to be JSON.
-                return response.status, None
-            if (
-                response.getheader("Content-Type", "").split(";", 1)[0].strip()
-                != "application/json"
-            ):
-                raise TransportError("catalog_transport_response_invalid")
-            raw = bytes(data)
-            bounded_json.predecode(raw)
-            value = strict_json(raw)
-            if type(value) is not dict:
-                raise TransportError("catalog_transport_response_invalid")
-            _response_depth(value)
-            self._remaining()
-            if expired.is_set():
-                raise TransportError("catalog_transport_deadline_exceeded")
-            return response.status, value
+            data = self._read_response(response, channel, expired)
+            return self._response_value(response, data, expired)
         except (
             OSError,
             ValueError,

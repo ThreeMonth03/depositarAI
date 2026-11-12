@@ -59,7 +59,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/operations/local_status.py`。
 - `search/operations/state.py`。
 - `search/operations/shared` 下的 `runtime_probe.py`、`bounded_process.py`。
-- `search/operations/catalog/policy.py`。
+- `search/operations/catalog/policy.py`、`transport.py`。
 - `search/catalog/session.py`。
 - `search/catalog/build/builder.py`、`normalize.py`。
 - `search/http`、`search/api/shared/middleware.py`。
