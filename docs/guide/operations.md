@@ -4,6 +4,9 @@
 `up-private` 串接資料準備與首次私有網站啟用；主機軟體與模型須預先備妥。
 完整產品更新與回退仍未提供。以下命令都在 repository 根目錄，以操作帳號執行。
 
+文件描述來源提供的操作；GitHub `main` 不代表正在服務的版本。確認網站能力時，
+須核對實際 release 與所綁定的 catalog；候選程式、資料或測試完成，都不會自動切換線上服務。
+
 ## 先準備主機與設定
 
 - 準備 Docker、Compose 及 NVIDIA container runtime，操作帳號須能使用 Docker。

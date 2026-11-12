@@ -5,6 +5,10 @@ Tika、CSV 與 PDF 抽取器產生欄位及文字摘要。整份計畫可以分�
 完成後把明確的 profile-set 交給既有 `sync`／`stage-catalog` 流程，封入搜尋 catalog。
 搜尋請求不觸發下載或解析。
 
+這個流程分開處理摘要與啟用：`profile-resources` 準備摘要，`sync` 匯入本次選取的
+既有 profiles；之後仍須建置索引、向量及完成線上啟用。摘要完成或 candidate
+準備完成，不代表目前服務的 catalog 已包含它；GitHub `main` 也不是現役版本證據。
+
 ## 固定 metadata 與資源清單
 
 先用 `sync --snapshot` 固定 metadata，保存回傳的 snapshot 路徑、metadata-only
@@ -248,6 +252,12 @@ CSV 的 `rows_observed` 是有界觀察數，`rows_complete` 不承諾完整資�
 摘要不覆寫資料集的時間或地理涵蓋；格式篩選仍以資料集列出的全部資源 metadata
 為準。OCR 與 PDF 表格結構需另外處理。摘要及 provenance 會封入 v3 catalog；
 後續索引與向量重建沿用既有候選流程。
+
+例如資料集同時列有 CSV 與 PDF，即使只抽取 PDF，仍符合「至少提供 CSV」。
+這不表示 CSV 已解析；多格式條件採 OR，格式 AND 與排除尚未支援。
+時間條件來自資料涵蓋 metadata，不以建立／更新日或節錄內的年份代替。
+日期未知的結果可能保留供確認，不能當成已確定符合。使用者可用的條件與澄清例子見
+[搜尋指南](../guide/using-search.md)。摘要也不提供任意 CSV 資料列查詢、檔案計算或一般問答。
 
 ## 開發者整合測試
 

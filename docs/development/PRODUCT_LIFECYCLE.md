@@ -125,7 +125,7 @@ API key、推論、query 或 release；這些中途流程須以原細項命令�
 
 | 命令 | 用途與副作用 |
 |---|---|
-| `sync` | 下載或讀取公開 metadata，建立 cache、封存資料包及 candidate；不改 live index |
+| `sync` | 下載或讀取公開 metadata，可匯入明確選取的既有資源摘要，建立 cache、封存資料包及 candidate；不改 live index |
 | `prepare-index` | 封存與 candidate、catalog source 相符的隔離 CPU plan；不啟動服務 |
 | `build-catalog-images` | 建置或重新核對 catalog／admin images 與完成收據；不啟動服務 |
 | `start-index` | 啟動或核對 OpenSearch、Fess、CPU embedding；可能 build／取得必要映像，不發布 ports |
@@ -139,9 +139,14 @@ API key、推論、query 或 release；這些中途流程須以原細項命令�
 從固定公開來源匿名下載，完整掃描兩次並確認一致；`--force` 略過設定的 TTL，
 不略過下載、資料或 digest 檢查。沒有自動安裝 cron／timer。
 
-明確選取的 CSV 欄位／PDF 節錄可用重複的 `--profile-file /absolute/private/PROFILE_SHA256.json`
+明確選取的 CSV 欄名／PDF 有界節錄，可用 `--profile-set` 或重複的 `--profile-file`
 封入同一份候選 catalog；每次同步都須提供選取清單，省略即只有 metadata。
-這三個指令不下載資源原檔，摘要準備及來源核對見[資源摘要](RESOURCE_PROFILES.md)。
+這三個命令只匯入既有摘要，不下載或解析資源原檔。原檔由離線的
+`profile-resources` 準備；選取、數量限制與來源核對見[資源摘要](RESOURCE_PROFILES.md)。
+
+摘要準備、封入 catalog、索引／向量建置與線上啟用是不同階段。`sync` 不修改
+現役索引，`stage-catalog` 不啟用網站；搜尋只使用 API 實際綁定 catalog 的已索引內容。
+來源已合併到 GitHub `main` 或候選已準備完成，都不能據此宣稱線上已有這些摘要。
 
 首次同步不需要基準；之後預設與前次 staged metadata 比較，該基準不是 active catalog。
 只有 `sync` 提供自訂基準，兩個參數必須一起使用：
@@ -173,9 +178,9 @@ review reasons。所有結果固定 `promotion_allowed=false`，不自動改寫 
 兩次完整下載一致也不提供 CKAN server-side transaction；離線快照會標為
 `source_consistency=offline_not_checked`。
 
-本版只處理公開 dataset／resource metadata，不下載 resource URL、不解析 PDF 或 CSV
-內容。metadata snapshot 不能證明來源現在仍公開；資料移除或轉私有的處理與更新排程
-須另行管理。下載、候選準備、線上切換及備份是不同操作。
+`sync` 的下載範圍是公開 dataset／resource metadata；CSV 欄名與 PDF 節錄需走上述
+離線摘要流程。Metadata snapshot 不能證明來源現在仍公開；目前沒有自動更新排程，
+資料移除或轉私有的處理須另行管理。下載、候選準備、線上切換及備份是不同操作。
 
 全新的 `prepare-index` 會由 sealed source 建置 password-hash helper，將固定來源
 qualified tag 與 immutable image ID 成對傳給內部 bootstrap helper。操作者使用
