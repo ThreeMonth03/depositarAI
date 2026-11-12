@@ -245,6 +245,89 @@ def _resident_models(
         yield verified
 
 
+def _model_sources(config, stack, include_embedding):
+    """Retain original source roots and bound the complete model inventory."""
+    roots = {
+        "api": stack.enter_context(
+            search_model_source.open_source_root(config.api_model_root)
+        ),
+        "reranker": stack.enter_context(
+            search_model_source.open_source_root(config.reranker_model_root)
+        ),
+    }
+    plans = _model_plan(config)
+    if include_embedding:
+        from search.catalog.embedding import MODEL, MODEL_DIGEST
+
+        roots["embedding"] = stack.enter_context(
+            search_model_source.open_source_root(config.embedding_model_root)
+        )
+        plans["embedding"] = doctor._ollama_files(
+            config.embedding_model_root, {MODEL: MODEL_DIGEST}
+        )
+    if (
+        sum(map(len, plans.values())) > MAX_MODEL_FILES
+        or sum(
+            item["bytes"]
+            for files in plans.values()
+            for item in files.values()
+        )
+        > MAX_MODEL_BYTES
+    ):
+        raise InferenceError("inference_model_inventory_limit")
+    return roots, plans
+
+
+def _verify_model_file(
+    stack,
+    root,
+    relative,
+    expected,
+    expected_file_identity_sha256,
+    check_deadline,
+):
+    """Pin one file to its caller-owned stack before checking its bytes."""
+    check_deadline()
+    parent, name = root.relative_parent(relative)
+    named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    search_model_source._source_file_policy(named, root.uid, expected["bytes"])
+    descriptor = os.open(name, search_model_source.READ_FLAGS, dir_fd=parent)
+    stack.callback(os.close, descriptor)
+    opened = os.fstat(descriptor)
+    search_model_source._source_file_policy(
+        opened, root.uid, expected["bytes"]
+    )
+    if search_model_source._file_identity(
+        opened
+    ) != search_model_source._file_identity(named):
+        raise InferenceError("inference_model_file_changed")
+    if (
+        expected_file_identity_sha256 is None
+        or expected["bytes"] <= RESIDENT_METADATA_BYTES
+    ):
+        digest, size = hashlib.sha256(), 0
+        while size <= expected["bytes"]:
+            check_deadline()
+            block = os.read(
+                descriptor,
+                min(
+                    search_model_source.CHUNK_BYTES,
+                    expected["bytes"] + 1 - size,
+                ),
+            )
+            if not block:
+                break
+            size += len(block)
+            digest.update(block)
+        if (
+            size != expected["bytes"]
+            or digest.hexdigest() != expected["sha256"]
+        ):
+            raise InferenceError("inference_model_digest_changed")
+    identity = search_model_source._file_identity(opened)
+    return descriptor, parent, name, identity
+
+
 @contextmanager
 def _model_files(
     config, *, deadline, include_embedding, expected_file_identity_sha256=None
@@ -259,85 +342,20 @@ def _model_files(
 
     check_deadline()
     with ExitStack() as stack:
-        roots = {
-            "api": stack.enter_context(
-                search_model_source.open_source_root(config.api_model_root)
-            ),
-            "reranker": stack.enter_context(
-                search_model_source.open_source_root(
-                    config.reranker_model_root
-                )
-            ),
-        }
-        plans = _model_plan(config)
-        if include_embedding:
-            from search.catalog.embedding import MODEL, MODEL_DIGEST
-
-            roots["embedding"] = stack.enter_context(
-                search_model_source.open_source_root(
-                    config.embedding_model_root
-                )
-            )
-            plans["embedding"] = doctor._ollama_files(
-                config.embedding_model_root, {MODEL: MODEL_DIGEST}
-            )
-        if (
-            sum(map(len, plans.values())) > MAX_MODEL_FILES
-            or sum(
-                item["bytes"]
-                for files in plans.values()
-                for item in files.values()
-            )
-            > MAX_MODEL_BYTES
-        ):
-            raise InferenceError("inference_model_inventory_limit")
+        roots, plans = _model_sources(config, stack, include_embedding)
         records = []
         identities = []
         for role, files in plans.items():
             root = roots[role]
             for relative, expected in sorted(files.items()):
-                check_deadline()
-                parent, name = root.relative_parent(relative)
-                named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                search_model_source._source_file_policy(
-                    named, root.uid, expected["bytes"]
+                descriptor, parent, name, identity = _verify_model_file(
+                    stack,
+                    root,
+                    relative,
+                    expected,
+                    expected_file_identity_sha256,
+                    check_deadline,
                 )
-                descriptor = os.open(
-                    name, search_model_source.READ_FLAGS, dir_fd=parent
-                )
-                stack.callback(os.close, descriptor)
-                opened = os.fstat(descriptor)
-                search_model_source._source_file_policy(
-                    opened, root.uid, expected["bytes"]
-                )
-                if search_model_source._file_identity(
-                    opened
-                ) != search_model_source._file_identity(named):
-                    raise InferenceError("inference_model_file_changed")
-                if (
-                    expected_file_identity_sha256 is None
-                    or expected["bytes"] <= RESIDENT_METADATA_BYTES
-                ):
-                    digest, size = hashlib.sha256(), 0
-                    while size <= expected["bytes"]:
-                        check_deadline()
-                        block = os.read(
-                            descriptor,
-                            min(
-                                search_model_source.CHUNK_BYTES,
-                                expected["bytes"] + 1 - size,
-                            ),
-                        )
-                        if not block:
-                            break
-                        size += len(block)
-                        digest.update(block)
-                    if (
-                        size != expected["bytes"]
-                        or digest.hexdigest() != expected["sha256"]
-                    ):
-                        raise InferenceError("inference_model_digest_changed")
-                identity = search_model_source._file_identity(opened)
                 records.append(
                     (
                         descriptor,
@@ -456,6 +474,178 @@ def _runtime_identity(compose, model_plan, authority, images):
     }
 
 
+def _prepare_runtime(docker, source_plan, authority, compose, model_plan):
+    """Bind the private runtime plan to verified immutable images."""
+    if (
+        image_build._json(
+            docker.call(["info", "--format", "{{json .OSType}}"])
+        )
+        != "linux"
+    ):
+        raise InferenceError("inference_daemon_unsupported")
+    images = _images(docker, source_plan, authority)
+    compose = copy.deepcopy(compose)
+    for name, image in images.items():
+        compose["services"][name]["image"] = image["Id"]
+    if b"$" in private_io.canonical(compose):
+        raise InferenceError("inference_compose_interpolation_forbidden")
+    identity = _runtime_identity(compose, model_plan, authority, images)
+    return images, compose, identity
+
+
+def _slot_inventory(parent_fd, compose):
+    """Admit only bounded, named slots before selecting start or reuse."""
+    names = set(os.listdir(parent_fd))
+    if (
+        any(SLOT.fullmatch(name) is None for name in names)
+        or len(names) > MAX_SLOTS
+    ):
+        raise InferenceError("inference_unknown_state")
+    name = compose["name"].removeprefix("depositar-ai-")
+    reused = name in names
+    if not reused and len(names) >= MAX_SLOTS:
+        raise InferenceError("inference_retention_limit")
+    return name, reused
+
+
+def _completed_slot(slot_fd, identity, compose):
+    """Read the complete sealed slot against its original start authority."""
+    if set(os.listdir(slot_fd)) != {
+        "started.json",
+        "compose.json",
+        "complete.json",
+    }:
+        raise InferenceError("inference_partial_state_recovery_required")
+    _equal(
+        image_build._record(slot_fd, "started.json"),
+        identity,
+        "inference_start_identity_changed",
+    )
+    _equal(
+        image_build._record(slot_fd, "compose.json"),
+        compose,
+        "inference_compose_changed",
+    )
+    complete = image_build._record(slot_fd, "complete.json")
+    return complete
+
+
+def _require_empty_project(
+    config, docker, compose, gpu_runner, parent_fd, parent
+):
+    """Prove an empty project and free GPUs before creating a start intent."""
+    ids, network_names = runtime_docker.project_inventory(
+        docker, compose["name"]
+    )
+    if ids or network_names:
+        raise InferenceError("inference_legacy_runtime_not_adopted")
+    _gpu(config, (), gpu_runner)
+    if any(runtime_docker.project_inventory(docker, compose["name"])):
+        raise InferenceError("inference_legacy_runtime_not_adopted")
+    private_io.verify_directory(parent_fd, parent)
+
+
+def _start_compose(
+    docker,
+    compose,
+    slot,
+    slot_fd,
+    identity,
+    config,
+    gpu_runner,
+    parent_fd,
+    parent,
+):
+    """Validate the sealed Compose client and recheck ownership before up."""
+    prefix = [
+        "compose",
+        "--env-file",
+        "/dev/null",
+        "--project-directory",
+        str(slot),
+        "--project-name",
+        compose["name"],
+        "--file",
+        str(slot / "compose.json"),
+    ]
+    docker.call([*prefix, "config", "--quiet"])
+    _equal(
+        image_build._record(slot_fd, "compose.json"),
+        compose,
+        "inference_compose_changed",
+    )
+    _equal(
+        image_build._record(slot_fd, "started.json"),
+        identity,
+        "inference_start_identity_changed",
+    )
+    _gpu(config, (), gpu_runner)
+    if any(runtime_docker.project_inventory(docker, compose["name"])):
+        raise InferenceError("inference_legacy_runtime_not_adopted")
+    private_io.verify_directory(parent_fd, parent)
+    private_io.verify_directory(slot_fd, slot)
+    docker.call(
+        [
+            *prefix,
+            "up",
+            "--detach",
+            "--no-build",
+            "--pull",
+            "never",
+            "--wait",
+            "--wait-timeout",
+            "600",
+            *sorted(inference_runtime.SERVICES),
+        ],
+        timeout=660,
+    )
+
+
+def _publish_inference(
+    store,
+    parent_fd,
+    parent,
+    slot_fd,
+    slot,
+    reused,
+    identity,
+    compose,
+    result,
+    deadline,
+):
+    """Publish only after all model and client contexts have exited."""
+    if time.monotonic() >= deadline:
+        raise InferenceError("inference_operation_deadline")
+    store._check_directory()
+    private_io.verify_directory(parent_fd, parent)
+    private_io.verify_directory(slot_fd, slot)
+    _equal(
+        image_build._record(slot_fd, "started.json"),
+        identity,
+        "inference_start_identity_changed",
+    )
+    _equal(
+        image_build._record(slot_fd, "compose.json"),
+        compose,
+        "inference_compose_changed",
+    )
+    if reused:
+        _equal(
+            image_build._record(slot_fd, "complete.json"),
+            result,
+            "inference_completed_runtime_changed",
+        )
+    else:
+        private_io.write_json(
+            slot_fd,
+            "complete.json",
+            result,
+            max_bytes=image_build.MAX_RECORD_BYTES,
+        )
+    store.write("inference-candidate.json", result, replace=True)
+    return {**result, "runtime_reused": reused}
+
+
 def start_private_inference(
     config,
     store,
@@ -520,23 +710,8 @@ def start_private_inference(
                 docker = runtime_docker.Docker(
                     client, docker_runner, deadline=deadline
                 )
-                if (
-                    image_build._json(
-                        docker.call(["info", "--format", "{{json .OSType}}"])
-                    )
-                    != "linux"
-                ):
-                    raise InferenceError("inference_daemon_unsupported")
-                images = _images(docker, source_plan, authority)
-                compose = copy.deepcopy(compose)
-                for name, image in images.items():
-                    compose["services"][name]["image"] = image["Id"]
-                if b"$" in private_io.canonical(compose):
-                    raise InferenceError(
-                        "inference_compose_interpolation_forbidden"
-                    )
-                identity = _runtime_identity(
-                    compose, model_plan, authority, images
+                images, compose, identity = _prepare_runtime(
+                    docker, source_plan, authority, compose, model_plan
                 )
                 parent = config.state_root / "inference"
                 store._check_directory()
@@ -545,56 +720,15 @@ def start_private_inference(
                     "inference",
                     create="inference" not in os.listdir(store.fd),
                 )
-                names = set(os.listdir(parent_fd))
-                if (
-                    any(SLOT.fullmatch(name) is None for name in names)
-                    or len(names) > MAX_SLOTS
-                ):
-                    raise InferenceError("inference_unknown_state")
-                name = compose["name"].removeprefix("depositar-ai-")
-                reused = name in names
-                if not reused and len(names) >= MAX_SLOTS:
-                    raise InferenceError("inference_retention_limit")
+                name, reused = _slot_inventory(parent_fd, compose)
                 slot = parent / name
                 if reused:
                     slot_fd = private_io.open_child_directory(parent_fd, name)
-                    if set(os.listdir(slot_fd)) != {
-                        "started.json",
-                        "compose.json",
-                        "complete.json",
-                    }:
-                        raise InferenceError(
-                            "inference_partial_state_recovery_required"
-                        )
-                    _equal(
-                        image_build._record(slot_fd, "started.json"),
-                        identity,
-                        "inference_start_identity_changed",
-                    )
-                    _equal(
-                        image_build._record(slot_fd, "compose.json"),
-                        compose,
-                        "inference_compose_changed",
-                    )
-                    complete = image_build._record(slot_fd, "complete.json")
+                    complete = _completed_slot(slot_fd, identity, compose)
                 else:
-                    ids, network_names = runtime_docker.project_inventory(
-                        docker, compose["name"]
+                    _require_empty_project(
+                        config, docker, compose, gpu_runner, parent_fd, parent
                     )
-                    if ids or network_names:
-                        raise InferenceError(
-                            "inference_legacy_runtime_not_adopted"
-                        )
-                    _gpu(config, (), gpu_runner)
-                    if any(
-                        runtime_docker.project_inventory(
-                            docker, compose["name"]
-                        )
-                    ):
-                        raise InferenceError(
-                            "inference_legacy_runtime_not_adopted"
-                        )
-                    private_io.verify_directory(parent_fd, parent)
                     slot_fd = private_io.open_child_directory(
                         parent_fd, name, create=True
                     )
@@ -625,53 +759,16 @@ def start_private_inference(
                     )
                     verify_models()
                     private_io.verify_directory(slot_fd, slot)
-                    prefix = [
-                        "compose",
-                        "--env-file",
-                        "/dev/null",
-                        "--project-directory",
-                        str(slot),
-                        "--project-name",
-                        compose["name"],
-                        "--file",
-                        str(slot / "compose.json"),
-                    ]
-                    docker.call([*prefix, "config", "--quiet"])
-                    _equal(
-                        image_build._record(slot_fd, "compose.json"),
+                    _start_compose(
+                        docker,
                         compose,
-                        "inference_compose_changed",
-                    )
-                    _equal(
-                        image_build._record(slot_fd, "started.json"),
+                        slot,
+                        slot_fd,
                         identity,
-                        "inference_start_identity_changed",
-                    )
-                    _gpu(config, (), gpu_runner)
-                    if any(
-                        runtime_docker.project_inventory(
-                            docker, compose["name"]
-                        )
-                    ):
-                        raise InferenceError(
-                            "inference_legacy_runtime_not_adopted"
-                        )
-                    private_io.verify_directory(parent_fd, parent)
-                    private_io.verify_directory(slot_fd, slot)
-                    docker.call(
-                        [
-                            *prefix,
-                            "up",
-                            "--detach",
-                            "--no-build",
-                            "--pull",
-                            "never",
-                            "--wait",
-                            "--wait-timeout",
-                            "600",
-                            *sorted(inference_runtime.SERVICES),
-                        ],
-                        timeout=660,
+                        config,
+                        gpu_runner,
+                        parent_fd,
+                        parent,
                     )
                     complete = None
                 proof = _inspect_runtime(docker, compose, images)
@@ -734,36 +831,18 @@ def start_private_inference(
                 os.close(client_fd)
         # Every fallible model/ancestry context exit and temporary-client
         # cleanup finishes before a durable success receipt is published.
-        if time.monotonic() >= deadline:
-            raise InferenceError("inference_operation_deadline")
-        store._check_directory()
-        private_io.verify_directory(parent_fd, parent)
-        private_io.verify_directory(slot_fd, slot)
-        _equal(
-            image_build._record(slot_fd, "started.json"),
+        return _publish_inference(
+            store,
+            parent_fd,
+            parent,
+            slot_fd,
+            slot,
+            reused,
             identity,
-            "inference_start_identity_changed",
-        )
-        _equal(
-            image_build._record(slot_fd, "compose.json"),
             compose,
-            "inference_compose_changed",
+            result,
+            deadline,
         )
-        if reused:
-            _equal(
-                image_build._record(slot_fd, "complete.json"),
-                result,
-                "inference_completed_runtime_changed",
-            )
-        else:
-            private_io.write_json(
-                slot_fd,
-                "complete.json",
-                result,
-                max_bytes=image_build.MAX_RECORD_BYTES,
-            )
-        store.write("inference-candidate.json", result, replace=True)
-        return {**result, "runtime_reused": reused}
     except (
         OSError,
         ValueError,
