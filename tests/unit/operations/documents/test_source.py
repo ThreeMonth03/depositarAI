@@ -514,3 +514,38 @@ class DocumentSourceTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
             self.assertTrue(caught.exception.__suppress_context__)
             fetch.assert_not_called()
+
+    def test_literal_glob_paths_keep_exact_url_and_source_identity(self):
+        def guarded_transport(command):
+            if "--globoff" not in command:
+                return 3, b"synthetic curl URL glob error"
+            return 0, response(headers=[b"Content-Length: 17"])
+
+        for path in (
+            "report[final].csv",
+            "report{draft.csv",
+            "report{draft,final}.csv",
+            "report[1-2].csv",
+            "report%5Bfinal%5D.csv",
+            "報告[final].csv",
+        ):
+            url = "https://data.depositar.io/synthetic-literal/" + path
+            item = resource(url=url)
+            before = source.source_identity(item)
+            with (
+                self.subTest(path=path),
+                patch.object(
+                    source, "_run", side_effect=guarded_transport
+                ) as run,
+            ):
+                body, _ = source.fetch(item)
+                run.assert_called_once()
+                command = run.call_args.args[0]
+                self.assertIn("--globoff", command)
+                self.assertEqual(command[-1].encode("utf-8"), url.encode())
+                self.assertEqual(body, b"station,pH\nA,7.2\n")
+                self.assertEqual(source.source_identity(item), before)
+                self.assertEqual(
+                    before["source_url_sha256"],
+                    hashlib.sha256(url.encode("utf-8")).hexdigest(),
+                )

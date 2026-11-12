@@ -228,6 +228,7 @@ def fetch(resource):
         [
             "curl",
             "-q",
+            "--globoff",
             "--silent",
             "--show-error",
             "--fail",
