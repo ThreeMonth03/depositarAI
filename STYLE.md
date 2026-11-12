@@ -77,6 +77,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/operations/deployment/frontend/binding.py`。
 - `search/operations/deployment/frontend/traces.py`。
 - `search/operations/deployment/images/build.py`。
+- `search/operations/deployment/source_bundle.py`。
 - `search/operations/deployment/release/runtime.py`。
 - `search/operations/deployment/inference_runtime.py`。
 - `search/operations/deployment/credentials.py`。

@@ -96,6 +96,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/deployment/frontend/binding.py", "")
         self.write("search/operations/deployment/frontend/traces.py", "")
         self.write("search/operations/deployment/images/build.py", "")
+        self.write("search/operations/deployment/source_bundle.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
         self.write("search/operations/deployment/credentials.py", "")
@@ -333,6 +334,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/api/worker.py",
             "search/scope.py",
             "search/operations/deployment/images/build.py",
+            "search/operations/deployment/source_bundle.py",
             "search/operations/deployment/release/runtime.py",
             "search/operations/deployment/inference_runtime.py",
             "search/operations/deployment/credentials.py",

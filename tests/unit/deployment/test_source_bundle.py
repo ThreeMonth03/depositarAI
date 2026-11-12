@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -942,6 +943,100 @@ class SourceBundleStageTests(unittest.TestCase):
                 bundle._verify_context(descriptor, records)
         finally:
             os.close(descriptor)
+
+    def test_partial_write_failure_closes_all_acquired_directory_fds(self):
+        descriptors, written = [], []
+        real_parent = private_io.open_directory
+        real_child = private_io.open_child_directory
+        real_write = bundle._write_source
+
+        def open_parent(*arguments, **keywords):
+            descriptor = real_parent(*arguments, **keywords)
+            descriptors.append(descriptor)
+            return descriptor
+
+        def open_child(*arguments, **keywords):
+            descriptor = real_child(*arguments, **keywords)
+            descriptors.append(descriptor)
+            return descriptor
+
+        def fail_after_first_write(*arguments):
+            if written:
+                raise OSError("PRIVATE_WRITE_SENTINEL")
+            real_write(*arguments)
+            written.append(arguments[1])
+
+        with (
+            mock.patch.object(
+                private_io, "open_directory", side_effect=open_parent
+            ),
+            mock.patch.object(
+                private_io, "open_child_directory", side_effect=open_child
+            ),
+            mock.patch.object(
+                bundle, "_write_source", side_effect=fail_after_first_write
+            ),
+            self.assertRaisesRegex(
+                bundle.SourceBundleError, "^source_bundle_staging_failed$"
+            ) as caught,
+        ):
+            self.stage()
+
+        # Check closed descriptors before any later IO can reuse their numbers.
+        for descriptor in descriptors:
+            with self.assertRaises(OSError) as closed:
+                os.fstat(descriptor)
+            self.assertEqual(errno.EBADF, closed.exception.errno)
+        self.assertGreaterEqual(len(descriptors), 6)
+        self.assertEqual(len(descriptors), len(set(descriptors)))
+        self.assertEqual(1, len(written))
+        context = self.destination / "context"
+        first = context / sorted(self.sources)[0]
+        self.assertEqual(
+            [first], [path for path in context.rglob("*") if path.is_file()]
+        )
+        self.assertEqual(
+            self.sources[str(first.relative_to(context))], first.read_bytes()
+        )
+        self.assertFalse((self.destination / "manifest.json").exists())
+        self.assertNotIn("PRIVATE_WRITE_SENTINEL", str(caught.exception))
+
+    def test_postmanifest_source_tamper_preserves_failed_stage_evidence(self):
+        real_write = private_io.write_json
+        manifest = self.destination / "manifest.json"
+        relative = "search/api/conversation/app.py"
+        target = self.destination / "context" / relative
+        published = []
+
+        def tamper_after_manifest(parent_fd, name, value, **keywords):
+            real_write(parent_fd, name, value, **keywords)
+            self.assertEqual("manifest.json", name)
+            self.assertEqual(
+                private_io.canonical(value), manifest.read_bytes()
+            )
+            self.assertEqual(self.sources[relative], target.read_bytes())
+            published.append(value)
+            target.write_bytes(b"tampered after manifest publication\n")
+
+        with (
+            mock.patch.object(
+                private_io, "write_json", side_effect=tamper_after_manifest
+            ),
+            self.assertRaisesRegex(
+                bundle.SourceBundleError,
+                "^source_bundle_staged_source_changed$",
+            ),
+        ):
+            self.stage()
+
+        self.assertEqual(1, len(published))
+        self.assertEqual(
+            private_io.canonical(published[0]), manifest.read_bytes()
+        )
+        self.assertEqual(self.revision, published[0]["revision"])
+        self.assertEqual(
+            b"tampered after manifest publication\n", target.read_bytes()
+        )
 
     def test_git_runner_errors_and_output_limits_do_not_leak_private_stderr(
         self,
