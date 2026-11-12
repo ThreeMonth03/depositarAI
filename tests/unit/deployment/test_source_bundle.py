@@ -232,6 +232,22 @@ class SourceBundlePlanTests(unittest.TestCase):
             after["services"]["conversation-api"],
         )
 
+    def test_result_export_module_is_bound_only_to_frontend_source(self):
+        before = self.plan()
+        path = "web/src/search/export.ts"
+        self.assertIn(path, before["files"])
+        self.sources[path] += b"\n// changed export projection\n"
+        self.tree[path]["object"] = blob(self.sources[path])
+        after = self.plan()
+        self.assertNotEqual(
+            before["services"]["web-nginx"]["source_sha256"],
+            after["services"]["web-nginx"]["source_sha256"],
+        )
+        for service in ("web", "conversation-api", "reranker"):
+            self.assertEqual(
+                before["services"][service], after["services"][service]
+            )
+
     def test_recipe_and_ignore_mutations_require_review(
         self,
     ):

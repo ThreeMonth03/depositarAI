@@ -14,6 +14,7 @@ web/src/**
 !web/src/search/
 web/src/search/**
 !web/src/search/session.ts
+!web/src/search/export.ts
 !web/src/assets/
 web/src/assets/**
 !web/src/assets/search-symbol.svg

@@ -18,6 +18,7 @@ export type ResourceContext = {
   excerpt: string;
 };
 export type Card = {
+  rank?: number;
   dataset_id: string;
   title: string;
   url: string;
@@ -27,6 +28,18 @@ export type Card = {
   temporal_coverage: TemporalCoverage;
   resource_context: ResourceContext[];
   condition_status: "match" | "unknown" | "not_checked";
+  metadata_modified?: string;
+};
+export type SearchConditions = {
+  time: {
+    start: string | null;
+    end: string | null;
+    field: "data_coverage";
+    relation: "overlaps";
+    endpoints: "inclusive";
+  } | null;
+  place: null;
+  formats: string[];
 };
 export type TurnResult = {
   status: "ok" | "rejected" | "clarification_required" | "unavailable";
@@ -41,6 +54,8 @@ export type TurnResult = {
     filter_scope: "none" | "index_prefilter";
     warnings: string[];
     catalog_manifest_sha256: string;
+    parsed_conditions?: SearchConditions;
+    applied_conditions?: SearchConditions | null;
   };
 };
 export type TracePolicy = {
@@ -93,7 +108,11 @@ export type Reply = {
   trace?: TraceStatus;
   version: number;
   result: TurnResult;
-  context_used: { reference_date: string; timezone: string };
+  context_used: {
+    reference_time?: string;
+    reference_date: string;
+    timezone: string;
+  };
 };
 
 function record(value: unknown): value is Record<string, unknown> {

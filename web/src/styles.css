@@ -949,3 +949,15 @@ main {
   font-size: 0.8rem;
   text-align: center;
 }
+.result-export {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.result-export p {
+  margin: 6px 0;
+}
+.export-actions {
+  display: flex;
+  gap: 16px;
+}

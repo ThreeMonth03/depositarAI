@@ -87,6 +87,7 @@ class SearchImageHardeningTests(unittest.TestCase):
                 "!web/src/*.css",
                 "!web/src/search/",
                 "!web/src/search/session.ts",
+                "!web/src/search/export.ts",
                 "!web/src/assets/",
                 "!web/src/assets/search-symbol.svg",
                 "!web/src/assets/search-logo.svg",

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { safeDatasetUrl } from "./api";
+import { ResultExportError, serializeResultExport } from "./search/export";
+import type { ResultExportSnapshot } from "./search/export";
 import type {
   Card,
   ResourceContext,
@@ -160,7 +162,82 @@ function ResultCard({ card, rank }: { card: Card; rank: number }) {
   );
 }
 
-export function Results({ result }: { result: TurnResult }) {
+function ExportControls({
+  snapshot,
+  canExport,
+}: {
+  snapshot: ResultExportSnapshot | null;
+  canExport?: (snapshot: ResultExportSnapshot) => boolean;
+}) {
+  const [error, setError] = useState("");
+  const available = snapshot !== null && canExport?.(snapshot) === true;
+
+  function download(format: "csv" | "json") {
+    if (!snapshot || !canExport?.(snapshot)) return;
+    let url: string | undefined;
+    let link: HTMLAnchorElement | undefined;
+    try {
+      const file = serializeResultExport(snapshot, format);
+      if (!canExport(snapshot)) return;
+      url = URL.createObjectURL(new Blob([file.content], { type: file.mime }));
+      link = document.createElement("a");
+      link.href = url;
+      link.download = file.filename;
+      document.body.append(link);
+      link.click();
+      setError("");
+    } catch (failure) {
+      setError(
+        failure instanceof ResultExportError && failure.message === "too_large"
+          ? "清單超過下載大小上限，未產生檔案。"
+          : "無法下載此輪清單，請稍後重試。",
+      );
+    } finally {
+      link?.remove();
+      if (url) {
+        const used = url;
+        window.setTimeout(() => URL.revokeObjectURL(used), 0);
+      }
+    }
+  }
+
+  return (
+    <div className="result-export" aria-label="下載本次結果清單">
+      <div className="export-actions">
+        <button
+          className="text-button"
+          disabled={!available}
+          onClick={() => download("csv")}
+        >
+          下載清單 CSV
+        </button>
+        <button
+          className="text-button"
+          disabled={!available}
+          onClick={() => download("json")}
+        >
+          下載清單 JSON
+        </button>
+      </div>
+      <p>
+        {available
+          ? "僅含本次顯示的有界清單，不代表全部符合結果；資料狀態以此快照為準。"
+          : "此輪未提供可確認的清單資料，下載暫時不可用。"}
+      </p>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
+}
+
+export function Results({
+  result,
+  exportSnapshot,
+  canExportSnapshot,
+}: {
+  result: TurnResult;
+  exportSnapshot?: ResultExportSnapshot | null;
+  canExportSnapshot?: (snapshot: ResultExportSnapshot) => boolean;
+}) {
   if (!result.search) return null;
   return (
     <div className="results">
@@ -177,6 +254,12 @@ export function Results({ result }: { result: TurnResult }) {
         </span>
         <span>{(result.timing_ms.total / 1000).toFixed(1)} 秒</span>
       </div>
+      {exportSnapshot !== undefined && (
+        <ExportControls
+          snapshot={exportSnapshot}
+          canExport={canExportSnapshot}
+        />
+      )}
       {result.search.cards.length === 0 && (
         <p className="notice">試著放寬年份、移除格式限制，或換個主題再找找。</p>
       )}
