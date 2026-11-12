@@ -1,6 +1,7 @@
 """The public entrance is a separate CPU deployment with a guarded image."""
 
 import copy
+import errno
 import json
 import os
 from pathlib import Path
@@ -361,6 +362,172 @@ class PublicEntryBindingTests(unittest.TestCase):
         self.assertEqual(
             (self.root / "public-entry/operator-sentinel").read_text(), "keep"
         )
+
+    def test_saved_report_failure_precedes_assets_without_overwrite(self):
+        report = self.prepare()
+        prepared = self.root / "public-entry"
+        saved = prepared / "prepared.json"
+        original = host.private_io.read_file
+        for raw, message in (
+            (
+                json.dumps({**report, "status": "changed"}).encode(),
+                "public_entry_preparation_changed",
+            ),
+            (b'{"status":1,"status":2}\n', "duplicate JSON key"),
+        ):
+            with self.subTest(message=message):
+                saved.write_bytes(raw)
+                before = {
+                    path.name: path.read_bytes()
+                    for path in prepared.iterdir()
+                    if path.is_file()
+                }
+                reads = []
+
+                def read(descriptor, name, **kwargs):
+                    if name in {
+                        "prepared.json",
+                        *self.rendered["assets"],
+                        "compose.json",
+                    }:
+                        reads.append(name)
+                    return original(descriptor, name, **kwargs)
+
+                with (
+                    patch.object(
+                        host.private_io, "read_file", side_effect=read
+                    ),
+                    self.assertRaisesRegex(ValueError, "^" + message + "$"),
+                ):
+                    self.prepare()
+                self.assertEqual(reads, ["prepared.json"])
+                self.assertEqual(
+                    {
+                        path.name: path.read_bytes()
+                        for path in prepared.iterdir()
+                        if path.is_file()
+                    },
+                    before,
+                )
+
+    def test_non_compose_asset_drift_preserves_read_order_and_files(self):
+        self.prepare()
+        prepared = self.root / "public-entry"
+        (prepared / "apisix.yaml").write_bytes(b"changed asset\n")
+        before = {
+            path.name: path.read_bytes()
+            for path in prepared.iterdir()
+            if path.is_file()
+        }
+        original = host.private_io.read_file
+        reads = []
+
+        def read(descriptor, name, **kwargs):
+            if name in {
+                "prepared.json",
+                *self.rendered["assets"],
+                "compose.json",
+            }:
+                reads.append(name)
+            return original(descriptor, name, **kwargs)
+
+        with (
+            patch.object(host.private_io, "read_file", side_effect=read),
+            self.assertRaisesRegex(
+                ValueError, "^public_entry_preparation_changed$"
+            ),
+        ):
+            self.prepare()
+        self.assertEqual(
+            reads, ["prepared.json", "config.yaml", "apisix.yaml"]
+        )
+        self.assertEqual(
+            {
+                path.name: path.read_bytes()
+                for path in prepared.iterdir()
+                if path.is_file()
+            },
+            before,
+        )
+
+    def test_existing_retry_releases_descriptors_and_lock_after_read_failure(
+        self,
+    ):
+        report = self.prepare()
+        original_read = host.private_io.read_file
+        original_open = host.private_io.open_directory
+        original_flock = host.fcntl.flock
+        lock_path = self.root / ".public-entry-prepare.lock"
+        for fail_read in (False, True):
+            with self.subTest(fail_read=fail_read):
+                parent = lock = None
+                resources = {}
+                failure = PermissionError("existing asset unavailable")
+
+                def open_directory(path, **kwargs):
+                    nonlocal parent
+                    parent = original_open(path, **kwargs)
+                    return parent
+
+                def flock(descriptor, operation):
+                    nonlocal lock
+                    original_flock(descriptor, operation)
+                    lock = descriptor
+
+                def read(descriptor, name, **kwargs):
+                    if name in {
+                        "prepared.json",
+                        *self.rendered["assets"],
+                        "compose.json",
+                    }:
+                        resources.update(
+                            parent=parent, preparation=descriptor, lock=lock
+                        )
+                        for owned in resources.values():
+                            os.fstat(owned)
+                        with lock_path.open("rb") as competing:
+                            with self.assertRaises(BlockingIOError):
+                                original_flock(
+                                    competing.fileno(),
+                                    host.fcntl.LOCK_EX | host.fcntl.LOCK_NB,
+                                )
+                    if fail_read and name == "apisix.yaml":
+                        raise failure
+                    result = original_read(descriptor, name, **kwargs)
+                    os.fstat(descriptor)
+                    return result
+
+                with (
+                    patch.object(
+                        host.private_io,
+                        "open_directory",
+                        side_effect=open_directory,
+                    ),
+                    patch.object(host.fcntl, "flock", side_effect=flock),
+                    patch.object(
+                        host.private_io, "read_file", side_effect=read
+                    ),
+                ):
+                    if fail_read:
+                        with self.assertRaises(PermissionError) as caught:
+                            self.prepare()
+                        self.assertIs(caught.exception, failure)
+                    else:
+                        self.assertEqual(self.prepare(), report)
+                self.assertEqual(len(set(resources.values())), 3)
+                for name, descriptor in resources.items():
+                    with (
+                        self.subTest(resource=name),
+                        self.assertRaises(OSError) as caught,
+                    ):
+                        os.fstat(descriptor)
+                    self.assertEqual(caught.exception.errno, errno.EBADF)
+                with lock_path.open("rb") as competing:
+                    original_flock(
+                        competing.fileno(),
+                        host.fcntl.LOCK_EX | host.fcntl.LOCK_NB,
+                    )
+                self.assertEqual(self.prepare(), report)
 
 
 if __name__ == "__main__":
