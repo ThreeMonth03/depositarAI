@@ -100,6 +100,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.test_private_api_tls \
   tests.unit.deployment.frontend.test_check \
   tests.unit.deployment.frontend.test_policy \
+  tests.unit.deployment.frontend.test_traces \
   tests.unit.deployment.frontend.test_access \
   tests.unit.deployment.frontend.test_wrapper \
   tests.unit.deployment.frontend.test_artifact \

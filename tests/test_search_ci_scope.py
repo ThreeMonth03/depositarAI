@@ -1206,12 +1206,24 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                         "search.tests.test_conversation_calendar",
                         "search.tests.test_conversation_time",
                         "search.tests.test_search_web",
+                        "search.tests.test_search_web_trace",
                         "search.tests.test_search_web_identity",
                         "search.tests.test_worker_io",
                         "-v",
                     ],
-                    unit[-7:],
+                    unit[-8:],
                 )
+                if suite == "browser":
+                    fixture = next(
+                        args
+                        for args in docker
+                        if "search.tests.web_fixture:website" in args
+                    )
+                    browser = next(
+                        args for args in docker if args[-2:] == ["npm", "test"]
+                    )
+                    self.assertIn("WEB_TRACE_ROOT=/tmp/trace-fixture", fixture)
+                    self.assertIn("DEPOSITAR_TEST_TRACE_RUNTIME=1", browser)
                 self.assertEqual(4, sum("ruff" in args for args in docker))
                 self.assertEqual(
                     1,

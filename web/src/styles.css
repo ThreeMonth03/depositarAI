@@ -890,3 +890,62 @@ main {
     margin-top: 9px;
   }
 }
+
+.trace-choice {
+  margin: 0 auto 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+.trace-choice h2 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.trace-choice p {
+  margin: 6px 0;
+}
+.trace-opt-in {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--ink);
+}
+.trace-opt-in input {
+  flex-shrink: 0;
+  margin-top: 7px;
+  accent-color: var(--green);
+}
+.trace-state {
+  margin-top: 10px;
+}
+.trace-choice .trace-id {
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
+}
+.trace-choice .trace-error {
+  color: #8b342d;
+}
+.trace-withdraw {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.trace-withdraw:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.trace-unavailable {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}

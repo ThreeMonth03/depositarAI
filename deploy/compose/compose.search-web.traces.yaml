@@ -1,0 +1,21 @@
+# The wrapper includes this only when its dedicated env file selects an existing
+# private directory. Other inputs and the container root remain read-only.
+services:
+  web:
+    environment:
+      WEB_TRACE_ROOT: /var/lib/depositar/traces
+      WEB_TRACE_TTL_SECONDS: ${WEB_TRACE_TTL_SECONDS:-604800}
+      WEB_TRACE_MAX_TURNS: ${WEB_TRACE_MAX_TURNS:-20}
+      WEB_TRACE_MAX_EVENT_BYTES: ${WEB_TRACE_MAX_EVENT_BYTES:-1048576}
+      WEB_TRACE_MAX_SESSION_BYTES: ${WEB_TRACE_MAX_SESSION_BYTES:-8388608}
+      WEB_TRACE_MAX_TOTAL_BYTES: ${WEB_TRACE_MAX_TOTAL_BYTES:-104857600}
+      WEB_TRACE_QUEUE_ITEMS: ${WEB_TRACE_QUEUE_ITEMS:-16}
+      WEB_TRACE_QUEUE_BYTES: ${WEB_TRACE_QUEUE_BYTES:-16777216}
+      WEB_TRACE_MAX_SESSIONS: ${WEB_TRACE_MAX_SESSIONS:-100}
+      WEB_TRACE_SHUTDOWN_SECONDS: ${WEB_TRACE_SHUTDOWN_SECONDS:-1}
+    volumes:
+      - type: bind
+        source: ${WEB_TRACE_DIRECTORY:?existing private trace directory required}
+        target: /var/lib/depositar/traces
+        read_only: false
+        bind: {create_host_path: false}

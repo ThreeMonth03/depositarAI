@@ -26,6 +26,7 @@
 |---|---|
 | 私有搜尋 HTTP 契約 | [Conversation API](API.md) |
 | 搜尋條件回歸與結果檢查 | [搜尋品質檢查](development/SEARCH_QUALITY.md) |
+| 自願提供搜尋測試紀錄與私有維護 | [搜尋測試紀錄](development/SEARCH_TRACES.md) |
 | Browser session 與 BFF | [Search website](SEARCH_WEBSITE.md) |
 | 程式責任與依賴方向 | [Search](../search/README.md)、[API](../search/api/README.md)、[Catalog](../search/catalog/README.md)、[Operations](../search/operations/README.md) |
 | 共用模組與封裝 | [模組邊界](development/SOURCE_REFACTOR.md)、[目錄規範](development/REPOSITORY_LAYOUT.md) |

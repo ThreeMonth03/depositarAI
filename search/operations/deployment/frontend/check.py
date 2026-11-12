@@ -26,6 +26,7 @@ from ..public_entry import profile
 from ..runtime_docker import Docker
 from . import access
 from . import policy
+from . import traces
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -135,6 +136,14 @@ def _compose(client, config):
             "-f",
             str(ROOT / "deploy/compose/compose.search-web.ca.yaml"),
         ]
+    trace = first["services"]["web"]["environment"].get("WEB_TRACE_ROOT")
+    if trace:
+        _require(traces.absolute_directory(trace), "profile_invalid")
+        command += [
+            "-f",
+            str(ROOT / "deploy/compose/compose.search-web.traces.yaml"),
+        ]
+    if ca or trace:
         first = strict_json(
             client.call(command + ["config", "--format", "json"])
         )
@@ -352,7 +361,7 @@ def _runtime(client, expected, config):
             "runtime_invalid",
         )
         wanted_mounts = sorted(
-            (m["source"], m["target"], False)
+            (m["source"], m["target"], not m.get("read_only", False))
             for m in service.get("volumes", [])
         )
         actual_mounts = sorted(

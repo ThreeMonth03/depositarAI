@@ -46,6 +46,8 @@ roles = {
         "search.web.app",
         "search.web.sessions",
         "search.web.upstream",
+        "search.trace.worker",
+        "search.operations.shared.private_io",
     ),
     "reranker": ("search.reranker.server",),
     "catalog-admin": ("search.catalog_admin",),
@@ -96,13 +98,31 @@ if role == "conversation":
 
 if role == "web":
     assert not Path("/app/web-dist").exists(), "static assets belong to the frontend image"
-    for relative in ("operations", "catalog/admin.py", "catalog/client.py",
+    for relative in ("catalog/admin.py", "catalog/client.py",
                      "catalog/importer.py", "catalog/vectors.py",
                      "model_policy.py", "scope.py", "api/retrieval/results.py",
                      "api/retrieval/fess.py",
                      "api/conversation/app.py", "api/conversation/worker.py"):
         path = search_root / relative
         assert not (path.exists() or path.is_symlink()), "unrelated code in web image"
+    allowed_private_io = {
+        "__init__.py", "shared", "shared/__init__.py", "shared/private_io.py",
+    }
+    for path in (search_root / "operations").rglob("*"):
+        assert not path.is_symlink(), "linked operator code in web image"
+        assert (
+            path.relative_to(search_root / "operations").as_posix()
+            in allowed_private_io
+        ), "unrelated operator code in web image"
+    allowed_traces = {
+        "__init__.py", "limits.py", "contract.py", "files.py", "store.py",
+        "worker.py",
+    }
+    for path in (search_root / "trace").rglob("*"):
+        assert not path.is_symlink(), "linked trace code in web image"
+        assert (
+            path.relative_to(search_root / "trace").as_posix() in allowed_traces
+        ), "offline trace code in web image"
 
 if role == "catalog-admin":
     for relative in ("api", "web", "catalog/query.py", "catalog/client.py"):

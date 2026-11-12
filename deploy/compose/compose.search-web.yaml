@@ -28,6 +28,8 @@ services:
       WEB_ORIGIN: ${WEB_ORIGIN:?required}
       WEB_UPSTREAM: ${WEB_UPSTREAM:?approved HTTPS endpoint required}
       WEB_UPSTREAM_CA_FILE: ${WEB_UPSTREAM_CA_FILE:-}
+      # The optional override replaces this host path with the fixed target.
+      WEB_TRACE_ROOT: ${WEB_TRACE_DIRECTORY:-}
       NVIDIA_VISIBLE_DEVICES: void
     volumes:
       - type: bind

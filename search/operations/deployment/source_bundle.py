@@ -134,8 +134,15 @@ RERANKER_PY = _paths(
 RERANKER = RERANKER_PY | {"search/reranker/requirements.lock"}
 WEB = _paths(
     "search/web/",
-    "__init__.py app.py identity.py origin.py sessions.py upstream.py "
+    "__init__.py app.py identity.py origin.py sessions.py trace.py turn.py "
+    "upstream.py "
     "requirements.lock",
+)
+TRACE_RUNTIME = _paths(
+    "search/trace/",
+    "__init__.py limits.py contract.py files.py store.py worker.py",
+) | _paths(
+    "search/operations/", "__init__.py shared/__init__.py shared/private_io.py"
 )
 ASSETS = (
     _paths(
@@ -146,6 +153,7 @@ ASSETS = (
     | _paths(
         "web/src/",
         "api.ts env.d.ts main.tsx search-access.tsx search-progress.tsx "
+        "trace-choice.tsx "
         "search-results.tsx styles.css",
     )
     | _paths("web/src/search/", "session.ts")
@@ -189,12 +197,16 @@ RECIPES = {
     },
     "web": {
         "dockerfile": "deploy/docker/web/Dockerfile",
-        "dockerfile_sha256": "24a3bc5ab156f4147d3214416d04038b"
-        "db0b6362a2a9d6bb787649236688deda",
-        "dockerignore_sha256": "a44d28c6b36440522025533b860615e6"
-        "c37db79f36c9f9e1fdebd9a297e718da",
+        "dockerfile_sha256": "0a3a67aca6cce7633c17812daab9d764"
+        "42f99e6155335cf6a7c4e72312d3a256",
+        "dockerignore_sha256": "6afc05da9bd76d10b8f13289bcaf5cbf"
+        "fd5c29a43ee9436ddb50e4273f815e8f",
         "bases": (PYTHON_BASE,),
-        "inputs": WEB_CONTRACT | HTTP | WEB | {"search/api/requirements.lock"},
+        "inputs": WEB_CONTRACT
+        | HTTP
+        | WEB
+        | TRACE_RUNTIME
+        | {"search/api/requirements.lock"},
         "patterns": (
             "search/http/*.py",
             "search/web/*.py",

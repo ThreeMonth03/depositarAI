@@ -5,6 +5,8 @@ import re
 
 from search.transport.version import CONVERSATION_CONTRACT_VERSION
 
+from . import traces
+
 PROJECTS = {
     "private": "depositar-search-web",
     "intranet-http": "depositar-search-intranet",
@@ -82,8 +84,10 @@ def _runtime_restrictions(service):
         raise ValueError("resource limits required")
 
 
-def _readonly_bind_inputs(service):
+def _readonly_bind_inputs(service, trace_output=None):
     for mount in service.get("volumes", []):
+        if mount is trace_output:
+            continue
         if (
             mount.get("type") != "bind"
             or not mount.get("read_only")
@@ -128,8 +132,10 @@ def _network_policy(config, web, services):
         raise ValueError("remote frontend network policy drift")
 
 
-def _secret_inputs(web, services, *, intranet):
-    mounts = web.get("volumes", [])
+def _secret_inputs(web, services, *, intranet, trace_output=None):
+    mounts = [
+        mount for mount in web.get("volumes", []) if mount is not trace_output
+    ]
     ca_file = web["environment"].get("WEB_UPSTREAM_CA_FILE", "")
     expected_targets = {"/run/secrets/api_key"}
     if ca_file:
@@ -171,6 +177,7 @@ def validate(config, *, intranet=False, prepare=False):
         "WEB_UPSTREAM_CA_FILE",
         "NVIDIA_VISIBLE_DEVICES",
     } | ({"WEB_ACCESS_MODE"} if intranet else set())
+    web_keys |= set(web["environment"]) & traces.ENVIRONMENT_KEYS
     nginx_keys = {"WEB_ALLOWED_CIDRS"} if intranet else set()
     if (
         set(web["environment"]) != web_keys
@@ -183,12 +190,13 @@ def validate(config, *, intranet=False, prepare=False):
     )
     expected_host = origin.hostname if intranet else "127.0.0.1"
     expected_port = str(origin.port) if intranet else "18081"
+    trace_output = traces.output_mount(web, services)
     for name, service in services.items():
         _runtime_restrictions(service)
-        _readonly_bind_inputs(service)
+        _readonly_bind_inputs(service, trace_output if name == "web" else None)
         _published_port(name, service, expected_host, expected_port)
     _network_policy(config, web, services)
-    _secret_inputs(web, services, intranet=intranet)
+    _secret_inputs(web, services, intranet=intranet, trace_output=trace_output)
     if intranet:
         from . import access
 

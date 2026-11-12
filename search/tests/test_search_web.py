@@ -221,7 +221,6 @@ class WebHTTPTests(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
         for method, path in (
             ("HEAD", "/healthz"),
-            ("GET", "/api/session"),
             ("OPTIONS", "/api/turn"),
         ):
             with self.subTest(method=method, path=path):
@@ -615,6 +614,11 @@ class WebsiteRouteTests(unittest.TestCase):
                 "login_url": None,
                 "logout_url": None,
                 "limits": {"turns": None, "window_seconds": None},
+                "trace_policy": {
+                    "available": False,
+                    "notice_version": "search-trace-v1",
+                    "retention_days": 7.0,
+                },
             },
         )
 

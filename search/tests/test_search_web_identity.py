@@ -40,6 +40,11 @@ def access_payload(*, kind="user", subject=ALICE, mode="login_required"):
         "login_url": "/auth/login" if kind == "guest" else None,
         "logout_url": "/auth/logout" if kind == "user" else None,
         "limits": {"turns": 10, "window_seconds": 86400},
+        "trace_policy": {
+            "available": False,
+            "notice_version": "search-trace-v1",
+            "retention_days": 7.0,
+        },
     }
 
 

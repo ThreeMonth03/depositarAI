@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 from django.urls import path
 from pydantic import Field, ValidationError, field_validator
@@ -15,13 +14,16 @@ from search.http.body import bounded_body, replay_body
 from search.http.responses import json_response
 from search.http.views import APIView
 from search.serialization import strict_json
-from search.api.conversation.contract import TurnRequest
 from search.api.shared.schemas import StrictModel
 from search.planning.clock import normalize_context
 from search.planning.contract import checked_query
 from .identity import EdgeIdentity
 from .sessions import SessionError, Sessions
-from .upstream import Upstream, UpstreamError, WebSettings
+from search.trace.contract import CaptureChoice, WithdrawChoice
+from search.trace.worker import TraceSink
+from .trace import SearchTrace, utc_now
+from .turn import admitted_turn
+from .upstream import Upstream, WebSettings
 
 
 class UserTurn(StrictModel):
@@ -93,10 +95,11 @@ class WebBoundary:
             if duplicate or scope.get("query_string"):
                 return 400, "invalid_request"
             # Same-origin browser GET requests may omit Origin. Only this
-            # read-only identity check accepts its absence; no CORS wildcard.
-            access_check = (
-                scope["method"] == "GET" and scope["path"] == "/api/access"
-            )
+            # read-only metadata checks accept its absence; no CORS wildcard.
+            access_check = scope["method"] == "GET" and scope["path"] in {
+                "/api/access",
+                "/api/session",
+            }
             if headers.get(b"origin") != self.origin and not (
                 access_check and b"origin" not in headers
             ):
@@ -124,19 +127,19 @@ class WebBoundary:
         rejection = self._admit(scope, headers, duplicate)
         if rejection is not None:
             return await reject(*rejection)
-        is_post = scope["method"] == "POST"
+        has_body = scope["method"] in {"POST", "PATCH"}
         length = headers.get(b"content-length", "")
         rejection = (
-            _post_status(headers) if is_post else _empty_status(headers)
+            _post_status(headers) if has_body else _empty_status(headers)
         )
         if rejection is not None:
             return await reject(*rejection)
 
         try:
             body = await bounded_body(
-                receive, limit=4096 if is_post else 0, timeout=5
+                receive, limit=4096 if has_body else 0, timeout=5
             )
-            if is_post:
+            if has_body:
                 if len(body) != int(length):
                     raise ValueError("length mismatch")
                 strict_json(body)
@@ -189,9 +192,8 @@ def _token(request):
     return auth[7:]
 
 
-async def _turn(payload, request, upstream, sessions, slots):
-    stamp = datetime.now(timezone.utc).isoformat()
-    context = {"reference_time": stamp, "timezone": payload.timezone}
+async def _turn(payload, request, upstream, sessions, slots, trace):
+    context = {"reference_time": utc_now(), "timezone": payload.timezone}
     try:
         normalize_context(context)
     except ValueError:
@@ -203,44 +205,14 @@ async def _turn(payload, request, upstream, sessions, slots):
                 payload.version,
                 request.scope["state"]["owner"],
             )
-            try:
-                data = TurnRequest(
-                    query=payload.query,
-                    state=session.state,
-                    pending=session.pending,
-                    context=context,
-                    top_k=payload.top_k,
-                ).model_dump()
-                result = await upstream.turn(data)
-                if result.status == "unavailable":
-                    return problem(503, "upstream_unavailable")
-                if result.status == "ok":
-                    session.state, session.pending = result.state, None
-                elif result.status == "clarification_required":
-                    session.pending = session.pending or payload.query
-                # Rejections cannot poison state or pending clarification.
-                session.version += 1
-                return Response(
-                    {
-                        "version": session.version,
-                        "result": result.model_dump(),
-                        "context_used": normalize_context(context),
-                    }
-                )
-            finally:
-                session.busy = False
+            return await admitted_turn(
+                payload, session, upstream, trace, context, problem
+            )
     except Busy:
         return problem(429, "busy")
-    except UpstreamError as error:
-        return problem(error.status, "upstream_unavailable")
 
 
-def create_app(settings=None, upstream=None, sessions=None):
-    settings = settings or WebSettings.from_environment()
-    identity = EdgeIdentity(settings.edge_secret_file)
-    upstream, sessions = upstream or Upstream(settings), sessions or Sessions()
-    slots = Slots(1)
-
+def _lifecycle(sessions, sink, limits):
     @asynccontextmanager
     async def lifespan(_app):
         async def reap():
@@ -248,6 +220,10 @@ def create_app(settings=None, upstream=None, sessions=None):
                 await asyncio.sleep(30)
                 sessions.reap()
 
+        try:
+            sink.start()
+        except Exception:
+            pass
         task = asyncio.create_task(reap())
         try:
             yield
@@ -255,6 +231,72 @@ def create_app(settings=None, upstream=None, sessions=None):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             sessions.items.clear()
+            try:
+                sink.close(limits.shutdown_seconds)
+            except Exception:
+                pass
+
+    return lifespan
+
+
+def _session_view(sessions, trace, settings):
+    class SessionView(WebsiteView):
+        http_method_names = ["get", "post", "patch", "delete"]
+
+        async def get(self, request):
+            session = sessions.get(
+                _token(request), request.scope["state"]["owner"]
+            )
+            return Response({"trace": trace.status(session)})
+
+        async def post(self, request):
+            choice = CaptureChoice.model_validate(request.data)
+            if choice.capture and settings.trace_root is None:
+                return problem(503, "capture_unavailable")
+            token = sessions.create(
+                request.scope["state"]["owner"],
+                capture=choice.capture,
+                consented_at=utc_now(),
+            )
+            return Response(
+                {
+                    "token": token,
+                    "version": 0,
+                    "expires_in": sessions.ttl,
+                    "max_turns": sessions.max_turns,
+                    "revision": settings.revision,
+                    "trace": trace.status(
+                        sessions.get(token, request.scope["state"]["owner"])
+                    ),
+                }
+            )
+
+        async def patch(self, request):
+            WithdrawChoice.model_validate(request.data)
+            session = sessions.get(
+                _token(request), request.scope["state"]["owner"]
+            )
+            return Response({"trace": trace.withdraw(session)})
+
+        async def delete(self, request):
+            token, owner = _token(request), request.scope["state"]["owner"]
+            session = sessions.items.get(token)
+            value = None
+            if session is not None and session.owner == owner:
+                value = trace.withdraw(session)
+            sessions.delete(token, owner)
+            return Response({"status": "cleared", "trace": value})
+
+    return SessionView
+
+
+def create_app(settings=None, upstream=None, sessions=None, trace_sink=None):
+    settings = settings or WebSettings.from_environment()
+    identity = EdgeIdentity(settings.edge_secret_file)
+    upstream, sessions = upstream or Upstream(settings), sessions or Sessions()
+    slots = Slots(1)
+    sink = trace_sink or TraceSink(settings.trace_root, settings.trace_limits)
+    trace = SearchTrace(settings, sink)
 
     class HealthView(WebsiteView):
         http_method_names = ["get"]
@@ -266,27 +308,12 @@ def create_app(settings=None, upstream=None, sessions=None):
         http_method_names = ["get"]
 
         async def get(self, request):
-            return Response(request.scope["state"]["access"].payload())
-
-    class SessionView(WebsiteView):
-        http_method_names = ["post", "delete"]
-
-        async def post(self, request):
-            if request.data != {}:
-                return problem(422, "invalid_request")
             return Response(
                 {
-                    "token": sessions.create(request.scope["state"]["owner"]),
-                    "version": 0,
-                    "expires_in": sessions.ttl,
-                    "max_turns": sessions.max_turns,
-                    "revision": settings.revision,
+                    **request.scope["state"]["access"].payload(),
+                    "trace_policy": trace.policy(),
                 }
             )
-
-        async def delete(self, request):
-            sessions.delete(_token(request), request.scope["state"]["owner"])
-            return Response({"status": "cleared"})
 
     class TurnView(WebsiteView):
         http_method_names = ["post"]
@@ -298,6 +325,7 @@ def create_app(settings=None, upstream=None, sessions=None):
                 upstream,
                 sessions,
                 slots,
+                trace,
             )
 
     return WebBoundary(
@@ -305,10 +333,13 @@ def create_app(settings=None, upstream=None, sessions=None):
             [
                 path("healthz", HealthView.as_view()),
                 path("api/access", AccessView.as_view()),
-                path("api/session", SessionView.as_view()),
+                path(
+                    "api/session",
+                    _session_view(sessions, trace, settings).as_view(),
+                ),
                 path("api/turn", TurnView.as_view()),
             ],
-            lifespan=lifespan,
+            lifespan=_lifecycle(sessions, sink, settings.trace_limits),
         ),
         settings.origin,
         identity,

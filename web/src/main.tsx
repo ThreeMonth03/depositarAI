@@ -13,6 +13,7 @@ import type { SearchMessage } from "./search/session";
 import { Results } from "./search-results";
 import { SearchProgress } from "./search-progress";
 import { SearchAccess } from "./search-access";
+import { TraceChoice } from "./trace-choice";
 import searchLogo from "./assets/search-logo.svg?no-inline";
 import "./styles.css";
 
@@ -44,6 +45,15 @@ function SearchApp() {
   const {
     messages,
     isRunning,
+    isResetting,
+    captureChoice,
+    setCaptureChoice,
+    trace,
+    traceError,
+    isTraceBusy,
+    captureBlocked,
+    hasSession,
+    withdrawCapture,
     error,
     mustReset,
     clock,
@@ -97,7 +107,11 @@ function SearchApp() {
             >
               探索 depositar <span aria-hidden="true">↗</span>
             </a>
-            <button className="reset" onClick={reset} disabled={isRunning}>
+            <button
+              className="reset"
+              onClick={reset}
+              disabled={isRunning || isTraceBusy || isResetting}
+            >
               ＋ 新搜尋
             </button>
           </div>
@@ -121,6 +135,19 @@ function SearchApp() {
                 info={accessInfo}
                 recheck={recheckAccess}
               />
+              {access === "ready" && (
+                <TraceChoice
+                  policy={accessInfo?.trace_policy}
+                  selected={captureChoice}
+                  setSelected={setCaptureChoice}
+                  trace={trace}
+                  error={traceError}
+                  hasSession={hasSession}
+                  locked={isRunning || isResetting || mustReset}
+                  withdrawing={isTraceBusy}
+                  withdraw={withdrawCapture}
+                />
+              )}
               <div className="transcript" aria-label="本次搜尋對話">
                 <ThreadPrimitive.Messages>
                   {({ message }) => {
@@ -178,7 +205,12 @@ function SearchApp() {
                     {canRetry && (
                       <button
                         onClick={retry}
-                        disabled={isRunning || access !== "ready"}
+                        disabled={
+                          isRunning ||
+                          isResetting ||
+                          captureBlocked ||
+                          access !== "ready"
+                        }
                       >
                         重試這次搜尋
                       </button>
@@ -196,7 +228,13 @@ function SearchApp() {
                         : "想研究什麼？例如：2020 年以後的河川水質資料"
                     }
                     maxLength={512}
-                    disabled={isRunning || mustReset || access !== "ready"}
+                    disabled={
+                      isRunning ||
+                      isResetting ||
+                      captureBlocked ||
+                      mustReset ||
+                      access !== "ready"
+                    }
                   />
                   <div className="composer-bottom">
                     <label>
@@ -204,7 +242,12 @@ function SearchApp() {
                       <select
                         aria-label="結果數"
                         value={topK}
-                        disabled={isRunning || access !== "ready"}
+                        disabled={
+                          isRunning ||
+                          isResetting ||
+                          captureBlocked ||
+                          access !== "ready"
+                        }
                         onChange={(e) => setTopK(Number(e.target.value))}
                       >
                         {[5, 10, 20].map((k) => (
@@ -213,7 +256,12 @@ function SearchApp() {
                       </select>
                     </label>
                     <ComposerPrimitive.Send
-                      disabled={mustReset || access !== "ready"}
+                      disabled={
+                        isResetting ||
+                        captureBlocked ||
+                        mustReset ||
+                        access !== "ready"
+                      }
                       aria-label="送出搜尋"
                     >
                       {messages.length ? "繼續搜尋" : "開始探索"}{" "}
@@ -238,7 +286,13 @@ function SearchApp() {
                         key={example.query}
                         prompt={example.query}
                         send
-                        disabled={access !== "ready" || isRunning || mustReset}
+                        disabled={
+                          access !== "ready" ||
+                          isRunning ||
+                          isResetting ||
+                          captureBlocked ||
+                          mustReset
+                        }
                         aria-label={example.query}
                       >
                         <span className="example-title">
@@ -260,7 +314,7 @@ function SearchApp() {
             <summary>使用說明</summary>
             <p>
               每次搜尋暫存 30 分鐘，最多 20
-              輪。不建立永久對話記憶；重新整理或「新搜尋」即可重新開始。
+              輪。不建立永久對話記憶；重新整理或「新搜尋」即可重新開始。另行選擇提供的測試紀錄依告知期限保存，可在本次搜尋有效期間撤回；到期或重整後請聯絡維護者。
             </p>
             <p>
               可追問主題、資料涵蓋時間或格式。目前不提供附近、距離篩選或檔案內文問答。各次結果的「搜尋詳情」提供來源與搜尋範圍。

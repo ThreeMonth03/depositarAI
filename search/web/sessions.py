@@ -23,6 +23,13 @@ class Session:
     pending: str | None = None
     version: int = 0
     busy: bool = False
+    capture_enabled: bool = False
+    consented_at: str | None = None
+    test_session_id: str | None = None
+    trace_epoch: int = 0
+    trace_attempt: int = 0
+    capture_status: str = "disabled"
+    deletion_status: str = "none"
 
 
 class Sessions:
@@ -53,7 +60,7 @@ class Sessions:
             ):
                 del self.items[token]
 
-    def create(self, owner=None):
+    def create(self, owner=None, *, capture=False, consented_at=None):
         self.reap()
         if len(self.items) >= self.capacity:
             raise SessionError(429, "session_capacity")
@@ -64,7 +71,14 @@ class Sessions:
         ):
             raise SessionError(429, "session_capacity")
         token = secrets.token_urlsafe(32)
-        self.items[token] = Session(self.clock() + self.ttl, owner=owner)
+        self.items[token] = Session(
+            self.clock() + self.ttl,
+            owner=owner,
+            capture_enabled=capture,
+            consented_at=consented_at if capture else None,
+            test_session_id=secrets.token_hex(16) if capture else None,
+            capture_status="ready" if capture else "disabled",
+        )
         return token
 
     def get(self, token, owner=None):
