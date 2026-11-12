@@ -178,6 +178,34 @@ review reasons。所有結果固定 `promotion_allowed=false`，不自動改寫 
 兩次完整下載一致也不提供 CKAN server-side transaction；離線快照會標為
 `source_consistency=offline_not_checked`。
 
+新寫入的 metadata `latest.json`、result 與 failure receipt 使用 schema 2。
+`source_observation` 使用單一 schema 1，綁定固定來源、snapshot SHA256 與原始
+`evidence_run_id`；cache hit 的 run ID 更新後，仍會回讀並核對原始 receipt。
+
+| 欄位／觀測種類 | 時間語意 |
+|---|---|
+| `complete_online` | `started_at` 至 `completed_at` 包含兩次一致的完整掃描。 |
+| `unknown_offline` | 離線輸入的原始觀測時間未知，起訖為 `null`。 |
+| `unknown_legacy` | 舊 schema 1 immutable receipt 沒有此證據，起訖為 `null`。 |
+| `fetched_at` | 保留本地載入／建包完成時間；TTL 重用不更新。 |
+| `decision_at` | 本輪完成驗證、準備發布結果的時間。 |
+| `cache_used_at` | 本輪 TTL 重用驗證後的時間；沒有重用時為 `null`。 |
+
+非空時間均為 operator 的 Unix UTC 秒數，不是 CKAN server timestamp。
+TTL 重用只保留原觀測，不能宣稱重新查過來源；離線或舊收據也不以今天補填觀測時間。
+`unknown_legacy` 的 evidence run 指可驗的舊收據，不證明它就是首次採集的 run。
+舊 immutable 收據不改寫，新結果才記錄目前 schema；目前 schema 缺少或不符合觀測
+證據時直接拒絕，不降級成 unknown。Metadata TTL 與 resource 取得 cache 的24小時
+TTL 分開；摘要通過身分校驗也不表示 resource 內容或公開狀態仍未改變。
+
+Failure receipt 的 `failure_code` 是固定分類：`timeout`、`source_incomplete`、
+`source_count_changed`、`source_content_changed`、`source_invalid`、
+`clock_invalid`、`clock_reversed`、`clock_future`、`evidence_invalid`、
+`io_failure`、`sync_invalid` 或 `unexpected_failure`；不記錄原始錯誤文字。
+掃描、時鐘、觀測證據或完整性檢查在發布前失敗時，原 latest bytes 保持不變。
+發布 latest 已完成替換後若發生 IO 錯誤，指標可能已變；該 run 仍會隔離並拒絕重用。
+保留原始收據與實際指標，先檢查故障，不自動 rollback 或把隔離結果改成成功。
+
 `sync` 的下載範圍是公開 dataset／resource metadata；CSV 欄名與 PDF 節錄需走上述
 離線摘要流程。Metadata snapshot 不能證明來源現在仍公開；目前沒有自動更新排程，
 資料移除或轉私有的處理須另行管理。下載、候選準備、線上切換及備份是不同操作。
