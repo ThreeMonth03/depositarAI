@@ -287,6 +287,12 @@ class RealComplexityGateTests(unittest.TestCase):
                 path.write_text("")
             script = root / "scripts/ci/complexity.py"
             shutil.copyfile(SCRIPT, script)
+            marker = Path(name) / "shadow-called"
+            (root / "ruff.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('executed')\n"
+                "print('[]')\n"
+            )
             (root / "ruff.toml").write_text(
                 "[lint.mccabe]\nmax-complexity = 10\n"
             )
@@ -297,6 +303,7 @@ class RealComplexityGateTests(unittest.TestCase):
             report = Path(name) / "report.json"
             command = [
                 sys.executable,
+                "-I",
                 "-B",
                 str(script),
                 "--report",
@@ -322,6 +329,7 @@ class RealComplexityGateTests(unittest.TestCase):
                     self.assertEqual(
                         result.returncode, expected, result.stderr
                     )
+                    self.assertFalse(marker.exists())
                     findings = json.loads(report.read_text())
                     self.assertEqual(len(findings), 1)
                     self.assertEqual(Path(findings[0]["filename"]), path)

@@ -12,7 +12,7 @@ if [[ $# -gt 1 || ! "$action" =~ ^(install|check|format)$ ]]; then
 fi
 
 tool_policy() {
-  python3 - search/api/requirements-test.lock "$1" <<'PY'
+  python3 -I -B - search/api/requirements-test.lock "$1" <<'PY'
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import re
@@ -49,7 +49,7 @@ if [[ "$action" == install ]]; then
   requirements_file=$(mktemp)
   trap 'rm -f "$requirements_file"' EXIT
   tool_policy requirements > "$requirements_file"
-  python3 -m pip install --disable-pip-version-check --no-deps \
+  python3 -I -B -m pip install --disable-pip-version-check --no-deps \
     --require-hashes -r "$requirements_file"
   tool_policy versions
   exit
@@ -58,12 +58,12 @@ fi
 tool_policy versions
 lint_roots=(search scripts tests deploy/docker)
 if [[ "$action" == format ]]; then
-  python3 -m ruff format --no-cache "${lint_roots[@]}"
+  python3 -I -B -m ruff format --no-cache "${lint_roots[@]}"
   exit
 fi
 
-python3 -m ruff check --no-cache "${lint_roots[@]}"
-python3 -m ruff format --check --no-cache "${lint_roots[@]}"
+python3 -I -B -m ruff check --no-cache "${lint_roots[@]}"
+python3 -I -B -m ruff format --check --no-cache "${lint_roots[@]}"
 bash scripts/ci/python-unused.sh
 
 complexity_report=${COMPLEXITY_REPORT:-}

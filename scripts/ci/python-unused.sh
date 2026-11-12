@@ -19,10 +19,10 @@ for entry in "${framework_arguments[@]}"; do
 done
 excluded_paths="$(IFS=,; printf '%s' "${excluded_files[*]}")"
 
-python3 -m vulture search scripts tests deploy/docker \
+python3 -I -B -m vulture search scripts tests deploy/docker \
   --min-confidence 100 --exclude "$excluded_paths"
 for entry in "${framework_arguments[@]}"; do
-  python3 -m vulture "${entry%%:*}" \
+  python3 -I -B -m vulture "${entry%%:*}" \
     --min-confidence 100 --ignore-names "${entry#*:}"
 done
 echo "Python unused-code checks passed."
