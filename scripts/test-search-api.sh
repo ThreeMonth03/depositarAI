@@ -2,11 +2,14 @@
 set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
-docker build -f deploy/docker/api/Dockerfile -t depositar-search-conversation:ci .
+readonly python_base='python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d'
+readonly -a python_context=(--build-context
+  "$python_base=docker-image://public.ecr.aws/docker/library/python@${python_base##*@}")
+docker build "${python_context[@]}" -f deploy/docker/api/Dockerfile -t depositar-search-conversation:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-conversation:ci conversation
-docker build --network none -f deploy/docker/importer/Dockerfile -t depositar-search-catalog-admin:ci .
+docker build "${python_context[@]}" --network none -f deploy/docker/importer/Dockerfile -t depositar-search-catalog-admin:ci .
 bash scripts/ci/runtime-imports.sh depositar-search-catalog-admin:ci catalog-admin
-docker build --target tests -f deploy/docker/api/Dockerfile -t depositar-search-api:ci .
+docker build "${python_context[@]}" --target tests -f deploy/docker/api/Dockerfile -t depositar-search-api:ci .
 # Product roots cover new modules and tests without a parallel file list.
 lint_roots=(search scripts tests deploy/docker)
 for lint_action in check format; do

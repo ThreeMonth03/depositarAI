@@ -100,9 +100,12 @@ docker compose --env-file deploy/env/.env.search-web.example -f deploy/compose/c
   config --format json | python3 scripts/validate_search_web.py
 node_image='node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8'
 browser_image='mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27'
+readonly python_base='python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d'
+readonly -a python_context=(--build-context
+  "$python_base=docker-image://public.ecr.aws/docker/library/python@${python_base##*@}")
 begin_phase python-images
-docker build --target tests -f deploy/docker/api/Dockerfile -t depositar-search-api:ci .
-docker build -f deploy/docker/api/Dockerfile -t depositar-search-conversation:ci .
+docker build "${python_context[@]}" --target tests -f deploy/docker/api/Dockerfile -t depositar-search-api:ci .
+docker build "${python_context[@]}" -f deploy/docker/api/Dockerfile -t depositar-search-conversation:ci .
 begin_phase python-unit
 bash scripts/ci/runtime-imports.sh depositar-search-conversation:ci conversation
 docker run --rm --network none --user "$(id -u):$(id -g)" --workdir /app \
@@ -157,7 +160,7 @@ docker run --rm --network none --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=$project_dir/web,dst=/web,readonly" --workdir /web "$node_image" npm run format:check
 begin_phase web-image
 ci_source_revision="$(git rev-parse HEAD)"
-docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
+docker build "${python_context[@]}" --build-arg "SOURCE_REVISION=$ci_source_revision" \
   -f deploy/docker/web/Dockerfile -t depositar-search-web:ci .
 docker build --build-arg "SOURCE_REVISION=$ci_source_revision" \
   -f deploy/docker/web-nginx/Dockerfile -t depositar-search-web-nginx:ci .

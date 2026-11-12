@@ -18,6 +18,15 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 LINT_ROOTS = ("search", "scripts", "tests", "deploy/docker")
+PYTHON_BASE = (
+    "python:3.13.7-slim-bookworm@sha256:"
+    "adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d"
+)
+PYTHON_CONTEXT = (
+    PYTHON_BASE
+    + "=docker-image://public.ecr.aws/docker/library/python@"
+    + PYTHON_BASE.rsplit("@", 1)[1]
+)
 
 
 def lint_roots(source: str) -> tuple[str, ...]:
@@ -936,6 +945,11 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             fake_docker = temporary / "docker"
             fake_docker.write_text(
                 common + "record('docker')\n"
+                "if arguments[:1] == ['build'] and "
+                "os.environ.get('DEPOSITAR_TEST_FAILED_BUILD') == "
+                "arguments[arguments.index('-t') + 1]:\n"
+                "    print('fixture Python build refused', file=sys.stderr)\n"
+                "    sys.exit(29)\n"
                 "if mode == 'style-failure' and 'ruff' in arguments "
                 "and 'check' in arguments:\n"
                 "    sys.exit(26)\n"
@@ -1090,6 +1104,59 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertEqual(
             commands[False], [args[:2] + args[4:] for args in commands[True]]
         )
+
+    def test_python_builds_use_exact_ecr_context_without_other_overrides(self):
+        result, calls, running = self.run_website_gate(
+            "cached", suite="browser"
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(running)
+        builds = [args for kind, args in calls if args[:1] == ["build"]]
+        self.assertEqual(4, len(builds))
+        for arguments in builds[:3]:
+            with self.subTest(image=arguments[arguments.index("-t") + 1]):
+                self.assertEqual(1, arguments.count("--build-context"))
+                self.assertEqual(
+                    PYTHON_CONTEXT,
+                    arguments[arguments.index("--build-context") + 1],
+                )
+        self.assertNotIn("--build-context", builds[3])
+
+    def test_python_build_failures_keep_exit_phase_and_stop_downstream(self):
+        targets = (
+            "depositar-search-api:ci",
+            "depositar-search-conversation:ci",
+            "depositar-search-web:ci",
+        )
+        for suite in ("all", "browser"):
+            for index, target in enumerate(targets):
+                with self.subTest(suite=suite, target=target):
+                    result, calls, running = self.run_website_gate(
+                        "cached",
+                        suite=suite,
+                        environment={"DEPOSITAR_TEST_FAILED_BUILD": target},
+                    )
+                    self.assertEqual(29, result.returncode, result.stderr)
+                    self.assertFalse(running)
+                    self.assertIn(
+                        "fixture Python build refused", result.stderr
+                    )
+                    builds = [
+                        args for _, args in calls if args[:1] == ["build"]
+                    ]
+                    self.assertEqual(
+                        list(targets[: index + 1]),
+                        [args[args.index("-t") + 1] for args in builds],
+                    )
+                    self.assertEqual(["docker", builds[-1]], calls[-1])
+                    phase = "python-images" if index < 2 else "web-image"
+                    self.assertRegex(
+                        result.stdout,
+                        rf"CI_PHASE phase={phase} seconds=\d+ exit=29\n",
+                    )
+                    self.assertNotIn(
+                        "OSS runtime checks passed.", result.stdout
+                    )
 
     def test_cold_pull_overlaps_oss_but_finishes_before_the_browser(self):
         result, calls, running = self.run_website_gate("cold")
@@ -1637,6 +1704,10 @@ if name == "python3":
             and arguments == ["scripts/validate_catalog_compose.py"]):
         raise SystemExit(19)
 if name == "docker":
+    if (arguments[0] == "build"
+            and mode == "build-" + arguments[arguments.index("-t") + 1]):
+        print("fixture Python build refused", file=sys.stderr)
+        raise SystemExit(29)
     if mode == "api-build" and arguments[0] == "build":
         raise SystemExit(20)
     if (mode == "api-tests"
@@ -1766,6 +1837,46 @@ raise SystemExit(0)
                     )
                     self.assertEqual(code, result.returncode, result.stderr)
                     self.assertNotIn("CI_PHASE phase=api", result.stdout)
+
+    def test_python_builds_use_exact_ecr_context_and_keep_offline_importer(
+        self,
+    ):
+        result, rows = self.invoke(("--phase", "api"))
+        self.assertEqual(0, result.returncode, result.stderr)
+        builds = [row["argv"] for row in rows if row["argv"][:1] == ["build"]]
+        self.assertEqual(3, len(builds))
+        for arguments in builds:
+            with self.subTest(image=arguments[arguments.index("-t") + 1]):
+                self.assertEqual(1, arguments.count("--build-context"))
+                self.assertEqual(
+                    PYTHON_CONTEXT,
+                    arguments[arguments.index("--build-context") + 1],
+                )
+        self.assertEqual("none", builds[1][builds[1].index("--network") + 1])
+
+    def test_each_python_build_failure_stops_before_later_builds(self):
+        targets = (
+            "depositar-search-conversation:ci",
+            "depositar-search-catalog-admin:ci",
+            "depositar-search-api:ci",
+        )
+        for index, target in enumerate(targets):
+            with self.subTest(target=target):
+                result, rows = self.invoke(
+                    ("--phase", "api"), failure="build-" + target
+                )
+                self.assertEqual(29, result.returncode, result.stderr)
+                self.assertIn("fixture Python build refused", result.stderr)
+                builds = [
+                    row["argv"] for row in rows if row["argv"][:1] == ["build"]
+                ]
+                self.assertEqual(
+                    list(targets[: index + 1]),
+                    [args[args.index("-t") + 1] for args in builds],
+                )
+                self.assertEqual("docker", rows[-1]["tool"])
+                self.assertEqual(builds[-1], rows[-1]["argv"])
+                self.assertNotIn("CI_PHASE phase=api", result.stdout)
 
 
 if __name__ == "__main__":
