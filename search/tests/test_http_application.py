@@ -393,23 +393,42 @@ class BoundedBodyTests(unittest.IsolatedAsyncioTestCase):
     async def test_deadline_covers_all_chunks_and_cancels_pending_receive(
         self,
     ):
-        cancelled = asyncio.Event()
+        cancelled, cleaned = asyncio.Event(), asyncio.Event()
+        initial_tasks = asyncio.all_tasks()
         chunks = 0
 
         async def receive():
             nonlocal chunks
             try:
-                await asyncio.sleep(0.005)
+                # Finish a prefix before yielding to the deadline callback.
+                if chunks >= 2:
+                    await asyncio.sleep(0)
                 chunks += 1
                 return {"type": "http.request", "more_body": True}
             except asyncio.CancelledError:
                 cancelled.set()
+                await asyncio.sleep(0)
+                cleaned.set()
                 raise
 
-        with self.assertRaises(TimeoutError):
-            await bounded_body(receive, limit=0, timeout=0.025)
-        self.assertGreater(chunks, 0)
-        self.assertTrue(cancelled.is_set())
+        task = asyncio.create_task(
+            bounded_body(receive, limit=0, timeout=0.025)
+        )
+        try:
+            done, _ = await asyncio.wait({task}, timeout=2)
+            self.assertIn(task, done, "overall body deadline did not expire")
+            with self.assertRaises(TimeoutError):
+                await task
+            self.assertGreaterEqual(chunks, 2)
+            self.assertTrue(cancelled.is_set())
+            self.assertTrue(cleaned.is_set())
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(task, return_exceptions=True), 2
+            )
+        self.assertEqual(asyncio.all_tasks() - initial_tasks, set())
 
     async def test_caller_cancellation_joins_pending_receive(self):
         entered = asyncio.Event()
