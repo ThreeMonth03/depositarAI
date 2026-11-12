@@ -786,6 +786,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "test_real_challenge_gate_keeps_json_and_post_boundaries_across_restart",
             "public_entry.test_antibot_gateway.AntibotGatewayTests."
             "test_guest_and_oidc_challenges_preserve_durable_quotas",
+            "public_entry.test_antibot_gateway.AntibotSessionManagementTests."
+            "test_session_management_keeps_identity_and_quota_boundaries",
             "public_entry.test_runtime.PublicEntryConcurrencyTests."
             "test_authenticated_bursts_keep_account_global_and_session_caps",
             "public_entry.test_runtime.PublicEntryMixedAccessTests."
@@ -794,8 +796,12 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "test_parallel_guests_cannot_consume_reserved_user_pool",
             "public_entry.test_runtime.PublicEntryRuntimeTests."
             "test_real_oidc_account_quotas_restart_and_fail_closed",
+            "public_entry.test_runtime.PublicEntrySessionManagementTests."
+            "test_session_management_keeps_identity_and_quota_boundaries",
             "public_entry.test_identity_gateway.IdentityGatewayTests."
             "test_tamper_login_account_switch_and_logout_keep_session_ownership",
+            "public_entry.test_identity_gateway.MixedSessionManagementTests."
+            "test_session_management_keeps_identity_and_quota_boundaries",
             "public_entry.test_updates.PublicEntryUpdatesRuntimeTests."
             "test_pair_update_manual_rollback_and_failed_frontend_preserve_quotas",
             "public_entry.test_remote_backend.RemoteBackendTests."
@@ -848,8 +854,8 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         self.assertEqual(original, set(selected["oss"]))
         self.assertEqual(policy, set(selected["oss-policy"]))
         self.assertEqual(original - policy, set(selected["oss-gateway"]))
-        self.assertEqual(7, len(selected["oss-policy"]))
-        self.assertEqual(6, len(selected["oss-gateway"]))
+        self.assertEqual(8, len(selected["oss-policy"]))
+        self.assertEqual(8, len(selected["oss-gateway"]))
         self.assertFalse(
             set(selected["oss-policy"]) & set(selected["oss-gateway"])
         )

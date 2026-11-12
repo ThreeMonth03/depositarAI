@@ -1,5 +1,6 @@
 """Authenticated entrance cannot allocate or use another caller's session."""
 
+import copy
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from search.tests.asgi_client import ASGITestClient
 
 from search.tests.web_support import FakeUpstream, ORIGIN, SETTINGS
+from search.trace.contract import NOTICE_VERSION
 from search.web.app import create_app
 from search.web.identity import EdgeIdentity, Principal
 from search.web.sessions import SessionError, Sessions
@@ -428,6 +430,170 @@ class PublicIdentityHTTPTests(unittest.TestCase):
                 403,
             )
         self.assertEqual(self.store.items, {})
+
+    def test_session_management_keeps_public_owner_and_search_state(self):
+        for kind, mode in (
+            ("user", "login_required"),
+            ("guest", "mixed"),
+            ("user", "mixed"),
+        ):
+            identity = public_headers(kind=kind, mode=mode)
+            count = len(self.store.items)
+            unavailable = self.client.post(
+                "/api/session",
+                json={"capture": True, "notice_version": NOTICE_VERSION},
+                headers=identity,
+            )
+            self.assertEqual(unavailable.status_code, 503)
+            self.assertEqual(len(self.store.items), count)
+            created = self.client.post(
+                "/api/session", json={}, headers=identity
+            )
+            self.assertEqual(created.status_code, 200)
+            token = created.json()["token"]
+            session = self.store.get(token, kind + ":" + ALICE)
+            session.version = 3
+            session.state.topic = "synthetic private topic"
+            session.pending = "synthetic private refinement"
+            before = copy.deepcopy(self.store.items)
+            headers = {**identity, "Authorization": "Bearer " + token}
+            read_headers = {
+                name: value
+                for name, value in headers.items()
+                if name != "Origin"
+            }
+            read = self.client.get("/api/session", headers=read_headers)
+            self.assertEqual(read.status_code, 200)
+            self.assertEqual(set(read.json()), {"trace"})
+            self.assertFalse(read.json()["trace"]["enabled"])
+            self.assertIsNone(read.json()["trace"]["test_session_id"])
+            self.assertEqual(
+                read.json()["trace"]["capture_status"], "disabled"
+            )
+            self.assertNotIn("synthetic private", read.text)
+            withdrawn = self.client.request(
+                "PATCH",
+                "/api/session",
+                json={"capture": False},
+                headers=headers,
+            )
+            self.assertEqual(withdrawn.status_code, 200)
+            self.assertEqual(withdrawn.json(), read.json())
+            for other_kind, subject in (
+                (kind, BOB),
+                ("guest" if kind == "user" else "user", ALICE),
+            ):
+                other = {
+                    **public_headers(
+                        kind=other_kind, subject=subject, mode="mixed"
+                    ),
+                    "Authorization": "Bearer " + token,
+                }
+                for method in ("GET", "PATCH"):
+                    payload = (
+                        {"json": {"capture": False}}
+                        if method == "PATCH"
+                        else {}
+                    )
+                    denied = self.client.request(
+                        method, "/api/session", headers=other, **payload
+                    )
+                    self.assertEqual(denied.status_code, 410)
+            self.assertEqual(self.store.items, before)
+        self.assertEqual(self.upstream.calls, [])
+
+    def test_session_management_rejects_untrusted_identity_and_tokens(self):
+        token = self.client.post(
+            "/api/session", json={}, headers=self.headers
+        ).json()["token"]
+        headers = {**self.headers, "Authorization": "Bearer " + token}
+        before = copy.deepcopy(self.store.items)
+        for method in ("GET", "PATCH"):
+            payload = {"json": {"capture": False}} if method == "PATCH" else {}
+            for invalid, status in (
+                (
+                    {
+                        "Origin": ORIGIN,
+                        "Authorization": headers["Authorization"],
+                    },
+                    401,
+                ),
+                ({**headers, "X-Depositar-Edge-Key": "e" * 64}, 401),
+                ([*headers.items(), ("X-Depositar-Subject", ALICE)], 401),
+                (
+                    [
+                        *headers.items(),
+                        ("Authorization", headers["Authorization"]),
+                    ],
+                    400,
+                ),
+                (self.headers, 401),
+                ({**headers, "Authorization": "Bearer " + "0" * 43}, 410),
+                ({**headers, "Authorization": "Bearer " + "f" * 32}, 401),
+            ):
+                with self.subTest(method=method, status=status):
+                    response = self.client.request(
+                        method, "/api/session", headers=invalid, **payload
+                    )
+                    self.assertEqual(response.status_code, status)
+        self.assertEqual(self.store.items, before)
+        self.store.items[token].expires = 0
+        for method in ("GET", "PATCH"):
+            payload = {"json": {"capture": False}} if method == "PATCH" else {}
+            self.assertEqual(
+                self.client.request(
+                    method, "/api/session", headers=headers, **payload
+                ).status_code,
+                410,
+            )
+        self.assertNotIn(token, self.store.items)
+        self.assertEqual(self.upstream.calls, [])
+
+    def test_session_management_preserves_origin_query_and_body_limits(self):
+        token = self.client.post(
+            "/api/session", json={}, headers=self.headers
+        ).json()["token"]
+        headers = {
+            **self.headers,
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+        }
+        without_origin = {
+            name: value for name, value in headers.items() if name != "Origin"
+        }
+        before = copy.deepcopy(self.store.items)
+        choice = b'{"capture":false}'
+        for method, path, body, supplied, status in (
+            ("GET", "/api/session?unexpected=1", b"", headers, 400),
+            ("GET", "/api/session", b"x", headers, 400),
+            ("GET", "/api/session", b"", {**headers, "Origin": "null"}, 403),
+            ("PATCH", "/api/session", choice, without_origin, 403),
+            (
+                "PATCH",
+                "/api/session",
+                choice,
+                {**headers, "Origin": "null"},
+                403,
+            ),
+            ("PATCH", "/api/session?unexpected=1", choice, headers, 400),
+            ("PATCH", "/api/session", b"{", headers, 400),
+            ("PATCH", "/api/session", b" " * 4097, headers, 413),
+            ("PATCH", "/api/session", b'{"capture":true}', headers, 422),
+            (
+                "PATCH",
+                "/api/session",
+                choice,
+                {**headers, "Content-Type": "text/plain"},
+                415,
+            ),
+        ):
+            with self.subTest(method=method, status=status):
+                response = self.client.request(
+                    method, path, content=body, headers=supplied
+                )
+                self.assertEqual(response.status_code, status)
+        self.assertEqual(self.store.items, before)
+        self.assertEqual(self.upstream.calls, [])
 
 
 def dict_or_pairs(value):

@@ -195,5 +195,17 @@ class AntibotGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         self.assertEqual(self.calls(), 3)
 
 
+@unittest.skipUnless(
+    os.environ.get("DEPOSITAR_TEST_ANTIBOT_RUNTIME") == "1",
+    "combined browser gate requires an explicit isolated CPU test opt-in",
+)
+class AntibotSessionManagementTests(
+    runtime_fixture.PublicEntrySessionManagementTests
+):
+    mixed = True
+    antibot = True
+    challenge_lifetime = "10s"
+
+
 if __name__ == "__main__":
     unittest.main()

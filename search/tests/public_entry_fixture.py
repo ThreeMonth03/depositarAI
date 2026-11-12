@@ -373,6 +373,53 @@ def burst(directory, payload):
         return {"results": list(workers.map(request, payload["requests"]))}
 
 
+def _session_management_request(action, account, payload):
+    options = payload or {}
+    method = options.get(
+        "method",
+        {
+            "session-status": "GET",
+            "session-withdraw": "PATCH",
+            "session-delete": "DELETE",
+        }[action],
+    )
+    url = ORIGIN + "/api/session" + options.get("query", "")
+    data = (
+        json.dumps(options.get("body", {"capture": False})).encode()
+        if method == "PATCH"
+        else None
+    )
+    headers = {"Content-Type": "application/json"} if data else {}
+    origin = options.get("origin", None if method == "GET" else ORIGIN)
+    if origin is not None:
+        headers["Origin"] = origin
+    owner = options.get("token_account", account)
+    if owner is not None:
+        saved = json.loads(Path("/tmp/" + owner + ".session").read_text())
+        headers["Authorization"] = "Bearer " + options.get(
+            "token", saved["token"]
+        )
+    if options.get("spoof"):
+        headers.update(
+            {
+                "X-Depositar-Subject": hashlib.sha256(
+                    (ISSUER + "\x00" + owner).encode()
+                ).hexdigest(),
+                "X-Depositar-Principal-Kind": "user",
+                "X-Depositar-Edge-Key": "d" * 64,
+            }
+        )
+    return url, method, data, headers
+
+
+def _renew_fixture_challenge(jar, payload):
+    if not payload or not payload.get("renew"):
+        return
+    for cookie in list(jar):
+        if "anubis" in cookie.name.lower():
+            jar.clear(cookie.domain, cookie.path, cookie.name)
+
+
 def probe(action, account, directory, payload=None):
     if action == "burst":
         print(json.dumps(burst(directory, payload)))
@@ -389,6 +436,7 @@ def probe(action, account, directory, payload=None):
     data = None
     method = "GET"
     if action == "verify":
+        _renew_fixture_challenge(jar, payload)
 
         def fetch(url):
             try:
@@ -480,6 +528,10 @@ def probe(action, account, directory, payload=None):
         url = "http://conversation-api:8000/__calls"
     elif action in ("access", "health"):
         url = ORIGIN + ("/api/access" if action == "access" else "/healthz")
+    elif action in ("session-status", "session-withdraw", "session-delete"):
+        url, method, data, headers = _session_management_request(
+            action, account, payload
+        )
     else:
         url = ORIGIN + (
             payload["path"]

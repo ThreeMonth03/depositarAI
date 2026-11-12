@@ -480,6 +480,85 @@ class ConsentedWebsiteTests(unittest.TestCase):
         self.assertNotIn("resource_context", raw)
         self.assertNotIn("rank_fusion_score", raw)
 
+    def test_public_owner_manages_inflight_synthetic_capture(self):
+        # This injected private sink is synthetic; public profiles stay off.
+        with tempfile.TemporaryDirectory() as temporary:
+            key = Path(temporary) / "edge-key"
+            key.write_text("d" * 64)
+            key.chmod(0o600)
+            upstream = GatedUpstream()
+            client = self.start(
+                upstream,
+                replace(self.settings, edge_secret_file=key),
+            )
+            value, headers = self.session(client, headers=public_headers())
+            session = self.sessions.get(value["token"], "user:" + "a" * 64)
+            before = (
+                session.version,
+                session.state.model_dump(),
+                session.pending,
+            )
+            replies = []
+            thread = threading.Thread(
+                target=lambda: replies.append(self.turn(client, headers))
+            )
+            thread.start()
+            try:
+                self.assertTrue(upstream.started.wait(2))
+                read_headers = {
+                    name: item
+                    for name, item in headers.items()
+                    if name != "Origin"
+                }
+                read = client.get("/api/session", headers=read_headers)
+                self.assertEqual(read.status_code, 200)
+                self.assertEqual(set(read.json()), {"trace"})
+                self.assertTrue(read.json()["trace"]["enabled"])
+                other = {**headers, "X-Depositar-Subject": "b" * 64}
+                self.assertEqual(
+                    client.get("/api/session", headers=other).status_code, 410
+                )
+                denied = client.request(
+                    "PATCH",
+                    "/api/session",
+                    json={"capture": False},
+                    headers=other,
+                )
+                self.assertEqual(denied.status_code, 410)
+                self.assertEqual(session.trace_epoch, 0)
+                self.assertEqual(self.sink.revoked, {})
+                withdrawn = client.request(
+                    "PATCH",
+                    "/api/session",
+                    json={"capture": False},
+                    headers=headers,
+                )
+                self.assertEqual(withdrawn.status_code, 200)
+                self.assertFalse(withdrawn.json()["trace"]["enabled"])
+                self.assertEqual(session.trace_epoch, 1)
+                self.assertTrue(session.busy)
+                self.assertEqual(
+                    (
+                        session.version,
+                        session.state.model_dump(),
+                        session.pending,
+                    ),
+                    before,
+                )
+                self.assertEqual(upstream.calls, [])
+                stopped = client.get("/api/session", headers=read_headers)
+                self.assertFalse(stopped.json()["trace"]["enabled"])
+            finally:
+                upstream.release.set()
+                thread.join(3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(replies[0].status_code, 200)
+            self.assertFalse(replies[0].json()["trace"]["enabled"])
+            self.assertEqual(self.sink.events, [])
+            self.assertEqual(session.version, 1)
+            self.assertFalse(session.busy)
+            self.assertEqual(len(upstream.calls), 1)
+
 
 class TraceSettingsTests(unittest.TestCase):
     def test_limits_and_root_reject_unbounded_or_unsafe_values(self):

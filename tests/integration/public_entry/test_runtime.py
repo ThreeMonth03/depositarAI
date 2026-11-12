@@ -36,6 +36,23 @@ ORIGIN = "https://public.test:9443"
 ISSUER = "https://oidc.test:9443"
 
 
+def _install_counter_reader(root):
+    """Observe only the disposable management fixture's admission keys."""
+    path = root / "public-entry/redis-start.sh"
+    script = path.read_text()
+    marker = "unset password digest\n"
+    if script.count(marker) != 1:
+        raise AssertionError("fixture Redis startup changed")
+    observer = (
+        "printf 'user fixture-counter-reader on #%s "
+        "~plugin-limit-count:v1:/routes/turn:* "
+        "~plugin-limit-count:v1:/routes/session-create:* "
+        "-@all +auth +ping +eval +scan +get\\n' "
+        '"$digest" >> /tmp/users.acl\n'
+    )
+    path.write_text(script.replace(marker, observer + marker))
+
+
 @unittest.skipUnless(
     os.environ.get("DEPOSITAR_TEST_PUBLIC_ENTRY_RUNTIME") == "1",
     "real public-entry runtime requires an explicit isolated test opt-in",
@@ -43,6 +60,8 @@ ISSUER = "https://oidc.test:9443"
 class PublicEntryRuntimeFixture(unittest.TestCase):
     mixed = False
     antibot = False
+    counter_observer = False
+    challenge_lifetime = "24h"
 
     @classmethod
     def command(cls, argv, *, timeout=30, check=True):
@@ -297,6 +316,9 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
         services["public-entry"].pop("ports", None)
         if cls.antibot:
             services["public-edge"].pop("ports", None)
+            services["antibot"]["environment"]["COOKIE_EXPIRATION_TIME"] = (
+                cls.challenge_lifetime
+            )
         services["quota-redis"]["image"] = images["redis"]
         # Check disposable startup promptly while preserving steady-state
         # commands, intervals, retries and the actual HTTPS readiness probe.
@@ -486,6 +508,8 @@ http {
             "entrypoint": ["python", "-c", "import time; time.sleep(600)"],
             "networks": ["outbound"],
         }
+        if cls.counter_observer:
+            _install_counter_reader(root)
         cls.compose_file.write_text(json.dumps(composition))
         cls.compose_file.chmod(0o600)
         cls.addClassCleanup(
@@ -540,6 +564,305 @@ http {
 
     def calls(self):
         return self.probe("counter")["value"]["calls"]
+
+
+class PublicEntrySessionManagementTests(PublicEntryRuntimeFixture):
+    counter_observer = True
+
+    def management(self, action, account, options=None):
+        # Keep these checks inside the unchanged gateway's ordinary IP rate.
+        time.sleep(0.35)
+        return self.probe(action, account, options)
+
+    def counter_snapshot(self):
+        script = """local values = {}
+for _, pattern in ipairs({
+ 'plugin-limit-count:v1:/routes/turn:*',
+ 'plugin-limit-count:v1:/routes/session-create:*'
+}) do
+ local cursor = '0'
+ repeat
+  local page = redis.call('SCAN', cursor, 'MATCH', pattern, 'COUNT', 1000)
+  cursor = page[1]
+  for _, key in ipairs(page[2]) do
+   table.insert(values, {key, redis.call('GET', key)})
+  end
+ until cursor == '0'
+end
+return values"""
+        result = self.compose(
+            "exec",
+            "--no-TTY",
+            "quota-redis",
+            "/bin/sh",
+            "-c",
+            'export REDISCLI_AUTH="$(cat /run/secrets/redis-password)"; '
+            "exec redis-cli --no-auth-warning --user fixture-counter-reader "
+            '--json "$@"',
+            "fixture-read",
+            "EVAL",
+            script,
+            "0",
+        )
+        return dict(
+            sorted(
+                (key, int(value)) for key, value in json.loads(result.stdout)
+            )
+        )
+
+    def assert_disabled_management(self, account):
+        status = self.management("session-status", account)
+        withdrawn = self.management("session-withdraw", account)
+        for response in (status, withdrawn):
+            self.assertEqual(response["status"], 200, response)
+            self.assertEqual(set(response["value"]), {"trace"})
+            trace = response["value"]["trace"]
+            self.assertFalse(trace["enabled"])
+            self.assertIsNone(trace["test_session_id"])
+            self.assertEqual(trace["capture_status"], "disabled")
+            self.assertEqual(trace["deletion_status"], "none")
+        self.assertEqual(status["value"], withdrawn["value"])
+        return {"GET": status["status"], "PATCH": withdrawn["status"]}
+
+    def management_accounts(self):
+        owners = [("management-user", 3 if self.mixed else 2)]
+        if self.mixed:
+            owners.append(("management-guest", 1))
+        for account, _ in owners:
+            if self.antibot:
+                self.assertEqual(self.probe("verify", account)["status"], 200)
+            if account == "management-user":
+                self.assertEqual(self.probe("login", account)["status"], 200)
+            self.assertEqual(self.probe("session", account)["status"], 200)
+        return owners
+
+    def exhaust_turn_allowances(self, owners):
+        exhausted = {}
+        for account, allowance in owners:
+            if self.antibot:
+                self.assertEqual(
+                    self.probe("verify", account, {"renew": True})["status"],
+                    200,
+                )
+            for version in range(allowance):
+                response = self.probe(
+                    "turn", account, {"query": "氣候", "version": version}
+                )
+                self.assertEqual(response["status"], 200, response)
+            response = self.probe(
+                "turn", account, {"query": "氣候", "version": allowance}
+            )
+            self.assertEqual(response["status"], 429, response)
+            expected = "quota_exceeded"
+            if self.mixed:
+                expected = (
+                    "user_quota_exceeded"
+                    if account == "management-user"
+                    else "guest_quota_exceeded"
+                )
+            self.assertEqual(response["value"]["error"]["code"], expected)
+            exhausted[account] = response["value"]["error"]["code"]
+        return exhausted
+
+    def assert_management_denials(self, owner, other):
+        for action in ("session-status", "session-withdraw"):
+            for options, expected in (
+                ({"token_account": None}, (401,)),
+                ({"token": "invalid-browser-token"}, (401, 410)),
+                ({"token": "test-session-00000000"}, (401, 410)),
+                ({"origin": "https://other.example"}, (403,)),
+                ({"query": "?unexpected=1"}, (400,)),
+            ):
+                response = self.management(action, owner, options)
+                self.assertIn(response["status"], expected, response)
+            for account in (other, "management-anonymous"):
+                response = self.management(
+                    action, account, {"token_account": owner, "spoof": True}
+                )
+                self.assertIn(response["status"], (401, 410), response)
+        for options, expected in (
+            ({"origin": None}, 403),
+            ({"body": {"capture": True}}, 422),
+            ({"body": {"capture": False, "extra": True}}, 422),
+        ):
+            response = self.management("session-withdraw", owner, options)
+            self.assertEqual(response["status"], expected, response)
+        for method in ("HEAD", "PUT", "OPTIONS"):
+            response = self.management(
+                "session-status", owner, {"method": method}
+            )
+            self.assertIn(response["status"], (404, 405), response)
+
+    def assert_login_cookie_fences(self, account):
+        from tests.integration.public_entry.test_identity_gateway import (
+            COOKIE_PROBE,
+        )
+
+        def cookie(operation, argument):
+            return self.compose(
+                "exec",
+                "--no-TTY",
+                "probe",
+                "python",
+                "-c",
+                COOKIE_PROBE,
+                account,
+                operation,
+                argument,
+            )
+
+        cookie("snapshot", "session-management")
+        for operation in ("tamper", "expire"):
+            cookie(operation, "__Host-depositar-login")
+            for action in ("session-status", "session-withdraw"):
+                response = self.management(action, account)
+                self.assertIn(response["status"], (401, 410), response)
+            if self.mixed and operation == "expire":
+                principal = self.probe("access", account)["value"]["principal"]
+                self.assertEqual(principal["kind"], "guest")
+            cookie("restore", "session-management")
+            self.assertEqual(
+                self.management("session-status", account)["status"], 200
+            )
+
+    def expired_challenge_management(self, owners):
+        time.sleep(11)
+        results = {
+            account: self.assert_disabled_management(account)
+            for account, _ in owners
+        }
+        owner, allowance = owners[0]
+        for action, payload in (
+            ("session", None),
+            ("turn", {"query": "氣候", "version": allowance}),
+        ):
+            response = self.probe(action, owner, payload)
+            self.assertEqual(response["status"], 403, response)
+            self.assertEqual(
+                response["value"]["error"]["code"], "challenge_required"
+            )
+            results[owner][action] = response["status"]
+        login = self.login_challenge_redirect(owner)
+        self.assertEqual(
+            login, {"status": 302, "verification_path": "/verify"}
+        )
+        results[owner]["login"] = login
+        deleted = self.management("session-delete", owner)
+        self.assertEqual(deleted["status"], 200, deleted)
+        results[owner]["DELETE"] = deleted["status"]
+        self.assertEqual(self.probe("verify", owner)["status"], 200)
+        self.assertEqual(self.probe("session", owner)["status"], 200)
+        return results
+
+    def login_challenge_redirect(self, account):
+        code = (
+            "import http.client,json,ssl,sys\n"
+            "from http.cookiejar import MozillaCookieJar\n"
+            "from urllib.request import Request\n"
+            "from urllib.parse import urlsplit\n"
+            "jar=MozillaCookieJar('/tmp/'+sys.argv[1]+'.cookies')\n"
+            "jar.load(ignore_discard=True,ignore_expires=True)\n"
+            "request=Request('https://public.test:9443/auth/login')\n"
+            "jar.add_cookie_header(request)\n"
+            "context=ssl.create_default_context(cafile='/fixture/tls.crt')\n"
+            "connection=http.client.HTTPSConnection('public.test',9443,"
+            "context=context,timeout=10)\n"
+            "connection.request('GET','/auth/login',"
+            "headers=dict(request.header_items()))\n"
+            "response=connection.getresponse();response.read(16384)\n"
+            "print(json.dumps({'status':response.status,'verification_path':"
+            "urlsplit(response.getheader('Location') or '').path}))\n"
+        )
+        result = self.compose(
+            "exec", "--no-TTY", "probe", "python", "-c", code, account
+        )
+        return json.loads(result.stdout)
+
+    def redis_down_management(self, owners):
+        self.compose("stop", "--timeout", "2", "quota-redis", timeout=15)
+        results = {
+            account: self.assert_disabled_management(account)
+            for account, _ in owners
+        }
+        owner, allowance = owners[0]
+        for action, payload in (
+            ("session", None),
+            ("turn", {"query": "氣候", "version": allowance}),
+        ):
+            if self.antibot:
+                self.assertEqual(
+                    self.probe("verify", owner, {"renew": True})["status"],
+                    200,
+                )
+            response = self.probe(action, owner, payload)
+            self.assertIn(response["status"], (500, 503), response)
+        self.assertEqual(
+            self.management("session-delete", owner)["status"], 200
+        )
+        return results
+
+    def test_session_management_keeps_identity_and_quota_boundaries(self):
+        composition = json.loads(self.compose_file.read_text())
+        owners = self.management_accounts()
+        owner = owners[0][0]
+        report = {
+            "project": self.project,
+            "mixed": self.mixed,
+            "antibot": self.antibot,
+            "images": {
+                name: service["image"]
+                for name, service in composition["services"].items()
+            },
+            "initial": {owner: self.assert_disabled_management(owner)},
+        }
+        self.assertEqual(
+            self.management("session-delete", owner)["status"], 200
+        )
+        self.assertEqual(self.probe("session", owner)["status"], 200)
+        for account, _ in owners[1:]:
+            report["initial"][account] = self.assert_disabled_management(
+                account
+            )
+        report["quota_exhausted"] = self.exhaust_turn_allowances(owners)
+        before = self.counter_snapshot()
+        report["healthy_counter_before"] = before
+        type(self).session_management_evidence = report
+        self.assertTrue(
+            any(
+                key.startswith("plugin-limit-count:v1:/routes/turn:")
+                for key in before
+            )
+        )
+        self.assertTrue(
+            any(
+                key.startswith("plugin-limit-count:v1:/routes/session-create:")
+                for key in before
+            )
+        )
+        calls = self.calls()
+        report["exhausted_management"] = {
+            account: self.assert_disabled_management(account)
+            for account, _ in owners
+        }
+        other = owners[-1][0]
+        if not self.mixed:
+            other = "management-other"
+            self.assertEqual(self.probe("login", other)["status"], 200)
+        self.assert_management_denials(owner, other)
+        self.assert_login_cookie_fences(owner)
+        after = self.counter_snapshot()
+        self.assertEqual(after, before)
+        self.assertEqual(self.calls(), calls)
+        report["healthy_counter_before"] = before
+        report["healthy_counter_after"] = after
+        if self.antibot:
+            report["expired_challenge"] = self.expired_challenge_management(
+                owners
+            )
+        report["redis_down"] = self.redis_down_management(owners)
+        self.assertEqual(self.calls(), calls)
+        report["upstream_calls"] = calls
+        type(self).session_management_evidence = report
 
 
 class PublicEntryRuntimeTests(PublicEntryRuntimeFixture):

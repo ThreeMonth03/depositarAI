@@ -550,6 +550,8 @@ class PublicEntryTests(unittest.TestCase):
             ("public-health", "/healthz", ["GET"]),
             ("access", "/api/access", ["GET"]),
             ("session-create", "/api/session", ["POST"]),
+            ("session-status", "/api/session", ["GET"]),
+            ("session-withdraw", "/api/session", ["PATCH"]),
             ("session-delete", "/api/session", ["DELETE"]),
             ("turn", "/api/turn", ["POST"]),
             ("login", "/auth/login", ["GET"]),
@@ -605,6 +607,43 @@ class PublicEntryTests(unittest.TestCase):
                     plan["apisix_config"],
                 )
                 self.assertFalse((self.state / "public-entry").exists())
+
+    def test_session_management_routes_authenticate_without_quota(self):
+        for raw in (self.raw, self.mixed_raw()):
+            config = edge.validate_public_entry_config(raw)
+            plan = edge.render_public_entry(config)
+            routes = {
+                route["id"]: route for route in plan["apisix_routes"]["routes"]
+            }
+            for identifier, method, reference in (
+                ("session-status", "GET", "access"),
+                ("session-withdraw", "PATCH", "session-delete"),
+            ):
+                with self.subTest(mode=config.access_mode, route=identifier):
+                    self.assertIn(identifier, set(routes))
+                    route = routes[identifier]
+                    self.assertEqual(route["uri"], "/api/session")
+                    self.assertEqual(route["methods"], [method])
+                    plugins = route["plugins"]
+                    self.assertEqual(plugins, routes[reference]["plugins"])
+                    self.assertNotIn("limit-count", plugins)
+                    self.assertNotIn("depositar-quota-response", plugins)
+                    self.assertEqual(plugins["limit-req"]["rate"], 3)
+                    self.assertEqual(plugins["limit-req"]["burst"], 12)
+                    self.assertFalse(plugins["limit-req"]["allow_degradation"])
+
+    def test_public_profile_cannot_enable_trace_capture(self):
+        for field, value in (
+            ("trace_root", str(self.root / "private-trace")),
+            ("capture", True),
+        ):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(
+                    edge.PublicEntryError, "^public_entry_fields$"
+                ),
+            ):
+                edge.validate_public_entry_config({**self.raw, field: value})
 
 
 if __name__ == "__main__":

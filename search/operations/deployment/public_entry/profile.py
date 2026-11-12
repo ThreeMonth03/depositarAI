@@ -783,6 +783,16 @@ def _render_apisix_routes(config):
         session=True,
     )
     route(
+        "session-status", "/api/session", ["GET"], api=True, authenticated=True
+    )
+    route(
+        "session-withdraw",
+        "/api/session",
+        ["PATCH"],
+        api=True,
+        authenticated=True,
+    )
+    route(
         "session-delete",
         "/api/session",
         ["DELETE"],
