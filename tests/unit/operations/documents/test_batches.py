@@ -803,6 +803,125 @@ class BatchTests(unittest.TestCase):
             batches.status(self.state, self.plan_sha)["pending_count"], 2
         )
 
+    def _use_literal_sources(self):
+        urls = (
+            "https://data.depositar.io/synthetic-literal/report[final].csv",
+            "https://data.depositar.io/synthetic-literal/report{draft.csv",
+        )
+        snapshot = self.root / "snapshot.jsonl"
+        rows = [
+            json.loads(line) for line in snapshot.read_bytes().splitlines()
+        ]
+        self.assertEqual(len(rows[0]["resources"]), len(urls))
+        for index, item in enumerate(rows[0]["resources"]):
+            item["url"] = urls[index]
+        snapshot.write_bytes(
+            b"".join(json.dumps(row).encode() + b"\n" for row in rows)
+        )
+        output = self.root / "literal-bundles"
+        output.mkdir(mode=0o700)
+        result = build_bundle(snapshot, output)
+        self.bundle = Path(result["bundle_path"])
+        self.manifest = result["manifest_sha256"]
+        return urls
+
+    def _acquire_downloaded_fixture(self, root, item):
+        body, _ = source.fetch(item)
+        self.assertEqual(body, self.raw)
+        return self.acquired(root, item)
+
+    def test_literal_sources_complete_once_without_running_leftovers(self):
+        urls = self._use_literal_sources()
+        self.prepare()
+        self.fetch.side_effect = self._acquire_downloaded_fixture
+        raw = (
+            "HTTP/2 200\r\nContent-Type: text/csv\r\nContent-Length: "
+            + str(len(self.raw))
+            + "\r\n\r\n"
+        ).encode() + self.raw
+
+        def guarded_transport(command):
+            if "--globoff" not in command:
+                return 3, b"synthetic curl URL glob error"
+            return 0, raw
+
+        with patch.object(
+            source, "_run", side_effect=guarded_transport
+        ) as run:
+            report = self.run_batch()
+            self.assertEqual(
+                tuple(
+                    report[key]
+                    for key in (
+                        "status",
+                        "profile_count",
+                        "pending_count",
+                        "failed_count",
+                    )
+                ),
+                ("completed", 2, 0, 0),
+            )
+            self.assertEqual(
+                [call.args[0][-1] for call in run.call_args_list], list(urls)
+            )
+            self.assertEqual(self.fetch.call_count, 2)
+            for identifier in self.ids:
+                row = json.loads(
+                    (
+                        self.state / "outcomes" / (identifier + ".json")
+                    ).read_bytes()
+                )
+                self.assertEqual(row["status"], "ok")
+            record, _ = sets.read(self.state / report["profile_set_file"])
+            self.assertEqual(
+                [row["resource_id"] for row in record["profiles"]], self.ids
+            )
+            self.assertEqual(record["failures"], [])
+            self.assertEqual(self.run_batch()["attempted_count"], 0)
+            self.assertEqual(run.call_count, 2)
+
+    def test_unknown_curl_exit_three_keeps_fatal_intent_on_resume(self):
+        urls = self._use_literal_sources()
+        self.prepare()
+        self.fetch.side_effect = self._acquire_downloaded_fixture
+        with (
+            patch.object(
+                source,
+                "_run",
+                return_value=(3, b"synthetic private transport diagnostic"),
+            ) as run,
+            patch.object(extractor, "helper_exists", return_value=False),
+        ):
+            for _ in range(2):
+                with self.assertRaises(source.SourceError) as caught:
+                    self.run_batch()
+                self.assertEqual(
+                    caught.exception.args, ("document_source_fetch_failed",)
+                )
+                row = json.loads(
+                    (
+                        self.state / "outcomes" / (self.ids[0] + ".json")
+                    ).read_bytes()
+                )
+                self.assertEqual(
+                    (row["status"], row["attempt"]), ("running", 1)
+                )
+                self.assertFalse(
+                    (
+                        self.state / "outcomes" / (self.ids[1] + ".json")
+                    ).exists()
+                )
+                self.assertEqual(list((self.state / "profiles").iterdir()), [])
+                self.assertEqual(
+                    list(self.state.glob("profile-set-*.json")), []
+                )
+            self.assertEqual(
+                [call.args[0][-1] for call in run.call_args_list],
+                [urls[0], urls[0]],
+            )
+        self.assertEqual(self.fetch.call_count, 2)
+        self.parse.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
