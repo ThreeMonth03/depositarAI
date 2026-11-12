@@ -3,15 +3,15 @@ set -euo pipefail
 suite=all
 if [[ "$#" != 0 ]]; then
   if [[ "$#" != 2 || "$1" != --suite ]]; then
-    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|browser}]' >&2
+    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|oss-gateway-a|oss-gateway-b|browser}]' >&2
     exit 64
   fi
   suite="$2"
 fi
 case "$suite" in
-  all|oss|oss-policy|oss-gateway|browser) ;;
+  all|oss|oss-policy|oss-gateway|oss-gateway-a|oss-gateway-b|browser) ;;
   *)
-    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|browser}]' >&2
+    echo 'Usage: test-search-web.sh [--suite {all|oss|oss-policy|oss-gateway|oss-gateway-a|oss-gateway-b|browser}]' >&2
     exit 64
     ;;
 esac
@@ -32,6 +32,8 @@ oss_gateway_modules=(
 case "$suite" in
   oss-policy) oss_modules=("${oss_policy_modules[@]}") ;;
   oss-gateway) oss_modules=("${oss_gateway_modules[@]}") ;;
+  oss-gateway-a) oss_modules=("${oss_gateway_modules[0]}" "${oss_gateway_modules[4]}") ;;
+  oss-gateway-b) oss_modules=("${oss_gateway_modules[@]:1:3}") ;;
   *) oss_modules=("${oss_policy_modules[@]}" "${oss_gateway_modules[@]}") ;;
 esac
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -254,5 +256,7 @@ case "$suite" in
   oss) echo 'Website unit/contract, build and OSS runtime checks passed.' ;;
   oss-policy) echo 'Website unit/contract, build and OSS policy runtime checks passed.' ;;
   oss-gateway) echo 'Website unit/contract, build and OSS gateway runtime checks passed.' ;;
+  oss-gateway-a) echo 'Website common checks and OSS gateway shard A runtime checks passed.' ;;
+  oss-gateway-b) echo 'Website common checks and OSS gateway shard B runtime checks passed.' ;;
   browser) echo 'Website unit/contract, build, native bootstrap and real HTTP browser checks passed.' ;;
 esac

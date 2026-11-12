@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WEBSITE_SUITES = (
     ("oss-policy", "OSS_POLICY"),
     ("oss-gateway", "OSS_GATEWAY"),
+    ("oss-gateway-b", "OSS_GATEWAY_B"),
     ("browser", "BROWSER"),
 )
 
@@ -89,7 +90,13 @@ class WorkflowSyntaxTests(unittest.TestCase):
             encoding="utf-8"
         )
         installer = "run: bash scripts/ci/install-compose.sh"
-        self.assertEqual(5, ci.count(installer))
+        self.assertEqual(6, ci.count(installer))
+        self.assertIn(
+            installer,
+            SourcePackageWorkflowTests.jobs(ci)[
+                "private-website-oss-gateway-b"
+            ],
+        )
         self.assertEqual(2, package.count(installer))
 
     def test_new_ci_helpers_are_in_the_core_syntax_and_unit_checks(
@@ -157,13 +164,15 @@ class SourcePackageWorkflowTests(unittest.TestCase):
             )
         for suite, _ in WEBSITE_SUITES:
             self.assertIn(
-                "run: bash scripts/test-search-web.sh --suite " + suite,
+                "run: bash scripts/test-search-web.sh --suite "
+                + {"oss-gateway": "oss-gateway-a"}.get(suite, suite),
                 ci_jobs["private-website-" + suite],
             )
         self.assertIn(
             (
                 "needs: [private-website-oss-policy, "
-                "private-website-oss-gateway, private-website-browser]"
+                "private-website-oss-gateway, private-website-oss-gateway-b, "
+                "private-website-browser]"
             ),
             ci_jobs["private-website"],
         )
@@ -253,6 +262,7 @@ class WebsiteAggregateTests(unittest.TestCase):
                     prefix + "_SOURCE_TREE": tree,
                 }
             )
+        values.update(OSS_GATEWAY_SHARD_ID="a", OSS_GATEWAY_B_SHARD_ID="b")
         return values
 
     def run_aggregate(self, values, *, missing=()):
@@ -319,6 +329,21 @@ class WebsiteAggregateTests(unittest.TestCase):
                     + " }}",
                     aggregate,
                 )
+        for suite, prefix in (
+            ("oss-gateway", "OSS_GATEWAY"),
+            ("oss-gateway-b", "OSS_GATEWAY_B"),
+        ):
+            self.assertIn(
+                "shard_id: ${{ steps.source.outputs.shard_id }}",
+                self.jobs["private-website-" + suite],
+            )
+            self.assertIn(
+                prefix
+                + "_SHARD_ID: ${{ needs.private-website-"
+                + suite
+                + ".outputs.shard_id }}",
+                aggregate,
+            )
         for variable, expression in (
             ("EXPECTED_SHA", "steps.source.outputs.sha"),
             ("EXPECTED_TREE", "steps.source.outputs.tree"),
@@ -370,9 +395,13 @@ class WebsiteAggregateTests(unittest.TestCase):
 
     def test_scopes_must_agree_and_use_the_two_valid_boolean_values(self):
         for scopes in product(
-            ("true", "false", "", "unknown", "True", "0"), repeat=3
+            ("true", "false", "", "unknown", "True", "0"),
+            repeat=len(WEBSITE_SUITES),
         ):
-            if scopes in (("true",) * 3, ("false",) * 3):
+            if scopes in (
+                ("true",) * len(WEBSITE_SUITES),
+                ("false",) * len(WEBSITE_SUITES),
+            ):
                 continue
             with self.subTest(scopes=scopes):
                 values = self.environment()
@@ -389,6 +418,35 @@ class WebsiteAggregateTests(unittest.TestCase):
                 values["GITHUB_EVENT_NAME"] = event
                 self.assertNotEqual(0, self.run_aggregate(values).returncode)
 
+    def test_gateway_shard_identity_cannot_be_missing_repeated_or_wrong(self):
+        for unaffected, identities in product(
+            (False, True),
+            (
+                ("", "b"),
+                ("a", ""),
+                ("a", "a"),
+                ("b", "b"),
+                ("b", "a"),
+                (" a", "b"),
+                ("a", "B"),
+            ),
+        ):
+            with self.subTest(unaffected=unaffected, identities=identities):
+                values = self.environment(unaffected=unaffected)
+                values.update(
+                    zip(
+                        ("OSS_GATEWAY_SHARD_ID", "OSS_GATEWAY_B_SHARD_ID"),
+                        identities,
+                    )
+                )
+                self.assertNotEqual(0, self.run_aggregate(values).returncode)
+        for key in ("OSS_GATEWAY_SHARD_ID", "OSS_GATEWAY_B_SHARD_ID"):
+            for unaffected in (False, True):
+                values = self.environment(unaffected=unaffected)
+                self.assertNotEqual(
+                    0, self.run_aggregate(values, missing=(key,)).returncode
+                )
+
     def test_source_evidence_must_match_for_both_scope_paths(self):
         for unaffected in (False, True):
             for key, value in product(
@@ -396,10 +454,12 @@ class WebsiteAggregateTests(unittest.TestCase):
                     "EXPECTED_SHA",
                     "OSS_POLICY_SOURCE_SHA",
                     "OSS_GATEWAY_SOURCE_SHA",
+                    "OSS_GATEWAY_B_SOURCE_SHA",
                     "BROWSER_SOURCE_SHA",
                     "EXPECTED_TREE",
                     "OSS_POLICY_SOURCE_TREE",
                     "OSS_GATEWAY_SOURCE_TREE",
+                    "OSS_GATEWAY_B_SOURCE_TREE",
                     "BROWSER_SOURCE_TREE",
                 ),
                 ("", "c" * 40, "invalid"),
@@ -417,12 +477,14 @@ class WebsiteAggregateTests(unittest.TestCase):
                     "EXPECTED_SHA",
                     "OSS_POLICY_SOURCE_SHA",
                     "OSS_GATEWAY_SOURCE_SHA",
+                    "OSS_GATEWAY_B_SOURCE_SHA",
                     "BROWSER_SOURCE_SHA",
                 ),
                 (
                     "EXPECTED_TREE",
                     "OSS_POLICY_SOURCE_TREE",
                     "OSS_GATEWAY_SOURCE_TREE",
+                    "OSS_GATEWAY_B_SOURCE_TREE",
                     "BROWSER_SOURCE_TREE",
                 ),
             ),
@@ -484,6 +546,7 @@ class WebsiteAggregateTests(unittest.TestCase):
             for name in (
                 "private-website-oss-policy",
                 "private-website-oss-gateway",
+                "private-website-oss-gateway-b",
                 "private-website-browser",
                 "private-website",
             ):
@@ -514,8 +577,15 @@ class WebsiteAggregateTests(unittest.TestCase):
                             self.assertEqual(
                                 0, result.returncode, result.stderr
                             )
+                            expected_outputs = {"sha": sha, "tree": tree}
+                            shards = {
+                                "private-website-oss-gateway": "a",
+                                "private-website-oss-gateway-b": "b",
+                            }
+                            if name in shards:
+                                expected_outputs["shard_id"] = shards[name]
                             self.assertEqual(
-                                {"sha": sha, "tree": tree},
+                                expected_outputs,
                                 dict(
                                     line.split("=", 1)
                                     for line in output.read_text().splitlines()
