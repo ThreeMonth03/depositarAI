@@ -3,14 +3,16 @@ Docker/OpenSearch."""
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import base64
+from contextlib import contextmanager, nullcontext
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from search.operations.catalog import (
     access,
@@ -19,7 +21,9 @@ from search.operations.catalog import (
     projection,
     query,
     reuse,
+    transport,
 )
+from search.operations import lifecycle
 from search.operations.shared import private_io
 from tests.unit.catalog.test_access import AccessClient
 from tests.unit.catalog.test_projection import (
@@ -28,8 +32,11 @@ from tests.unit.catalog.test_projection import (
     make_bundle,
 )
 from tests.unit.catalog.test_vectors import host_context
+from tests.unit.catalog.test_transport import Response
+from tests.unit.catalog.test_reuse import PROFILE
 
 READ_MATERIALS = connection.materials
+EXPORT_CACHE = reuse.export
 
 
 class QueryClient:
@@ -199,7 +206,7 @@ class CatalogQueryTests(unittest.TestCase):
         self.assertEqual(INDEX, report["index"])
         self.assertEqual(2, report["document_count"])
         self.assertEqual(
-            [("index", "172.19.0.3", b"sealed-ca", "a" * 64)],
+            [("index", "172.19.0.3", b"sealed-ca", "a" * 64)] * 2,
             self.factory_calls,
         )
         root = self.root / "query-access"
@@ -1003,6 +1010,384 @@ class CatalogQueryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(query.RuntimeError, "runtime_changed"):
             self.verify_authority(lambda _: next(observations))
+
+    def clocked_transport(self, tick):
+        clients = []
+        self.clock_inputs = []
+
+        def factory(peer, ca, admin):
+            self.clock_inputs.append((peer, ca, admin))
+            client = transport.OpenSearchClient(
+                peer, ca, admin, clock=lambda: tick[0]
+            )
+            clients.append(client)
+            self.clock_trace.append(
+                ("client", tick[0], client._started, client._deadline)
+            )
+            return client
+
+        def connect(_peer, *, context, timeout):
+            self.assertIsNotNone(context)
+            self.assertTrue(0 < timeout <= 20)
+            channel = Mock()
+
+            def request(method, path, *, body, headers):
+                encoded = headers["Authorization"].split(" ", 1)[1]
+                user, password = (
+                    base64.b64decode(encoded).decode().split(":", 1)
+                )
+                kwargs = (
+                    {}
+                    if user == "admin"
+                    else dict(username=user, password=password)
+                )
+                if path.endswith("/_bulk"):
+                    payload = body.decode()
+                    kwargs["ndjson"] = True
+                else:
+                    payload = None if body is None else json.loads(body)
+                status, value = self.client.request(
+                    method, path, payload, **kwargs
+                )
+                channel.getresponse.return_value = Response(
+                    b"" if value is None else private_io.canonical(value),
+                    status=status,
+                )
+
+            channel.request.side_effect = request
+            return channel
+
+        patch.object(transport.ssl, "SSLContext").start()
+        patch.object(
+            transport, "_PinnedHTTPSConnection", side_effect=connect
+        ).start()
+        timers = patch.object(transport.threading, "Timer").start()
+        return factory, clients, timers
+
+    def phase_window(self, *, repeat):
+        if repeat:
+            self.provision()
+        tick = [0.0]
+        self.clock_trace = []
+        factory, clients, timers = self.clocked_transport(tick)
+
+        def query_elapsed(*_args, **_kwargs):
+            tick[0] = 590.0
+            self.clock_trace.append(("query-complete", tick[0]))
+            return self.context["plan"]["revision"]
+
+        def export(_context, client, _scan, _ready):
+            self.clock_trace.append(("export-start", tick[0]))
+            client.request("GET", "/" + INDEX + "/_mapping")
+            tick[0] += 590.0
+            self.clock_trace.append(("export-end", tick[0]))
+            client.request("GET", "/" + INDEX + "/_mapping")
+            return {"status": "exported", "cached_count": 2}
+
+        self.source_mock.side_effect = query_elapsed
+        self.cache_mock.side_effect = export
+        result = query._provision(self.context, factory)
+        self.assertEqual("query-ready", result["status"])
+        self.assertEqual(2, len(clients))
+        self.assertIsNot(clients[0], clients[1])
+        self.assertEqual([0.0, 590.0], [c._started for c in clients])
+        self.assertEqual([600.0, 1190.0], [c._deadline for c in clients])
+        self.assertTrue(
+            all(0 < call.args[0] <= 20 for call in timers.call_args_list)
+        )
+
+    def test_cold_query_and_export_have_independent_http_windows(self):
+        self.phase_window(repeat=False)
+
+    def test_ready_repeat_and_export_have_independent_http_windows(self):
+        self.phase_window(repeat=True)
+
+    def native_export_context(self):
+        old_project = self.context["plan"]["project"]
+        revision = self.context["plan"]["revision"]
+        slot = self.root / (self.bundle.bundle_id[:12] + "-" + revision[:12])
+        slot.mkdir(mode=0o700)
+        self.root = slot
+        self.context.update(root=slot, data=slot)
+        self.context["plan"].update(
+            project="depositar-ai-catalog-" + slot.name,
+            bundle_path=str(
+                next(
+                    path
+                    for path in (
+                        Path(self.bundle_temp.name) / "bundles"
+                    ).iterdir()
+                    if path.is_dir()
+                )
+            ),
+            source_sha256=PROFILE["fess_sources"],
+        )
+        self.context["compose"] = {
+            "services": {
+                "fess-search": {
+                    "build": {"args": PROFILE["fess_build_arguments"]},
+                    "environment": PROFILE["fess_environment"],
+                },
+                "ollama-embedding": {
+                    "image": PROFILE["embedding_image"],
+                    "environment": PROFILE["embedding_environment"],
+                },
+            }
+        }
+        self.context["plan"]["compose_sha256"] = execution.digest_record(
+            self.context["compose"]
+        )
+        for container in self.containers:
+            networks = container["NetworkSettings"]["Networks"]
+            networks[self.context["plan"]["project"] + "_search_backend"] = (
+                networks.pop(old_project + "_search_backend")
+            )
+        identity = execution.catalog_identity(self.context)
+        self.runtime.update(identity)
+        recipe = {
+            **identity,
+            "embedding_model": PROFILE["model"],
+            "embedding_manifest_sha256": PROFILE["model_manifest_sha256"],
+            "dimensions": PROFILE["dimensions"],
+        }
+        self.gate.update(
+            **identity,
+            runtime_sha256=execution.digest_record(self.runtime),
+            recipe_sha256=execution.digest_record(recipe),
+        )
+        (slot / "vector-operations").mkdir(mode=0o700)
+        for path, value in (
+            (slot / "plan.json", self.context["plan"]),
+            (slot / "compose.json", self.context["compose"]),
+            (slot / "vector-operations/recipe.json", recipe),
+        ):
+            self.replace_record(path, value)
+        patch.object(reuse, "_profile", return_value=PROFILE).start()
+        self.cache_mock.side_effect = EXPORT_CACHE
+
+    def native_export_window(self, elapsed, *, invoke=None):
+        self.native_export_context()
+        tick = [0.0]
+        self.clock_trace = []
+        factory, clients, _timers = self.clocked_transport(tick)
+        self.export_clients = clients
+        self.export_snapshot = {}
+
+        def query_elapsed(*_args, **_kwargs):
+            tick[0] = 590.0
+            return self.context["plan"]["revision"]
+
+        original_write = reuse._write
+
+        def write(path, value, **kwargs):
+            digest = original_write(path, value, **kwargs)
+            if len(path.stem) == 64 and not self.export_snapshot:
+                self.assertFalse((path.parent / "manifest.json").exists())
+                paths = [path, path.parent / "export-started.json"] + [
+                    self.root / "query-access" / name
+                    for name in query.QUERY_FILES
+                ]
+                self.export_snapshot.update(
+                    (p, (p.stat().st_ino, p.read_bytes())) for p in paths
+                )
+                tick[0] += elapsed
+            return digest
+
+        self.source_mock.side_effect = query_elapsed
+        patch.object(reuse, "_write", side_effect=write).start()
+        return (
+            query._provision(self.context, factory)
+            if invoke is None
+            else invoke(factory)
+        )
+
+    def test_real_export_uses_its_own_window_and_publishes_manifest_last(self):
+        result = self.native_export_window(590.0)
+        self.assertEqual("query-ready", result["status"])
+        self.assertEqual(2, result["vector_cache"]["cached_documents"])
+        self.assertEqual(2, len(self.export_clients))
+        self.assertEqual(
+            [("172.19.0.3", b"sealed-ca", "a" * 64)] * 2,
+            self.clock_inputs,
+        )
+        manifest = self.root / "vector-cache/manifest.json"
+        self.assertTrue(manifest.exists())
+        for path, state in self.export_snapshot.items():
+            self.assertEqual(state, (path.stat().st_ino, path.read_bytes()))
+        self.assertEqual(2, json.loads(manifest.read_bytes())["cached_count"])
+
+    def test_export_own_deadline_keeps_ready_and_partial_objects(self):
+        with self.assertRaisesRegex(
+            query.RuntimeError, "reuse_export_invalid"
+        ):
+            self.native_export_window(601.0)
+        self.assertEqual(2, len(self.export_clients))
+        self.assertEqual(1, self.cache_mock.call_count)
+        self.assertTrue(self.export_snapshot)
+        self.assertFalse((self.root / "vector-cache/manifest.json").exists())
+        for path, state in self.export_snapshot.items():
+            self.assertEqual(state, (path.stat().st_ino, path.read_bytes()))
+        objects = [
+            path
+            for path in (self.root / "vector-cache").iterdir()
+            if len(path.stem) == 64
+        ]
+        self.assertTrue(objects)
+        for path in objects:
+            self.assertEqual(0o400, path.stat().st_mode & 0o777)
+            self.assertEqual(
+                path.stem, hashlib.sha256(path.read_bytes()).hexdigest()
+            )
+
+    def test_export_deadline_never_publishes_product_query_candidate(self):
+        store = Mock()
+
+        def invoke(factory):
+            with (
+                patch.object(lifecycle, "_require_revision"),
+                patch.object(
+                    lifecycle, "operation", return_value=nullcontext({})
+                ),
+                patch.object(lifecycle, "_candidate", return_value={}),
+                patch.object(
+                    lifecycle, "_index_plan", return_value=self.context["plan"]
+                ),
+                patch.object(
+                    query,
+                    "provision",
+                    side_effect=lambda *_args, **_kwargs: query._provision(
+                        self.context, factory
+                    ),
+                ),
+            ):
+                return lifecycle._prepare_query_locked(
+                    None,
+                    store,
+                    self.context["plan"]["revision"],
+                    repo_root=self.root,
+                )
+
+        with self.assertRaisesRegex(
+            query.RuntimeError, "reuse_export_invalid"
+        ):
+            self.native_export_window(601.0, invoke=invoke)
+        store.write.assert_not_called()
+        self.assertEqual(2, len(self.export_clients))
+        self.assertTrue((self.root / "query-access/ready.json").exists())
+        self.assertFalse((self.root / "vector-cache/manifest.json").exists())
+
+    def cutover_drift(self, change, diagnostic):
+        original_write = query._write
+        calls_at_cutover = []
+
+        def write(root, name, value, **kwargs):
+            original_write(root, name, value, **kwargs)
+            if name == "ready.json":
+                calls_at_cutover.extend(
+                    (
+                        len(self.client.projection.calls),
+                        len(self.client.access.calls),
+                    )
+                )
+                change()
+
+        with (
+            patch.object(query, "_write", side_effect=write),
+            self.assertRaisesRegex(ValueError, diagnostic),
+        ):
+            self.provision()
+        self.assertEqual(1, len(self.factory_calls))
+        self.cache_mock.assert_not_called()
+        self.assertEqual(
+            calls_at_cutover,
+            [len(self.client.projection.calls), len(self.client.access.calls)],
+        )
+        self.assertTrue((self.root / "query-access/ready.json").exists())
+        self.assertFalse((self.root / "vector-cache/manifest.json").exists())
+
+    def test_source_drift_at_export_cutover_blocks_second_client(self):
+        self.cutover_drift(
+            lambda: setattr(self.source_mock, "return_value", "9" * 40),
+            "runtime_changed",
+        )
+
+    def test_runtime_drift_at_export_cutover_blocks_second_client(self):
+        self.cutover_drift(
+            lambda: setattr(
+                self.runtime_mock,
+                "return_value",
+                ({**self.runtime, "network_id": "9" * 64}, {}),
+            ),
+            "runtime_changed",
+        )
+
+    def test_peer_drift_at_export_cutover_blocks_second_client(self):
+        def change():
+            cid = self.runtime["container_ids"]["opensearch-search"]
+            name = self.context["plan"]["project"] + "_search_backend"
+            self.containers[1]["NetworkSettings"]["Networks"][name][
+                "IPAddress"
+            ] = "172.19.0.8"
+            self.network["Containers"][cid]["IPv4Address"] = "172.19.0.8/16"
+
+        self.cutover_drift(change, "runtime_changed")
+
+    def test_admin_drift_at_export_cutover_blocks_second_client(self):
+        self.cutover_drift(
+            lambda: setattr(
+                self.materials_mock, "return_value", ("9" * 64, b"sealed-ca")
+            ),
+            "secret_changed",
+        )
+
+    def test_ca_drift_at_export_cutover_blocks_second_client(self):
+        self.cutover_drift(
+            lambda: setattr(
+                self.materials_mock, "return_value", ("a" * 64, b"changed-ca")
+            ),
+            "secret_changed",
+        )
+
+    def test_query_secret_drift_at_export_cutover_blocks_second_client(self):
+        self.cutover_drift(
+            lambda: (
+                self.root / "query-access" / access.SECRET_NAME
+            ).write_bytes(b"9" * 64 + b"\n"),
+            "secret_changed",
+        )
+
+    def test_query_binding_drift_at_export_cutover_blocks_second_client(self):
+        path = self.root / "query-access" / access.BINDING_NAME
+
+        def change():
+            binding = json.loads(path.read_bytes())
+            binding["bundle_id"] = "9" * 64
+            self.replace_record(path, binding)
+
+        self.cutover_drift(change, "binding_changed")
+
+    def test_export_vector_drift_cannot_publish_manifest_or_retry(self):
+        self.native_export_context()
+
+        def factory(peer, ca, admin):
+            client = self.os_factory(peer, ca, admin)
+            if len(self.factory_calls) == 2:
+                self.client.projection.rows[0]["_source"][
+                    "content_chunk_vector"
+                ][0]["vector"][0] = 2.0
+            return client
+
+        with self.assertRaisesRegex(
+            query.RuntimeError, "reuse_export_invalid"
+        ):
+            query._provision(self.context, factory)
+        self.assertEqual(2, len(self.factory_calls))
+        self.assertEqual(1, self.cache_mock.call_count)
+        self.assertTrue((self.root / "query-access/ready.json").exists())
+        self.assertTrue(
+            (self.root / "vector-cache/export-started.json").exists()
+        )
+        self.assertFalse((self.root / "vector-cache/manifest.json").exists())
 
 
 if __name__ == "__main__":

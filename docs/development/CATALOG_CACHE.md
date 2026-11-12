@@ -57,6 +57,16 @@ digest remain part of its provenance. Retain these files together; do not edit
 or copy receipts to make a cache appear compatible. Missing exports are normal
 cache misses; a malformed published export fails explicitly.
 
+Query preparation and the following export each use one HTTP client with a
+600-second lifetime budget and a 20-second request cap. Before creating the
+export client, preparation rechecks the original source, runtime, peers and
+credentials; changed identities are rejected. These two budgets are not a
+1,200-second CLI deadline: preflight, CPU work, private-file IO and publication
+can add elapsed time. Work between a client's requests still consumes its
+remaining budget. A failed export retains completed query evidence and partial
+immutable records, but publishes no usable cache until its manifest is complete.
+Continuing a retained operation requires the normal source and resource admission.
+
 The first catalog built with this export contract generates its vectors
 normally. Pre-contract catalogs do not seed the new cache. Interrupted exports
 publish no manifest until their complete scan passes; repeating `prepare-query`
