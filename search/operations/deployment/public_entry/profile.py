@@ -224,6 +224,62 @@ def _url(raw, *, origin=False):
     return raw
 
 
+def _validate_quota_limits(value, access_mode):
+    """Validate public admission limits and mixed-mode pool reservations."""
+    bounds = {
+        "loopback_port": (1024, 65535),
+        "quota_per_account": (1, 10000),
+        "quota_global": (1, 100000),
+        "quota_per_guest": (1, 10000),
+        "quota_guest_pool": (1, 100000),
+        "quota_user_pool": (1, 100000),
+        "quota_window_seconds": (60, 604800),
+        "session_limit": (1, 1000),
+        "session_window_seconds": (60, 86400),
+    }
+    for name, (low, high) in bounds.items():
+        if name in value:
+            _require(
+                type(value[name]) is int and low <= value[name] <= high,
+                "limits_invalid",
+            )
+    _require(
+        value.get("loopback_port", 18084) != 18083, "private_port_reserved"
+    )
+    _require(
+        value.get("quota_per_account", 10) <= value.get("quota_global", 100),
+        "limits_invalid",
+    )
+    if access_mode == "mixed":
+        guest = value.get("quota_per_guest", 3)
+        user = value.get("quota_per_account", 10)
+        guest_pool = value.get("quota_guest_pool", 20)
+        user_pool = value.get("quota_user_pool", 80)
+        _require(
+            guest < user
+            and guest <= guest_pool
+            and user <= user_pool
+            and guest_pool + user_pool <= value.get("quota_global", 100),
+            "pool_limits_invalid",
+        )
+
+
+def _normalize_trusted_proxy_cidrs(cidrs):
+    """Return unique canonical proxy CIDRs in the original input order."""
+    _require(type(cidrs) is list and len(cidrs) <= 16, "trusted_proxy_invalid")
+    normalized = []
+    for cidr in cidrs:
+        _require(type(cidr) is str, "trusted_proxy_invalid")
+        network = ipaddress.ip_network(cidr, strict=True)
+        _require(
+            network.prefixlen > 0 and not network.is_multicast,
+            "trusted_proxy_invalid",
+        )
+        normalized.append(str(network))
+    _require(len(set(normalized)) == len(normalized), "trusted_proxy_invalid")
+    return tuple(normalized)
+
+
 def validate_public_entry_config(value, *, repo_root=None, uid=None):
     """Validate existing private inputs, including bounded secret-file
     formats.
@@ -316,60 +372,10 @@ def validate_public_entry_config(value, *, repo_root=None, uid=None):
             == len(secret_fields),
             "secret_paths_overlap",
         )
-        bounds = {
-            "loopback_port": (1024, 65535),
-            "quota_per_account": (1, 10000),
-            "quota_global": (1, 100000),
-            "quota_per_guest": (1, 10000),
-            "quota_guest_pool": (1, 100000),
-            "quota_user_pool": (1, 100000),
-            "quota_window_seconds": (60, 604800),
-            "session_limit": (1, 1000),
-            "session_window_seconds": (60, 86400),
-        }
-        for name, (low, high) in bounds.items():
-            if name in value:
-                _require(
-                    type(value[name]) is int and low <= value[name] <= high,
-                    "limits_invalid",
-                )
-        _require(
-            value.get("loopback_port", 18084) != 18083, "private_port_reserved"
+        _validate_quota_limits(value, access_mode)
+        parsed["trusted_proxy_cidrs"] = _normalize_trusted_proxy_cidrs(
+            value.get("trusted_proxy_cidrs", [])
         )
-        _require(
-            value.get("quota_per_account", 10)
-            <= value.get("quota_global", 100),
-            "limits_invalid",
-        )
-        if access_mode == "mixed":
-            guest = value.get("quota_per_guest", 3)
-            user = value.get("quota_per_account", 10)
-            guest_pool = value.get("quota_guest_pool", 20)
-            user_pool = value.get("quota_user_pool", 80)
-            _require(
-                guest < user
-                and guest <= guest_pool
-                and user <= user_pool
-                and guest_pool + user_pool <= value.get("quota_global", 100),
-                "pool_limits_invalid",
-            )
-        cidrs = value.get("trusted_proxy_cidrs", [])
-        _require(
-            type(cidrs) is list and len(cidrs) <= 16, "trusted_proxy_invalid"
-        )
-        normalized = []
-        for cidr in cidrs:
-            _require(type(cidr) is str, "trusted_proxy_invalid")
-            network = ipaddress.ip_network(cidr, strict=True)
-            _require(
-                network.prefixlen > 0 and not network.is_multicast,
-                "trusted_proxy_invalid",
-            )
-            normalized.append(str(network))
-        _require(
-            len(set(normalized)) == len(normalized), "trusted_proxy_invalid"
-        )
-        parsed["trusted_proxy_cidrs"] = tuple(normalized)
         if "network_subnets" in value:
             subnets = value["network_subnets"]
             _require(
@@ -533,10 +539,6 @@ end"""
     )
 
 
-def _identity(config, *, redirect=False):
-    return render_identity(config, redirect=redirect)
-
-
 def _oidc(config, *, login=False):
     return {
         "client_id": config.oidc_client_id,
@@ -609,10 +611,6 @@ def _oidc(config, *, login=False):
             "error_response": {"error": {"code": "authentication_required"}}
         },
     }
-
-
-def _counter(config, *, session=False):
-    return render_counter(config, session=session)
 
 
 APISIX_START = (
@@ -692,21 +690,8 @@ def _mount(source, target, *, read_only=True):
     }
 
 
-def render_public_entry(config, *, uid=None, gid=None):
-    """Return deployment assets without creating files or touching Docker.
-
-    The caller must add an authenticated public-web image and bind it to the
-    existing private conversation network before treating this as deployable.
-    """
-    uid = os.geteuid() if uid is None else uid
-    gid = os.getegid() if gid is None else gid
-    _require(isinstance(config, PublicEntryConfig), "config_invalid")
-    _require(
-        all(type(v) is int and 1 <= v <= 2**31 - 1 for v in (uid, gid)),
-        "operator_invalid",
-    )
-    config = validate_public_entry_config(config.to_dict(), uid=uid)
-    root = config.state_root / "public-entry"
+def _render_apisix_routes(config):
+    """Render the ordered routes from an already validated profile."""
     origin_host = urlsplit(config.public_origin).hostname
     upstream = {
         "type": "roundrobin",
@@ -767,10 +752,10 @@ def render_public_entry(config, *, uid=None, gid=None):
             plugins["openid-connect"] = _oidc(config, login=login)
             plugins["serverless-post-function"] = {
                 "phase": "rewrite",
-                "functions": [_identity(config, redirect=login)],
+                "functions": [render_identity(config, redirect=login)],
             }
         if turn or session:
-            plugins["limit-count"] = _counter(config, session=session)
+            plugins["limit-count"] = render_counter(config, session=session)
         if turn and config.access_mode == "mixed":
             plugins["depositar-quota-response"] = {}
         routes.append(
@@ -812,6 +797,25 @@ def render_public_entry(config, *, uid=None, gid=None):
         "callback", "/auth/callback", ["GET"], authenticated=True, login=True
     )
     route("logout", "/auth/logout", ["GET"], authenticated=True, login=True)
+    return routes
+
+
+def render_public_entry(config, *, uid=None, gid=None):
+    """Return deployment assets without creating files or touching Docker.
+
+    The caller must add an authenticated public-web image and bind it to the
+    existing private conversation network before treating this as deployable.
+    """
+    uid = os.geteuid() if uid is None else uid
+    gid = os.getegid() if gid is None else gid
+    _require(isinstance(config, PublicEntryConfig), "config_invalid")
+    _require(
+        all(type(v) is int and 1 <= v <= 2**31 - 1 for v in (uid, gid)),
+        "operator_invalid",
+    )
+    config = validate_public_entry_config(config.to_dict(), uid=uid)
+    root = config.state_root / "public-entry"
+    routes = _render_apisix_routes(config)
     apisix_config = {
         "apisix": {
             "node_listen": 9080,

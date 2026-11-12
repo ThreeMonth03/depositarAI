@@ -1,5 +1,6 @@
 """Public edge admission, private inputs and deployment boundaries."""
 
+import copy
 from dataclasses import replace
 import json
 import os
@@ -483,6 +484,127 @@ class PublicEntryTests(unittest.TestCase):
         )
         with self.assertRaises(FileExistsError):
             edge.write_public_entry(self.config)
+
+    def test_quota_errors_precede_proxy_errors_without_mutating_inputs(self):
+        for extra, code in (
+            ({"quota_global": 0}, "limits_invalid"),
+            ({"loopback_port": 18083}, "private_port_reserved"),
+            ({"quota_per_account": 101}, "limits_invalid"),
+            ({"quota_guest_pool": 2}, "pool_limits_invalid"),
+            ({}, "configuration_invalid"),
+        ):
+            raw = self.mixed_raw(
+                **extra, trusted_proxy_cidrs=["not-a-network"]
+            )
+            before = copy.deepcopy(raw)
+            with (
+                self.subTest(extra=extra),
+                self.assertRaisesRegex(
+                    edge.PublicEntryError, "^public_entry_" + code + "$"
+                ),
+            ):
+                edge.validate_public_entry_config(raw)
+            self.assertEqual(raw, before)
+
+    def test_proxy_cidrs_preserve_order_and_reject_nonlists_and_duplicates(
+        self,
+    ):
+        cidrs = ["2001:DB8::/32", "192.0.2.0/24"]
+        raw = {**self.raw, "trusted_proxy_cidrs": cidrs}
+        before = copy.deepcopy(raw)
+        config = edge.validate_public_entry_config(raw)
+        self.assertEqual(
+            config.trusted_proxy_cidrs, ("2001:db8::/32", "192.0.2.0/24")
+        )
+        self.assertEqual(raw, before)
+        self.assertEqual(
+            edge.render_public_entry(config)["apisix_config"]["nginx_config"][
+                "http"
+            ]["real_ip_from"],
+            ["2001:db8::/32", "192.0.2.0/24"],
+        )
+        for rejected in (
+            tuple(cidrs),
+            ["192.0.2.0/24", "192.0.2.0/24"],
+            ["2001:DB8::/32", "2001:db8::/32"],
+            [f"192.0.{index}.0/24" for index in range(17)],
+        ):
+            with (
+                self.subTest(cidrs=rejected),
+                self.assertRaisesRegex(
+                    edge.PublicEntryError,
+                    "^public_entry_trusted_proxy_invalid$",
+                ),
+            ):
+                edge.validate_public_entry_config(
+                    {**self.raw, "trusted_proxy_cidrs": rejected}
+                )
+
+    def test_ordered_routes_and_final_assets_match_returned_configuration(
+        self,
+    ):
+        expected = [
+            ("public-home", "/", ["GET", "HEAD"]),
+            ("public-assets", "/assets/*", ["GET", "HEAD"]),
+            ("public-favicon", "/favicon.ico", ["GET", "HEAD"]),
+            ("public-health", "/healthz", ["GET"]),
+            ("access", "/api/access", ["GET"]),
+            ("session-create", "/api/session", ["POST"]),
+            ("session-delete", "/api/session", ["DELETE"]),
+            ("turn", "/api/turn", ["POST"]),
+            ("login", "/auth/login", ["GET"]),
+            ("callback", "/auth/callback", ["GET"]),
+            ("logout", "/auth/logout", ["GET"]),
+        ]
+        ca = self.root / "ca.pem"
+        ca.write_text(
+            "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n"
+        )
+        ca.chmod(0o600)
+        mixed = self.mixed_raw()
+        for raw in (
+            self.raw,
+            mixed,
+            {
+                **mixed,
+                "antibot_enabled": True,
+                "antibot_signing_key_file": str(
+                    self.root / "antibot_signing_key_file"
+                ),
+                "oidc_ca_file": str(ca),
+            },
+        ):
+            with self.subTest(
+                access_mode=raw.get("access_mode", "login_required"),
+                antibot_enabled=raw.get("antibot_enabled", False),
+            ):
+                config = edge.validate_public_entry_config(raw)
+                plan = edge.render_public_entry(config)
+                routes = plan["apisix_routes"]["routes"]
+                self.assertEqual(
+                    [
+                        (route["id"], route["uri"], route["methods"])
+                        for route in routes
+                    ],
+                    expected,
+                )
+                self.assertTrue(
+                    all(
+                        route["upstream"] is routes[0]["upstream"]
+                        for route in routes
+                    )
+                )
+                encoded_routes = plan["assets"]["apisix.yaml"]
+                self.assertTrue(encoded_routes.endswith("#END\n"))
+                self.assertEqual(
+                    json.loads(encoded_routes.removesuffix("#END\n")),
+                    plan["apisix_routes"],
+                )
+                self.assertEqual(
+                    json.loads(plan["assets"]["config.yaml"]),
+                    plan["apisix_config"],
+                )
+                self.assertFalse((self.state / "public-entry").exists())
 
 
 if __name__ == "__main__":
