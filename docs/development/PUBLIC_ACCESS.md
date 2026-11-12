@@ -72,6 +72,7 @@ conversation API key。它不重啟模型、不重新 embedding，也不修改�
 | 訪客共用／登入者共用 | 每個視窗分別最多 20／80 次，第一版不互相借用 |
 | 公眾入口全站 | 每個視窗最多 100 次；同一條 turn 路由共用全站計數器 |
 | session 建立 | 每個身分每 3,600 秒最多 10 次建立；全站最多 100 次建立 |
+| session 管理 | GET 讀自己的 metadata、PATCH 撤回擷取、DELETE 清除；保留身分與 Bearer owner 驗證，不消耗搜尋或 session 建立額度 |
 | 暫存 session | 每個身分最多 2 個同時存活的搜尋 session；30 分鐘期限與 20 輪上限保留 |
 | 請求限速 | APISIX 每來源 IP 每秒 3 次、burst 12；防爬外層另有全站／IP 連線和速率限制 |
 | 計數故障 | Redis 不可用時拒絕受配額控制的請求，沒有無限使用的降級路徑 |
@@ -133,15 +134,27 @@ issuer／audience。小段入口銜接程式只從驗證完成的 claims 取得 
 Secure／HttpOnly／SameSite=Lax，與登入 cookie 分開。CPU BFF 的
 [identity.py](../../search/web/identity.py) 同時驗證入口金鑰、身分類型、subject 與額度描述，
 將搜尋 session 綁定 `guest:<id>` 或 `user:<id>`。公眾模式不接受空 owner；
-其他身分即使取得搜尋 token，也不能讀取、使用或刪除該 session。
+其他身分即使取得搜尋 token，也不能讀取、撤回、使用或刪除該 session。
 
-OIDC 登入 cookie 與搜尋 session bearer 各自處理；入口會保留 `/api/turn` 的
+OIDC 登入 cookie 與搜尋 session bearer 各自處理；入口會保留 `/api/session`、`/api/turn` 的
 `Authorization: Bearer <search-session>`，不以 provider token 覆蓋。
 前端只將搜尋 token 與對話留在記憶體，不寫入 localStorage／sessionStorage。
 登入、登出或其他分頁造成身分改變時，前端清除舊搜尋狀態並建立新對話，不移交原 token。
 登入失效會拒絕請求，不靜默降回訪客沿用舊對話；搜尋 session 本身失效則提示「新搜尋」。
 `GET /api/access` 回傳明確的 mode、principal、登入／登出路徑與額度政策，查詢不消耗額度；
 它不是剩餘額度查帳端點。
+
+`GET /api/session` 僅回報自己的擷取／刪除 metadata，可省略 Origin；有帶錯誤 Origin
+仍會拒絕。`PATCH /api/session` 必須同 Origin，body 僅接受 `{"capture":false}`，
+回報停止／刪除狀態並保留搜尋 session。兩者都需要有效的入口身分 cookie、搜尋
+Bearer 與相同 `kind:subject` owner，可在 turn 尚未結束時使用，不呼叫搜尋上游或消耗
+account／guest／pool／global turn 與 session 建立額度。搜尋額度已用盡或 quota Redis
+不可用時仍可管理既有 session；每來源 IP 的有限請求速率、既有身分 cookie 更新與
+到期 session 回收照常運作。
+
+受支援的公眾設定與 host binding 未提供 trace 根目錄或 output mount，擷取預設
+停用；符合 JSON 契約的 `capture=true` 要求會在配置 session 前回
+`503 capture_unavailable`。session 管理路由沿用這個界線。
 
 登入提供穩定的配額歸屬，**不證明是真人，也不防止多帳號、prompt injection 或大量
 連線攻擊**。全站上限降低多帳號的運算消耗，原有輸入長度、嚴格 schema、固定上游、
@@ -153,6 +166,8 @@ OIDC 登入 cookie 與搜尋 session bearer 各自處理；入口會保留 `/api
 `/verify` 新分頁完成挑戰後回首頁，原分頁保留問題與結果，必須由使用者再次提交。
 登入入口也先驗證；OIDC callback 與登出保留原本的 state／nonce 處理。
 Anubis cookie 過期不會自動重播 POST。登入成功不會跳過挑戰與總量控制。
+挑戰過期後，GET／PATCH／DELETE `/api/session` 仍可在有效身分與搜尋 Bearer 下管理
+自己的 session；建立 session、turn 與登入繼續要求挑戰。
 
 PoW 只能提高自動抓取成本，不能保證擋住分散式爬蟲或證明是真人。
 參考固定版本的 [Anubis 政策文件](https://github.com/TecharoHQ/anubis/blob/v1.28.1/docs/docs/admin/policies.mdx)。

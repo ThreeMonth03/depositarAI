@@ -33,6 +33,12 @@ COOKIE_PROBE = (
     "    raise SystemExit\n"
     "jar = MozillaCookieJar(str(path))\n"
     "jar.load(ignore_discard=True, ignore_expires=True)\n"
+    "if operation == 'expire':\n"
+    "    cookie = next(cookie for cookie in jar if cookie.name == argument)\n"
+    "    cookie.expires = 1\n"
+    "    jar.save(ignore_discard=True, ignore_expires=True)\n"
+    "    print(json.dumps({'changed': True}))\n"
+    "    raise SystemExit\n"
     "if operation == 'tamper':\n"
     "    cookie = next(cookie for cookie in jar if cookie.name == "
     "argument)\n"
@@ -179,6 +185,12 @@ class IdentityGatewayTests(runtime_fixture.PublicEntryRuntimeFixture):
         after_logout = self.probe("access", account)["value"]["principal"]
         self.assertEqual(after_logout["kind"], "guest")
         self.assertEqual(self.calls(), 2)
+
+
+class MixedSessionManagementTests(
+    runtime_fixture.PublicEntrySessionManagementTests
+):
+    mixed = True
 
 
 if __name__ == "__main__":

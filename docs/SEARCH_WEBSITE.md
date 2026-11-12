@@ -245,18 +245,24 @@ Playwright 清理目錄之前拒絕舊輸出，保留原有證據。驗收核對
 | 請求 | 輸入與回應 |
 |---|---|
 | `GET /api/access` | 回報 `auth_required`、`authenticated`，供介面決定是否引導登入。 |
-| `POST /api/session` | body 必須是 `{}`；回傳臨時 `token`、初始 `version=0`、`expires_in`、`max_turns` 與 `revision`。 |
+| `POST /api/session` | 預設 body 為 `{}`；回傳臨時 `token`、初始 `version=0`、`expires_in`、`max_turns` 與 `revision`。 |
+| `GET /api/session` | 帶臨時 Bearer token，僅回報自己的擷取／刪除 metadata；不建立或推進搜尋。 |
+| `PATCH /api/session` | 帶臨時 Bearer token，body 僅接受 `{"capture":false}`；回報停止／刪除狀態並保留搜尋 session，可在 turn 尚未結束時使用。 |
 | `POST /api/turn` | 帶臨時 Bearer token 與下方 JSON；回傳下一個 `version`、`result` 及實際 `context_used`。 |
 | `DELETE /api/session` | 帶臨時 Bearer token，清除本次搜尋；不需 JSON body。 |
+
+透過受支援公眾 profile 部署時，擷取預設停用，設定與 host binding 未提供 trace
+根目錄或 output mount。符合 JSON 契約的 `capture=true` 要求會在配置 session 前回覆
+`503 capture_unavailable`；GET／PATCH 沿用這個界線。
 
 ```json
 {"query":"河川水質觀測資料","version":0,"top_k":5,"timezone":"Asia/Taipei"}
 ```
 
 - `/api/*` 不接受 query string；重複的 Origin、Host、Authorization、Content-Length
-  或 Content-Type 會被拒絕。Origin 須精確符合 `WEB_ORIGIN`，唯一例外是唯讀的
-  `GET /api/access` 可省略 Origin；有帶錯誤 Origin 仍會拒絕。
-- POST 需 `application/json`、正確的 `Content-Length`，不接受 Content-Encoding。
+  或 Content-Type 會被拒絕。Origin 須精確符合 `WEB_ORIGIN`；唯讀的
+  `GET /api/access`、`GET /api/session` 可省略 Origin，有帶錯誤 Origin 仍會拒絕。
+- POST／PATCH 需 `application/json`、正確的 `Content-Length`，不接受 Content-Encoding。
   body 最多 4,096 bytes、讀取上限 5 秒；拒絕重複 JSON key 與 NaN／Infinity 常數。
 - `query` 是 1–512 字元的單一搜尋問題，另經查詢字元驗證；`top_k` 是整數 1–20，
   預設 5；`version` 是整數 0–20；`timezone` 最多 64 字元，預設 `Asia/Taipei`，須通過 IANA 時區驗證。
