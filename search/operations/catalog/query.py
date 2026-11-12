@@ -427,6 +427,38 @@ def provision(
         return _provision(context, opensearch_factory)
 
 
+def _export_client(
+    context,
+    opensearch_factory,
+    *,
+    before,
+    runtime,
+    images,
+    peers,
+    admin,
+    ca,
+    credential_hashes,
+    index,
+):
+    """Recheck the original binding before starting export's HTTP budget."""
+    if (
+        require_clean_revision(context["repo"], runner=context["runner"])
+        != context.get("source_revision", context["plan"]["revision"])
+        or before
+        != execution.digest_record(execution.require_runtime(context))
+        or peers != connection.peers(context, runtime, images)
+    ):
+        raise RuntimeError("catalog_query_runtime_changed")
+    if (admin, ca) != connection.materials(context):
+        raise RuntimeError("catalog_query_secret_changed")
+    _password, observed_hashes = _credentials(
+        context["root"] / "query-access", context["bundle"], index
+    )
+    if observed_hashes != credential_hashes:
+        raise RuntimeError("catalog_query_secret_changed")
+    return opensearch_factory(peers["opensearch-search"], ca, admin)
+
+
 def _provision(context, opensearch_factory):
     gate = vectors.verify_complete(context)
     runtime, images = execution.require_runtime(context)
@@ -574,8 +606,20 @@ def _provision(context, opensearch_factory):
         },
         replace=ready is not None,
     )
+    export_client = _export_client(
+        context,
+        opensearch_factory,
+        before=before,
+        runtime=runtime,
+        images=images,
+        peers=peers,
+        admin=admin,
+        ca=ca,
+        credential_hashes=observed_hashes,
+        index=identity["index"],
+    )
     cache = reuse.export(
-        context, client, after_scan, _read(root, "ready.json")
+        context, export_client, after_scan, _read(root, "ready.json")
     )
     return {
         **identity,
