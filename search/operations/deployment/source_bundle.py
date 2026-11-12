@@ -156,7 +156,7 @@ ASSETS = (
         "trace-choice.tsx "
         "search-results.tsx styles.css",
     )
-    | _paths("web/src/search/", "session.ts")
+    | _paths("web/src/search/", "session.ts export.ts")
     | _paths("web/src/assets/", "search-symbol.svg search-logo.svg")
 )
 API_PATTERNS = (
@@ -233,8 +233,8 @@ RECIPES = {
         "dockerfile": "deploy/docker/web-nginx/Dockerfile",
         "dockerfile_sha256": "832598580d7978ac2c2797361d934e34"
         "6c424b6e31f3b0c1479972da3da5a785",
-        "dockerignore_sha256": "9bae44a1e0822f159c1ba5c0bfe9c4bf"
-        "7fa5734a6ccd436933c8226bd9137aa1",
+        "dockerignore_sha256": "09c228c634e9217263f299475ca059f5"
+        "a19f707d6ce074a4463894ca02c6c2a8",
         "bases": (NODE_BASE, NGINX_BASE),
         "inputs": ASSETS
         | _paths(

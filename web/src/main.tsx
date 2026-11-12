@@ -44,6 +44,7 @@ function SearchApp() {
   const [topK, setTopK] = useState(5);
   const {
     messages,
+    canExportSnapshot,
     isRunning,
     isResetting,
     captureChoice,
@@ -178,7 +179,13 @@ function SearchApp() {
                             <Results result={source.result} />
                           </details>
                         ) : (
-                          source?.result && <Results result={source.result} />
+                          source?.result && (
+                            <Results
+                              result={source.result}
+                              exportSnapshot={source.exportSnapshot ?? null}
+                              canExportSnapshot={canExportSnapshot}
+                            />
+                          )
                         )}
                       </MessagePrimitive.Root>
                     );

@@ -9,12 +9,15 @@ import {
   request,
 } from "../api";
 import type { Access, Session, TraceStatus, TurnResult } from "../api";
+import { createResultExport } from "./export";
+import type { ResultExportSnapshot } from "./export";
 
 export type SearchMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
   result?: TurnResult;
+  exportSnapshot?: ResultExportSnapshot | null;
 };
 
 export function useSearchSession(topK: number) {
@@ -42,6 +45,7 @@ export function useSearchSession(topK: number) {
   const [accessAttempt, setAccessAttempt] = useState(0);
   const previousAccess = useRef<Access | null>(null);
   const session = useRef<Session | null>(null);
+  const activeExport = useRef<ResultExportSnapshot | null>(null);
   // These IDs are component-local React keys, not authentication tokens.
   const nextMessageId = useRef(0);
   const generation = useRef(0);
@@ -58,6 +62,8 @@ export function useSearchSession(topK: number) {
       if (expiry.current) clearTimeout(expiry.current);
       generation.current++;
       traceGeneration.current++;
+      activeExport.current = null;
+      session.current = null;
     },
     [],
   );
@@ -130,6 +136,7 @@ export function useSearchSession(topK: number) {
     setTraceError("");
     setCaptureBlocked(false);
     session.current = null;
+    activeExport.current = null;
     if (expiry.current) clearTimeout(expiry.current);
     expiry.current = null;
     setMessages([]);
@@ -326,6 +333,13 @@ export function useSearchSession(topK: number) {
       );
       if (generation.current !== ownerGeneration || session.current !== current)
         return;
+      const exportSnapshot = createResultExport(
+        reply,
+        topK,
+        current.revision,
+        new Date().toISOString(),
+      );
+      activeExport.current = exportSnapshot;
       current.version = reply.version;
       if (turnTraceGeneration === traceGeneration.current && reply.trace) {
         current.trace = reply.trace;
@@ -349,6 +363,7 @@ export function useSearchSession(topK: number) {
                 : "這次沒有找到結果，可以試著調整條件。"
               : reply.result.message,
           result: reply.result,
+          exportSnapshot,
         },
       ]);
       if (current.version >= current.max_turns) {
@@ -392,6 +407,8 @@ export function useSearchSession(topK: number) {
 
   return {
     messages,
+    canExportSnapshot: (snapshot: ResultExportSnapshot) =>
+      session.current !== null && activeExport.current === snapshot,
     isRunning,
     isResetting,
     captureChoice,
