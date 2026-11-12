@@ -63,6 +63,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/catalog/session.py`。
 - `search/catalog/build/builder.py`、`normalize.py`。
 - `search/http`、`search/api/shared/middleware.py`。
+- `search/transport/http.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/web/trace.py`、`turn.py`。
 - `search/quality`、`search/operations/deployment/candidate`。

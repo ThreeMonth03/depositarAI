@@ -49,6 +49,53 @@ class UrllibTransport:
             urllib.request.ProxyHandler({}), _NoRedirect()
         )
 
+    @staticmethod
+    def _read_bounded_body(
+        response: Any, *, deadline: float, max_bytes: int
+    ) -> bytes:
+        """Read one body under its absolute deadline and byte cap."""
+        # HTTPError wraps HTTPResponse; only its body reader is one level
+        # deeper. Keep error metadata and closure on the outer response.
+        read_response = (
+            response.fp
+            if isinstance(response, urllib.error.HTTPError)
+            else response
+        )
+        parts: list[bytes] = []
+        body_size = 0
+        while body_size <= max_bytes:
+            remaining = deadline - time.monotonic()
+            if not math.isfinite(remaining) or remaining <= 0:
+                raise TimeoutError("Ollama transport deadline expired")
+            # Python 3.13 clears ``HTTPResponse.fp`` immediately when a
+            # small Content-Length-delimited body is consumed by read1().
+            # That is a normal EOF, not a loss of deadline enforcement.
+            # A prematurely short declared body is still rejected later by
+            # the exact Content-Length check in _OllamaAdapter._send().
+            is_closed = getattr(read_response, "isclosed", None)
+            if callable(is_closed) and is_closed():
+                break
+            fp = getattr(read_response, "fp", None)
+            raw = getattr(fp, "raw", None)
+            socket = getattr(raw, "_sock", None)
+            if socket is None or not callable(
+                getattr(socket, "settimeout", None)
+            ):
+                raise OSError("cannot enforce Ollama transport deadline")
+            socket.settimeout(max(0.001, remaining))
+            read1 = getattr(read_response, "read1", None)
+            if not callable(read1):
+                raise OSError("cannot enforce bounded Ollama body reads")
+            part = read1(min(64 * 1024, max_bytes + 1 - body_size))
+            if not part:
+                break
+            parts.append(part)
+            body_size += len(part)
+        body = b"".join(parts)
+        if len(body) > max_bytes:
+            raise OSError("Ollama response exceeded its cap")
+        return body
+
     def send(
         self, request: HTTPRequest, *, timeout: float, max_bytes: int
     ) -> HTTPResponse:
@@ -69,46 +116,9 @@ class UrllibTransport:
         except Exception:
             raise OSError("Ollama transport failed") from None
         try:
-            # HTTPError wraps HTTPResponse; only its body reader is one level
-            # deeper. Keep error metadata and closure on the outer response.
-            read_response = (
-                response.fp
-                if isinstance(response, urllib.error.HTTPError)
-                else response
+            body = self._read_bounded_body(
+                response, deadline=deadline, max_bytes=max_bytes
             )
-            parts: list[bytes] = []
-            body_size = 0
-            while body_size <= max_bytes:
-                remaining = deadline - time.monotonic()
-                if not math.isfinite(remaining) or remaining <= 0:
-                    raise TimeoutError("Ollama transport deadline expired")
-                # Python 3.13 clears ``HTTPResponse.fp`` immediately when a
-                # small Content-Length-delimited body is consumed by read1().
-                # That is a normal EOF, not a loss of deadline enforcement.
-                # A prematurely short declared body is still rejected later by
-                # the exact Content-Length check in _OllamaAdapter._send().
-                is_closed = getattr(read_response, "isclosed", None)
-                if callable(is_closed) and is_closed():
-                    break
-                fp = getattr(read_response, "fp", None)
-                raw = getattr(fp, "raw", None)
-                socket = getattr(raw, "_sock", None)
-                if socket is None or not callable(
-                    getattr(socket, "settimeout", None)
-                ):
-                    raise OSError("cannot enforce Ollama transport deadline")
-                socket.settimeout(max(0.001, remaining))
-                read1 = getattr(read_response, "read1", None)
-                if not callable(read1):
-                    raise OSError("cannot enforce bounded Ollama body reads")
-                part = read1(min(64 * 1024, max_bytes + 1 - body_size))
-                if not part:
-                    break
-                parts.append(part)
-                body_size += len(part)
-            body = b"".join(parts)
-            if len(body) > max_bytes:
-                raise OSError("Ollama response exceeded its cap")
             return HTTPResponse(
                 status=int(response.code),
                 headers=tuple(

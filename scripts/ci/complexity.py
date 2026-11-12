@@ -29,6 +29,7 @@ GATED_PATHS = (
     "search/catalog/build/normalize.py",
     "search/api/shared/middleware.py",
     "search/http",
+    "search/transport/http.py",
     "search/web/app.py",
     "search/web/trace.py",
     "search/web/turn.py",
