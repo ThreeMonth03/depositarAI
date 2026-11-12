@@ -108,6 +108,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/deployment/payload/plan.py", "")
         self.write("search/operations/deployment/payload/archive.py", "")
         self.write("search/operations/deployment/payload/export.py", "")
+        self.write("search/operations/deployment/payload/restore.py", "")
         self.write("search/operations/deployment/public_entry/host.py", "")
         self.write("search/operations/deployment/public_entry/profile.py", "")
         self.environment = {
@@ -349,6 +350,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/payload/plan.py",
             "search/operations/deployment/payload/archive.py",
             "search/operations/deployment/payload/export.py",
+            "search/operations/deployment/payload/restore.py",
             "search/operations/deployment/public_entry/host.py",
             "search/operations/deployment/public_entry/profile.py",
             "scripts/search_model_source.py",
