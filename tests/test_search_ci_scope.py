@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+
 import json
 import importlib.util
 import os
@@ -460,6 +462,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
         website_jobs = {
             "private-website-oss-policy",
             "private-website-oss-gateway",
+            "private-website-oss-gateway-b",
             "private-website-browser",
         }
         self.assertEqual(
@@ -503,10 +506,12 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             self.assertIn("CI_HEAD_SHA: ${{ github.sha }}", jobs[name])
             self.assertIn("if: steps.scope.outputs.run != 'false'", jobs[name])
             self.assertIn("Report unaffected gate", jobs[name])
-        for suite in ("oss-policy", "oss-gateway", "browser"):
+        for suite in ("oss-policy", "oss-gateway", "oss-gateway-b", "browser"):
             job = jobs["private-website-" + suite]
             self.assertIn(
-                "run: bash scripts/test-search-web.sh --suite " + suite, job
+                "run: bash scripts/test-search-web.sh --suite "
+                + {"oss-gateway": "oss-gateway-a"}.get(suite, suite),
+                job,
             )
             self.assertIn("id: website", job)
             for field, value in (
@@ -519,7 +524,8 @@ class SpecialistChangedScopeTests(unittest.TestCase):
         aggregate = jobs["private-website"]
         self.assertIn(
             "needs: [private-website-oss-policy, "
-            "private-website-oss-gateway, private-website-browser]",
+            "private-website-oss-gateway, private-website-oss-gateway-b, "
+            "private-website-browser]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
@@ -538,6 +544,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
         for name in (
             "private-website-oss-policy",
             "private-website-oss-gateway",
+            "private-website-oss-gateway-b",
             "private-website-browser",
         ):
             job = jobs[name]
@@ -563,7 +570,7 @@ class SpecialistChangedScopeTests(unittest.TestCase):
             self.assertIn(
                 "success() && steps.scope.outputs.run != 'false'", job
             )
-        self.assertEqual(6, source.count("continue-on-error: true"))
+        self.assertEqual(8, source.count("continue-on-error: true"))
         self.assertNotIn("path: web/node_modules", source)
         self.assertNotRegex(
             source, r"if:.*cache-hit.*\n.*run: bash scripts/test-search-web"
@@ -815,7 +822,14 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
         }
         original = {"tests.integration." + suffix for suffix in original}
         selected = {}
-        for suite in ("all", "oss", "oss-policy", "oss-gateway"):
+        for suite in (
+            "all",
+            "oss",
+            "oss-policy",
+            "oss-gateway",
+            "oss-gateway-a",
+            "oss-gateway-b",
+        ):
             with self.subTest(suite=suite):
                 result, calls, running = self.run_website_gate(
                     "cold", suite=suite
@@ -863,6 +877,42 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             original,
             set(selected["oss-policy"]) | set(selected["oss-gateway"]),
         )
+        for suite in ("oss-gateway-a", "oss-gateway-b"):
+            self.assertEqual(4, len(selected[suite]))
+        self.assertEqual(
+            Counter(selected["oss-gateway"]),
+            Counter(selected["oss-gateway-a"])
+            + Counter(selected["oss-gateway-b"]),
+        )
+        self.assertFalse(
+            set(selected["oss-gateway-a"]) & set(selected["oss-gateway-b"])
+        )
+        tls_cases = {
+            case
+            for case in original
+            if ".test_private_api_tls_runtime." in case
+        }
+        self.assertEqual(2, len(tls_cases))
+        self.assertTrue(tls_cases <= set(selected["oss-gateway-a"]))
+
+    def test_gateway_shard_runtime_signals_preserve_the_exit_status(self):
+        for suite in ("oss-gateway-a", "oss-gateway-b"):
+            for mode, status in (("signal-term", 143), ("signal-int", 130)):
+                with self.subTest(suite=suite, mode=mode):
+                    result, calls, running = self.run_website_gate(
+                        mode, suite=suite
+                    )
+                    self.assertEqual(status, result.returncode, result.stderr)
+                    self.assertFalse(running)
+                    self.assertIn(
+                        "CI_PHASE phase=public-entry-runtime", result.stdout
+                    )
+                    self.assertRegex(
+                        result.stdout, rf"CI_TOTAL seconds=\d+ exit={status}"
+                    )
+                    self.assertFalse(
+                        any(kind == "timeout" for kind, _ in calls)
+                    )
 
     def run_website_gate(
         self, mode: str, *, suite=None, arguments=None, environment=None
@@ -1185,7 +1235,14 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             "browser-image-wait",
             "browser",
         }
-        for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
+        for suite in (
+            "oss",
+            "oss-policy",
+            "oss-gateway",
+            "oss-gateway-a",
+            "oss-gateway-b",
+            "browser",
+        ):
             with self.subTest(suite=suite):
                 result, calls, running = self.run_website_gate(
                     "cold", suite=suite
@@ -1335,7 +1392,11 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     expected = common_phases | browser_phases
                 else:
                     expected = common_phases | oss_phases
-                    if suite == "oss-gateway":
+                    if suite in {
+                        "oss-gateway",
+                        "oss-gateway-a",
+                        "oss-gateway-b",
+                    }:
                         expected -= {"intranet-entry-runtime"}
                 self.assertEqual(expected, set(phases))
                 self.assertEqual(len(expected), len(phases))
@@ -1355,6 +1416,9 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
             ["--suite"],
             ["browser"],
             ["--suite", "unknown"],
+            ["--suite", "oss-gateway-c"],
+            ["--suite", "oss-gateway-a", "extra"],
+            ["--suite", "oss-gateway-b", "--shard", "a"],
             ["--unknown", "oss"],
             ["--suite", "browser", "extra"],
             ["--suite", ""],
@@ -1370,7 +1434,15 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
     def test_all_suites_propagate_contract_and_style_failures_before_runtime(
         self,
     ):
-        for suite in ("all", "oss", "oss-policy", "oss-gateway", "browser"):
+        for suite in (
+            "all",
+            "oss",
+            "oss-policy",
+            "oss-gateway",
+            "oss-gateway-a",
+            "oss-gateway-b",
+            "browser",
+        ):
             for mode, status, phase in (
                 ("contract-failure", 17, "contracts"),
                 ("style-failure", 26, "python-style"),
@@ -1397,7 +1469,13 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                     )
 
     def test_oss_group_failures_keep_the_runtime_exit_code(self):
-        for suite in ("oss", "oss-policy", "oss-gateway"):
+        for suite in (
+            "oss",
+            "oss-policy",
+            "oss-gateway",
+            "oss-gateway-a",
+            "oss-gateway-b",
+        ):
             with self.subTest(suite=suite):
                 result, calls, running = self.run_website_gate(
                     "early-failure", suite=suite
@@ -1415,7 +1493,14 @@ class WebsiteBrowserPullInvocationTests(unittest.TestCase):
                 )
 
     def test_partial_suites_cannot_emit_a_complete_tested_image_receipt(self):
-        for suite in ("oss", "oss-policy", "oss-gateway", "browser"):
+        for suite in (
+            "oss",
+            "oss-policy",
+            "oss-gateway",
+            "oss-gateway-a",
+            "oss-gateway-b",
+            "browser",
+        ):
             with self.subTest(suite=suite):
                 result, calls, running = self.run_website_gate(
                     "cold",
