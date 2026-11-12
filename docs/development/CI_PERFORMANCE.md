@@ -8,6 +8,23 @@ Actions runner 固定使用 `ubuntu-24.04`，ShellCheck 使用固定 digest 的 
 或 coreutils 供應者時，須完整驗證失敗、逾時與中斷案例，不能只延長 timeout。
 產品映像內的 Python 與套件仍由各自的 image pin／lock 決定。
 
+API／網站測試入口對六個 Python build 固定使用 BuildKit named context，將完整
+`python:3.13.7-slim-bookworm@sha256:…` reference 映射至
+`public.ecr.aws/docker/library/python` 的同一 digest。這是
+[Docker 官方發佈來源](https://www.docker.com/blog/news-from-aws-reinvent-docker-official-images-on-amazon-ecr-public/)，
+只改測試 build 的取得位置；產品 Dockerfile、base pin、套件 lock 與來源 recipe
+保持原值。映射固定在既有測試腳本，不接受環境提供的 URL，也不以 tag-only、
+另一 registry fallback 或略過 build 取代失敗。完整 key 的實際解析和 build
+結果須由當次 runner 的 Buildx／frontend 與來源一致的 CI 證據確認。
+
+[ECR 匿名配額](https://docs.aws.amazon.com/AmazonECR/latest/public/public-service-quotas.html)
+仍為每秒1次 pull、每月500GB；共享 runner 出口也可能受限，歷史 digest 不保證
+永久可取。這項 Python-only 設定不消除 Node、nginx 等 DockerHub 依賴，也不保證
+永不429。npm 下載快取不包含 Python manifest；layer cache 命中亦不等於完全
+沒有 registry resolution。原錯誤仍使該 phase 失敗並保留 exit code／cleanup，
+不能靠 cache-hit 字串跳過測試。先辨識 registry acquisition429 與 browser HTTP429：
+若前者發生在 `python-images`，尚未開始的 browser 不能記成測試失敗或通過。
+
 `validate` 先以固定版本的 Gitleaks 掃描該 commit 的完整歷史，並驗證原始碼
 打包，再執行核心測試。這份暫存包不會上傳；交付 artifact 使用
 [Source package](SOURCE_PACKAGE.md) workflow。
