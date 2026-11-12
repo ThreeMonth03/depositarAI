@@ -299,6 +299,25 @@ def bind_configured_web(
     )
 
 
+def _verify_existing_preparation(descriptor, assets, report):
+    """Verify the saved report and assets using a borrowed directory FD."""
+    saved = strict_json(
+        private_io.read_file(
+            descriptor, "prepared.json", mode=0o600, max_bytes=65536
+        )
+    )
+    if saved != report:
+        raise ValueError("public_entry_preparation_changed")
+    for filename, raw in assets.items():
+        if (
+            private_io.read_file(
+                descriptor, filename, mode=0o600, max_bytes=2 * 1024**2
+            )
+            != raw
+        ):
+            raise ValueError("public_entry_preparation_changed")
+
+
 def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
     """
     Publish a complete preparation; failed staging never replaces live state.
@@ -354,21 +373,7 @@ def _publish_prepared(root, assets, report, state_directories=("redis-data",)):
             descriptor = private_io.open_child_directory(
                 parent, "public-entry"
             )
-            saved = strict_json(
-                private_io.read_file(
-                    descriptor, "prepared.json", mode=0o600, max_bytes=65536
-                )
-            )
-            if saved != report:
-                raise ValueError("public_entry_preparation_changed")
-            for filename, raw in assets.items():
-                if (
-                    private_io.read_file(
-                        descriptor, filename, mode=0o600, max_bytes=2 * 1024**2
-                    )
-                    != raw
-                ):
-                    raise ValueError("public_entry_preparation_changed")
+            _verify_existing_preparation(descriptor, assets, report)
     finally:
         if descriptor is not None:
             os.close(descriptor)
