@@ -855,6 +855,21 @@ def committed_source_plan(repo_root, verified_clean_sha, runner=None):
     return plan
 
 
+def _materialize_sources(sources, records, directories):
+    """Write committed files and register directory FDs in the caller's map."""
+    for path, raw in sources.items():
+        parts = path.split("/")
+        prefix = ""
+        for part in parts[:-1]:
+            child_prefix = prefix + part + "/"
+            if child_prefix not in directories:
+                directories[child_prefix] = _create_source_directory(
+                    directories[prefix], part
+                )
+            prefix = child_prefix
+        _write_source(directories[prefix], parts[-1], raw, records[path])
+
+
 def stage_source_bundle(
     repo_root, verified_clean_sha, private_root, runner=None
 ):
@@ -896,19 +911,7 @@ def stage_source_bundle(
         )
         context = private_io.open_child_directory(root, "context", create=True)
         directories[""] = context
-        for path, raw in sources.items():
-            parts = path.split("/")
-            prefix = ""
-            for part in parts[:-1]:
-                child_prefix = prefix + part + "/"
-                if child_prefix not in directories:
-                    directories[child_prefix] = _create_source_directory(
-                        directories[prefix], part
-                    )
-                prefix = child_prefix
-            _write_source(
-                directories[prefix], parts[-1], raw, plan["files"][path]
-            )
+        _materialize_sources(sources, plan["files"], directories)
         private_io.verify_directory(parent, destination.parent)
         private_io.verify_directory(root, destination)
         private_io.verify_directory(context, destination / "context")
