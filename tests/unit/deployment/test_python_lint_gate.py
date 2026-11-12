@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import distribution
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -138,6 +140,126 @@ class PythonLintGateTests(unittest.TestCase):
             timeout=30,
         )
 
+    def shadow_tool(self, name, *, package=False):
+        marker = self.directory / f"{name}-shadow-called"
+        source = (
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed')\n"
+            "print('[]')\n"
+        )
+        if package:
+            self.write(f"{name}/__init__.py", "")
+            self.write(f"{name}/__main__.py", source)
+        else:
+            self.write(f"{name}.py", source)
+        return marker
+
+    def assert_ruff_shadow_is_ignored(self, *, package):
+        marker = self.shadow_tool("ruff", package=package)
+        self.write("search/example.py", "import os\n")
+        before = self.snapshot()
+        result = self.run_command("make", "lint")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("F401", result.stdout)
+        self.assertFalse(marker.exists())
+        self.assertEqual(before, self.snapshot())
+
+        self.write("search/example.py", "value=1\n")
+        before = self.snapshot()
+        result = self.run_command("make", "format")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        after = self.snapshot()
+        self.assertEqual(
+            {"search/example.py"},
+            {name for name in before if before[name] != after[name]},
+        )
+        self.assertEqual(
+            "value = 1\n", (self.root / "search/example.py").read_text()
+        )
+        self.assertFalse(marker.exists())
+
+    def test_ruff_module_shadow_does_not_replace_real_tools(self):
+        self.assert_ruff_shadow_is_ignored(package=False)
+
+    def test_ruff_package_shadow_does_not_replace_real_tools(self):
+        self.assert_ruff_shadow_is_ignored(package=True)
+
+    def test_vulture_shadow_does_not_replace_any_unused_check(self):
+        marker = self.shadow_tool("vulture")
+        self.write(
+            "search/unused_example.py",
+            "def component(unread_probe):\n    return 1\n",
+        )
+        before = self.snapshot()
+        result = self.run_command("bash", "scripts/ci/python-unused.sh")
+        self.assertEqual(3, result.returncode, result.stdout + result.stderr)
+        self.assertIn("unused variable 'unread_probe'", result.stdout)
+        self.assertFalse(marker.exists())
+        self.assertEqual(before, self.snapshot())
+
+        (self.root / "search/unused_example.py").unlink()
+        before = self.snapshot()
+        result = self.run_command("bash", "scripts/ci/python-unused.sh")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("Python unused-code checks passed.", result.stdout)
+        self.assertFalse(marker.exists())
+        self.assertEqual(before, self.snapshot())
+
+    def test_source_metadata_does_not_replace_locked_tool_versions(self):
+        for name in ("ruff", "vulture"):
+            self.write(
+                f"{name}-0.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 0\n",
+            )
+        before = self.snapshot()
+        result = self.run_command("make", "lint")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_isolated_tools_do_not_write_bytecode_to_their_environment(self):
+        environment = self.directory / "copied-tool-environment"
+        venv.EnvBuilder(with_pip=False).create(environment)
+        interpreter = environment / "bin/python3"
+        purelib = subprocess.check_output(
+            [
+                str(interpreter),
+                "-I",
+                "-B",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+        for name in ("ruff", "vulture", "tomli"):
+            spec = importlib.util.find_spec(name)
+            if spec is None:
+                continue
+            shutil.copytree(
+                Path(spec.origin).parent,
+                Path(purelib) / name,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            package = distribution(name)
+            metadata = next(
+                path.parts[0]
+                for path in package.files
+                if path.parts[0].endswith(".dist-info")
+            )
+            shutil.copytree(
+                package.locate_file(metadata), Path(purelib) / metadata
+            )
+        shutil.copy2(
+            Path(sys.executable).parent / "ruff", interpreter.parent / "ruff"
+        )
+        self.environment["PATH"] = (
+            str(interpreter.parent) + os.pathsep + self.environment["PATH"]
+        )
+        before = self.snapshot()
+        result = self.run_command("make", "lint")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertFalse(list(environment.rglob("__pycache__")))
+        self.assertEqual(before, self.snapshot())
+
     def test_lint_accepts_valid_source_without_mutation(self):
         before = self.snapshot()
         result = self.run_command("make", "lint")
@@ -271,6 +393,13 @@ class PythonLintGateTests(unittest.TestCase):
         self.environment["PATH"] = (
             str(environment / "bin") + os.pathsep + self.environment["PATH"]
         )
+        lock = (ROOT / "search/api/requirements-test.lock").read_text()
+        for name in ("ruff", "vulture"):
+            pinned = re.search(rf"(?m)^{name}==([^ ;]+)", lock)[1]
+            self.write(
+                f"{name}-{pinned}.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: {pinned}\n",
+            )
         before = self.snapshot()
         result = self.run_command("make", "lint")
         self.assertNotEqual(0, result.returncode)
@@ -291,11 +420,13 @@ class PythonLintGateTests(unittest.TestCase):
         shim.write_text(
             f"#!{sys.executable}\n"
             "import json, os, pathlib, sys\n"
-            "if sys.argv[1:3] == ['-m', 'pip']:\n"
-            "    arguments = sys.argv[3:]\n"
+            "module = sys.argv.index('-m') if '-m' in sys.argv else -1\n"
+            "if module > 0 and sys.argv[module + 1] == 'pip':\n"
+            "    arguments = sys.argv[module + 2:]\n"
             "    path = pathlib.Path(arguments[arguments.index('-r') + 1])\n"
             f"    pathlib.Path({str(ledger)!r}).write_text(json.dumps(\n"
-            "        {'arguments': arguments, 'requirements': "
+            "        {'python_flags': sys.argv[1:module], "
+            "'arguments': arguments, 'requirements': "
             "path.read_text(),\n"
             "         'temporary': str(path)}))\n"
             "    raise SystemExit(0)\n"
@@ -318,6 +449,7 @@ class PythonLintGateTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         captured = json.loads(ledger.read_text())
+        self.assertEqual(["-I", "-B"], captured["python_flags"])
         self.assertIn("--no-deps", captured["arguments"])
         self.assertIn("--require-hashes", captured["arguments"])
         lock_lines = (

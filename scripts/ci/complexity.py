@@ -120,7 +120,7 @@ def main(argv=None):
     command = (
         [options.ruff]
         if options.ruff is not None
-        else [sys.executable, "-m", "ruff"]
+        else [sys.executable, "-I", "-B", "-m", "ruff"]
     )
     try:
         count = report_findings(command, options.report)
