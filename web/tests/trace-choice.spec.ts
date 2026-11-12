@@ -158,6 +158,9 @@ async function submit(page: Page, text = "氣候資料") {
   await page.getByRole("button", { name: "送出搜尋" }).click();
 }
 
+const completedReplies = (page: Page) =>
+  page.locator(".assistant").filter({ hasText: "合成搜尋回覆" });
+
 const choice = (page: Page) =>
   page.getByRole("checkbox", { name: /願意從這次新搜尋開始/ });
 
@@ -201,7 +204,7 @@ test("consent uses the notice version and withdrawal distinguishes pending from 
   await expect(page.locator(".trace-state")).toContainText("已排隊");
   await expect(page.locator(".trace-state")).not.toContainText("已確認保存");
   await submit(page, "改成 2023");
-  await expect(page.locator(".assistant")).toHaveCount(2);
+  await expect(completedReplies(page)).toHaveCount(2);
   expect(api.sessionBodies).toEqual([
     { capture: true, notice_version: noticeVersion },
   ]);
@@ -219,7 +222,7 @@ test("consent uses the notice version and withdrawal distinguishes pending from 
   await page.getByRole("button", { name: "確認刪除進度" }).click();
   await expect(page.locator(".trace-state")).toContainText("紀錄已刪除");
   await submit(page, "只要 CSV");
-  await expect(page.locator(".assistant")).toHaveCount(3);
+  await expect(completedReplies(page)).toHaveCount(3);
   await expect(choice(page)).toBeDisabled();
   expect(api.sessionBodies).toHaveLength(1);
   expect(api.turns.map((turn) => turn.version)).toEqual([0, 1, 2]);
@@ -263,7 +266,7 @@ test("failed withdrawal pauses new turns until a successful retry", async ({
   await page.goto("/");
   await choice(page).check();
   await submit(page);
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   await page.getByRole("button", { name: "撤回並刪除測試紀錄" }).click();
   await expect(page.locator(".trace-error")).toContainText("無法確認撤回");
   await expect(
@@ -285,7 +288,7 @@ test("failed reset keeps the conversation and never claims deletion; pending res
   await page.goto("/");
   await choice(page).check();
   await submit(page);
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   await page.getByRole("button", { name: "新搜尋" }).click();
   await expect(page.locator(".trace-error")).toContainText("無法確認測試紀錄");
   await expect(page.locator(".message")).toHaveCount(2);
@@ -316,7 +319,7 @@ test("a late reset response cannot restore traces after account restoration", as
     await page.goto("/");
     await choice(page).check();
     await submit(page);
-    await expect(page.locator(".assistant")).toHaveCount(1);
+    await expect(completedReplies(page)).toHaveCount(1);
     await page.getByRole("button", { name: "新搜尋" }).click();
     await expect.poll(() => api.deletes).toBe(1);
     await page.evaluate(() => {
@@ -341,12 +344,12 @@ test("a new search after deletion starts with capture off", async ({
   await page.goto("/");
   await choice(page).check();
   await submit(page);
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   await page.getByRole("button", { name: "新搜尋" }).click();
   await expect(page.locator(".trace-state")).toContainText("紀錄已刪除");
   await expect(choice(page)).not.toBeChecked();
   await submit(page, "新的搜尋");
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   expect(api.sessionBodies).toEqual([
     { capture: true, notice_version: noticeVersion },
     {},
@@ -360,7 +363,7 @@ test("upstream error exposes capture degradation without changing the search fai
   await page.goto("/");
   await choice(page).check();
   await submit(page);
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   api.trace.capture_status = "queue_full";
   api.failTurn = true;
   await submit(page, "改 2023");
@@ -381,7 +384,7 @@ for (const reason of ["expiry", "account restoration"] as const)
     await page.goto("/");
     await choice(page).check();
     await submit(page);
-    await expect(page.locator(".assistant")).toHaveCount(1);
+    await expect(completedReplies(page)).toHaveCount(1);
     if (reason === "expiry") await page.clock.runFor(5000);
     else
       await page.evaluate(() => {
@@ -402,7 +405,7 @@ test("an unavailable trace policy offers no consent control and keeps ordinary s
   await expect(choice(page)).toHaveCount(0);
   await expect(page.locator(".trace-unavailable")).toBeVisible();
   await submit(page);
-  await expect(page.locator(".assistant")).toHaveCount(1);
+  await expect(completedReplies(page)).toHaveCount(1);
   expect(api.sessionBodies).toEqual([{}]);
 });
 
@@ -430,11 +433,11 @@ for (const outcome of ["queued", "unavailable", "unknown"] as const)
     await page.goto("/");
     await choice(page).check();
     await submit(page);
-    await expect(page.locator(".assistant")).toHaveCount(1);
+    await expect(completedReplies(page)).toHaveCount(1);
     await expect.poll(() => api.gets.length).toBe(outcome === "queued" ? 3 : 1);
     await page.clock.runFor(10000);
     expect(api.gets).toHaveLength(outcome === "queued" ? 3 : 1);
-    await expect(page.locator(".assistant")).toHaveCount(1);
+    await expect(completedReplies(page)).toHaveCount(1);
     await expect(
       page.getByRole("textbox", { name: "搜尋或追問" }),
     ).toBeEnabled();
@@ -458,7 +461,7 @@ test("a late status poll cannot replace the next turn's degraded capture status"
     await expect.poll(() => api.gets.length).toBe(1);
     api.trace.capture_status = "queue_full";
     await submit(page, "改成 2023");
-    await expect(page.locator(".assistant")).toHaveCount(2);
+    await expect(completedReplies(page)).toHaveCount(2);
     await expect(page.locator(".trace-state")).toContainText("未能保存");
     release();
     await expect(page.locator(".trace-state")).toContainText("未能保存");
