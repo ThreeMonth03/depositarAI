@@ -265,6 +265,49 @@ class FakeTransport:
             raise AssertionError(
                 "admin HTML request did not pin the English locale"
             )
+        if path == "/api/v2/auth/login" or path == "/api/v2/auth/logout":
+            return self._session_response(request, path)
+        if (
+            path == "/admin/accesstoken/createnew/"
+            or (
+                path.startswith("/admin/accesstoken/list/")
+                and request.method == "GET"
+            )
+            or (path == "/admin/accesstoken/" and request.method == "POST")
+            or (path == "/admin/accesstoken/details/4/token-id")
+        ):
+            return self._token_admin_response(request, path)
+        if (
+            path == "/api/admin/accesstoken/setting/token-id"
+            or path == "/api/admin/systeminfo"
+        ):
+            return self._token_api_response(request, path)
+        if (
+            path == "/api/admin/searchlist/docs"
+            or path == "/api/admin/documents/bulk"
+        ):
+            return self._document_response(request, path, query)
+        if (
+            path == "/api/admin/scheduler/settings"
+            or (
+                path == "/api/admin/scheduler/setting/vector-scheduler"
+                and request.method == "GET"
+            )
+            or (
+                path == "/api/admin/scheduler/setting"
+                and request.method == "PUT"
+            )
+        ):
+            return self._scheduler_configuration_response(request, path)
+        if path == "/api/admin/joblog/logs":
+            return self._joblog_response(request)
+        if path == "/api/admin/scheduler/vector-scheduler/start":
+            return self._start_response(request)
+        if path == "/api/admin/scheduler/vector-scheduler/stop":
+            return self._stop_response(request)
+        raise AssertionError("unexpected path %s" % path)
+
+    def _session_response(self, request, path):
         if path == "/api/v2/auth/login":
             payload = json.loads(request.body)
             if payload["password"] != PASSWORD:
@@ -287,6 +330,9 @@ class FakeTransport:
             ):
                 raise AssertionError("logout was not session authenticated")
             return _response(request, {"status": 0})
+        raise AssertionError("unexpected path %s" % path)
+
+    def _token_admin_response(self, request, path):
         if path == "/admin/accesstoken/createnew/":
             return _response(
                 request,
@@ -298,31 +344,7 @@ class FakeTransport:
             path.startswith("/admin/accesstoken/list/")
             and request.method == "GET"
         ):
-            page_number = int(path.rsplit("/", 1)[1])
-            if self.token_listing_pages is None:
-                pages = [
-                    []
-                    if not self.token_active
-                    else [(self.token_name, "token-id")]
-                ]
-            else:
-                pages = self.token_listing_pages
-            rows = b""
-            if 1 <= page_number <= len(pages):
-                for name, token_id in pages[page_number - 1]:
-                    rows += (
-                        '<tr data-href="/admin/accesstoken/details/4'
-                        '/%s"><td>%s</td></tr>' % (token_id, name)
-                    ).encode("ascii")
-            next_link = b""
-            if page_number < len(pages):
-                next_link = (
-                    '<a href="/admin/accesstoken/list/%d">next</a>'
-                    % (page_number + 1)
-                ).encode("ascii")
-            return _response(
-                request, b"<table>" + rows + b"</table>" + next_link
-            )
+            return self._token_page_response(request, path)
         if path == "/admin/accesstoken/" and request.method == "POST":
             values = urllib.parse.parse_qs(
                 request.body.decode("ascii"), strict_parsing=True
@@ -364,6 +386,9 @@ class FakeTransport:
                 )
             ).encode("ascii")
             return _response(request, html)
+        raise AssertionError("unexpected path %s" % path)
+
+    def _token_api_response(self, request, path):
         if path == "/api/admin/accesstoken/setting/token-id":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
@@ -381,6 +406,9 @@ class FakeTransport:
             return _response(
                 request, {"status": 0, "data": {"version": "15.8"}}
             )
+        raise AssertionError("unexpected path %s" % path)
+
+    def _document_response(self, request, path, query):
         if path == "/api/admin/searchlist/docs":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
@@ -455,6 +483,9 @@ class FakeTransport:
                     ],
                 },
             )
+        raise AssertionError("unexpected path %s" % path)
+
+    def _scheduler_configuration_response(self, request, path):
         if path == "/api/admin/scheduler/settings":
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
@@ -490,21 +521,7 @@ class FakeTransport:
         ):
             if not self._require_token(request):
                 return _response(request, {"status": 3}, status=403)
-            running = self.vector_job_running
-            if self.ambiguous_start_pending:
-                self.ambiguous_detail_checks += 1
-                # launchNow() was queued before the response was lost.  It is
-                # not executing for the first recovery observations, then
-                # starts even though recovery has already disabled the DB
-                # schedule, and finally becomes quiescent again.
-                if self.ambiguous_detail_checks in (3, 4):
-                    running = True
-                    self.ambiguous_running_observed = True
-                    self.scheduler_started = True
-                    for document in self.documents.values():
-                        document["content_chunk_status"] = "done"
-                elif self.ambiguous_detail_checks >= 5:
-                    self.ambiguous_start_pending = False
+            running = self._observed_running()
             return _response(
                 request,
                 {
@@ -573,72 +590,116 @@ class FakeTransport:
                     "created": False,
                 },
             )
-        if path == "/api/admin/joblog/logs":
-            if not self._require_token(request):
-                return _response(request, {"status": 3}, status=403)
-            self.assert_json_body(
-                request, {"id": "new-job", "size": 2, "page": 1}
-            )
-            logs = []
-            if self.job_log_created:
-                logs = [
-                    {
-                        "id": "new-job",
-                        "job_name": VECTOR_JOB_NAME,
-                        "job_status": self.vector_job_status,
-                        "target": "all",
-                        "script_type": VECTOR_SCRIPT_TYPE,
-                        "script_data": VECTOR_SCRIPT_DATA,
-                        "script_result": self.vector_script_result,
-                        "start_time": "2026-09-09T12:00:00",
-                        "end_time": (
-                            None
-                            if self.vector_job_running
-                            else "2026-09-09T12:00:01"
-                        ),
-                    }
-                ]
-            return _response(
-                request, {"status": 0, "logs": logs, "total": len(logs)}
-            )
-        if path == "/api/admin/scheduler/vector-scheduler/start":
-            if not self._require_token(request):
-                return _response(request, {"status": 3}, status=403)
-            if not self.scheduler_available:
-                return _response(request, {"status": 9})
-            if self.start_failures_remaining:
-                self.start_failures_remaining -= 1
-                return _response(request, {"status": 9})
-            if self.start_commits_then_times_out:
-                self.ambiguous_start_pending = True
-                self.ambiguous_detail_checks = 0
-                raise CatalogTimeout("simulated lost start response")
-            self.scheduler_started = True
-            self.job_log_created = True
-            self.vector_job_running = self.vector_job_status == "running"
-            if (
-                self.vector_job_status == "ok"
-                and self.vector_script_result.strip() == VECTOR_SCRIPT_RESULT
-            ):
+        raise AssertionError("unexpected path %s" % path)
+
+    def _joblog_response(self, request):
+        if not self._require_token(request):
+            return _response(request, {"status": 3}, status=403)
+        self.assert_json_body(request, {"id": "new-job", "size": 2, "page": 1})
+        logs = []
+        if self.job_log_created:
+            logs = [
+                {
+                    "id": "new-job",
+                    "job_name": VECTOR_JOB_NAME,
+                    "job_status": self.vector_job_status,
+                    "target": "all",
+                    "script_type": VECTOR_SCRIPT_TYPE,
+                    "script_data": VECTOR_SCRIPT_DATA,
+                    "script_result": self.vector_script_result,
+                    "start_time": "2026-09-09T12:00:00",
+                    "end_time": (
+                        None
+                        if self.vector_job_running
+                        else "2026-09-09T12:00:01"
+                    ),
+                }
+            ]
+        return _response(
+            request, {"status": 0, "logs": logs, "total": len(logs)}
+        )
+
+    def _start_response(self, request):
+        if not self._require_token(request):
+            return _response(request, {"status": 3}, status=403)
+        if not self.scheduler_available:
+            return _response(request, {"status": 9})
+        if self.start_failures_remaining:
+            self.start_failures_remaining -= 1
+            return _response(request, {"status": 9})
+        if self.start_commits_then_times_out:
+            self.ambiguous_start_pending = True
+            self.ambiguous_detail_checks = 0
+            raise CatalogTimeout("simulated lost start response")
+        self.scheduler_started = True
+        self.job_log_created = True
+        self.vector_job_running = self.vector_job_status == "running"
+        if (
+            self.vector_job_status == "ok"
+            and self.vector_script_result.strip() == VECTOR_SCRIPT_RESULT
+        ):
+            for document in self.documents.values():
+                document["content_chunk_status"] = "done"
+        return _response(request, {"status": 0, "job_log_id": "new-job"})
+
+    def _stop_response(self, request):
+        if not self._require_token(request):
+            return _response(request, {"status": 3}, status=403)
+        self.stop_calls += 1
+        if self.stop_mode == "failure":
+            return _response(request, {"status": 9})
+        if self.stop_mode != "no_commit_timeout":
+            self.vector_job_running = False
+            self.vector_job_status = "fail"
+            self.vector_script_result = "stopped"
+        if self.stop_mode in ("commit_timeout", "no_commit_timeout"):
+            raise CatalogTimeout("simulated lost stop response")
+        if self.stop_mode == "extra_field":
+            return _response(request, {"status": 0, "unexpected": True})
+        return _response(request, {"status": 0})
+
+    def _token_page_response(self, request, path):
+        page_number = int(path.rsplit("/", 1)[1])
+        if self.token_listing_pages is None:
+            pages = [
+                []
+                if not self.token_active
+                else [(self.token_name, "token-id")]
+            ]
+        else:
+            pages = self.token_listing_pages
+        rows = b""
+        if 1 <= page_number <= len(pages):
+            for name, token_id in pages[page_number - 1]:
+                rows += (
+                    '<tr data-href="/admin/accesstoken/details/4'
+                    '/%s"><td>%s</td></tr>' % (token_id, name)
+                ).encode("ascii")
+        next_link = b""
+        if page_number < len(pages):
+            next_link = (
+                '<a href="/admin/accesstoken/list/%d">next</a>'
+                % (page_number + 1)
+            ).encode("ascii")
+        return _response(request, b"<table>" + rows + b"</table>" + next_link)
+
+    def _observed_running(self):
+        running = self.vector_job_running
+        if self.ambiguous_start_pending:
+            self.ambiguous_detail_checks += 1
+            # launchNow() was queued before the response was lost.  It is
+            # not executing for the first recovery observations, then
+            # starts even though recovery has already disabled the DB
+            # schedule, and finally becomes quiescent again.
+            if self.ambiguous_detail_checks in (3, 4):
+                running = True
+                self.ambiguous_running_observed = True
+                self.scheduler_started = True
                 for document in self.documents.values():
                     document["content_chunk_status"] = "done"
-            return _response(request, {"status": 0, "job_log_id": "new-job"})
-        if path == "/api/admin/scheduler/vector-scheduler/stop":
-            if not self._require_token(request):
-                return _response(request, {"status": 3}, status=403)
-            self.stop_calls += 1
-            if self.stop_mode == "failure":
-                return _response(request, {"status": 9})
-            if self.stop_mode != "no_commit_timeout":
-                self.vector_job_running = False
-                self.vector_job_status = "fail"
-                self.vector_script_result = "stopped"
-            if self.stop_mode in ("commit_timeout", "no_commit_timeout"):
-                raise CatalogTimeout("simulated lost stop response")
-            if self.stop_mode == "extra_field":
-                return _response(request, {"status": 0, "unexpected": True})
-            return _response(request, {"status": 0})
-        raise AssertionError("unexpected path %s" % path)
+            elif self.ambiguous_detail_checks >= 5:
+                self.ambiguous_start_pending = False
+        return running
 
     @staticmethod
     def assert_json_body(request, expected):

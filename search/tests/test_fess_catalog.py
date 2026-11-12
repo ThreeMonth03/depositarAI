@@ -2214,5 +2214,426 @@ class QueryBoundaryTests(unittest.TestCase):
             self.assertEqual(2, caught.exception.code)
 
 
+class FakeTransportContractTests(unittest.TestCase):
+    AUTH = (("Authorization", "Bearer " + TOKEN),)
+    ADMIN = (("Accept-Language", "en"),)
+    PERMISSION = "{role}admin-api"
+
+    @staticmethod
+    def request(path, *, method="GET", headers=(), payload=None):
+        body = None if payload is None else json.dumps(payload).encode()
+        return HTTPRequest(method, "http://example.test" + path, headers, body)
+
+    @staticmethod
+    def authorized():
+        transport = FakeTransport()
+        transport.token_active = True
+        return transport
+
+    def send(self, transport, request):
+        response = transport.send(request, timeout=0, max_bytes=0)
+        self.assertIs(request, transport.requests[-1])
+        self.assertIs(request.url, response.url)
+        return response
+
+    def response(self, actual, value, *, status=200, headers=()):
+        expected = (
+            value
+            if isinstance(value, bytes)
+            else json.dumps(
+                {"response": value}, sort_keys=True, separators=(",", ":")
+            ).encode()
+        )
+        self.assertEqual(
+            (status, headers, expected),
+            (actual.status, actual.headers, actual.body),
+        )
+
+    def timeout(self, transport, request, message):
+        sentinel = CatalogTimeout("fixed synthetic timeout sentinel")
+        module = sys.modules[type(transport).__module__]
+        with mock.patch.object(
+            module, "CatalogTimeout", return_value=sentinel
+        ) as factory:
+            with self.assertRaises(CatalogTimeout) as caught:
+                transport.send(request, timeout=0, max_bytes=0)
+        factory.assert_called_once_with(message)
+        self.assertIs(sentinel, caught.exception)
+        self.assertIs(request, transport.requests[-1])
+
+    def test_entry_dispatch_locale_and_auth_keep_request_identity(self):
+        cookie = (("Cookie", "admin-session"),)
+        bad = (("Authorization", "Bearer wrong"), *cookie)
+        cases = (
+            (
+                "/admin/unknown",
+                "GET",
+                (),
+                None,
+                False,
+                "admin HTML request did not pin the English locale",
+                None,
+            ),
+            (
+                "/admin/unknown",
+                "GET",
+                self.ADMIN,
+                None,
+                False,
+                "unexpected path /admin/unknown",
+                None,
+            ),
+            (
+                "/api/admin/searchlist/docs",
+                "GET",
+                bad,
+                None,
+                True,
+                None,
+                {"status": 3},
+            ),
+            (
+                "/api/admin/searchlist/docs",
+                "GET",
+                (*self.AUTH, *cookie),
+                None,
+                True,
+                "bearer API request also carried an admin cookie",
+                None,
+            ),
+            (
+                "/api/admin/searchlist/docs",
+                "GET",
+                self.AUTH,
+                None,
+                True,
+                "SearchList pagination was not sent as a PUT JSON body",
+                None,
+            ),
+            (
+                "/api/admin/scheduler/setting/vector-scheduler",
+                "POST",
+                (),
+                None,
+                False,
+                "unexpected path /api/admin/scheduler/setting/"
+                "vector-scheduler",
+                None,
+            ),
+            (
+                "/api/admin/documents/bulk",
+                "GET",
+                self.AUTH,
+                {"documents": []},
+                True,
+                None,
+                {"status": 0, "items": []},
+            ),
+            (
+                "/api/v2/auth/login",
+                "GET",
+                (),
+                {"username": "admin", "password": "wrong"},
+                False,
+                None,
+                {"status": 3},
+            ),
+        )
+        for path, method, headers, payload, active, error, expected in cases:
+            with self.subTest(path=path, method=method, error=error):
+                transport = FakeTransport()
+                transport.token_active = active
+                request = self.request(
+                    path, method=method, headers=headers, payload=payload
+                )
+                if error is not None:
+                    with self.assertRaisesRegex(AssertionError, error):
+                        transport.send(request, timeout=0, max_bytes=0)
+                else:
+                    status = (
+                        403 if expected == {"status": 3} and active else 200
+                    )
+                    self.response(
+                        self.send(transport, request), expected, status=status
+                    )
+                self.assertEqual(1, len(transport.requests))
+                self.assertIs(request, transport.requests[0])
+                self.assertEqual({}, transport.documents)
+        transport = FakeTransport()
+        request = HTTPRequest("GET", "http://[invalid", ())
+        with self.assertRaises(ValueError):
+            transport.send(request, timeout=0, max_bytes=0)
+        self.assertIs(request, transport.requests[0])
+
+    def test_token_state_precedes_permission_and_expiry_assertions(self):
+        valid = "2026-09-09T12:15:00"
+        for permissions, expires, error in (
+            ("wrong", valid, "token was overprivileged"),
+            (self.PERMISSION, "wrong", "token lifetime was not allowlisted"),
+            ("wrong", "wrong", "token was overprivileged"),
+        ):
+            with self.subTest(permissions=permissions, expires=expires):
+                transport = FakeTransport()
+                body = urllib.parse.urlencode(
+                    {
+                        "name": "fixture-token",
+                        "permissions": permissions,
+                        "expires": expires,
+                    }
+                ).encode("ascii")
+                request = HTTPRequest(
+                    "POST",
+                    "http://example.test/admin/accesstoken/",
+                    self.ADMIN,
+                    body,
+                )
+                with self.assertRaisesRegex(AssertionError, error):
+                    transport.send(request, timeout=0, max_bytes=0)
+                self.assertEqual("fixture-token", transport.token_name)
+                self.assertTrue(transport.token_active)
+                self.assertEqual([], transport.created_token_expiries)
+                self.assertIs(request, transport.requests[0])
+        transport = FakeTransport()
+        body = urllib.parse.urlencode(
+            {
+                "name": "fixture-token",
+                "permissions": self.PERMISSION,
+                "expires": valid,
+            }
+        ).encode("ascii")
+        request = HTTPRequest(
+            "POST", "http://example.test/admin/accesstoken/", self.ADMIN, body
+        )
+        self.response(
+            self.send(transport, request),
+            b"",
+            status=302,
+            headers=(("Location", "/admin/accesstoken/"),),
+        )
+        self.assertEqual([valid], transport.created_token_expiries)
+
+    def test_bulk_keeps_partial_and_timeout_committed_prefix(self):
+        rows = [
+            {"url": "https://example.test/one", "title": "one"},
+            {"url": "https://example.test/two", "title": "two"},
+        ]
+        for mode, count, expected in (
+            (
+                "success",
+                2,
+                {
+                    "status": 0,
+                    "items": [
+                        {"result": "CREATED", "id": "created-1"},
+                        {"result": "CREATED", "id": "created-2"},
+                    ],
+                },
+            ),
+            (
+                "partial",
+                1,
+                {
+                    "status": 9,
+                    "items": [{"result": "CREATED", "id": "created-1"}],
+                    "message": REMOTE_SECRET,
+                },
+            ),
+            ("timeout", 2, None),
+        ):
+            with self.subTest(mode=mode):
+                transport = self.authorized()
+                documents = transport.documents
+                documents["prior"] = {"url": "prior", "title": "retained"}
+                transport.bulk_mode = mode
+                request = self.request(
+                    "/api/admin/documents/bulk",
+                    method="PUT",
+                    headers=self.AUTH,
+                    payload={"documents": rows},
+                )
+                if mode == "timeout":
+                    self.timeout(
+                        transport,
+                        request,
+                        "simulated timeout without secret data",
+                    )
+                else:
+                    self.response(self.send(transport, request), expected)
+                self.assertIs(documents, transport.documents)
+                self.assertEqual(
+                    ["prior", *[row["url"] for row in rows[:count]]],
+                    list(transport.documents),
+                )
+                self.assertEqual(
+                    {
+                        "prior": {"url": "prior", "title": "retained"},
+                        **{row["url"]: row for row in rows[:count]},
+                    },
+                    transport.documents,
+                )
+                self.assertEqual(1, len(transport.requests))
+
+    def test_detail_keeps_each_observation_and_stored_running(self):
+        for stored in (False, True):
+            with self.subTest(stored_running=stored):
+                transport = self.authorized()
+                transport.vector_job_running = stored
+                transport.ambiguous_start_pending = True
+                transport.documents = {"one": {"marker": "retained"}}
+                documents = transport.documents
+                denied = self.request(
+                    "/api/admin/scheduler/setting/vector-scheduler"
+                )
+                self.response(
+                    self.send(transport, denied), {"status": 3}, status=403
+                )
+                self.assertEqual(0, transport.ambiguous_detail_checks)
+                for index, running in enumerate(
+                    (stored, stored, True, True, stored), 1
+                ):
+                    request = self.request(
+                        "/api/admin/scheduler/setting/vector-scheduler",
+                        headers=self.AUTH,
+                    )
+                    self.response(
+                        self.send(transport, request),
+                        {
+                            "status": 0,
+                            "setting": {
+                                "id": "vector-scheduler",
+                                "version_no": -1,
+                                "name": "Content Chunk Vector Indexer",
+                                "target": "all",
+                                "script_type": "groovy",
+                                "script_data": (
+                                    "return container.getComponent("
+                                    '"chunkVectorJob")'
+                                    '.logLevel("info").sessionId("CHUNK")'
+                                    ".execute(executor);"
+                                ),
+                                "crawler": "false",
+                                "job_logging": "true",
+                                "available": "false",
+                                "sort_order": 14,
+                                "running": running,
+                            },
+                        },
+                    )
+                    self.assertEqual(index, transport.ambiguous_detail_checks)
+                    self.assertEqual(
+                        index < 5, transport.ambiguous_start_pending
+                    )
+                    self.assertEqual(index >= 3, transport.scheduler_started)
+                    self.assertEqual(
+                        index >= 3, transport.ambiguous_running_observed
+                    )
+                    self.assertIs(stored, transport.vector_job_running)
+                    expected = {"marker": "retained"}
+                    if index >= 3:
+                        expected["content_chunk_status"] = "done"
+                    self.assertEqual({"one": expected}, documents)
+                    self.assertIs(documents, transport.documents)
+                self.assertEqual(6, len(transport.requests))
+
+    def test_start_stop_keep_timeout_identity_and_mutation_order(self):
+        for (
+            available,
+            failures,
+            lost,
+            expected,
+            remaining,
+            pending,
+            started,
+        ) in (
+            (False, 2, True, {"status": 9}, 2, False, False),
+            (True, 1, True, {"status": 9}, 0, False, False),
+            (True, 0, True, None, 0, True, False),
+            (
+                True,
+                0,
+                False,
+                {"status": 0, "job_log_id": "new-job"},
+                0,
+                False,
+                True,
+            ),
+        ):
+            with self.subTest(start=(available, failures, lost)):
+                transport = self.authorized()
+                transport.scheduler_available = available
+                transport.start_failures_remaining = failures
+                transport.start_commits_then_times_out = lost
+                transport.ambiguous_detail_checks = 9
+                transport.documents = {
+                    "one": {"content_chunk_status": "pending"}
+                }
+                request = self.request(
+                    "/api/admin/scheduler/vector-scheduler/start",
+                    headers=self.AUTH,
+                )
+                if expected is None:
+                    self.timeout(
+                        transport, request, "simulated lost start response"
+                    )
+                else:
+                    self.response(self.send(transport, request), expected)
+                self.assertEqual(
+                    (remaining, pending, started, started, False),
+                    (
+                        transport.start_failures_remaining,
+                        transport.ambiguous_start_pending,
+                        transport.scheduler_started,
+                        transport.job_log_created,
+                        transport.vector_job_running,
+                    ),
+                )
+                self.assertEqual(
+                    0 if pending else 9, transport.ambiguous_detail_checks
+                )
+                self.assertEqual(
+                    "done" if started else "pending",
+                    transport.documents["one"]["content_chunk_status"],
+                )
+                self.assertEqual(1, len(transport.requests))
+        for mode, expected, timeout, committed in (
+            ("success", {"status": 0}, False, True),
+            ("failure", {"status": 9}, False, False),
+            ("commit_timeout", None, True, True),
+            ("no_commit_timeout", None, True, False),
+            ("extra_field", {"status": 0, "unexpected": True}, False, True),
+            ("unknown-mode", {"status": 0}, False, True),
+        ):
+            with self.subTest(stop=mode):
+                transport = self.authorized()
+                transport.stop_mode = mode
+                transport.vector_job_running = True
+                transport.vector_job_status = "running"
+                transport.vector_script_result = "original"
+                request = self.request(
+                    "/api/admin/scheduler/vector-scheduler/stop",
+                    headers=self.AUTH,
+                )
+                if timeout:
+                    self.timeout(
+                        transport, request, "simulated lost stop response"
+                    )
+                else:
+                    self.response(self.send(transport, request), expected)
+                self.assertEqual(1, transport.stop_calls)
+                self.assertEqual(
+                    (
+                        not committed,
+                        "fail" if committed else "running",
+                        "stopped" if committed else "original",
+                    ),
+                    (
+                        transport.vector_job_running,
+                        transport.vector_job_status,
+                        transport.vector_script_result,
+                    ),
+                )
+                self.assertEqual(1, len(transport.requests))
+
+
 if __name__ == "__main__":
     unittest.main()

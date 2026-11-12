@@ -76,6 +76,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/web/trace.py", "")
         self.write("search/web/turn.py", "")
         self.write("search/tests/web_fixture.py", "")
+        self.write("search/tests/catalog_fixtures.py", "")
         self.write("search/quality/__init__.py", "")
         self.write("search/trace/__init__.py", "")
         self.write(
@@ -322,6 +323,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/trace/future_policy.py",
             "search/web/trace.py",
             "search/web/turn.py",
+            "search/tests/catalog_fixtures.py",
             "search/operations/doctor.py",
             "search/operations/local_status.py",
             "search/operations/state.py",
