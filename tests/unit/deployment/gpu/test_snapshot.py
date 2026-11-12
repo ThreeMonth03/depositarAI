@@ -48,6 +48,35 @@ class GPUOwnershipTests(unittest.TestCase):
         self.assertFalse(result["exclusive_reservation"])
         self.assertFalse(result["runtime_modified"])
 
+    def test_multiple_invalid_fields_preserve_first_rejection(self):
+        cases = []
+        row = scope_container()
+        row["Image"] = "invalid"
+        row["State"]["Running"] = False
+        cases.append(("identity", row, "container_identity_invalid"))
+
+        row = scope_container()
+        row["HostConfig"]["Runtime"] = "unknown"
+        row["HostConfig"]["DeviceRequests"][0]["Count"] = -1
+        cases.append(("host", row, "container_host_access"))
+
+        row = scope_container()
+        row["HostConfig"]["DeviceRequests"][0]["Count"] = -1
+        row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=all"]
+        cases.append(("request", row, "device_scope_unknown"))
+
+        row = bind(scope_container(), "/dev/nvidia0")
+        row["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] *= 2
+        cases.append(("duplicate", row, "device_scope_duplicate"))
+
+        row = bind(scope_container(), "/dev/nvidia0")
+        row["NVIDIAEnv"] = ["NVIDIA_VISIBLE_DEVICES=all"]
+        cases.append(("environment", row, "legacy_gpu_access"))
+
+        for phase, row, code in cases:
+            with self.subTest(phase=phase):
+                self.blocked("gpu_ownership_" + code, containers=[row])
+
     def test_idle_gpu_claim_is_blocked_without_compute_activity(self):
         self.blocked(
             "gpu_ownership_unsealed_gpu_container",

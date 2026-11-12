@@ -132,16 +132,7 @@ def bounded_runner(argv, *, timeout, max_bytes):
     context/host/config or NVIDIA variables. The explicit Linux local socket
     prevents inspecting a remote Docker host against local nvidia-smi PIDs.
     """
-    if (
-        type(timeout) not in {int, float}
-        or not math.isfinite(timeout)
-        or not 0 < timeout <= COMMAND_TIMEOUT_SECONDS
-        or type(max_bytes) is not int
-        or not 1 <= max_bytes <= contract.MAX_OUTPUT_BYTES
-    ):
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_command_limits_invalid"
-        )
+    _runner_limits(timeout, max_bytes)
     process = None
     selector = selectors.DefaultSelector()
     streams = {"stdout": bytearray(), "stderr": bytearray()}
@@ -160,34 +151,8 @@ def bounded_runner(argv, *, timeout, max_bytes):
             stream = getattr(process, name)
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
-        deadline = time.monotonic() + timeout
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_command_timeout"
-                )
-            for key, _mask in selector.select(remaining):
-                chunk = os.read(
-                    key.fileobj.fileno(), min(65536, max_bytes + 1)
-                )
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                total += len(chunk)
-                if total > max_bytes:
-                    raise contract.GPUOwnershipError(
-                        "gpu_ownership_command_output_limit"
-                    )
-                streams[key.data].extend(chunk)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise contract.GPUOwnershipError("gpu_ownership_command_timeout")
-        process.wait(timeout=remaining)
-        result = contract.CommandResult(
-            process.returncode,
-            streams["stdout"].decode("utf-8", errors="strict"),
-            streams["stderr"].decode("utf-8", errors="strict"),
+        result = _stream_command_output(
+            process, selector, streams, total, timeout, max_bytes
         )
         completed = True
         return result
@@ -422,149 +387,19 @@ def run_gpu_ownership(
 
     try:
         started = clock()
-        if type(config) is not ProductConfig:
-            raise contract.GPUOwnershipError("gpu_ownership_config_invalid")
-        roles = snapshot._roles(config.gpus)
-        proofs = snapshot._proofs(allowed, roles)
-        cpu = snapshot._cpu_proofs(cpu_proofs, proofs)
-        info = _strict_json(
-            command(
-                [
-                    *DOCKER_PREFIX,
-                    "info",
-                    "--format",
-                    '{"OSType":{{json .OSType}},"DefaultRuntime":{{json '
-                    '.DefaultRuntime}},"DockerRootDir":{{json '
-                    ".DockerRootDir}}}",
-                ]
-            )
+        result = _gather_gpu_snapshot(
+            config,
+            allowed,
+            cpu_proofs,
+            command,
+            bind_source_probe,
+            clock,
+            started,
         )
-        if (
-            type(info) is not dict
-            or info.get("OSType") != "linux"
-            or type(info.get("DefaultRuntime")) is not str
-            or info["DefaultRuntime"] not in {"runc", "nvidia"}
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_host_profile_unsupported"
-            )
-        inventory = command(
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,index",
-                "--format=csv,noheader,nounits",
-            ]
-        )
-        snapshot._inventory(inventory, roles)
-        ids = _container_ids(
-            command([*DOCKER_PREFIX, "ps", "--quiet", "--no-trunc"])
-        )
-        containers = [_inspect(command, identifier) for identifier in ids]
-        sources = {
-            source
-            for row in containers
-            for source in snapshot._container(row, cpu.get(row.get("Id")))[3]
-        }
-        if len(sources) > MAX_BIND_SOURCES:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_source_limit"
-            )
-        for source in sorted(sources):
-            if bind_source_probe is None:
-                _bind_metadata(command(_bind_command(source)))
-            else:
-                # An injected probe is trusted test/operator code and must
-                # honor this timeout just like an injected command runner.
-                remaining = started + TOTAL_BUDGET_SECONDS - clock()
-                if not 0 < remaining <= TOTAL_BUDGET_SECONDS:
-                    raise contract.GPUOwnershipError(
-                        "gpu_ownership_deadline_exceeded"
-                    )
-                bind_source_probe(
-                    source, timeout=min(COMMAND_TIMEOUT_SECONDS, remaining)
-                )
-        volumes = _collect_local_volumes(
-            containers, info.get("DockerRootDir"), command
-        )
-        snapshot._containers(
-            containers,
-            proofs,
-            roles,
-            frozenset(sources),
-            volumes,
-            cpu_proofs=cpu,
-        )
-        pids = {
-            identifier: command(
-                [*DOCKER_PREFIX, "top", identifier, "-eo", "pid"]
-            )
-            for identifier in sorted(proofs)
-        }
-        compute_apps = command(
-            [
-                "nvidia-smi",
-                "--query-compute-apps=gpu_uuid,pid",
-                "--format=csv,noheader,nounits",
-            ]
-        )
-        result = snapshot.validate_gpu_ownership(
-            config.gpus,
-            inventory=inventory,
-            containers=containers,
-            compute_apps=compute_apps,
-            container_pids=pids,
-            allowed=allowed,
-            cpu_proofs=cpu_proofs,
-            verified_bind_sources=frozenset(sources),
-            verified_local_volumes=volumes,
-        )
-        if ids != _container_ids(
-            command([*DOCKER_PREFIX, "ps", "--quiet", "--no-trunc"])
-        ):
-            raise contract.GPUOwnershipError("gpu_ownership_snapshot_changed")
-        after = [_inspect(command, identifier) for identifier in ids]
-        if [
-            snapshot._snapshot(row, cpu.get(row.get("Id")))
-            for row in containers
-        ] != [
-            snapshot._snapshot(row, cpu.get(row.get("Id"))) for row in after
-        ]:
-            raise contract.GPUOwnershipError("gpu_ownership_snapshot_changed")
-        if volumes:
-            after_info = _strict_json(
-                command(
-                    [
-                        *DOCKER_PREFIX,
-                        "info",
-                        "--format",
-                        '{"OSType":{{json .OSType}},"DefaultRuntime":{{jso'
-                        'n .DefaultRuntime}},"DockerRootDir":{{json '
-                        ".DockerRootDir}}}",
-                    ]
-                )
-            )
-            if (
-                after_info != info
-                or _collect_local_volumes(
-                    after, info["DockerRootDir"], command
-                )
-                != volumes
-            ):
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_snapshot_changed"
-                )
-        now = clock()
-        if (
-            not math.isfinite(now)
-            or not started <= now < started + TOTAL_BUDGET_SECONDS
-        ):
-            raise contract.GPUOwnershipError("gpu_ownership_deadline_exceeded")
         result["command_count"] = calls
         return result
     except contract.GPUOwnershipError as error:
-        code = str(error)
-        if code not in contract.ERROR_CODES:
-            code = "gpu_ownership_preflight_failed"
+        code = _failure_code(error)
     except Exception:
         # Injected tool/filesystem diagnostics may contain secrets. Never
         # expose
@@ -579,3 +414,198 @@ def run_gpu_ownership(
         "exclusive_reservation": False,
         "runtime_modified": False,
     }
+
+
+def _stream_command_output(
+    process, selector, streams, total, timeout, max_bytes
+):
+    deadline = time.monotonic() + timeout
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise contract.GPUOwnershipError("gpu_ownership_command_timeout")
+        for key, _mask in selector.select(remaining):
+            chunk = os.read(key.fileobj.fileno(), min(65536, max_bytes + 1))
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise contract.GPUOwnershipError(
+                    "gpu_ownership_command_output_limit"
+                )
+            streams[key.data].extend(chunk)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise contract.GPUOwnershipError("gpu_ownership_command_timeout")
+    process.wait(timeout=remaining)
+    result = contract.CommandResult(
+        process.returncode,
+        streams["stdout"].decode("utf-8", errors="strict"),
+        streams["stderr"].decode("utf-8", errors="strict"),
+    )
+    return result
+
+
+def _gather_gpu_snapshot(
+    config, allowed, cpu_proofs, command, bind_source_probe, clock, started
+):
+    if type(config) is not ProductConfig:
+        raise contract.GPUOwnershipError("gpu_ownership_config_invalid")
+    roles = snapshot._roles(config.gpus)
+    proofs = snapshot._proofs(allowed, roles)
+    cpu = snapshot._cpu_proofs(cpu_proofs, proofs)
+    info = _strict_json(
+        command(
+            [
+                *DOCKER_PREFIX,
+                "info",
+                "--format",
+                '{"OSType":{{json .OSType}},"DefaultRuntime":{{json '
+                '.DefaultRuntime}},"DockerRootDir":{{json '
+                ".DockerRootDir}}}",
+            ]
+        )
+    )
+    if (
+        type(info) is not dict
+        or info.get("OSType") != "linux"
+        or type(info.get("DefaultRuntime")) is not str
+        or info["DefaultRuntime"] not in {"runc", "nvidia"}
+    ):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_host_profile_unsupported"
+        )
+    inventory = command(
+        [
+            "nvidia-smi",
+            "--query-gpu=uuid,index",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    snapshot._inventory(inventory, roles)
+    ids = _container_ids(
+        command([*DOCKER_PREFIX, "ps", "--quiet", "--no-trunc"])
+    )
+    containers = [_inspect(command, identifier) for identifier in ids]
+    sources = {
+        source
+        for row in containers
+        for source in snapshot._container(row, cpu.get(row.get("Id")))[3]
+    }
+    if len(sources) > MAX_BIND_SOURCES:
+        raise contract.GPUOwnershipError("gpu_ownership_mount_source_limit")
+    _probe_bind_sources(sources, command, bind_source_probe, started, clock)
+    volumes = _collect_local_volumes(
+        containers, info.get("DockerRootDir"), command
+    )
+    snapshot._containers(
+        containers,
+        proofs,
+        roles,
+        frozenset(sources),
+        volumes,
+        cpu_proofs=cpu,
+    )
+    pids = {
+        identifier: command([*DOCKER_PREFIX, "top", identifier, "-eo", "pid"])
+        for identifier in sorted(proofs)
+    }
+    compute_apps = command(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=gpu_uuid,pid",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    result = snapshot.validate_gpu_ownership(
+        config.gpus,
+        inventory=inventory,
+        containers=containers,
+        compute_apps=compute_apps,
+        container_pids=pids,
+        allowed=allowed,
+        cpu_proofs=cpu_proofs,
+        verified_bind_sources=frozenset(sources),
+        verified_local_volumes=volumes,
+    )
+    _recheck_gpu_snapshot(
+        command, ids, containers, cpu, volumes, info, clock, started
+    )
+    return result
+
+
+def _probe_bind_sources(sources, command, bind_source_probe, started, clock):
+    for source in sorted(sources):
+        if bind_source_probe is None:
+            _bind_metadata(command(_bind_command(source)))
+        else:
+            # An injected probe is trusted test/operator code and must
+            # honor this timeout just like an injected command runner.
+            remaining = started + TOTAL_BUDGET_SECONDS - clock()
+            if not 0 < remaining <= TOTAL_BUDGET_SECONDS:
+                raise contract.GPUOwnershipError(
+                    "gpu_ownership_deadline_exceeded"
+                )
+            bind_source_probe(
+                source, timeout=min(COMMAND_TIMEOUT_SECONDS, remaining)
+            )
+
+
+def _recheck_gpu_snapshot(
+    command, ids, containers, cpu, volumes, info, clock, started
+):
+    if ids != _container_ids(
+        command([*DOCKER_PREFIX, "ps", "--quiet", "--no-trunc"])
+    ):
+        raise contract.GPUOwnershipError("gpu_ownership_snapshot_changed")
+    after = [_inspect(command, identifier) for identifier in ids]
+    if [
+        snapshot._snapshot(row, cpu.get(row.get("Id"))) for row in containers
+    ] != [snapshot._snapshot(row, cpu.get(row.get("Id"))) for row in after]:
+        raise contract.GPUOwnershipError("gpu_ownership_snapshot_changed")
+    if volumes:
+        after_info = _strict_json(
+            command(
+                [
+                    *DOCKER_PREFIX,
+                    "info",
+                    "--format",
+                    '{"OSType":{{json .OSType}},"DefaultRuntime":{{jso'
+                    'n .DefaultRuntime}},"DockerRootDir":{{json '
+                    ".DockerRootDir}}}",
+                ]
+            )
+        )
+        if (
+            after_info != info
+            or _collect_local_volumes(after, info["DockerRootDir"], command)
+            != volumes
+        ):
+            raise contract.GPUOwnershipError("gpu_ownership_snapshot_changed")
+    now = clock()
+    if (
+        not math.isfinite(now)
+        or not started <= now < started + TOTAL_BUDGET_SECONDS
+    ):
+        raise contract.GPUOwnershipError("gpu_ownership_deadline_exceeded")
+
+
+def _failure_code(error):
+    code = str(error)
+    if code not in contract.ERROR_CODES:
+        code = "gpu_ownership_preflight_failed"
+    return code
+
+
+def _runner_limits(timeout, max_bytes):
+    if (
+        type(timeout) not in {int, float}
+        or not math.isfinite(timeout)
+        or not 0 < timeout <= COMMAND_TIMEOUT_SECONDS
+        or type(max_bytes) is not int
+        or not 1 <= max_bytes <= contract.MAX_OUTPUT_BYTES
+    ):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_command_limits_invalid"
+        )
