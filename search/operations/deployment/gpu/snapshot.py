@@ -313,272 +313,17 @@ def _mounts(row, cpu_proof=None):
         )
     ):
         raise contract.GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
-    for mount in mounts:
-        if type(mount) is not dict:
-            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
-        # A volume is structurally accepted here, but grants no authority until
-        # _containers matches separate daemon-owned LocalVolumeProof evidence.
-        if type(mount.get("Type")) is not str or mount["Type"] not in {
-            "bind",
-            "tmpfs",
-            "volume",
-        }:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_type_unknown"
-            )
-        if mount["Type"] == "volume" and (
-            type(mount.get("Name")) is not str
-            or contract.VOLUME_NAME.fullmatch(mount["Name"]) is None
-            or type(mount.get("Driver")) is not str
-            or mount["Driver"] != "local"
-            or type(mount.get("RW")) is not bool
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_type_unknown"
-            )
-        target = _path(
-            mount.get("Destination"), target=True, tls_targets=tls_targets
-        )
-        # These are container-local query/secret destinations, not host /run.
-        # The independently verified source must still be an ordinary private
-        # path, and the actual mount must not permit writes at these targets.
-        if PurePosixPath(target).parts[1] == "run" and (
-            mount["Type"] != "bind" or mount.get("RW") is not False
-        ):
-            raise contract.GPUOwnershipError("gpu_ownership_host_access_mount")
-        if target in targets:
-            raise contract.GPUOwnershipError("gpu_ownership_mount_duplicate")
-        targets.add(target)
-        if type(mount.get("Propagation", "")) is not str or mount.get(
-            "Propagation", ""
-        ) not in {"", "private", "rprivate"}:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_propagation_unknown"
-            )
-        if mount["Type"] == "bind":
-            sources.append(_path(mount.get("Source")))
-        elif mount["Type"] == "volume":
-            _path(mount.get("Source"))
-    binds = _list(host.get("Binds"))
-    if len(binds) > len(mounts):
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_mount_inventory_mismatch"
-        )
-    for bind in binds:
-        if type(bind) is not str or len(bind) > 8192:
-            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
-        pieces = bind.split(":")
-        if len(pieces) not in {2, 3}:
-            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
-        source, target = (
-            pieces[0],
-            _path(pieces[1], target=True, tls_targets=tls_targets),
-        )
-        is_bind = source.startswith("/")
-        if is_bind:
-            _path(source)
-        elif contract.VOLUME_NAME.fullmatch(source) is None:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_path_invalid"
-            )
-        if len(pieces) == 3 and not set(pieces[2].split(",")) <= {
-            "ro",
-            "rw",
-            "private",
-            "rprivate",
-            "z",
-            "Z",
-            "nocopy",
-        }:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_propagation_unknown"
-            )
-        if not any(
-            mount.get("Type") == ("bind" if is_bind else "volume")
-            and mount.get("Source" if is_bind else "Name") == source
-            and mount.get("Destination") == target
-            for mount in mounts
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_mount_inventory_mismatch"
-            )
-    count = host.get("MountSpecsCount")
-    if type(count) is not int or not 0 <= count <= len(mounts):
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_mount_inventory_mismatch"
-        )
+    _observed_mounts(mounts, tls_targets, sources, targets)
+    _declared_binds(host, mounts, tls_targets)
     return tuple(sources)
 
 
 def _container(row, cpu_proof=None):
-    if type(row) is not dict or set(row) != {
-        "Id",
-        "Image",
-        "RestartCount",
-        "State",
-        "HostConfig",
-        "Mounts",
-        "NVIDIAEnv",
-    }:
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_container_shape_invalid"
-        )
-    identifier, image = row.get("Id"), row.get("Image")
-    if (
-        type(identifier) is not str
-        or contract.CONTAINER_ID.fullmatch(identifier) is None
-        or type(image) is not str
-        or contract.IMAGE_ID.fullmatch(image) is None
-        or type(row.get("RestartCount")) is not int
-        or not 0 <= row["RestartCount"] <= 2**31 - 1
-    ):
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_container_identity_invalid"
-        )
-    if cpu_proof is not None:
-        _cpu_proofs((cpu_proof,), {})
-        if (
-            identifier != cpu_proof.container_id
-            or image != cpu_proof.image_id
-            or cpu_projection_sha256(row) != cpu_proof.projection_sha256
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_cpu_identity_changed"
-            )
-    host, state = row.get("HostConfig"), row.get("State")
-    if (
-        type(host) is not dict
-        or set(host)
-        != {
-            "Runtime",
-            "PidMode",
-            "IpcMode",
-            "Privileged",
-            "Devices",
-            "DeviceCgroupRules",
-            "CapAdd",
-            "VolumesFrom",
-            "AnnotationsPresent",
-            "Binds",
-            "MountSpecsCount",
-            "DeviceRequests",
-        }
-        or type(state) is not dict
-        or set(state)
-        != {"Running", "Paused", "Restarting", "Dead", "Pid", "StartedAt"}
-    ):
-        raise contract.GPUOwnershipError(
-            "gpu_ownership_container_shape_invalid"
-        )
-    if (
-        state.get("Running") is not True
-        or any(
-            state.get(name) is not False
-            for name in ("Paused", "Restarting", "Dead")
-        )
-        or type(state.get("Pid")) is not int
-        or not 1 <= state["Pid"] <= 2**31 - 1
-        or type(state.get("StartedAt")) is not str
-        or not re.fullmatch(r"[0-9T:.Z+-]{1,64}", state["StartedAt"])
-    ):
-        raise contract.GPUOwnershipError("gpu_ownership_container_not_running")
-    if (
-        host.get("Privileged") is not False
-        or host.get("AnnotationsPresent") is not False
-        or any(
-            type(host.get(key)) is not str
-            for key in ("Runtime", "PidMode", "IpcMode")
-        )
-        or host.get("Runtime") not in {"runc", "nvidia"}
-        or host.get("PidMode") not in {"", "default"}
-        or host.get("IpcMode") not in {"", "private"}
-    ):
-        raise contract.GPUOwnershipError("gpu_ownership_container_host_access")
-    for key in ("Devices", "DeviceCgroupRules", "VolumesFrom"):
-        if key not in host or _list(host[key]):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_container_device_access"
-            )
-    capabilities = _list(host.get("CapAdd"))
-    if cpu_proof is None:
-        if "CapAdd" not in host or capabilities:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_container_device_access"
-            )
-    else:
-        if (
-            host["Runtime"] != "runc"
-            or any(type(value) is not str for value in capabilities)
-            or len(set(capabilities)) != len(capabilities)
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_cpu_profile_invalid"
-            )
-        capabilities = {value.removeprefix("CAP_") for value in capabilities}
-        approved = (
-            (
-                contract.TLS_OUTER_CAPS,
-                contract.TLS_OUTER_CAPS | {"NET_BIND_SERVICE"},
-            )
-            if cpu_proof.role == "private-api-tls-outer"
-            else (frozenset(),)
-        )
-        if capabilities not in approved:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_cpu_profile_invalid"
-            )
-    requests = _list(host.get("DeviceRequests"), nullable=False)
-    if cpu_proof is not None and requests:
-        raise contract.GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
-    exposed = set()
-    for request in requests:
-        if (
-            type(request) is not dict
-            or set(request)
-            != {"Driver", "Count", "DeviceIDs", "Capabilities", "OptionsEmpty"}
-            or type(request.get("Driver")) is not str
-            or request.get("Driver") not in {"", "nvidia"}
-            or type(request.get("Count")) is not int
-            or request["Count"] != 0
-            or request.get("Capabilities") != [["gpu"]]
-            or request.get("OptionsEmpty") is not True
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_device_scope_unknown"
-            )
-        identifiers = _list(request.get("DeviceIDs"), nullable=False)
-        if not 1 <= len(identifiers) <= 4:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_device_scope_unknown"
-            )
-        for value in identifiers:
-            try:
-                identifier_uuid = _uuid(value)
-            except contract.GPUOwnershipError:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_device_scope_unknown"
-                ) from None
-            if identifier_uuid in exposed:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_device_scope_duplicate"
-                )
-            exposed.add(identifier_uuid)
-    environment = {}
-    for entry in _list(row.get("NVIDIAEnv"), nullable=False):
-        if type(entry) is not str or len(entry) > 4096 or "=" not in entry:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_nvidia_environment_invalid"
-            )
-        key, value = entry.split("=", 1)
-        if (
-            key not in contract.NVIDIA_KEYS
-            or key in environment
-            or "\x00" in value
-        ):
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_nvidia_environment_invalid"
-            )
-        environment[key] = value
+    (identifier, image) = _container_identity(row, cpu_proof)
+    host = _host_state(row)
+    _container_capabilities(host, cpu_proof)
+    exposed = _device_requests(host, cpu_proof)
+    environment = _nvidia_environment(row)
     if any(environment.get(key, "") for key in contract.NVIDIA_KEYS[1:]):
         raise contract.GPUOwnershipError("gpu_ownership_legacy_gpu_access")
     visible = environment.get("NVIDIA_VISIBLE_DEVICES", "")
@@ -639,32 +384,8 @@ def _containers(
             raise contract.GPUOwnershipError(
                 "gpu_ownership_mount_source_unverified"
             )
-        for mount in row["Mounts"]:
-            if mount["Type"] != "volume":
-                continue
-            name = mount["Name"]
-            proof = volumes.get(name)
-            if proof is None or mount["Source"] != proof.mountpoint:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_volume_evidence_invalid"
-                )
-            observed_volumes.add(name)
-        proof = proofs.get(identifier)
-        if exposed:
-            if proof is None:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_unsealed_gpu_container"
-                )
-            if image != proof.image_id or exposed != frozenset(
-                roles[proof.role]
-            ):
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_sealed_identity_changed"
-                )
-        elif proof is not None:
-            raise contract.GPUOwnershipError(
-                "gpu_ownership_sealed_identity_changed"
-            )
+        _container_volumes(row, volumes, observed_volumes)
+        _sealed_gpu_container(identifier, image, exposed, proofs, roles)
         result[identifier] = row
     if not set(proofs) <= set(result):
         raise contract.GPUOwnershipError(
@@ -738,17 +459,7 @@ def validate_gpu_ownership(
     )
     if type(container_pids) is not dict or set(container_pids) != set(proofs):
         raise contract.GPUOwnershipError("gpu_ownership_pid_evidence_missing")
-    owners = {}
-    for identifier, proof in proofs.items():
-        pids = _pids(container_pids[identifier])
-        if by_id[identifier]["State"]["Pid"] not in pids:
-            raise contract.GPUOwnershipError("gpu_ownership_main_pid_missing")
-        for pid in pids:
-            if pid in owners:
-                raise contract.GPUOwnershipError(
-                    "gpu_ownership_pid_owner_ambiguous"
-                )
-            owners[pid] = proof
+    owners = _pid_owners(proofs, container_pids, by_id)
     tasks = _text(compute_apps).splitlines()
     if len(tasks) > contract.MAX_PIDS:
         raise contract.GPUOwnershipError("gpu_ownership_compute_limit")
@@ -799,3 +510,335 @@ def _snapshot(row, cpu_proof=None):
     """
     _container(row, cpu_proof)
     return _projection(row)
+
+
+def _container_identity(row, cpu_proof):
+    if type(row) is not dict or set(row) != {
+        "Id",
+        "Image",
+        "RestartCount",
+        "State",
+        "HostConfig",
+        "Mounts",
+        "NVIDIAEnv",
+    }:
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_container_shape_invalid"
+        )
+    identifier, image = row.get("Id"), row.get("Image")
+    if (
+        type(identifier) is not str
+        or contract.CONTAINER_ID.fullmatch(identifier) is None
+        or type(image) is not str
+        or contract.IMAGE_ID.fullmatch(image) is None
+        or type(row.get("RestartCount")) is not int
+        or not 0 <= row["RestartCount"] <= 2**31 - 1
+    ):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_container_identity_invalid"
+        )
+    if cpu_proof is not None:
+        _cpu_proofs((cpu_proof,), {})
+        if (
+            identifier != cpu_proof.container_id
+            or image != cpu_proof.image_id
+            or cpu_projection_sha256(row) != cpu_proof.projection_sha256
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_cpu_identity_changed"
+            )
+    return (identifier, image)
+
+
+def _host_state(row):
+    host, state = row.get("HostConfig"), row.get("State")
+    if (
+        type(host) is not dict
+        or set(host)
+        != {
+            "Runtime",
+            "PidMode",
+            "IpcMode",
+            "Privileged",
+            "Devices",
+            "DeviceCgroupRules",
+            "CapAdd",
+            "VolumesFrom",
+            "AnnotationsPresent",
+            "Binds",
+            "MountSpecsCount",
+            "DeviceRequests",
+        }
+        or type(state) is not dict
+        or set(state)
+        != {"Running", "Paused", "Restarting", "Dead", "Pid", "StartedAt"}
+    ):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_container_shape_invalid"
+        )
+    if (
+        state.get("Running") is not True
+        or any(
+            state.get(name) is not False
+            for name in ("Paused", "Restarting", "Dead")
+        )
+        or type(state.get("Pid")) is not int
+        or not 1 <= state["Pid"] <= 2**31 - 1
+        or type(state.get("StartedAt")) is not str
+        or not re.fullmatch(r"[0-9T:.Z+-]{1,64}", state["StartedAt"])
+    ):
+        raise contract.GPUOwnershipError("gpu_ownership_container_not_running")
+    if (
+        host.get("Privileged") is not False
+        or host.get("AnnotationsPresent") is not False
+        or any(
+            type(host.get(key)) is not str
+            for key in ("Runtime", "PidMode", "IpcMode")
+        )
+        or host.get("Runtime") not in {"runc", "nvidia"}
+        or host.get("PidMode") not in {"", "default"}
+        or host.get("IpcMode") not in {"", "private"}
+    ):
+        raise contract.GPUOwnershipError("gpu_ownership_container_host_access")
+    for key in ("Devices", "DeviceCgroupRules", "VolumesFrom"):
+        if key not in host or _list(host[key]):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_container_device_access"
+            )
+    return host
+
+
+def _container_capabilities(host, cpu_proof):
+    capabilities = _list(host.get("CapAdd"))
+    if cpu_proof is None:
+        if "CapAdd" not in host or capabilities:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_container_device_access"
+            )
+    else:
+        if (
+            host["Runtime"] != "runc"
+            or any(type(value) is not str for value in capabilities)
+            or len(set(capabilities)) != len(capabilities)
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_cpu_profile_invalid"
+            )
+        capabilities = {value.removeprefix("CAP_") for value in capabilities}
+        approved = (
+            (
+                contract.TLS_OUTER_CAPS,
+                contract.TLS_OUTER_CAPS | {"NET_BIND_SERVICE"},
+            )
+            if cpu_proof.role == "private-api-tls-outer"
+            else (frozenset(),)
+        )
+        if capabilities not in approved:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_cpu_profile_invalid"
+            )
+
+
+def _device_requests(host, cpu_proof):
+    requests = _list(host.get("DeviceRequests"), nullable=False)
+    if cpu_proof is not None and requests:
+        raise contract.GPUOwnershipError("gpu_ownership_cpu_profile_invalid")
+    exposed = set()
+    for request in requests:
+        if (
+            type(request) is not dict
+            or set(request)
+            != {"Driver", "Count", "DeviceIDs", "Capabilities", "OptionsEmpty"}
+            or type(request.get("Driver")) is not str
+            or request.get("Driver") not in {"", "nvidia"}
+            or type(request.get("Count")) is not int
+            or request["Count"] != 0
+            or request.get("Capabilities") != [["gpu"]]
+            or request.get("OptionsEmpty") is not True
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_device_scope_unknown"
+            )
+        identifiers = _list(request.get("DeviceIDs"), nullable=False)
+        if not 1 <= len(identifiers) <= 4:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_device_scope_unknown"
+            )
+        for value in identifiers:
+            try:
+                identifier_uuid = _uuid(value)
+            except contract.GPUOwnershipError:
+                raise contract.GPUOwnershipError(
+                    "gpu_ownership_device_scope_unknown"
+                ) from None
+            if identifier_uuid in exposed:
+                raise contract.GPUOwnershipError(
+                    "gpu_ownership_device_scope_duplicate"
+                )
+            exposed.add(identifier_uuid)
+    return exposed
+
+
+def _nvidia_environment(row):
+    environment = {}
+    for entry in _list(row.get("NVIDIAEnv"), nullable=False):
+        if type(entry) is not str or len(entry) > 4096 or "=" not in entry:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_nvidia_environment_invalid"
+            )
+        key, value = entry.split("=", 1)
+        if (
+            key not in contract.NVIDIA_KEYS
+            or key in environment
+            or "\x00" in value
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_nvidia_environment_invalid"
+            )
+        environment[key] = value
+    return environment
+
+
+def _observed_mounts(mounts, tls_targets, sources, targets):
+    for mount in mounts:
+        if type(mount) is not dict:
+            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
+        # A volume is structurally accepted here, but grants no authority until
+        # _containers matches separate daemon-owned LocalVolumeProof evidence.
+        if type(mount.get("Type")) is not str or mount["Type"] not in {
+            "bind",
+            "tmpfs",
+            "volume",
+        }:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_type_unknown"
+            )
+        if mount["Type"] == "volume" and (
+            type(mount.get("Name")) is not str
+            or contract.VOLUME_NAME.fullmatch(mount["Name"]) is None
+            or type(mount.get("Driver")) is not str
+            or mount["Driver"] != "local"
+            or type(mount.get("RW")) is not bool
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_type_unknown"
+            )
+        target = _path(
+            mount.get("Destination"), target=True, tls_targets=tls_targets
+        )
+        # These are container-local query/secret destinations, not host /run.
+        # The independently verified source must still be an ordinary private
+        # path, and the actual mount must not permit writes at these targets.
+        if PurePosixPath(target).parts[1] == "run" and (
+            mount["Type"] != "bind" or mount.get("RW") is not False
+        ):
+            raise contract.GPUOwnershipError("gpu_ownership_host_access_mount")
+        if target in targets:
+            raise contract.GPUOwnershipError("gpu_ownership_mount_duplicate")
+        targets.add(target)
+        if type(mount.get("Propagation", "")) is not str or mount.get(
+            "Propagation", ""
+        ) not in {"", "private", "rprivate"}:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_propagation_unknown"
+            )
+        if mount["Type"] == "bind":
+            sources.append(_path(mount.get("Source")))
+        elif mount["Type"] == "volume":
+            _path(mount.get("Source"))
+
+
+def _declared_binds(host, mounts, tls_targets):
+    binds = _list(host.get("Binds"))
+    if len(binds) > len(mounts):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_mount_inventory_mismatch"
+        )
+    for bind in binds:
+        if type(bind) is not str or len(bind) > 8192:
+            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
+        pieces = bind.split(":")
+        if len(pieces) not in {2, 3}:
+            raise contract.GPUOwnershipError("gpu_ownership_mount_invalid")
+        source, target = (
+            pieces[0],
+            _path(pieces[1], target=True, tls_targets=tls_targets),
+        )
+        is_bind = source.startswith("/")
+        if is_bind:
+            _path(source)
+        elif contract.VOLUME_NAME.fullmatch(source) is None:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_path_invalid"
+            )
+        if len(pieces) == 3 and not set(pieces[2].split(",")) <= {
+            "ro",
+            "rw",
+            "private",
+            "rprivate",
+            "z",
+            "Z",
+            "nocopy",
+        }:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_propagation_unknown"
+            )
+        if not any(
+            mount.get("Type") == ("bind" if is_bind else "volume")
+            and mount.get("Source" if is_bind else "Name") == source
+            and mount.get("Destination") == target
+            for mount in mounts
+        ):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_mount_inventory_mismatch"
+            )
+    count = host.get("MountSpecsCount")
+    if type(count) is not int or not 0 <= count <= len(mounts):
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_mount_inventory_mismatch"
+        )
+
+
+def _container_volumes(row, volumes, observed_volumes):
+    for mount in row["Mounts"]:
+        if mount["Type"] != "volume":
+            continue
+        name = mount["Name"]
+        proof = volumes.get(name)
+        if proof is None or mount["Source"] != proof.mountpoint:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_volume_evidence_invalid"
+            )
+        observed_volumes.add(name)
+
+
+def _sealed_gpu_container(identifier, image, exposed, proofs, roles):
+    proof = proofs.get(identifier)
+    if exposed:
+        if proof is None:
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_unsealed_gpu_container"
+            )
+        if image != proof.image_id or exposed != frozenset(roles[proof.role]):
+            raise contract.GPUOwnershipError(
+                "gpu_ownership_sealed_identity_changed"
+            )
+    elif proof is not None:
+        raise contract.GPUOwnershipError(
+            "gpu_ownership_sealed_identity_changed"
+        )
+
+
+def _pid_owners(proofs, container_pids, by_id):
+    owners = {}
+    for identifier, proof in proofs.items():
+        pids = _pids(container_pids[identifier])
+        if by_id[identifier]["State"]["Pid"] not in pids:
+            raise contract.GPUOwnershipError("gpu_ownership_main_pid_missing")
+        for pid in pids:
+            if pid in owners:
+                raise contract.GPUOwnershipError(
+                    "gpu_ownership_pid_owner_ambiguous"
+                )
+            owners[pid] = proof
+    return owners

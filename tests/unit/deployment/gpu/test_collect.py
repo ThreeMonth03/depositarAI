@@ -327,6 +327,65 @@ class GPUHostGatherTests(unittest.TestCase):
                 max_bytes=128,
             )
 
+    def test_failed_stream_preserves_all_cleanup_and_order(self):
+        events = []
+        stdout, stderr = mock.Mock(), mock.Mock()
+        stdout.fileno.return_value = 11
+        stderr.fileno.return_value = 12
+        stdout.close.side_effect = lambda: events.append("stdout.close")
+        stderr.close.side_effect = lambda: events.append("stderr.close")
+        process = mock.Mock(pid=123, stdout=stdout, stderr=stderr)
+        process.wait.side_effect = lambda **_limits: events.append("wait")
+        selector = mock.Mock()
+        selector.get_map.return_value = {11: stdout, 12: stderr}
+        selector.select.return_value = [
+            (mock.Mock(fileobj=stdout, data="stdout"), 1)
+        ]
+        selector.close.side_effect = lambda: events.append("selector.close")
+
+        with (
+            mock.patch.object(
+                gpu_collect.subprocess, "Popen", return_value=process
+            ),
+            mock.patch.object(
+                gpu_collect.selectors,
+                "DefaultSelector",
+                return_value=selector,
+            ),
+            mock.patch.object(gpu_collect.os, "set_blocking"),
+            mock.patch.object(
+                gpu_collect.os, "read", side_effect=OSError("SECRET_READ")
+            ),
+            mock.patch.object(gpu_collect.time, "monotonic", return_value=0),
+            mock.patch.object(
+                gpu_collect.os,
+                "killpg",
+                side_effect=lambda *_args: events.append("killpg"),
+            ) as killpg,
+        ):
+            with self.assertRaisesRegex(
+                gpu_contract.GPUOwnershipError,
+                "^gpu_ownership_command_failed$",
+            ):
+                gpu_collect.bounded_runner(
+                    ["fixture-command"], timeout=1, max_bytes=128
+                )
+
+        self.assertEqual(
+            [
+                "selector.close",
+                "killpg",
+                "wait",
+                "stdout.close",
+                "stderr.close",
+            ],
+            events,
+        )
+        killpg.assert_called_once_with(123, gpu_collect.signal.SIGKILL)
+        process.wait.assert_called_once_with(timeout=2)
+        stdout.close.assert_called_once_with()
+        stderr.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
