@@ -351,6 +351,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/frontend/binding.py",
             "search/operations/deployment/frontend/traces.py",
             "search/operations/documents/future_policy.py",
+            "search/transport/http.py",
         ):
             with self.subTest(path=relative):
                 path = self.root / relative

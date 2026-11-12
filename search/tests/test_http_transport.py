@@ -119,6 +119,56 @@ class SharedHTTPTransportTests(unittest.TestCase):
         )
         response.close.assert_called_once()
 
+    def test_expired_deadline_precedes_closed_body_handling(self):
+        for tick in (11, float("nan")):
+            response = self.response()
+            response.isclosed = mock.Mock(return_value=True)
+            with (
+                self.subTest(tick=tick),
+                mock.patch.object(
+                    http.time, "monotonic", side_effect=[10, tick]
+                ),
+                self.assertRaisesRegex(
+                    TimeoutError, "^Ollama transport deadline expired$"
+                ),
+            ):
+                self.transport(response).send(
+                    self.request, timeout=1, max_bytes=64
+                )
+            response.isclosed.assert_not_called()
+            response.read1.assert_not_called()
+            response.close.assert_called_once()
+
+    def test_body_and_metadata_failures_keep_outer_close_ownership(self):
+        for stage in ("read1", "status", "headers", "url"):
+            body = self.response()
+            outer = urllib.error.HTTPError(
+                self.request.url, 410, "gone", body.headers, body
+            )
+            outer.close = mock.Mock(
+                side_effect=RuntimeError("private-close-sentinel")
+            )
+            failure = RuntimeError("private-" + stage + "-sentinel")
+            if stage == "read1":
+                body.read1.side_effect = failure
+            elif stage == "status":
+                outer.code = mock.Mock()
+                outer.code.__int__ = mock.Mock(side_effect=failure)
+            elif stage == "headers":
+                outer.headers = SimpleNamespace(
+                    items=mock.Mock(side_effect=failure)
+                )
+            else:
+                outer.geturl = mock.Mock(side_effect=failure)
+            transport = self.transport(outer)
+            transport._opener.open.side_effect = outer
+            with self.subTest(stage=stage):
+                with self.assertRaises(RuntimeError) as caught:
+                    transport.send(self.request, timeout=1, max_bytes=64)
+                self.assertIs(caught.exception, failure)
+                outer.close.assert_called_once()
+                body.close.assert_not_called()
+
 
 class UrllibTransportTests(unittest.TestCase):
     def loopback(self, status, body, *, drip=False, location=None):
