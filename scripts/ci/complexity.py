@@ -51,6 +51,7 @@ GATED_PATHS = (
     "search/operations/deployment/images/build.py",
     "search/operations/deployment/source_bundle.py",
     "search/operations/deployment/release/runtime.py",
+    "search/operations/deployment/inference.py",
     "search/operations/deployment/inference_runtime.py",
     "search/operations/deployment/gpu",
     "search/operations/deployment/credentials.py",

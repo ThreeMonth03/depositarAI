@@ -3,6 +3,7 @@ authority.
 """
 
 import hashlib
+from contextlib import ExitStack, suppress
 import os
 from pathlib import Path
 import tempfile
@@ -320,6 +321,63 @@ class ResidentModelFilesTests(unittest.TestCase):
                 with self.cached(stamp, deadline=20) as (_, verify):
                     clock.return_value = 21
                     verify()
+
+    def test_opened_model_fd_closes_on_postopen_validation_failure(self):
+        target = self.config.reranker_model_root / "model.safetensors"
+        real_open, real_close, real_fstat = os.open, os.close, os.fstat
+        source = inference.search_model_source
+        real_policy = source._source_file_policy
+
+        def release(descriptor):
+            with suppress(OSError):
+                real_close(descriptor)
+
+        for stage in ("stat", "policy"):
+            with self.subTest(stage=stage), ExitStack() as cleanup:
+                opened, close_starts = [], []
+
+                def open_file(name, flags, *args, dir_fd=None):
+                    descriptor = real_open(name, flags, *args, dir_fd=dir_fd)
+                    if name == target.name and dir_fd is not None:
+                        opened.append(descriptor)
+                        close_starts.append(len(close.call_args_list))
+                        cleanup.callback(release, descriptor)
+                    return descriptor
+
+                def inspect(descriptor):
+                    if stage == "stat" and descriptor in opened:
+                        raise OSError("synthetic post-open stat failure")
+                    return real_fstat(descriptor)
+
+                def policy(info, uid, expected_size):
+                    if stage == "policy" and opened:
+                        raise source.ModelSourceError(
+                            "model_source_file_unsafe"
+                        )
+                    return real_policy(info, uid, expected_size)
+
+                with (
+                    mock.patch.object(inference.os, "open", open_file),
+                    mock.patch.object(inference.os, "fstat", inspect),
+                    mock.patch.object(
+                        inference.os, "close", wraps=real_close
+                    ) as close,
+                    mock.patch.object(source, "_source_file_policy", policy),
+                    self.assertRaises((OSError, source.ModelSourceError)),
+                ):
+                    with inference._verified_models(self.config):
+                        self.fail("post-open failure was admitted")
+                self.assertEqual(1, len(opened))
+                self.assertEqual(
+                    opened,
+                    [
+                        call.args[0]
+                        for call in close.call_args_list[close_starts[0] :]
+                        if call.args[0] in opened
+                    ],
+                )
+                with self.assertRaises(OSError):
+                    real_fstat(opened[0])
 
 
 if __name__ == "__main__":

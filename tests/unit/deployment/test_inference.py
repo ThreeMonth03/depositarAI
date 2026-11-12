@@ -4,7 +4,7 @@ Docker/GPU.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import replace
 import hashlib
 import json
@@ -682,6 +682,79 @@ class PrivateInferenceTests(unittest.TestCase):
                 for call, _, _ in self.docker.calls
             )
         )
+
+    def test_fresh_slot_fds_close_on_intent_or_up_failure(self):
+        real_open = private_io.open_child_directory
+        real_write = private_io.write_json
+        real_close, real_fstat = os.close, os.fstat
+
+        def release(descriptor):
+            with suppress(OSError):
+                real_close(descriptor)
+
+        for stage, code, expected_files in (
+            ("intent", "inference_operation_failed", set()),
+            (
+                "up",
+                "inference_command_failed",
+                {"started.json", "compose.json"},
+            ),
+        ):
+            with self.subTest(stage=stage), ExitStack() as cleanup:
+                opened = []
+
+                def open_directory(parent, name, **options):
+                    descriptor = real_open(parent, name, **options)
+                    if "create" in options and (
+                        name == "inference" or inference.SLOT.fullmatch(name)
+                    ):
+                        opened.append((descriptor, len(close.call_args_list)))
+                        cleanup.callback(release, descriptor)
+                    return descriptor
+
+                def write(directory, name, value, **options):
+                    if stage == "intent" and name == "started.json":
+                        raise OSError("synthetic intent write failure")
+                    return real_write(directory, name, value, **options)
+
+                self.docker.up_failed = stage == "up"
+                with (
+                    mock.patch.object(
+                        private_io, "open_child_directory", open_directory
+                    ),
+                    mock.patch.object(private_io, "write_json", write),
+                    mock.patch.object(
+                        inference.os, "close", wraps=real_close
+                    ) as close,
+                    self.assertRaisesRegex(inference.InferenceError, code),
+                ):
+                    self.invoke()
+                slot = self.slot()
+                if stage == "intent":
+                    # Reset only the empty synthetic slot for the up case.
+                    cleanup.callback(slot.rmdir)
+                self.assertEqual(2, len(opened))
+                self.assertEqual(
+                    [descriptor for descriptor, _ in reversed(opened)],
+                    [
+                        call.args[0]
+                        for index, call in enumerate(close.call_args_list)
+                        for descriptor, start in opened
+                        if index >= start and call.args[0] == descriptor
+                    ],
+                )
+                for descriptor, _ in opened:
+                    with self.assertRaises(OSError):
+                        real_fstat(descriptor)
+                self.assertFalse((slot / "complete.json").exists())
+                self.assertFalse(
+                    (
+                        self.config.state_root / "inference-candidate.json"
+                    ).exists()
+                )
+                self.assertEqual(
+                    expected_files, {path.name for path in slot.iterdir()}
+                )
 
 
 class InferenceDockerBoundsTests(unittest.TestCase):
