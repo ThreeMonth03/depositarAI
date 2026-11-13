@@ -362,7 +362,7 @@ class PublicEntryRuntimeFixture(unittest.TestCase):
             "entrypoint": [
                 "python",
                 "-m",
-                "search.tests.public_entry_fixture",
+                "search.tests.public_entry.fixture",
                 "serve",
             ],
             "networks": {
@@ -528,7 +528,7 @@ http {
             "probe",
             "python",
             "-m",
-            "search.tests.public_entry_fixture",
+            "search.tests.public_entry.fixture",
             "probe",
             "--action",
             action,

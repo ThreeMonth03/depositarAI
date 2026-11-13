@@ -36,6 +36,7 @@ GATED_PATHS = (
     "search/web/turn.py",
     "search/tests/web_fixture.py",
     "search/tests/catalog_fixtures.py",
+    "search/tests/public_entry",
     "search/quality",
     "search/trace",
     "search/operations/deployment/candidate",
