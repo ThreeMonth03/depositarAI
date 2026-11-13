@@ -89,27 +89,7 @@ class Docker:
             )
             if self.verify_client is not None:
                 self.verify_client()
-            streams = [
-                value.encode("utf-8") if type(value) is str else value
-                for value in (result.stdout, result.stderr)
-            ]
-            if (
-                any(type(value) is not bytes for value in streams)
-                or type(result.returncode) is not int
-            ):
-                raise InferenceError("inference_command_invalid")
-            size = sum(map(len, streams))
-            self.total_bytes += size
-            if (
-                size > image_build.MAX_OUTPUT_BYTES
-                or self.total_bytes > image_build.MAX_TOTAL_OUTPUT_BYTES
-            ):
-                raise InferenceError("inference_output_limit")
-            if time.monotonic() > self.deadline:
-                raise InferenceError("inference_command_timeout")
-            if result.returncode != 0:
-                raise InferenceError("inference_command_failed")
-            return streams[0]
+            return self._checked_stdout(result)
         except InferenceError:
             raise
         except subprocess.TimeoutExpired:
@@ -120,6 +100,29 @@ class Docker:
             raise InferenceError("inference_command_failed") from None
         except (OSError, ValueError, subprocess.SubprocessError, UnicodeError):
             raise InferenceError("inference_command_failed") from None
+
+    def _checked_stdout(self, result):
+        streams = [
+            value.encode("utf-8") if type(value) is str else value
+            for value in (result.stdout, result.stderr)
+        ]
+        if (
+            any(type(value) is not bytes for value in streams)
+            or type(result.returncode) is not int
+        ):
+            raise InferenceError("inference_command_invalid")
+        size = sum(map(len, streams))
+        self.total_bytes += size
+        if (
+            size > image_build.MAX_OUTPUT_BYTES
+            or self.total_bytes > image_build.MAX_TOTAL_OUTPUT_BYTES
+        ):
+            raise InferenceError("inference_output_limit")
+        if time.monotonic() > self.deadline:
+            raise InferenceError("inference_command_timeout")
+        if result.returncode != 0:
+            raise InferenceError("inference_command_failed")
+        return streams[0]
 
     def inspect(self, reference, *, platform=None):
         arguments = ["image", "inspect"]

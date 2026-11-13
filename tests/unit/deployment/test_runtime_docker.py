@@ -298,6 +298,147 @@ class RuntimeDockerTests(unittest.TestCase):
                     runner.call_args.args[0][5:],
                 )
 
+    def test_result_precedence_keeps_failed_bytes_and_exact_boundaries(self):
+        fixtures = (
+            (
+                "malformed-before-caps-time-and-exit",
+                subprocess.CompletedProcess([], True, ["PRIVATE"], b"x"),
+                3,
+                90,
+                101,
+                "inference_command_invalid",
+                3,
+                1,
+                1,
+            ),
+            (
+                "combined-UTF8-cap-before-time-and-exit",
+                subprocess.CompletedProcess([], 1, "測試", b"abc"),
+                0,
+                90,
+                101,
+                "inference_output_limit",
+                9,
+                1,
+                1,
+            ),
+            (
+                "cumulative-cap-before-time-and-exit",
+                subprocess.CompletedProcess([], 1, b"a", b"b"),
+                11,
+                90,
+                101,
+                "inference_output_limit",
+                13,
+                1,
+                1,
+            ),
+            (
+                "late-before-nonzero-exit",
+                subprocess.CompletedProcess([], 1, "測", b"e"),
+                0,
+                90,
+                101,
+                "inference_command_timeout",
+                4,
+                1,
+                2,
+            ),
+            (
+                "equal-caps-and-deadline-reach-nonzero-exit",
+                subprocess.CompletedProcess([], 1, "測", b"12345"),
+                4,
+                90,
+                100,
+                "inference_command_failed",
+                12,
+                1,
+                2,
+            ),
+            (
+                "zero-remaining-before-malformed-result",
+                subprocess.CompletedProcess([], True, ["PRIVATE"], b"x"),
+                0,
+                100,
+                101,
+                "inference_command_budget",
+                0,
+                0,
+                1,
+            ),
+        )
+        for (
+            label,
+            result,
+            previous,
+            started,
+            finished,
+            code,
+            total,
+            runs,
+            clock_calls,
+        ) in fixtures:
+            with (
+                self.subTest(case=label),
+                mock.patch.object(image_build, "MAX_OUTPUT_BYTES", 8),
+                mock.patch.object(image_build, "MAX_TOTAL_OUTPUT_BYTES", 12),
+                mock.patch.object(
+                    runtime_docker.time,
+                    "monotonic",
+                    side_effect=[started, finished],
+                ) as clock,
+            ):
+                runner = mock.Mock(return_value=result)
+                client = runtime_docker.Docker(
+                    "/private-client", runner, deadline=100
+                )
+                client.total_bytes = previous
+                with self.assertRaisesRegex(
+                    runtime_docker.InferenceError, "^" + code + "$"
+                ) as caught:
+                    client.call(["info"], timeout=30)
+                self.assertNotIn("PRIVATE", str(caught.exception))
+                self.assertEqual(client.calls, 1)
+                self.assertEqual(client.total_bytes, total)
+                self.assertEqual(runner.call_count, runs)
+                self.assertEqual(clock.call_count, clock_calls)
+                if runs:
+                    self.assertEqual(
+                        runner.call_args.kwargs["timeout"], 100 - started
+                    )
+
+    def test_post_guard_refusal_precedes_malformed_result_admission(self):
+        runner = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                [], True, ["PRIVATE"], b"PRIVATE"
+            )
+        )
+        verify = mock.Mock(
+            side_effect=[
+                None,
+                runtime_docker.InferenceError(
+                    "inference_client_configuration_changed"
+                ),
+            ]
+        )
+        client = runtime_docker.Docker(
+            "/private-client", runner, deadline=100, verify_client=verify
+        )
+        with mock.patch.object(
+            runtime_docker.time, "monotonic", return_value=90
+        ) as clock:
+            with self.assertRaisesRegex(
+                runtime_docker.InferenceError,
+                "^inference_client_configuration_changed$",
+            ) as caught:
+                client.call(["info"])
+        self.assertNotIn("PRIVATE", str(caught.exception))
+        self.assertEqual(verify.call_count, 2)
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(clock.call_count, 1)
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.total_bytes, 0)
+
 
 class ProjectInventoryTests(unittest.TestCase):
     @staticmethod

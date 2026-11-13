@@ -53,6 +53,7 @@ GATED_PATHS = (
     "search/operations/deployment/release/runtime.py",
     "search/operations/deployment/inference.py",
     "search/operations/deployment/inference_runtime.py",
+    "search/operations/deployment/runtime_docker.py",
     "search/operations/deployment/gpu",
     "search/operations/deployment/credentials.py",
     "search/operations/deployment/gateway/probe_runtime.py",
