@@ -19,7 +19,7 @@ from search.operations.deployment.public_entry.antibot import (
     NETWORK,
     render_antibot,
 )
-from search.tests import public_entry_fixture
+from search.tests.public_entry import fixture
 
 
 class AntibotTests(unittest.TestCase):
@@ -193,7 +193,7 @@ class AntibotProbeTests(unittest.TestCase):
         ).encode()
         headers = {"Content-Encoding": "gzip"} if compressed else {}
         initial = HTTPError(
-            public_entry_fixture.ORIGIN + "/verify",
+            fixture.ORIGIN + "/verify",
             status,
             "fixture",
             headers,
@@ -204,17 +204,15 @@ class AntibotProbeTests(unittest.TestCase):
         self.opener.open.side_effect = [initial, completed]
         with (
             mock.patch.object(
-                public_entry_fixture, "MozillaCookieJar", return_value=self.jar
+                fixture, "MozillaCookieJar", return_value=self.jar
             ),
+            mock.patch.object(fixture.ssl, "create_default_context"),
             mock.patch.object(
-                public_entry_fixture.ssl, "create_default_context"
-            ),
-            mock.patch.object(
-                public_entry_fixture, "build_opener", return_value=self.opener
+                fixture, "build_opener", return_value=self.opener
             ),
             redirect_stdout(self.output),
         ):
-            public_entry_fixture.probe("verify", "fixture", self.root)
+            fixture.probe("verify", "fixture", self.root)
 
     def test_gzip_challenge_is_requested_decoded_and_solved(self):
         self.verify(self.challenge, compressed=True)
@@ -223,9 +221,7 @@ class AntibotProbeTests(unittest.TestCase):
         self.assertEqual(len(requests), 2)
         for request in requests:
             self.assertEqual(request.get_header("Accept-encoding"), "gzip")
-        self.assertEqual(
-            requests[0].full_url, public_entry_fixture.ORIGIN + "/verify"
-        )
+        self.assertEqual(requests[0].full_url, fixture.ORIGIN + "/verify")
         self.assertIn("/pass-challenge?", requests[1].full_url)
         self.jar.save.assert_called_once_with(
             ignore_discard=True, ignore_expires=True

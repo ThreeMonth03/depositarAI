@@ -230,6 +230,7 @@ python3 -m unittest -v "${unittest_timing[@]}" \
   tests.unit.deployment.public_entry.test_profile \
   tests.unit.deployment.public_entry.test_identity_adapter \
   tests.unit.deployment.public_entry.test_antibot \
+  tests.unit.deployment.public_entry.test_fixture \
   tests.unit.deployment.public_entry.test_antibot_updates \
   tests.unit.deployment.public_entry.test_host \
   tests.unit.deployment.public_entry.test_preflight \

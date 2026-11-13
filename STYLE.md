@@ -66,6 +66,7 @@ CI 使用相同入口與根目錄設定；只掛載部分來源的網站與曆�
 - `search/transport/http.py`。
 - `search/web/app.py`、`search/tests/web_fixture.py`。
 - `search/tests/catalog_fixtures.py` 的完整模組。
+- `search/tests/public_entry` 的完整目錄。
 - `search/web/trace.py`、`turn.py`。
 - `search/quality`、`search/operations/deployment/candidate`。
 - `search/trace` 的完整目錄。
