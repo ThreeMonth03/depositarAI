@@ -289,6 +289,71 @@ class BackendCancellationTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertIsNotNone(processes[0].returncode)
 
+    async def test_external_cancellation_waits_for_worker_reap(self):
+        entered, entering_reap = asyncio.Event(), asyncio.Event()
+        release_reap, reaped = asyncio.Event(), asyncio.Event()
+
+        async def read(_size):
+            entered.set()
+            await asyncio.Future()
+
+        async def drain():
+            pass
+
+        async def wait():
+            entering_reap.set()
+            await release_reap.wait()
+            process.returncode = -9
+            reaped.set()
+            return process.returncode
+
+        process = SimpleNamespace(
+            returncode=None,
+            stdin=SimpleNamespace(write=Mock(), drain=drain, close=Mock()),
+            stdout=SimpleNamespace(read=read),
+            kill=Mock(),
+            wait=wait,
+        )
+        with patch(
+            "search.api.shared.backend.asyncio.create_subprocess_exec",
+            return_value=process,
+        ):
+            caller = asyncio.create_task(
+                SubprocessBackend().call("scope", {"query": "test"}, 60)
+            )
+            reap_started = asyncio.create_task(entering_reap.wait())
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                caller.cancel()
+                completed, _ = await asyncio.wait(
+                    (caller, reap_started),
+                    timeout=2,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                self.assertIn(reap_started, completed)
+                self.assertFalse(caller.done())
+                process.kill.assert_called_once_with()
+                self.assertFalse(reaped.is_set())
+                self.assertIsNone(process.returncode)
+                release_reap.set()
+                result = await asyncio.wait_for(
+                    asyncio.gather(caller, return_exceptions=True), 2
+                )
+                self.assertIsInstance(result[0], asyncio.CancelledError)
+                self.assertTrue(reaped.is_set())
+                self.assertEqual(process.returncode, -9)
+            finally:
+                release_reap.set()
+                if not entering_reap.is_set():
+                    caller.cancel()
+                reap_started.cancel()
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        caller, reap_started, return_exceptions=True
+                    ),
+                    2,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
