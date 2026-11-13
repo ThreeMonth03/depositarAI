@@ -287,22 +287,26 @@ class Runner:
         elif args[:2] == ["network", "inspect"]:
             value = self.networks[args[-1]]
         elif args[0] == "exec":
-            if args[1:] == [IDS["web-nginx"], "cat", ACCESS_TARGET]:
-                return SimpleNamespace(
-                    returncode=0, stdout=self.mounted_acl, stderr=b""
-                )
-            if args[2:7] != ["python", "-E", "-s", "-B", "-c"] or args[
-                -2:
-            ] != [
-                API,
-                CATALOG,
-            ]:
-                raise AssertionError("unexpected container command")
-            if "/v1/turn" in args[7] or "FastAPI" in args[7]:
-                raise AssertionError("inference or app import")
-            value = self.proof
+            return self._container_proof(args)
         else:
             raise AssertionError("unapproved docker operation")
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps(value).encode(), stderr=b""
+        )
+
+    def _container_proof(self, args):
+        if args[1:] == [IDS["web-nginx"], "cat", ACCESS_TARGET]:
+            return SimpleNamespace(
+                returncode=0, stdout=self.mounted_acl, stderr=b""
+            )
+        if args[2:7] != ["python", "-E", "-s", "-B", "-c"] or args[-2:] != [
+            API,
+            CATALOG,
+        ]:
+            raise AssertionError("unexpected container command")
+        if "/v1/turn" in args[7] or "FastAPI" in args[7]:
+            raise AssertionError("inference or app import")
+        value = self.proof
         return SimpleNamespace(
             returncode=0, stdout=json.dumps(value).encode(), stderr=b""
         )
@@ -347,6 +351,92 @@ class FrontendCheckTests(unittest.TestCase):
     def run_check(self):
         with patch.object(check, "_homepage", return_value=2):
             return check.check(self.path, runner=self.runner)
+
+    def test_fake_proof_refusal_keeps_distinct_admission_ledgers(self):
+        from tests.unit.deployment.frontend.test_delivery import HostRunner
+
+        prefix = [
+            "docker",
+            "--host",
+            "unix:///var/run/docker.sock",
+            "--config",
+            str(self.root / "docker-config"),
+        ]
+        proof = [
+            "exec",
+            IDS["web"],
+            "python",
+            "-E",
+            "-s",
+            "-B",
+            "-c",
+            "version only",
+            API,
+            CATALOG,
+        ]
+        cases = [
+            (prefix + ["compose", "up"], 1, "mutating compose operation"),
+            (
+                prefix + ["pull", "unapproved"],
+                1,
+                "unapproved docker operation",
+            ),
+            (
+                prefix + proof[:3] + proof[4:],
+                1,
+                "unexpected container command",
+            ),
+            (
+                prefix + proof[:-2] + [FRONT, CATALOG],
+                1,
+                "unexpected container command",
+            ),
+            (
+                prefix + proof[:7] + ["/v1/turn", API, CATALOG],
+                1,
+                "inference or app import",
+            ),
+            (
+                prefix + proof[:7] + ["FastAPI", API, CATALOG],
+                1,
+                "inference or app import",
+            ),
+            (prefix + proof, 31, "unbounded or remote client"),
+            (
+                ["docker", "--host", "tcp://example.test:2375"]
+                + prefix[3:]
+                + proof,
+                1,
+                "unbounded or remote client",
+            ),
+        ]
+        for argv, timeout, message in cases:
+            with self.subTest(message=message, argv=argv):
+                environment = {"SOURCE_REVISION": FRONT}
+                before = len(self.runner.calls)
+                with self.assertRaises(AssertionError) as caught:
+                    self.runner(argv, environment=environment, timeout=timeout)
+                self.assertEqual(str(caught.exception), message)
+                self.assertEqual(len(self.runner.calls), before + 1)
+                self.assertEqual(self.runner.calls[-1], argv)
+                self.assertIsNot(self.runner.calls[-1], argv)
+                self.assertEqual(self.runner.environments[-1], environment)
+                self.assertIsNot(self.runner.environments[-1], environment)
+
+        host = HostRunner(self.root)
+        with self.assertRaises(AssertionError) as caught:
+            host(
+                prefix
+                + ["image", "inspect", "--platform", "linux/amd64", WEB_IMAGE],
+                environment={"SOURCE_REVISION": FRONT},
+                timeout=1,
+            )
+        self.assertEqual(
+            str(caught.exception),
+            "Docker29 does not resolve bare platform digests",
+        )
+        self.assertEqual(host.calls, [])
+        self.assertEqual(host.environments, [])
 
     def test_current_schema_checks_platform_identity_and_exact_contract(self):
         result = self.run_check()

@@ -139,55 +139,59 @@ class PublisherTests(unittest.TestCase):
         if args[:3] == ["gh", "release", "upload"]:
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:2] == ["gh", "api"]:
-            route = args[2].removeprefix("repos/" + publisher.REPOSITORY + "/")
-            if self.api_denied:
-                return self.response(args, {"status": 403}, 1)
-            if route.startswith("releases/tags/"):
-                return (
-                    self.response(args, {"id": 27}, 0)
-                    if self.existing_release
-                    else self.response(args, {"status": "404"}, 1)
-                )
-            if route.startswith("git/ref/tags/"):
-                return (
-                    self.response(
-                        args, {"object": {"type": "commit", "sha": REVISION}}
-                    )
-                    if self.tag_created
-                    else self.response(args, {"status": 404}, 1)
-                )
-            if route == "git/refs":
-                self.tag_created = True
-                return self.response(
+            return self._github_api(args)
+        self.fail(f"unexpected external command: {args}")
+
+    def _github_api(self, args):
+        route = args[2].removeprefix("repos/" + publisher.REPOSITORY + "/")
+        if self.api_denied:
+            return self.response(args, {"status": 403}, 1)
+        if route.startswith("releases/tags/"):
+            return (
+                self.response(args, {"id": 27}, 0)
+                if self.existing_release
+                else self.response(args, {"status": "404"}, 1)
+            )
+        if route.startswith("git/ref/tags/"):
+            return (
+                self.response(
                     args, {"object": {"type": "commit", "sha": REVISION}}
                 )
-            if route == "releases":
-                return self.response(args, {"id": 27, "draft": True})
-            if route == "releases/27":
-                if "PATCH" in args:
-                    self.published = True
-                    return self.response(args, {"draft": False})
-                assets = [
-                    {
-                        "name": p.name,
-                        "size": p.stat().st_size,
-                        "digest": "sha256:"
-                        + hashlib.sha256(p.read_bytes()).hexdigest(),
-                    }
-                    for p in self.output.iterdir()
-                ]
-                if self.incomplete_assets:
-                    assets.pop()
-                if self.bad_remote_digest:
-                    assets[0]["digest"] = "sha256:" + "0" * 64
-                return self.response(
-                    args,
-                    {
-                        "draft": True,
-                        "tag_name": "frontend-" + REVISION,
-                        "assets": assets,
-                    },
-                )
+                if self.tag_created
+                else self.response(args, {"status": 404}, 1)
+            )
+        if route == "git/refs":
+            self.tag_created = True
+            return self.response(
+                args, {"object": {"type": "commit", "sha": REVISION}}
+            )
+        if route == "releases":
+            return self.response(args, {"id": 27, "draft": True})
+        if route == "releases/27":
+            if "PATCH" in args:
+                self.published = True
+                return self.response(args, {"draft": False})
+            assets = [
+                {
+                    "name": p.name,
+                    "size": p.stat().st_size,
+                    "digest": "sha256:"
+                    + hashlib.sha256(p.read_bytes()).hexdigest(),
+                }
+                for p in self.output.iterdir()
+            ]
+            if self.incomplete_assets:
+                assets.pop()
+            if self.bad_remote_digest:
+                assets[0]["digest"] = "sha256:" + "0" * 64
+            return self.response(
+                args,
+                {
+                    "draft": True,
+                    "tag_name": "frontend-" + REVISION,
+                    "assets": assets,
+                },
+            )
         self.fail(f"unexpected external command: {args}")
 
     def prepare(self, *, signed=False):
@@ -197,6 +201,36 @@ class PublisherTests(unittest.TestCase):
             (self.output / publisher.BUNDLE).write_text(
                 '{"mediaType":"test bundle"}'
             )
+
+    def test_fake_github_unknown_route_and_denial_keep_original_state(self):
+        args = ["gh", "api", "repos/" + publisher.REPOSITORY + "/unknown"]
+        with self.assertRaises(AssertionError) as caught:
+            self.command(args)
+        self.assertEqual(
+            str(caught.exception), f"unexpected external command: {args}"
+        )
+        self.assertIs(self.calls[-1], args)
+        self.assertFalse(self.tag_created)
+        self.assertFalse(self.published)
+
+        self.api_denied = True
+        for route in ("unknown", "git/refs", "releases/27"):
+            with self.subTest(route=route):
+                args = [
+                    "gh",
+                    "api",
+                    "repos/" + publisher.REPOSITORY + "/" + route,
+                    "--method",
+                    "PATCH",
+                ]
+                result = self.command(args)
+                self.assertIs(self.calls[-1], args)
+                self.assertIsInstance(result, subprocess.CompletedProcess)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, '{"status": 403}')
+                self.assertEqual(result.stderr, "")
+                self.assertFalse(self.tag_created)
+                self.assertFalse(self.published)
 
     def test_export_keeps_tested_manifests_and_distinct_config_digests(
         self,

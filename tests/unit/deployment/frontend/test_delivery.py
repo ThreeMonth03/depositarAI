@@ -107,63 +107,66 @@ class HostRunner(Runner):
             or args[0] == "tag"
             or (args[0] == "compose" and "config" not in args)
         ):
-            self.calls.append(list(argv))
-            if args[0] == "tag":
-                self.locators[args[2]] = args[1]
-            elif args[0] == "compose" and "stop" in args:
-                for row in self.rows.values():
-                    if (
-                        row["Config"]["Labels"]["com.docker.compose.service"]
-                        == "web-nginx"
-                    ):
-                        row["State"]["Running"] = False
-            elif args[0] == "compose" and "up" in args:
-                composition = json.loads(
-                    Path(args[args.index("-f") + 1]).read_text()
-                )
-                self.generation += 1
-                self.rows = {}
-                for role in delivery.ROLES:
-                    service = composition["services"][role]
-                    image = self.images[self.locators[service["image"]]]
-                    row = copy.deepcopy(self.templates[IDS[role]])
-                    identifier = hashlib.sha256(
-                        f"{role}-{self.generation}".encode()
-                    ).hexdigest()
-                    row["Id"], row["Image"] = identifier, image["Id"]
-                    row["ImageManifestDescriptor"] = copy.deepcopy(
-                        image["Descriptor"]
-                    )
-                    row["Config"] = copy.deepcopy(image["Config"])
-                    row["Config"]["Env"] += [
-                        k + "=" + v for k, v in service["environment"].items()
-                    ]
-                    row["Config"]["User"] = service["user"]
-                    row["Config"]["Labels"].update(
-                        {
-                            "com.docker.compose.project": self.project,
-                            "com.docker.compose.service": role,
-                            **service.get("labels", {}),
-                        }
-                    )
-                    self.rows[identifier] = row
-                self.refresh_networks()
-                if self.fail_health:
-                    self.fail_health = False
-                    next(iter(self.rows.values()))["State"]["Health"][
-                        "Status"
-                    ] = "unhealthy"
-                    if self.foreign_after_failure:
-                        next(iter(self.rows.values()))["Config"]["Labels"][
-                            delivery.TRANSACTION_LABEL
-                        ] = "f" * 32
-                    return SimpleNamespace(
-                        returncode=23,
-                        stdout=b"",
-                        stderr=b"private health diagnostic",
-                    )
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            return self._mutate_host(argv, args)
         return super().__call__(argv, environment=environment, timeout=timeout)
+
+    def _mutate_host(self, argv, args):
+        self.calls.append(list(argv))
+        if args[0] == "tag":
+            self.locators[args[2]] = args[1]
+        elif args[0] == "compose" and "stop" in args:
+            for row in self.rows.values():
+                if (
+                    row["Config"]["Labels"]["com.docker.compose.service"]
+                    == "web-nginx"
+                ):
+                    row["State"]["Running"] = False
+        elif args[0] == "compose" and "up" in args:
+            composition = json.loads(
+                Path(args[args.index("-f") + 1]).read_text()
+            )
+            self.generation += 1
+            self.rows = {}
+            for role in delivery.ROLES:
+                service = composition["services"][role]
+                image = self.images[self.locators[service["image"]]]
+                row = copy.deepcopy(self.templates[IDS[role]])
+                identifier = hashlib.sha256(
+                    f"{role}-{self.generation}".encode()
+                ).hexdigest()
+                row["Id"], row["Image"] = identifier, image["Id"]
+                row["ImageManifestDescriptor"] = copy.deepcopy(
+                    image["Descriptor"]
+                )
+                row["Config"] = copy.deepcopy(image["Config"])
+                row["Config"]["Env"] += [
+                    k + "=" + v for k, v in service["environment"].items()
+                ]
+                row["Config"]["User"] = service["user"]
+                row["Config"]["Labels"].update(
+                    {
+                        "com.docker.compose.project": self.project,
+                        "com.docker.compose.service": role,
+                        **service.get("labels", {}),
+                    }
+                )
+                self.rows[identifier] = row
+            self.refresh_networks()
+            if self.fail_health:
+                self.fail_health = False
+                next(iter(self.rows.values()))["State"]["Health"]["Status"] = (
+                    "unhealthy"
+                )
+                if self.foreign_after_failure:
+                    next(iter(self.rows.values()))["Config"]["Labels"][
+                        delivery.TRANSACTION_LABEL
+                    ] = "f" * 32
+                return SimpleNamespace(
+                    returncode=23,
+                    stdout=b"",
+                    stderr=b"private health diagnostic",
+                )
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     def refresh_networks(self):
         for name, network in self.networks.items():
