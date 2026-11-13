@@ -98,7 +98,7 @@ class DerivationTests(unittest.TestCase):
             "last_modified": "2026-10-01",
         }
 
-    def build(self, source_hash, *, rows=None):
+    def build(self, source_hash, *, rows=None, builder_source=None):
         path = self.root / ("snapshot-" + source_hash + ".jsonl")
         path.write_bytes(
             b"".join(private_io.canonical(x) for x in (rows or self.rows))
@@ -107,7 +107,9 @@ class DerivationTests(unittest.TestCase):
         output = self.root / "bundles"
         output.mkdir(mode=0o700, exist_ok=True)
         with patch.object(
-            identity, "source_digest", return_value=source_hash * 64
+            identity,
+            "source_digest",
+            return_value=builder_source or source_hash * 64,
         ):
             result = builder.build_bundle(path, output)
         return dict(result, snapshot_path=path)
@@ -145,6 +147,108 @@ class DerivationTests(unittest.TestCase):
             "rows_complete": False,
             "may_require_ocr": is_pdf,
         }
+
+    def terminal_profiles(self, *, selected=None):
+        self.root = Path(tempfile.mkdtemp(prefix="terminal-", dir=self.root))
+        self.ids = [
+            f"{index:08x}-1111-4111-8111-111111111111" for index in range(1, 5)
+        ]
+        self.terminal_statuses = dict(
+            zip(
+                self.ids,
+                ("ok", "empty_text", "unsupported_format", "parse_error"),
+            )
+        )
+        bodies = dict(
+            zip(
+                self.ids,
+                (
+                    self.csv,
+                    self.pdf,
+                    b"unsupported fixture bytes",
+                    b"%PDF-broken-fixture",
+                ),
+            )
+        )
+        resources = []
+        for identifier, format_ in zip(self.ids, ("CSV", "PDF", "CSV", "PDF")):
+            resources.append(
+                {
+                    "id": identifier,
+                    "name": "Terminal result fixture",
+                    "format": format_,
+                    "url": "https://data.depositar.io/fixture/" + identifier,
+                    "size": len(bodies[identifier]),
+                    "last_modified": "2026-10-01",
+                }
+            )
+        self.rows = [
+            dict(self.rows[0], resources=resources[:2]),
+            dict(
+                self.rows[0],
+                id="00000000-0000-4000-8000-000000000002",
+                name="terminal-errors",
+                resources=resources[2:],
+            ),
+        ]
+        self.selection = self.root / "origin-selection.json"
+        self.write(self.selection, self.ids)
+        self.a = self.build("d")
+        target_rows = deepcopy(self.rows)
+        target_rows[0]["title"] = "Changed terminal metadata"
+        self.b = self.build("e", rows=target_rows, builder_source="d" * 64)
+        self.origin, self.target = self.root / "origin", self.root / "target"
+        self.aplan = self.prepare(self.a, self.origin)
+        statuses = {
+            hashlib.sha256(body).hexdigest(): self.terminal_statuses[
+                identifier
+            ]
+            for identifier, body in bodies.items()
+        }
+
+        def fetch(resource):
+            body = bodies[resource["id"]]
+            return body, {
+                "content_type": "application/octet-stream",
+                "etag": None,
+                "last_modified": None,
+            }
+
+        def parse(path, expected_format, *_args, **_kwargs):
+            report = self.parse(path, expected_format)
+            status = statuses[report["input_sha256"]]
+            if status in {"unsupported_format", "parse_error"}:
+                report.update(
+                    status=status,
+                    detected_mime="application/octet-stream",
+                    columns=[],
+                    text="",
+                    rows_observed=None,
+                    may_require_ocr=False,
+                )
+            return report
+
+        with (
+            patch.object(source.time, "time", return_value=100),
+            patch.object(source, "fetch", side_effect=fetch),
+            patch.object(extractor, "build_image", return_value=IMAGE),
+            patch.object(extractor, "extract", side_effect=parse),
+        ):
+            report = batches.run(
+                self.a["bundle_path"], self.origin, self.aplan
+            )
+        self.assertEqual(
+            (report["profile_count"], report["pending_count"]), (4, 0)
+        )
+        identifiers = [
+            identifier
+            for identifier, status in self.terminal_statuses.items()
+            if selected is None or status in selected
+        ]
+        self.selection = self.root / "target-selection.json"
+        self.write(self.selection, identifiers)
+        self.bplan = self.prepare(self.b, self.target)
+        return bodies
 
     def snapshot(self, root):
         return {
@@ -353,6 +457,151 @@ class DerivationTests(unittest.TestCase):
         self.assertFalse(proof["parser_executed"])
         self.assertNotIn("https://", json.dumps(report))
         self.assertNotIn("fixtureValue", json.dumps(report))
+
+    def test_all_terminal_profiles_keep_status_and_partial_disposition(self):
+        from argparse import Namespace
+
+        from search.operations import cli
+        from search.operations.documents import sets
+
+        bodies = self.terminal_profiles()
+        before = self.snapshot(self.origin)
+        target_caches = {
+            name: self.snapshot(self.target / name)
+            for name in ("acquisition", "extractions")
+        }
+        report = self.derive()
+        self.assertEqual(
+            (
+                report["selected_count"],
+                report["profile_count"],
+                report["pending_count"],
+                report["failed_count"],
+            ),
+            (4, 4, 0, 1),
+        )
+        self.assertEqual(report["derived_count"], 4)
+        self.assertEqual(report["status"], "partial")
+        options = Namespace(
+            command="profile-resources", profile_action="derive"
+        )
+        self.assertEqual(cli._exit_status(options, report), 1)
+        self.assertEqual(
+            report["verified_body_bytes"], sum(map(len, bodies.values()))
+        )
+        self.assertEqual(report["fresh_acquisitions"], 0)
+        self.assertEqual(report["parser_executions"], 0)
+        self.assertEqual(self.snapshot(self.origin), before)
+        for name, snapshot in target_caches.items():
+            self.assertEqual(self.snapshot(self.target / name), snapshot)
+        self.assertEqual(len(list((self.target / "derivations").iterdir())), 4)
+        for identifier, status in self.terminal_statuses.items():
+            old = self.profile(self.origin, identifier)
+            new = self.profile(self.target, identifier)
+            self.assertEqual(new["result"], old["result"])
+            self.assertEqual(new["result"]["status"], status)
+            self.assertEqual(new["source"]["acquired_at"], 100)
+            self.assertEqual(
+                new["source"]["catalog_manifest_sha256"],
+                self.b["manifest_sha256"],
+            )
+        profile_set = self.target / report["profile_set_file"]
+        value, digest = sets.read(profile_set)
+        self.assertEqual(digest, report["profile_set_sha256"])
+        self.assertEqual(len(value["profiles"]), 4)
+        self.assertEqual(value["failures"], [])
+        contexts, enriched = enrichment.load_profiles(
+            [],
+            self.b["bundle_path"],
+            self.b["manifest_sha256"],
+            self.b["snapshot_path"],
+            profile_set=profile_set,
+        )
+        self.assertEqual(
+            (enriched["included_count"], enriched["skipped_count"]), (1, 3)
+        )
+        self.assertEqual(
+            {
+                row["reason"]
+                for row in enriched["resources"]
+                if row["status"] == "skipped"
+            },
+            {"empty_text", "unsupported_format", "parse_error"},
+        )
+        self.assertEqual(len(contexts[DATASET]), 1)
+
+    def test_terminal_checkpoint_resume_preserves_error_and_lineage(self):
+        self.terminal_profiles()
+        first = self.derive(max_resources=3)
+        self.assertEqual(
+            (first["status"], first["profile_count"], first["pending_count"]),
+            ("checkpoint", 3, 1),
+        )
+        proofs = self.snapshot(self.target / "derivations")
+        second = self.derive(max_resources=1)
+        self.assertEqual(
+            (
+                second["status"],
+                second["derived_count"],
+                second["failed_count"],
+            ),
+            ("partial", 1, 1),
+        )
+        self.assertEqual(second["pending_count"], 0)
+        for path, raw in proofs.items():
+            self.assertEqual(
+                (self.target / "derivations" / path).read_bytes(), raw
+            )
+        done = self.snapshot(self.target)
+        repeated = self.derive()
+        self.assertEqual(
+            (repeated["status"], repeated["derived_count"]), ("partial", 0)
+        )
+        self.assertEqual(self.snapshot(self.target), done)
+
+    def test_terminal_profile_cache_faults_have_no_fallback(self):
+        for status in ("unsupported_format", "parse_error"):
+            for fault in ("missing_body", "missing_extraction", "result_hash"):
+                with self.subTest(status=status, fault=fault):
+                    self.terminal_profiles(selected={status})
+                    identifier = next(
+                        key
+                        for key, value in self.terminal_statuses.items()
+                        if value == status
+                    )
+                    profile = self.profile(self.origin, identifier)
+                    body_sha = profile["source"]["content_sha256"]
+                    paths = [
+                        path
+                        for path in (self.origin / "extractions").iterdir()
+                        if json.loads(path.read_bytes())["result"][
+                            "input_sha256"
+                        ]
+                        == body_sha
+                    ]
+                    self.assertEqual(len(paths), 1)
+                    if fault == "missing_body":
+                        (
+                            self.origin
+                            / "acquisition"
+                            / cache.body_name(body_sha)
+                        ).unlink()
+                    elif fault == "missing_extraction":
+                        paths[0].unlink()
+                    else:
+                        value = json.loads(paths[0].read_bytes())
+                        value["result"]["input_sha256"] = "e" * 64
+                        self.write(paths[0], value)
+                    before = self.snapshot(self.origin)
+                    with self.assertRaises(derivation.DerivationError):
+                        self.derive()
+                    self.assertEqual(self.snapshot(self.origin), before)
+                    self.assertEqual(
+                        list((self.target / "profiles").iterdir()), []
+                    )
+                    self.assertEqual(
+                        list((self.target / "outcomes").iterdir()), []
+                    )
 
     def test_checkpoint_and_resume_never_double_count(self):
         first = self.derive(max_resources=1)

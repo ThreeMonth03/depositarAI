@@ -168,13 +168,19 @@ timeout --signal=TERM --kill-after=30s 570s \
 ```
 
 `derive` 只讀取 origin，不下載、刷新快取或啟動解析器。來源的 outcome/profile、
-素材雜湊、解析映像／recipe、編碼與標頭政策均須符合；只有通過驗證的 `ok` 或
-`empty_text` 可沿用。過期素材保留原取得時間，代表封存內容，並非最新的來源確認。
+素材雜湊、解析快取、映像／recipe、編碼與標頭政策均須符合。可沿用的 terminal
+profile 狀態包含 `ok`、`empty_text`、`unsupported_format` 與 `parse_error`；
+這是衍生契約的延伸，各狀態與完整解析結果都保留原值。過期素材保留原取得時間，
+代表封存內容，並非最新的來源確認。
 來源與 target 的 bundle/state 必須是不同且不互相包含的專用路徑。
 
 每份新 profile 發布前，target 的 `derivations/` 會先保存不可覆寫的來源證據。
-origin 的 receipts、profiles 及素材不變。缺失、不合格或尚未驗證的項目仍留在
-target 計畫分母，之後可用正常 `run` 處理；不會偷偷改走網路或解析流程。
+origin 的 receipts、profiles 及素材不變；target 不複製原檔、取得快取或解析快取。
+缺失、取得失敗、執行中或尚未驗證的項目仍留在 target 計畫分母，之後可用正常
+`run` 處理；不會偷偷改走網路或解析流程。取得失敗沒有可沿用的 terminal profile，
+不能改成 `parse_error` profile。沿用 `parse_error` 也不會把解析失敗改成成功：
+即使 pending 為 0，回報仍是 `partial`、exit 1；profile-set 保留原狀態，
+搜尋 enrichment 仍跳過 `empty_text`、`unsupported_format` 與 `parse_error`。
 
 每次最多驗證 20 份、合計 320 MiB 素材；可用 `--max-resources`／`--max-bytes`
 調低。`--wall-seconds` 預設且最多 300 秒，在有界 IO 操作之間合作式檢查；
@@ -185,7 +191,8 @@ target 計畫分母，之後可用正常 `run` 處理；不會偷偷改走網路
 
 回報的 `derived_count` 是本次完成數；`source_candidate_count` 只代表 outcome
 可供檢查的候選，`unverified_candidate_count` 尚未驗證素材。`verified_body_bytes`
-是實際核對的 bytes；`fresh_acquisitions` 與 `parser_executions` 均為 0。
+是實際核對的 bytes，不是 target 新增儲存量；`fresh_acquisitions` 與
+`parser_executions` 均為 0。
 離線衍生不表示新 catalog、向量索引或搜尋驗收已完成。
 
 ## 封入搜尋 catalog
