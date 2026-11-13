@@ -16,7 +16,7 @@ from search.operations.shared.source_identity import require_clean_revision
 
 MAX_BYTES = 20 * cache.MAX_FILE_BYTES
 MAX_WALL_SECONDS = 300
-ELIGIBLE = frozenset({"ok", "empty_text"})
+ELIGIBLE = batches.PROFILE_STATUSES
 ERROR_CODES = frozenset(
     {
         "document_derivation_options_invalid",
