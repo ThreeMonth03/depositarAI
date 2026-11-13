@@ -101,6 +101,7 @@ class PythonLintGateTests(unittest.TestCase):
         self.write("search/operations/deployment/source_bundle.py", "")
         self.write("search/operations/deployment/release/runtime.py", "")
         self.write("search/operations/deployment/inference.py", "")
+        self.write("search/operations/deployment/runtime_docker.py", "")
         self.write("search/operations/deployment/inference_runtime.py", "")
         self.write("search/operations/deployment/gpu/__init__.py", "")
         self.write("search/operations/deployment/credentials.py", "")
@@ -345,6 +346,7 @@ class PythonLintGateTests(unittest.TestCase):
             "search/operations/deployment/release/runtime.py",
             "search/operations/deployment/inference.py",
             "search/operations/deployment/inference_runtime.py",
+            "search/operations/deployment/runtime_docker.py",
             "search/operations/deployment/gpu/future_policy.py",
             "search/operations/deployment/credentials.py",
             "search/operations/deployment/gateway/probe_runtime.py",
